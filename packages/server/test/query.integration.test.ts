@@ -35,7 +35,7 @@ import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { promptContentHash } from "../src/crypto.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import {
-  parseOpenRouterStream,
+  ModelProviderError,
   type LlmAssistantToolCall,
   type LlmMessage,
   type ModelStreamPart,
@@ -60,7 +60,6 @@ import {
 } from "./fixtures/reply-history-database.ts";
 import type { HistoryAttempt, HistorySettlement } from "../src/conversation-history/schema.ts";
 import { TokenService } from "../src/tokens.ts";
-import { stalledModelStream } from "./fixtures/interrupted-model-stream.ts";
 import {
   finishPart,
   makeEmbeddings,
@@ -507,7 +506,6 @@ const apiWithToken = async (path: string, body: unknown, token: string) => {
 
 type ReplySnapshot = {
   readonly reply_id: string;
-  readonly session_id: string;
   readonly status: "admitting" | "running" | "settling" | "completed" | "failed" | "stopped";
   readonly answer: string;
   readonly sources: readonly Record<string, unknown>[];
@@ -1692,15 +1690,16 @@ describe("query stream", () => {
     ).toEqual(["First", "Second"]);
   });
 
-  it("records a failed settlement privately without making its partial answer shareable or promotable", async () => {
+  it("keeps a nonretryable provider failure private without fallback and allows explicit retry", async () => {
     const partial = "Private partial must not be shared.";
     const language = makeScriptedLanguageModel({
       streams: [
         {
           kind: "parts",
           parts: [tokenPart(partial)],
-          errorAfterParts: new Error("provider secret"),
+          errorAfterParts: new ModelProviderError("provider secret"),
         },
+        { kind: "parts", parts: [tokenPart("Explicit retry."), finishPart("stop")] },
       ],
     });
     await startHarness({ language });
@@ -1765,7 +1764,18 @@ describe("query stream", () => {
     expect(publicBody).not.toContain(partial);
     expect(publicBody).not.toContain("context_messages");
     expect(publicBody).not.toContain("system_prompt_hash");
-    expect(language.streamCalls).toHaveLength(1);
+    expect(language.streamCalls.map((call) => call.model)).toEqual(["primary/test-model"]);
+    const retried = await retryReply(identifiers.reply_id);
+    expect(retried.response.status).toBe(202);
+    const retriedTail = await tailReply(JSON.parse(retried.text).reply_id);
+    expect(replySnapshots(retriedTail.text).at(-1)).toMatchObject({
+      status: "completed",
+      answer: "Explicit retry.",
+    });
+    expect(language.streamCalls.map((call) => call.model)).toEqual([
+      "primary/test-model",
+      "primary/test-model",
+    ]);
   });
 
   it.each(["query", "btw"])(
@@ -2932,31 +2942,7 @@ describe("query stream", () => {
     expect(malformed.text).not.toContain("Alpha");
   });
 
-  it("settles a pending source when a tool misses without emitting a source", async () => {
-    const language = makeScriptedLanguageModel({
-      streams: [
-        {
-          kind: "parts",
-          parts: [
-            toolCallPart(0, "tc-missing", "read_document", { path: "wiki/missing.md" }),
-            finishPart("tool_calls", "missing-round"),
-          ],
-        },
-        { kind: "parts", parts: [tokenPart("Recovered"), finishPart("stop", "missing-final")] },
-      ],
-    });
-    await startHarness({ language });
-
-    const result = await runReply({ question: "missing source" });
-
-    expect(result.snapshots.at(-1)).toMatchObject({
-      status: "completed",
-      answer: "Recovered",
-      sources: [],
-    });
-  });
-
-  it("resolves shifted pending slots, missing results and duplicate read/expand/link sources without checkpointing a replacement slot", async () => {
+  it("removes missing sources without losing or duplicating the remaining citations", async () => {
     const language = makeScriptedLanguageModel({
       streams: [
         {
@@ -2996,21 +2982,6 @@ describe("query stream", () => {
       expect.arrayContaining([expect.objectContaining({ pending: true })]),
     );
     expect(language.streamCalls).toHaveLength(2);
-    const checkpoint = JSON.parse(
-      await readFile(
-        join(
-          currentState().storageRoot,
-          "vaults",
-          id.vault,
-          "operations",
-          "replies",
-          `${terminal?.reply_id}.json`,
-        ),
-        "utf8",
-      ),
-    );
-    expect(checkpoint.accumulator.pendingCalls).toEqual([]);
-    expect(checkpoint.accumulator).not.toHaveProperty("replacementSlot");
   });
 
   it("returns invalid tool arguments to the model as tool messages instead of failing the reply", async () => {
@@ -3101,91 +3072,6 @@ describe("query stream", () => {
     expect(String(toolMessage?.content)).toContain(
       'No documents match the filters: {"genre":"theor","limit":50}',
     );
-  });
-
-  it.each([
-    { fault: "stall before output", partial: "" },
-    { fault: "stall after output", partial: "Saved partial." },
-    { fault: "missing body", partial: "" },
-  ])(
-    "does not fall back after an accepted provider response: $fault",
-    async ({ fault, partial }) => {
-      const timeout = vi.fn();
-      const language = makeScriptedLanguageModel({
-        streams: [
-          {
-            kind: "stream",
-            stream:
-              fault === "missing body"
-                ? parseOpenRouterStream(new Response(null))
-                : stalledModelStream(partial, timeout),
-          },
-          { kind: "parts", parts: [tokenPart("Explicit retry."), finishPart("stop")] },
-        ],
-      });
-      await startHarness({ language });
-      const { snapshots } = await runReply({ question: "Do not silently repeat this call" });
-      const terminal = snapshots.at(-1);
-      assert(terminal !== undefined);
-      expect(terminal).toMatchObject({ status: "failed", answer: partial });
-      expect(language.streamCalls.map((call) => call.model)).toEqual(["primary/test-model"]);
-      expect(timeout).toHaveBeenCalledTimes(fault === "missing body" ? 0 : 1);
-      const settlements = (await readSessionEvents(terminal.session_id)).filter(
-        (event) => event.type === "settlement",
-      );
-      expect(settlements).toEqual([
-        expect.objectContaining({
-          reply_id: terminal.reply_id,
-          answer: partial,
-          outcome: expect.objectContaining({ status: "failed", code: "generation_failed" }),
-        }),
-      ]);
-      const retried = await retryReply(terminal.reply_id);
-      expect(retried.response.status).toBe(202);
-      const retriedId = JSON.parse(retried.text).reply_id;
-      const tail = await tailReply(retriedId);
-      expect(replySnapshots(tail.text).at(-1)).toMatchObject({
-        status: "completed",
-        answer: "Explicit retry.",
-      });
-      expect(language.streamCalls.map((call) => call.model)).toEqual([
-        "primary/test-model",
-        "primary/test-model",
-      ]);
-    },
-  );
-
-  it("preserves a committed Stop when the accepted provider stream then times out", async () => {
-    const replyId = uuid(crypto.randomUUID());
-    const partial = "Stopped partial.";
-    const timeout = vi.fn();
-    const language = makeScriptedLanguageModel({
-      streams: [
-        {
-          kind: "stream",
-          stream: (async function* () {
-            for await (const part of stalledModelStream(partial, timeout)) {
-              yield part;
-              const stopped = await api(`${repliesPath}/${replyId}/stop`, {});
-              expect(stopped.response.status).toBe(204);
-            }
-          })(),
-        },
-      ],
-    });
-    await startHarness({ language });
-    const { snapshots } = await runReply({
-      reply_id: replyId,
-      question: "Stop before the timeout wins",
-    });
-    const terminal = snapshots.at(-1);
-    assert(terminal !== undefined);
-    expect(terminal).toMatchObject({ status: "stopped", answer: partial, error: null });
-    expect(language.streamCalls).toHaveLength(1);
-    expect(timeout).toHaveBeenCalledTimes(1);
-    expect(
-      (await readSessionEvents(terminal.session_id)).filter((event) => event.type === "settlement"),
-    ).toEqual([expect.objectContaining({ answer: partial, outcome: { status: "stopped" } })]);
   });
 
   it("continues invisibly on retryable primary-model fallback", async () => {

@@ -159,7 +159,7 @@ These are controlled PostgreSQL/local-filesystem/process-crash and fake-provider
 
 The independent review of `9875f79` led to two correctness fixes and three small deletions: retain generation-retry identity after acknowledgment loss; stop application-level fallback after accepted stream stalls/missing bodies; remove obsolete byte-append storage, the redundant selected-reply field, and the checkpointed source-replacement slot. Dependency inspection and reply dispatch/schema state remain in place. No shared conversation controller or new recovery framework was introduced.
 
-Verification across separate runs:
+Verification at `3c0d397` across separate runs (historical evidence, not a permanent-suite inventory):
 
 - **340 server tests / 20 files**, including native admission/settlement, conditional storage, restart and API regressions, exact retry redelivery after the replacement completes or fails, and the affected compile/worker storage doubles.
 - **57 query/parser tests / two files**, with one live-provider smoke skipped. The real stream parser runs through a scripted model layer into the native workflow; invocation counts verify that accepted stalls/missing bodies do not invoke the fallback, committed partials survive, explicit retry can generate, and committed Stop wins. Existing scripted 429 fallback remains covered. Mixed missing/duplicate read, expand, and link results verify pending-source index adjustment and checkpoint simplification.
@@ -167,4 +167,20 @@ Verification across separate runs:
 
 That is **449 distinct passes / 26 files**, not additional tests on top of the previous 383. A focused rerun passed **14 overlapping query/parser cases** after strengthening the timeout fixture with a positive expiry witness asserted outside the workflow. Root typecheck, Svelte check, formatting/lint, whitespace, and documentation checks passed; Svelte reported zero errors/warnings. All three owned database runs removed their containers, networks, and volumes.
 
-Runtime source relative to `9875f79`: **131 lines added, 214 removed; net 83 fewer lines**, excluding tests, fixtures, scripts, and documentation. Normal formatter output is included. The full query/parser run took 548 seconds including setup/cleanup; the focused rerun took 45 seconds. The cause of variable cluster delays remains unestablished. The test fixture expedites the existing read deadline to inject a stall; production deadlines are unchanged. These tests do not inspect a live provider or establish its internal retry/billing behavior.
+Runtime source relative to `9875f79`: **131 lines added, 214 removed; net 83 fewer lines**, excluding tests, fixtures, scripts, and documentation. Normal formatter output is included. The full query/parser run took 548 seconds including setup/cleanup; the focused rerun took 45 seconds. The cause of variable cluster delays remains unestablished. The proof fixture expedited the existing read deadline to inject a stall; production deadlines were unchanged. These tests did not inspect a live provider or establish its internal retry/billing behavior.
+
+### Permanent regressions versus proof work
+
+A useful investigation or refactor proof is not automatically a permanent test. Retain stable behavioral contracts at the smallest sufficient layer, with representative cross-layer coverage. Expense alone does not make a safety-critical crash test disposable. This retention pass covers only the latest review batch; it does not prune the earlier durability suites or change runtime code.
+
+- Keep the Session/BTW lost-acknowledgment regressions, server exact retry-replay cases, and distinct ordinary/conditional R2 contracts.
+- Keep the real parser's missing-body and before/after-output stall cases in `llm-stream.test.ts`, using local fake clocks rather than a shared global-timer interception fixture.
+- Extend the existing private-failure workflow case with a scripted nonretryable provider error, no-fallback invocation counts, partial-content/disclosure checks, and explicit retry. The full parser-fault matrix need not run again at this layer.
+- Extend the existing missing-source case with remaining/duplicate citations; test visible results rather than the absence of an internal checkpoint field named `replacementSlot`.
+- Extend the existing settlement Stop test to cover both completed and failed proposed results, rather than keeping another provider-timing scenario.
+
+The removed cross-layer fault probes and shared fixture remain recoverable at `3c0d397`, with their successful runs recorded above. There is no new proof-suite framework. Compile/worker test formatting is restored to the earlier baseline while retaining the obsolete storage-stub deletion.
+
+The retention pass verified **196 server tests / seven files** and **52 web tests / four files**: **248 distinct passes**, with one live-provider smoke skipped. The standalone eight-case parser run overlaps that total. Root and Svelte typechecks passed (zero Svelte errors/warnings), as did scoped lint/format, whitespace, and documentation checks. The owned disposable database was removed. This selected rerun is not a new all-suite count.
+
+Runtime source is unchanged. Tests/fixtures have **219 fewer lines**: 140 from test/scaffolding changes and 79 from reversing unrelated formatting expansion. There are four fewer expanded test cases; the latest batch's net growth relative to `9875f79` is now ten cases and 149 test/fixture lines, rather than fourteen cases and 368 lines.

@@ -264,47 +264,55 @@ describe("durable reply settlement", () => {
       }),
     ));
 
-  it("lets a committed stop win before the result is frozen", () =>
-    withSettlement((f) =>
-      Effect.gen(function* () {
-        yield* f.db.query((client) =>
-          client.update(replies).set({ stopRequested: true }).where(eq(replies.id, f.replyId)),
-        );
-        const result = completion();
-        yield* f.finalizer.begin(f.replyId, {
-          ...result,
-          context_messages: [
-            { role: "user", content: "Question" },
-            {
-              role: "assistant",
-              content: "",
-              tool_calls: [
-                {
-                  id: "pending-tool",
-                  type: "function",
-                  function: { name: "read_document", arguments: "{}" },
-                },
-              ],
-            },
-          ],
-        });
-        yield* f.finalizer.publish(f.replyId);
-        expect((yield* f.histories.read(f.address))!.history.records[2]).toMatchObject({
-          outcome: { status: "stopped" },
-          answer: f.progress.answer,
-          context_messages: [
-            { role: "user", content: "Question" },
-            { role: "assistant", content: "", tool_calls: expect.any(Array) },
-            {
-              role: "tool",
-              tool_call_id: "pending-tool",
-              content: "Tool call cancelled because the user stopped the response.",
-            },
-            { role: "assistant", content: f.progress.answer },
-          ],
-        });
-      }),
-    ));
+  it.each(["completed", "failed"] as const)(
+    "lets a committed stop win before a %s result is frozen",
+    (status) =>
+      withSettlement((f) =>
+        Effect.gen(function* () {
+          yield* f.db.query((client) =>
+            client.update(replies).set({ stopRequested: true }).where(eq(replies.id, f.replyId)),
+          );
+          const result = status === "completed" ? completion() : interruption("failed");
+          yield* f.finalizer.begin(f.replyId, {
+            ...result,
+            context_messages: [
+              { role: "user", content: "Question" },
+              {
+                role: "assistant",
+                content: "",
+                tool_calls: [
+                  {
+                    id: "pending-tool",
+                    type: "function",
+                    function: { name: "read_document", arguments: "{}" },
+                  },
+                ],
+              },
+            ],
+          });
+          yield* f.finalizer.publish(f.replyId);
+          expect(yield* f.reply()).toMatchObject({
+            status: "stopped",
+            error: null,
+            answer: f.progress.answer,
+          });
+          expect((yield* f.histories.read(f.address))!.history.records[2]).toMatchObject({
+            outcome: { status: "stopped" },
+            answer: f.progress.answer,
+            context_messages: [
+              { role: "user", content: "Question" },
+              { role: "assistant", content: "", tool_calls: expect.any(Array) },
+              {
+                role: "tool",
+                tool_call_id: "pending-tool",
+                content: "Tool call cancelled because the user stopped the response.",
+              },
+              { role: "assistant", content: f.progress.answer },
+            ],
+          });
+        }),
+      ),
+  );
 
   it("fences running-only stop and progress updates after the result is frozen", () =>
     withSettlement((f) =>

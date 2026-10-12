@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { ModelProviderError, parseOpenRouterStream, type ModelStreamPart } from "../src/llm.ts";
-import { stalledModelStream } from "./fixtures/interrupted-model-stream.ts";
 
 const sseResponse = (blocks: readonly string[], newline = "\n") =>
   new Response(
@@ -93,14 +92,30 @@ describe("openrouter stream protocol", () => {
   it.each(["", "Partial answer"])(
     "does not classify an accepted stream stall after %j as a safe retry",
     async (partial) => {
-      const parts: ModelStreamPart[] = [];
-      const timeout = vi.fn();
-      const consume = async () => {
-        for await (const part of stalledModelStream(partial, timeout)) parts.push(part);
-      };
-      await expect(consume()).rejects.toBeInstanceOf(ModelProviderError);
-      expect(timeout).toHaveBeenCalledTimes(1);
-      expect(parts).toEqual(partial.length === 0 ? [] : [{ type: "token", text: partial }]);
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const body = new TransformStream<Uint8Array>();
+      const writer = body.writable.getWriter();
+      const parser = parseOpenRouterStream(new Response(body.readable))[Symbol.asyncIterator]();
+      try {
+        if (partial.length > 0) {
+          const token = parser.next();
+          await writer.write(
+            new TextEncoder().encode(
+              `data: ${JSON.stringify({
+                choices: [{ delta: { content: partial } }],
+              })}\n\n`,
+            ),
+          );
+          expect(await token).toEqual({ done: false, value: { type: "token", text: partial } });
+        }
+        const failure = parser.next().catch((error: unknown) => error);
+        await vi.runAllTimersAsync();
+        expect(await failure).toBeInstanceOf(ModelProviderError);
+      } finally {
+        vi.useRealTimers();
+        await writer.close();
+        await parser.return?.();
+      }
     },
   );
 
