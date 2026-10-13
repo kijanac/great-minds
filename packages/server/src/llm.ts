@@ -156,6 +156,7 @@ const WireToolCallDelta = Schema.Struct({
 });
 
 const WireStreamChunk = Schema.Struct({
+  error: Schema.optionalKey(Schema.Unknown),
   id: Schema.optionalKey(Schema.NullOr(Schema.String)),
   usage: Schema.optionalKey(Schema.NullOr(WireUsage)),
   choices: Schema.optionalKey(
@@ -344,15 +345,18 @@ export async function* parseOpenRouterStream(response: Response): AsyncIterable<
         continue;
       }
       const chunk = decodeWireStreamChunk(JSON.parse(data));
+      const choice = chunk.choices?.[0];
+      if (chunk.error != null || choice?.finish_reason === "error") {
+        throw new ModelProviderError("model provider failed while streaming");
+      }
       if (chunk.id !== undefined && chunk.id !== null) {
         generationId = chunk.id;
       }
       usage = usageFrom(chunk.usage) ?? usage;
-      const choice = chunk.choices?.[0];
       if (choice === undefined) {
         continue;
       }
-      if (choice.finish_reason !== undefined) {
+      if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
         finishReason = choice.finish_reason;
       }
       const content = choice.delta?.content;
@@ -365,6 +369,9 @@ export async function* parseOpenRouterStream(response: Response): AsyncIterable<
     }
   }
 
+  if (finishReason === null || finishReason.length === 0) {
+    throw new ModelProviderError("model stream ended without a finish reason");
+  }
   yield { type: "finish", finishReason, generationId, usage };
 }
 

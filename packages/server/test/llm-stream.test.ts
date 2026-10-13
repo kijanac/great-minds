@@ -51,12 +51,13 @@ describe("openrouter stream protocol", () => {
     ]);
   });
 
-  it("treats null usage and absent choices as interim frames", async () => {
+  it("preserves a successful finish through interim frames and clean EOF", async () => {
     const parts = await collect(
       sseResponse([
         'data: {"id":"gen-2","usage":null,"choices":[{"index":0,"delta":{"content":"A"},"finish_reason":null}]}',
         'data: {"id":"gen-2","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
-        "data: [DONE]",
+        'data: {"usage":null}',
+        'data: {"choices":[{"delta":{},"finish_reason":null}]}',
       ]),
     );
 
@@ -84,6 +85,32 @@ describe("openrouter stream protocol", () => {
       { type: "finish", finishReason: "stop", generationId: "gen-3", usage: undefined },
     ]);
   });
+
+  it.each([
+    { ending: "EOF", suffix: [] },
+    { ending: "DONE without a finish reason", suffix: ["data: [DONE]"] },
+    {
+      ending: "provider error",
+      suffix: [
+        'data: {"error":{"code":"server_error","message":"Disconnected"},"choices":[{"delta":{},"finish_reason":"error"}]}',
+      ],
+    },
+  ])(
+    "rejects $ending without discarding partial output or authorizing retry",
+    async ({ suffix }) => {
+      const parser = parseOpenRouterStream(
+        sseResponse([
+          'data: {"choices":[{"delta":{"content":"Partial"},"finish_reason":null}]}',
+          ...suffix,
+        ]),
+      )[Symbol.asyncIterator]();
+      expect(await parser.next()).toEqual({
+        done: false,
+        value: { type: "token", text: "Partial" },
+      });
+      await expect(parser.next()).rejects.toBeInstanceOf(ModelProviderError);
+    },
+  );
 
   it("does not classify an accepted response with no body as a safe retry", async () => {
     await expect(collect(new Response(null))).rejects.toBeInstanceOf(ModelProviderError);

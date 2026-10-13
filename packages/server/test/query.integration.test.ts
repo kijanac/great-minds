@@ -35,7 +35,7 @@ import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { promptContentHash } from "../src/crypto.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import {
-  ModelProviderError,
+  parseOpenRouterStream,
   type LlmAssistantToolCall,
   type LlmMessage,
   type ModelStreamPart,
@@ -1690,14 +1690,19 @@ describe("query stream", () => {
     ).toEqual(["First", "Second"]);
   });
 
-  it("keeps a nonretryable provider failure private without fallback and allows explicit retry", async () => {
+  it("keeps an unfinished provider stream private without fallback and allows explicit retry", async () => {
     const partial = "Private partial must not be shared.";
     const language = makeScriptedLanguageModel({
       streams: [
         {
-          kind: "parts",
-          parts: [tokenPart(partial)],
-          errorAfterParts: new ModelProviderError("provider secret"),
+          kind: "stream",
+          stream: parseOpenRouterStream(
+            new Response(
+              `data: ${JSON.stringify({
+                choices: [{ delta: { content: partial }, finish_reason: null }],
+              })}\n\n`,
+            ),
+          ),
         },
         { kind: "parts", parts: [tokenPart("Explicit retry."), finishPart("stop")] },
       ],
