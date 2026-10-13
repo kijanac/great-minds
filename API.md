@@ -2095,7 +2095,7 @@ Request fields:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `reply_id` | `Uuid` | yes | Client-chosen id for the reply. Used for idempotency: submitting the same `reply_id` with an identical request returns the existing reply (with its `session_id`) instead of creating a new one. Submitting the same `reply_id` with a different request returns `409 Conflict`. |
+| `reply_id` | `Uuid` | yes | Client-chosen id for the reply. Used for idempotency: submitting the same `reply_id` with an identical request returns the existing reply (with its `session_id`) instead of creating a new one, including an already accepted later attempt. Submitting the same `reply_id` with a different request returns `409 Conflict`. A new ID cannot create another attempt in an existing exchange; use explicit retry. |
 | `exchange_id` | `Uuid` | yes | Client-chosen id for the question within the conversation. A retry retains this id and uses a new `reply_id`. |
 | `session` | object | yes | New-session details or an existing session destination, described below. |
 | `question` | string | yes | The question to answer. |
@@ -2187,7 +2187,7 @@ Request body (`RetryReplyRequest`):
 
 Response: `202 Accepted` with a `CreateReplyResponse` for the new reply.
 
-If that response is lost, resend the same failed reply ID in the path and the same new reply ID in the body. Exact redelivery returns the accepted replacement even if it has already completed or failed; it does not start another generation. Session and BTW clients retain this pair until acknowledgment. A new ID is required only for a new generation retry, not for redelivery of its acceptance.
+If that response is lost, resend the same failed reply ID in the path and the same new reply ID in the body. Exact redelivery returns the accepted replacement even if it has already completed or failed; it does not start another generation. Session and BTW clients retain this pair until acknowledgment. The retry endpoint also verifies the predecessor ID; matching the replacement payload does not authorize redelivery through a different predecessor. A new ID is required only for a new generation retry, not for redelivery of its acceptance.
 
 Errors: `400 BadRequest` (reply is not failed, or retry id equals the
 original), `409 Conflict`, `403 Forbidden`, `404 NotFound`,

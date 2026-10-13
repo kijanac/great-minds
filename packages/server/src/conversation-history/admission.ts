@@ -193,7 +193,7 @@ export const makeReplyAdmission = (
       const saved = yield* acceptedRequestFor(row);
       if (
         !isDeepStrictEqual(saved.command, input) ||
-        saved.attempt.previous_attempt_id !== previousReplyId
+        (previousReplyId !== null && saved.attempt.previous_attempt_id !== previousReplyId)
       ) {
         return yield* new Conflict({ detail: "Reply id already belongs to another request" });
       }

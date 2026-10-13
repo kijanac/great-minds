@@ -30,7 +30,7 @@ reserve immutable request as admitting
   → dispatch the same reply ID
 ```
 
-Normal API acceptance requires confirmed history admission. A failed dispatch after admission leaves a durable runnable obligation; it does not ask the client to invent a replacement reply. Exact replay retains the accepted identity even when the operation is already live or provider configuration has disappeared.
+Normal API acceptance requires confirmed history admission. A failed dispatch after admission leaves a durable runnable obligation; it does not ask the client to invent a replacement reply. Exact replay retains the accepted identity even when the operation is already live or provider configuration has disappeared. Create replay compares the same ID and identical payload without mistaking a recorded predecessor for a new generation request; explicit retry also verifies its supplied predecessor. A new create ID still cannot reuse an existing exchange.
 
 The `conversation_app_state` migration replaces overloaded `sessions.kind` with:
 
@@ -54,7 +54,7 @@ Generation steps first check for an already recorded settlement. `restoreRecorde
 
 A saved terminal checkpoint is also handled before claiming another external step. An outstanding model/tool claim without a saved result remains ambiguous: recovery records a failure or committed stop rather than calling the provider/tool again. Absence of generation metadata is not treated as evidence that no call happened.
 
-An accepted provider stream that stalls, or a successful response with no body, does not authorize a fallback-model invocation. These observed stream failures use the existing `generation_failed` settlement and preserve committed partial content; the `external_outcome_unknown` code remains reserved for unresolved external claims during recovery. Explicit retry can start another generation. Confirmed 429 rejection still permits the configured fallback. No provider timeout is changed.
+An accepted provider stream that stalls, reports an error, or ends without completion evidence—and a successful response with no body—does not authorize a fallback-model invocation. Clean EOF or `[DONE]` alone is not completion evidence: the parser requires a nonempty, non-error finish reason and retains it through later null/interim frames. A valid finish followed by clean EOF remains successful. These observed stream failures use the existing `generation_failed` settlement and preserve committed partial content; the `external_outcome_unknown` code remains reserved for unresolved external claims during recovery. Explicit retry can start another generation. Confirmed 429 rejection still permits the configured fallback. No provider timeout or reconnect policy is changed.
 
 Pending tool/source indices remain in the checkpoint because they cross model/tool steps. The replacement index used to settle one source is local to that tool step, not a separately checkpointed field. Selection similarly follows the last accepted attempt rather than storing another selected-reply ID.
 
@@ -106,11 +106,11 @@ This is a bounded multi-part read, not a global atomic capture. Root and childre
 
 The reply transport still automatically reopens ordinary disconnected streams. The view-level Reconnect state covers errors that escape that adapter; the model tests mock the adapter. Choosing and testing a single explicit-versus-automatic transport policy remains separate work, not a completed guarantee of this slice.
 
-Exported capture vectors/timestamps, all-attempt/provenance APIs, queued-versus-generating substates, and generalized dependency diagnostics are deferred. The next implementation is one-off offline conversion and an isolated restore/cutover rehearsal with stopped writers, not online dual-writing or a migration platform. The publication compiler and isolated PDF work follow; no new print flags are introduced here.
+Exported capture vectors/timestamps, all-attempt/provenance APIs, queued-versus-generating substates, and generalized dependency diagnostics are deferred. The [one-off offline converter](conversation-history-conversion.md) and isolated restore/cutover rehearsal use stopped copies, not online dual-writing or a migration platform. Authorized real-data inventory and deployment gates remain separate. The publication compiler and isolated PDF work follow; no new print flags are introduced here.
 
 ## Tooling and verification
 
-The verification seeder now creates synthetic native conversations through real admission and settlement, without invoking an LLM. Its provenance explicitly identifies synthetic fixture generation. Old schemas/projectors and the pre-native table/request shapes are detached under `scripts/lib/legacy-session-history.ts` for the existing historical migration/recovery tools. Those tools are not the missing legacy-to-native converter and must not run against live native histories.
+The verification seeder now creates synthetic native conversations through real admission and settlement, without invoking an LLM. Its provenance explicitly identifies synthetic fixture generation. Old schemas/projectors and the pre-native table/request shapes are detached under `scripts/lib/legacy-session-history.ts` for the existing historical migration/recovery tools. Those older tools are not the [native converter](conversation-history-conversion.md) and must not run against live native histories.
 
 Use the guarded disposable runner for database-backed suites:
 
@@ -175,7 +175,7 @@ A useful investigation or refactor proof is not automatically a permanent test. 
 
 - Keep the Session/BTW lost-acknowledgment regressions, server exact retry-replay cases, and distinct ordinary/conditional R2 contracts.
 - Keep the real parser's missing-body and before/after-output stall cases in `llm-stream.test.ts`, using local fake clocks rather than a shared global-timer interception fixture.
-- Extend the existing private-failure workflow case with a scripted nonretryable provider error, no-fallback invocation counts, partial-content/disclosure checks, and explicit retry. The full parser-fault matrix need not run again at this layer.
+- Extend the existing private-failure workflow case with a nonretryable provider failure, no-fallback invocation counts, partial-content/disclosure checks, and explicit retry. The subsequent EOF fix feeds this case through the real unfinished-stream parser. The full parser-fault matrix need not run again at this layer.
 - Extend the existing missing-source case with remaining/duplicate citations; test visible results rather than the absence of an internal checkpoint field named `replacementSlot`.
 - Extend the existing settlement Stop test to cover both completed and failed proposed results, rather than keeping another provider-timing scenario.
 
@@ -183,4 +183,12 @@ The removed cross-layer fault probes and shared fixture remain recoverable at `3
 
 The retention pass verified **196 server tests / seven files** and **52 web tests / four files**: **248 distinct passes**, with one live-provider smoke skipped. The standalone eight-case parser run overlaps that total. Root and Svelte typechecks passed (zero Svelte errors/warnings), as did scoped lint/format, whitespace, and documentation checks. The owned disposable database was removed. This selected rerun is not a new all-suite count.
 
-Runtime source is unchanged. Tests/fixtures have **219 fewer lines**: 140 from test/scaffolding changes and 79 from reversing unrelated formatting expansion. There are four fewer expanded test cases; the latest batch's net growth relative to `9875f79` is now ten cases and 149 test/fixture lines, rather than fourteen cases and 368 lines.
+At the retention checkpoint, runtime source was unchanged. Tests/fixtures had **219 fewer lines**: 140 from test/scaffolding changes and 79 from reversing unrelated formatting expansion. There were four fewer expanded test cases; that batch's net growth relative to `9875f79` became ten cases and 149 test/fixture lines, rather than fourteen cases and 368 lines.
+
+### Stream completion follow-up
+
+Four controlled parser failures reproduced clean EOF without a finish reason, `[DONE]` without a finish reason, an accepted-stream provider error, and a later null frame erasing a valid finish reason. The narrow fix uses the existing nonretryable `ModelProviderError`; the optional wire `error` field is presence-only parsing, not a new Effect error channel or application outcome type.
+
+The updated parser suite passed **11 cases**. The affected query/parser run passed **55 tests across two files**, with one live-provider smoke skipped. These totals overlap: do not add the standalone parser run again. The existing private-failure workflow case now verifies real unfinished-stream parsing, saved partial content, disclosure/promotion restrictions, no silent fallback and explicit retry. No new cross-layer fault matrix was retained. The owned database container/network were removed; the run took 472 seconds, without changing production deadlines.
+
+Converter and restore evidence is recorded separately in the [offline conversion guide](conversation-history-conversion.md); parser success does not establish migration or production readiness.

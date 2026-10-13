@@ -53,25 +53,36 @@ try {
   };
   await run("pnpm", ["--filter", "@great-minds/database", "migrate"], env);
   const selectors = process.argv.slice(2);
-  await run(
-    "pnpm",
-    [
-      "exec",
-      "vitest",
-      "run",
-      "--config",
-      "packages/server/vitest.config.ts",
-      "--no-file-parallelism",
-      ...(selectors.length > 0
-        ? selectors
-        : [
-            "packages/server/test/reply-admission.integration.test.ts",
-            "packages/server/test/reply-settlement.integration.test.ts",
-            "packages/server/test/conversation-history-store.test.ts",
-          ]),
-    ],
-    env,
-  );
+  if (selectors[0] === "--script") {
+    const script = selectors[1];
+    if (script === undefined) throw new Error("--script requires a path");
+    const { stdout: container } = await output("docker", [...compose, "ps", "--quiet", "db"], {
+      cwd: root,
+    });
+    await run("node", ["--experimental-strip-types", script, ...selectors.slice(2)], {
+      ...env,
+      REPLY_HISTORY_TEST_CONTAINER: container.trim(),
+    });
+  } else
+    await run(
+      "pnpm",
+      [
+        "exec",
+        "vitest",
+        "run",
+        "--config",
+        "packages/server/vitest.config.ts",
+        "--no-file-parallelism",
+        ...(selectors.length > 0
+          ? selectors
+          : [
+              "packages/server/test/reply-admission.integration.test.ts",
+              "packages/server/test/reply-settlement.integration.test.ts",
+              "packages/server/test/conversation-history-store.test.ts",
+            ]),
+      ],
+      env,
+    );
 } catch (error) {
   console.error(error);
   process.exitCode = 1;

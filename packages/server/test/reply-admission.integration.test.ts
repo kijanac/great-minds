@@ -712,6 +712,15 @@ describe("durable reply admission", () => {
             -1,
           )?.accepted.reply_id,
         ).toBe(retryId);
+        const successorId = Uuid.make(randomUUID());
+        yield* f.admission.retry(f.userId, f.vaultId, retryId, successorId);
+        expect(
+          failure(
+            yield* Effect.exit(
+              f.admission.retry(f.userId, f.vaultId, failed.reply_id, successorId),
+            ),
+          )._tag,
+        ).toBe("Conflict");
       }),
     ));
 
@@ -731,6 +740,8 @@ describe("durable reply admission", () => {
           expect(yield* f.admission.retry(f.userId, f.vaultId, input.reply_id, nextId)).toEqual(
             accepted,
           );
+          const saved = decodeRequest((yield* f.reply(nextId)).request);
+          expect(yield* f.admission.accept(f.userId, f.vaultId, saved.command)).toEqual(accepted);
           expect((yield* f.reply(nextId)).status).toBe(status);
           expect(yield* f.allReplies()).toHaveLength(2);
           expect((yield* f.histories.read(f.address(response.session_id)))!.history.jsonl).toBe(
