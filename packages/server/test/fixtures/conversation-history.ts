@@ -2,6 +2,7 @@ import { FileFingerprint, SessionId, Uuid } from "@great-minds/domain";
 import { Schema } from "effect";
 
 import { HistoryTimestamp, type HistoryWrite } from "../../src/conversation-history/schema.ts";
+import type { ReplySettlementResult } from "../../src/conversation-history/settlement.ts";
 import { promptContentHash } from "../../src/crypto.ts";
 
 export const sessionId = Schema.decodeUnknownSync(SessionId)("history-session");
@@ -77,6 +78,19 @@ export const settlement = (
   },
   ...overrides,
 });
+
+export const completion = (): Extract<ReplySettlementResult, { status: "completed" }> => {
+  const result = settlement();
+  if (result.generation === null || result.context_messages === null)
+    throw new Error("Completed fixture requires generation metadata and context");
+  return {
+    status: "completed",
+    answer: result.answer,
+    sources: result.sources,
+    context_messages: result.context_messages,
+    generation: result.generation,
+  };
+};
 
 export const historyBytes = (writes: readonly object[]) =>
   new TextEncoder().encode(

@@ -3,17 +3,22 @@ import { Data, Effect, Fiber } from "effect";
 
 import { fork } from "$lib/api/app";
 import { errorMessage } from "$lib/api/errors";
-import { prepareSessionExport } from "$lib/api/sessions";
+import { prepareSessionExport, readSessionMarkdown } from "$lib/api/sessions";
 import { auth } from "$lib/auth.svelte";
 import { activeVault } from "$lib/hooks/use-vault.svelte";
 
-export interface PreparedExport {
-  readonly title: string;
-  readonly preparedAt: Date;
+export type PreparedExport = {
   readonly filename: string;
-  readonly pdfUrl: string;
   readonly markdownUrl: string;
-}
+} & (
+  | {
+      readonly format: "pdf";
+      readonly title: string;
+      readonly preparedAt: Date;
+      readonly pdfUrl: string;
+    }
+  | { readonly format: "markdown" }
+);
 
 class DownloadUnavailable extends Data.TaggedError("DownloadUnavailable") {
   readonly message = "Couldn’t create this download in your browser.";
@@ -51,7 +56,7 @@ export function useSessionExport(sessionId: () => SessionId | null) {
     return close;
   });
 
-  function prepare() {
+  function prepare(format: "pdf" | "markdown") {
     const id = sessionId();
     const vaultId = activeVault.id;
     if (pending || id === null || vaultId === null) return;
@@ -64,27 +69,38 @@ export function useSessionExport(sessionId: () => SessionId | null) {
     error = null;
     const preparation = Effect.gen(function* () {
       if (previous !== null) yield* Fiber.interrupt(previous);
-      const result = yield* prepareSessionExport(vaultId, id, selectedPaper);
+      const result =
+        format === "pdf"
+          ? yield* prepareSessionExport(vaultId, id, selectedPaper).pipe(
+              Effect.map((value) => ({ ...value, format: "pdf" as const })),
+            )
+          : { format: "markdown" as const, markdown: yield* readSessionMarkdown(vaultId, id) };
       if (revision !== current) return;
-      const filename =
-        result.title
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/gu, "-")
-          .replace(/^-+|-+$/gu, "")
-          .slice(0, 60) || "conversation";
-      const pdfUrl = yield* objectUrl(
-        new Blob([new Uint8Array(result.pdf)], { type: "application/pdf" }),
-      );
       const markdownUrl = yield* objectUrl(
         new Blob([result.markdown], { type: "text/markdown;charset=utf-8" }),
       );
-      prepared = {
-        title: result.title,
-        preparedAt: result.prepared_at,
-        filename,
-        pdfUrl: `${pdfUrl}#view=FitH&navpanes=0`,
-        markdownUrl,
-      };
+      let ready: PreparedExport;
+      if (result.format === "pdf") {
+        const filename =
+          result.title
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/gu, "-")
+            .replace(/^-+|-+$/gu, "")
+            .slice(0, 60) || "conversation";
+        const pdfUrl = yield* objectUrl(
+          new Blob([new Uint8Array(result.pdf)], { type: "application/pdf" }),
+        );
+        ready = {
+          format: "pdf",
+          title: result.title,
+          preparedAt: result.prepared_at,
+          filename,
+          pdfUrl: `${pdfUrl}#view=FitH&navpanes=0`,
+          markdownUrl,
+        };
+      } else ready = { format: "markdown", filename: "conversation", markdownUrl };
+      if (revision !== current) return;
+      prepared = ready;
       pending = false;
       yield* Effect.never;
     });
@@ -105,7 +121,7 @@ export function useSessionExport(sessionId: () => SessionId | null) {
   function changePaper(value: PublicationPaper) {
     if (pending || value === paper) return;
     paper = value;
-    prepare();
+    prepare("pdf");
   }
 
   return {
@@ -124,7 +140,8 @@ export function useSessionExport(sessionId: () => SessionId | null) {
     get prepared() {
       return prepared;
     },
-    prepare,
+    prepare: () => prepare("pdf"),
+    prepareMarkdown: () => prepare("markdown"),
     close,
     changePaper,
   };

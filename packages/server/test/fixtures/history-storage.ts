@@ -40,6 +40,14 @@ export const withObjects = <Value, Error>(
     ),
   );
 
+export const expectFailure = <Value, Error, Services>(
+  effect: Effect.Effect<Value, Error, Services>,
+  tag: string,
+) =>
+  Effect.gen(function* () {
+    expect(failure(yield* Effect.exit(effect))).toMatchObject({ _tag: tag });
+  });
+
 export const failure = <Value, Error>(exit: Exit.Exit<Value, Error>): Error => {
   expect(exit._tag).toBe("Failure");
   if (Exit.isSuccess(exit)) throw new Error("Expected failure");

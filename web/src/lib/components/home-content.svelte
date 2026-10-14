@@ -67,16 +67,7 @@
     await tick();
     exportButton?.focus();
   }
-  const exportBusy = $derived(
-    session.phase !== "done" ||
-      session.thread.some((exchange) =>
-        exchange.btws.some(
-          (btw) =>
-            btw.activity !== null ||
-            btw.exchanges.some((turn) => turn.status === "running"),
-        ),
-      ),
-  );
+  const exportBusy = $derived(session.phase !== "done");
   let query = $state(initial.initialQuery ?? session.thread[0]?.query ?? "");
 
   const [send, receive] = crossfade({
@@ -189,7 +180,7 @@
                 exportBusy ||
                 publication.pending}
               title={exportBusy
-                ? "Available when the conversation and notes finish saving"
+                ? "Available when the conversation finishes saving"
                 : "Export conversation"}
               aria-label="Export conversation"
               bind:ref={exportButton}
@@ -214,6 +205,7 @@
             paper={publication.paper}
             onPaperChange={publication.changePaper}
             onPrepare={publication.prepare}
+            onMarkdown={publication.prepareMarkdown}
             onClose={() => void closeExport()}
           />
         {/if}

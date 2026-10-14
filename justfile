@@ -45,17 +45,11 @@ types-packages:
 
 # Run focused browser-library tests without external services
 test-web:
-    pnpm --prefix web exec vitest run --config vite.config.ts src/lib/api/runtime.test.ts src/lib/btw.test.ts src/lib/anchor-marks.test.ts
+    pnpm --prefix web exec vitest run --config vite.config.ts
 
 # Run TypeScript package integration tests against scratch Postgres
 test-packages:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    trap 'docker compose -f docker-compose.packages-test.yml down -v' EXIT
-    docker compose -f docker-compose.packages-test.yml down -v
-    docker compose -f docker-compose.packages-test.yml up -d --wait db
-    DATABASE_URL=postgresql://great_minds:great_minds@localhost:55434/gm_packages_test pnpm --filter @great-minds/database migrate
-    DATABASE_URL=postgresql://great_minds:great_minds@localhost:55434/gm_packages_test pnpm --filter @great-minds/server test:integration
+    pnpm test:history-settlement --all
 
 # Record compile goldens through live OpenRouter (explicitly opt-in)
 goldens-record:

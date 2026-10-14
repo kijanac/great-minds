@@ -1,9 +1,31 @@
 import tailwindcss from "@tailwindcss/vite";
 import { sveltekit } from "@sveltejs/kit/vite";
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [tailwindcss(), sveltekit()],
+  test: {
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "unit",
+          include: ["src/**/*.test.ts"],
+          exclude: ["src/**/*.mounted.test.ts"],
+        },
+      },
+      {
+        extends: true,
+        resolve: { conditions: ["browser"] },
+        test: {
+          name: "mounted",
+          environment: "jsdom",
+          include: ["src/**/*.mounted.test.ts"],
+          execArgv: ["--no-experimental-webstorage"],
+        },
+      },
+    ],
+  },
   server: {
     proxy: {
       // Match vault-scoped reply tails before the general API proxy.

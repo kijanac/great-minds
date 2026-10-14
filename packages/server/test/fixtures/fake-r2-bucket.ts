@@ -8,6 +8,7 @@ export const makeFakeBucket = (
     beforePut?: (key: string) => void | Promise<void>;
     afterPut?: (key: string) => void | Promise<void>;
     omitEtag?: boolean;
+    maxAttempts?: number;
   } = {},
 ) => {
   const objects = new Map<string, { bytes: Uint8Array; etag: string }>();
@@ -33,7 +34,7 @@ export const makeFakeBucket = (
     endpoint: "http://fake-r2.invalid",
     credentials: { accessKeyId: "test", secretAccessKey: "test" },
     forcePathStyle: true,
-    maxAttempts: 1,
+    maxAttempts: hooks.maxAttempts ?? 1,
     requestChecksumCalculation: "WHEN_REQUIRED",
     requestHandler: {
       handle: async (request: {

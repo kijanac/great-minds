@@ -44,7 +44,7 @@ describe("native session projection", () => {
       }),
       expect.objectContaining({ exId: uuid(202), answer: "Second answer", status: "completed" }),
     ]);
-    const markdown = renderSessionMarkdown(projected);
+    const markdown = renderSessionMarkdown(publicationExchanges(projected));
     expect(markdown.match(/^# First question$/gmu)).toHaveLength(1);
     expect(markdown.indexOf("# First question")).toBeLessThan(
       markdown.indexOf("# Second question"),
@@ -81,8 +81,9 @@ describe("native session projection", () => {
     expect(events.filter((event) => event.type === "exchange")).toHaveLength(2);
     expect(JSON.stringify(events)).not.toContain("Private tool result");
     expect(events[0]).not.toHaveProperty("context");
-    expect(renderSessionMarkdown(events)).toContain("# First BTW");
-    expect(renderSessionMarkdown(events)).toContain("# Second BTW");
+    const markdown = renderSessionMarkdown(publicationExchanges(events));
+    expect(markdown).toContain("# First BTW");
+    expect(markdown).toContain("# Second BTW");
   });
 
   it("distinguishes pending work from an empty completed answer", () => {
@@ -94,9 +95,6 @@ describe("native session projection", () => {
     expect(
       project([header(), attempt(), settlement({ answer: "", sources: [] })])[1],
     ).toMatchObject({ status: "completed", answer: "" });
-    expect(renderSessionMarkdown(project([header(), attempt()]))).toContain(
-      "Response in progress.",
-    );
   });
 
   it("keeps unknown historical settlement time unknown", () => {
@@ -110,9 +108,9 @@ describe("native session projection", () => {
     expect(project([header(), attempt(), result])[1]).toMatchObject({
       thinking: [{ sources: result.sources }],
     });
-    expect(renderSessionMarkdown(project([header(), attempt(), result]))).toContain(
-      "`raw/source.md`",
-    );
+    expect(
+      renderSessionMarkdown(publicationExchanges(project([header(), attempt(), result]))),
+    ).toContain("`raw/source.md`");
   });
 
   it("retains failed partials privately but excludes them from publication", () => {
@@ -129,7 +127,6 @@ describe("native session projection", () => {
       answer: "A private failed partial",
       error: "Not repeated",
     });
-    expect(renderSessionMarkdown(events)).toContain("Response failed.");
     expect(renderSessionMarkdown(publicationExchanges(events))).not.toContain(
       "A private failed partial",
     );

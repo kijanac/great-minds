@@ -1927,7 +1927,7 @@ Auth: required.
 
 Lists the caller's standalone sessions in this vault, most recently updated first. Inline BTWs remain available through their origin or parent conversation.
 
-The native conversation contract below is implemented in this checkout, not yet deployed through a production data cutover. See [integration and migration boundaries](docs/conversation-workflow-integration.md).
+The native conversation contract below is implemented in this checkout, not yet deployed through a production data cutover. See [conversation authority and cutover boundaries](docs/conversations.md).
 
 Path parameters: `vault_id` (`Uuid`).
 
@@ -2089,7 +2089,7 @@ Response: `200` JSON (`SessionExport`):
 
 The response is not `application/pdf`. Decode `pdf` for preview/download and reuse those bytes rather than calling the endpoint again. Uses `Cache-Control: private, no-store` and `X-Content-Type-Options: nosniff`. Cancellation interrupts rendering; clients must not automatically retry an interrupted preparation. An explicit new request prepares current saved content again.
 
-Private source links require access to the original vault. Images are linked descriptions in PDF, not fetched assets. See [publication setup and limitations](docs/session-publication.md).
+Private source links require access to the original vault. Images are linked descriptions in PDF, not fetched assets. See [publication setup and limitations](docs/conversations.md#publication).
 
 Errors: `403 Forbidden`, `404 NotFound`, `409 Conflict` (included content still generating/saving), `503 ServiceUnavailable` (required history unavailable, renderer busy, or PDF preparation failed), `422 Validation`. Ordinary authentication failures remain `401 Unauthorized`.
 
@@ -2252,13 +2252,12 @@ Events:
 | `message` | JSON `ReplySnapshot` | Sent whenever the reply's state changes. |
 | `done` | `{"id": "<reply_id>"}` | Sent once after `completed`, `stopped`, or `failed`; the stream then closes. |
 
-The `message` payload is a `ReplySnapshot`:
+The `message` payload is a `ReplySnapshot`. Session/BTW placement belongs to the conversation, not to a reply discriminator:
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `reply_id` | `Uuid` | Reply id. |
 | `session_id` | `SessionId` | Session the reply belongs to. |
-| `kind` | `"exchange"` | Every reply belongs to its own conversation. |
 | `status` | `"admitting"` \| `"running"` \| `"settling"` \| `"completed"` \| `"stopped"` \| `"failed"` | Operation status. Admitting and settling are nonterminal; settling does not permit another generation or a late stop. |
 | `answer` | string | The answer text (may be partial while running). |
 | `sources` | array | `ReplySource` entries: the `ThinkingSource` fields plus an optional `pending` boolean. |
@@ -2273,7 +2272,6 @@ Example message:
 {
   "reply_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
   "session_id": "session_42",
-  "kind": "exchange",
   "status": "completed",
   "answer": "The labor theory of value holds that...",
   "sources": [

@@ -37,7 +37,6 @@ export const projectSession = (history: ConversationHistory): readonly SessionEv
 export const replySnapshot = (row: typeof replies.$inferSelect): ReplySnapshot => ({
   reply_id: row.id,
   session_id: row.sessionId,
-  kind: row.kind,
   status: row.status,
   answer: row.answer,
   sources: row.sources,
@@ -47,23 +46,24 @@ export const replySnapshot = (row: typeof replies.$inferSelect): ReplySnapshot =
   updated_at: row.updatedAt,
 });
 
+export type PublishedExchange = SessionExchangeEvent & {
+  readonly status: "completed" | "stopped";
+};
+
 export const publicationExchanges = (
   events: readonly SessionEvent[],
-): readonly SessionExchangeEvent[] =>
+): readonly PublishedExchange[] =>
   events.filter(
-    (event): event is SessionExchangeEvent =>
+    (event): event is PublishedExchange =>
       event.type === "exchange" && (event.status === "completed" || event.status === "stopped"),
   );
 
-export const renderSessionMarkdown = (events: readonly SessionEvent[]) => {
+export const renderSessionMarkdown = (exchanges: readonly PublishedExchange[]) => {
   const parts: string[] = [];
-  for (const [index, exchange] of events.filter((event) => event.type === "exchange").entries()) {
+  for (const [index, exchange] of exchanges.entries()) {
     if (index > 0) parts.push("\n---\n\n");
     parts.push(`# ${exchange.query}\n\n`);
-    if (exchange.status === "running") parts.push("> Response in progress.\n\n");
     if (exchange.status === "stopped") parts.push("> Response stopped.\n\n");
-    if (exchange.status === "failed")
-      parts.push("> Response failed. The answer below is incomplete.\n\n");
     for (const block of exchange.thinking) {
       for (const source of block.sources) parts.push(`> \`${source.label}\`\n`);
       parts.push(">\n");

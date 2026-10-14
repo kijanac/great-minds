@@ -6,7 +6,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { openLocalConditionalObjectStore } from "../src/storage/local-conditional-object-store.ts";
 import type { ConditionalObjectStore } from "../src/storage/object-store.ts";
-import { expectBytes, failure, temporaryDirectory } from "./fixtures/history-storage.ts";
+import {
+  expectBytes,
+  expectFailure,
+  failure,
+  temporaryDirectory,
+} from "./fixtures/history-storage.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -39,9 +44,12 @@ beforeEach(() => {
 });
 
 describe("local history writer ownership", () => {
-  it("rejects another owner, including one opening the same root through a symlink", () =>
+  it("rejects another owner through the real path or a symlink even when the lock is old", () =>
     withLocal((_objects, directory) =>
       Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          fs.utimes(join(directory, ".conversation-history.lock"), new Date(0), new Date(0)),
+        );
         expect(
           failure(yield* Effect.exit(openLocalConditionalObjectStore(directory))),
         ).toMatchObject({ _tag: "LocalHistoryWriterBusy" });
@@ -50,48 +58,6 @@ describe("local history writer ownership", () => {
         expect(failure(yield* Effect.exit(openLocalConditionalObjectStore(alias)))).toMatchObject({
           _tag: "LocalHistoryWriterBusy",
         });
-      }),
-    ));
-
-  it("releases ownership on clean close and rejects use of the closed handle", () =>
-    Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const directory = yield* temporaryDirectory;
-          const closed = yield* Effect.scoped(
-            Effect.gen(function* () {
-              const objects = yield* openLocalConditionalObjectStore(directory);
-              yield* objects.putIfVersion(key, null, encode("saved\n"));
-              return objects;
-            }),
-          );
-          expect(failure(yield* Effect.exit(closed.getVersioned(key)))).toMatchObject({
-            _tag: "StorageBackendError",
-          });
-          expect(
-            failure(yield* Effect.exit(closed.putIfVersion(key, null, encode("wrong\n")))),
-          ).toMatchObject({ _tag: "StorageBackendError" });
-          const lockBefore = yield* Effect.promise(() =>
-            fs.stat(join(directory, ".conversation-history.lock")),
-          );
-          const reopened = yield* openLocalConditionalObjectStore(directory);
-          expectBytes((yield* reopened.getVersioned(key)).bytes, encode("saved\n"));
-          const lockAfter = yield* Effect.promise(() =>
-            fs.stat(join(directory, ".conversation-history.lock")),
-          );
-          expect(lockAfter.ino).toBe(lockBefore.ino);
-        }),
-      ),
-    ));
-
-  it("does not use lock-file age to take ownership from a live writer", () =>
-    withLocal((_objects, directory) =>
-      Effect.gen(function* () {
-        const lock = join(directory, ".conversation-history.lock");
-        yield* Effect.promise(() => fs.utimes(lock, new Date(0), new Date(0)));
-        expect(
-          failure(yield* Effect.exit(openLocalConditionalObjectStore(directory))),
-        ).toMatchObject({ _tag: "LocalHistoryWriterBusy" });
       }),
     ));
 
@@ -124,6 +90,8 @@ describe("local history writer ownership", () => {
           const objects = yield* openLocalConditionalObjectStore(directory).pipe(
             Effect.provideService(Scope.Scope, ownedScope),
           );
+          const lock = join(directory, ".conversation-history.lock");
+          const inode = (yield* Effect.promise(() => fs.stat(lock))).ino;
           yield* objects.putIfVersion(key, null, encode("old\n"));
           const old = yield* objects.getVersioned(key);
           const reached = yield* Deferred.make<void>();
@@ -152,8 +120,14 @@ describe("local history writer ownership", () => {
           }
           yield* Fiber.await(writer);
           yield* Fiber.join(closing);
+          yield* expectFailure(objects.getVersioned(key), "StorageBackendError");
+          yield* expectFailure(
+            objects.putIfVersion(key, old.version, encode("wrong\n")),
+            "StorageBackendError",
+          );
           const reopened = yield* openLocalConditionalObjectStore(directory);
           expectBytes((yield* reopened.getVersioned(key)).bytes, encode("new\n"));
+          expect((yield* Effect.promise(() => fs.stat(lock))).ino).toBe(inode);
         }),
       ),
     ));

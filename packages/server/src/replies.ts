@@ -46,7 +46,6 @@ import { SessionsService } from "./sessions.ts";
 import { ContentStorage, vaultOwner } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
 
-const terminalStatuses = new Set(["completed", "failed", "stopped"]);
 const sanitizedReplyError = "Something went wrong while answering. Try again in a minute.";
 const ambiguousReplyError =
   "Reply interrupted before an external response could be saved. It was not retried automatically.";
@@ -98,8 +97,33 @@ const encodeReplyCheckpoint = Schema.encodeSync(Schema.fromJsonString(ReplyCheck
 const checkpointPath = (replyId: Uuid) => `operations/replies/${replyId}.json`;
 const isInterruption = (cause: Cause.Cause<unknown>) =>
   cause.reasons.length > 0 && cause.reasons.every(Cause.isInterruptReason);
-const terminalControl = (control: ReplyStepControl) =>
+const terminalControl = (
+  control: ReplyStepControl,
+): control is ReplyStepControl & { readonly outcome: "done" | "failed" | "stopped" } =>
   control.outcome === "done" || control.outcome === "failed" || control.outcome === "stopped";
+const replyFailureTag = (cause: Cause.Cause<unknown>) => {
+  for (const reason of cause.reasons) {
+    if (Cause.isInterruptReason(reason)) continue;
+    const error = Cause.isFailReason(reason) ? reason.error : reason.defect;
+    if (typeof error !== "object" || error === null || !("_tag" in error)) continue;
+    switch (error._tag) {
+      case "HistoryInvalid":
+      case "HistoryConflict":
+      case "ReplyAdmissionInvalid":
+      case "ReplySettlementInvalid":
+      case "ObjectVersionConflict":
+      case "StorageBackendError":
+      case "SqlError":
+      case "EffectDrizzleError":
+      case "EffectDrizzleQueryError":
+      case "EffectTransactionRollbackError":
+      case "ModelProviderError":
+      case "Forbidden":
+        return error._tag;
+    }
+  }
+  return "UnexpectedFailure";
+};
 const readyControl = (cursor: number): ReplyStepControl => ({
   cursor,
   outcome: "ready",
@@ -193,9 +217,12 @@ export const ReplyWorkflow = Workflow.make("ReplyGeneration", {
   success: Schema.Void,
 });
 
-const dispatchReply = (replyId: Uuid, workflowEngine: WorkflowEngine.WorkflowEngine["Service"]) =>
+const dispatchReply = (
+  replyId: Uuid,
+  db: Database["Service"],
+  workflowEngine: WorkflowEngine.WorkflowEngine["Service"],
+) =>
   Effect.gen(function* () {
-    const db = yield* Database;
     const rows = yield* db.query((d) =>
       d.select({ status: replies.status }).from(replies).where(eq(replies.id, replyId)),
     );
@@ -478,17 +505,13 @@ export const RepliesServiceLive = Layer.effect(
         yield* logger.error("reply_generation_step_failed", {
           reply_id: replyId,
           generation_cursor: cursor,
+          error_tag: replyFailureTag(cause),
         });
         const row = yield* readGenerationReply(replyId);
         if (row === undefined || row.status !== "running") return doneControl(cursor);
         const checkpoint = yield* recoverCheckpoint(row);
         const control = checkpoint?.lastControl;
-        if (
-          control !== undefined &&
-          (control.outcome === "done" ||
-            control.outcome === "failed" ||
-            control.outcome === "stopped")
-        ) {
+        if (control !== undefined && terminalControl(control)) {
           yield* freezeOutcome(row, checkpoint, control.outcome, control.error);
           return control;
         }
@@ -585,11 +608,7 @@ export const RepliesServiceLive = Layer.effect(
 
     const freezeControl = (row: ReplyRow, checkpoint: ReplyCheckpoint, control: ReplyStepControl) =>
       Effect.gen(function* () {
-        if (
-          control.outcome === "done" ||
-          control.outcome === "failed" ||
-          control.outcome === "stopped"
-        ) {
+        if (terminalControl(control)) {
           yield* freezeOutcome(row, checkpoint, control.outcome, control.error);
         }
         return control;
@@ -782,15 +801,15 @@ export const RepliesServiceLive = Layer.effect(
         return control;
       }).pipe(Effect.catchCause((cause) => stepFailure(replyId, expectedCursor, cause)));
 
+    const deferFailure = (event: string, replyId: Uuid) => (cause: Cause.Cause<unknown>) =>
+      isInterruption(cause)
+        ? Effect.interrupt
+        : logger.warn(event, { reply_id: replyId, error_tag: replyFailureTag(cause) });
+
     const publishBestEffort = (replyId: Uuid) =>
-      settlement.publish(replyId).pipe(
-        Effect.asVoid,
-        Effect.catchCause((cause) =>
-          isInterruption(cause)
-            ? Effect.interrupt
-            : logger.warn("reply_settlement_deferred", { reply_id: replyId }),
-        ),
-      );
+      settlement
+        .publish(replyId)
+        .pipe(Effect.asVoid, Effect.catchCause(deferFailure("reply_settlement_deferred", replyId)));
 
     const finalizeStep = (
       replyId: Uuid,
@@ -805,22 +824,11 @@ export const RepliesServiceLive = Layer.effect(
         yield* publishBestEffort(replyId);
         const checkpoint = yield* recoverCheckpoint(row);
         if (checkpoint !== undefined) yield* query.finalizeExecution(checkpoint.query);
-      }).pipe(
-        Effect.catchCause((cause) =>
-          isInterruption(cause)
-            ? Effect.interrupt
-            : logger.warn("reply_finalization_deferred", { reply_id: replyId }),
-        ),
-      );
+      }).pipe(Effect.catchCause(deferFailure("reply_finalization_deferred", replyId)));
 
     const dispatchBestEffort = (replyId: Uuid) =>
-      dispatchReply(replyId, workflowEngine).pipe(
-        Effect.provideService(Database, db),
-        Effect.catchCause((cause) =>
-          isInterruption(cause)
-            ? Effect.interrupt
-            : logger.warn("reply_dispatch_deferred", { reply_id: replyId }),
-        ),
+      dispatchReply(replyId, db, workflowEngine).pipe(
+        Effect.catchCause(deferFailure("reply_dispatch_deferred", replyId)),
       );
 
     const acceptAndDispatch = (accept: Effect.Effect<CreateReplyResponse, ReplyAdmissionError>) =>
@@ -833,7 +841,7 @@ export const RepliesServiceLive = Layer.effect(
     const reconcileReply = (initial: ReplyRow) =>
       Effect.gen(function* () {
         const row = yield* readGenerationReply(initial.id);
-        if (row === undefined || terminalStatuses.has(row.status)) return;
+        if (row === undefined || !isReplyPending(row.status)) return;
         if (row.status === "admitting") {
           yield* admission.admit(row.id);
           yield* dispatchBestEffort(row.id);
@@ -855,12 +863,7 @@ export const RepliesServiceLive = Layer.effect(
           } else {
             const checkpoint = yield* recoverCheckpoint(row);
             const control = checkpoint?.lastControl;
-            if (
-              control !== undefined &&
-              (control.outcome === "done" ||
-                control.outcome === "failed" ||
-                control.outcome === "stopped")
-            ) {
+            if (control !== undefined && terminalControl(control)) {
               yield* freezeOutcome(row, checkpoint, control.outcome, control.error);
             } else {
               yield* freezeOutcome(
@@ -873,13 +876,7 @@ export const RepliesServiceLive = Layer.effect(
             yield* publishBestEffort(row.id);
           }
         }
-      }).pipe(
-        Effect.catchCause((cause) =>
-          isInterruption(cause)
-            ? Effect.interrupt
-            : logger.warn("reply_reconciliation_deferred", { reply_id: initial.id }),
-        ),
-      );
+      }).pipe(Effect.catchCause(deferFailure("reply_reconciliation_deferred", initial.id)));
 
     type ReconciliationPosition = { readonly createdAt: Date; readonly id: Uuid };
     let reconciliationScan: {
@@ -1010,17 +1007,11 @@ export const ReplyWorkflowLive = ReplyWorkflow.toLayer((payload) =>
               execute: service.modelStep(payload.replyId, cursor),
             });
     }
-    if (
-      control.outcome === "done" ||
-      control.outcome === "failed" ||
-      control.outcome === "stopped"
-    ) {
-      yield* Activity.make({
-        name: "reply-finalize",
-        success: Schema.Void,
-        execute: service.finalizeStep(payload.replyId, control.outcome, control.error),
-      });
-    }
+    yield* Activity.make({
+      name: "reply-finalize",
+      success: Schema.Void,
+      execute: service.finalizeStep(payload.replyId, control.outcome, control.error),
+    });
   }),
 );
 

@@ -38,6 +38,14 @@ export const fontAssets = [
     "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
   ),
   googleFont(
+    "notoemoji/NotoEmoji[wght].ttf",
+    "de6c18832938afc99caf132b39d6a30a19bac7f2e812e28db2535b4608d27551",
+  ),
+  googleFont(
+    "notoemoji/OFL.txt",
+    "500bb1ccf43df7bbb522112f9133a52b16e1c35e809632f5d8609b179152de5b",
+  ),
+  googleFont(
     "librebaskerville/OFL.txt",
     "3624eddd4c8f8a908130a417ae7cd089c9da69899c4e0ca1a5217d0a6fae16fd",
   ),

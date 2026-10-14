@@ -248,12 +248,15 @@ export const verifyHistoryReceipt = (
   history: ConversationHistory,
   receipt: HistoryRevision,
 ): Result.Result<void, HistoryInvalid> => {
-  const prefix = history.jsonl.split("\n").slice(0, receipt.last_seq).join("\n") + "\n";
   if (
     !Number.isSafeInteger(receipt.last_seq) ||
     receipt.last_seq < 1 ||
     receipt.last_seq > history.revision.last_seq ||
-    rawFileHash(encoder.encode(prefix)) !== receipt.sha256
+    (receipt.last_seq === history.revision.last_seq
+      ? history.revision.sha256
+      : rawFileHash(
+          encoder.encode(history.jsonl.split("\n").slice(0, receipt.last_seq).join("\n") + "\n"),
+        )) !== receipt.sha256
   ) {
     return Result.fail(
       new HistoryInvalid({
@@ -264,72 +267,4 @@ export const verifyHistoryReceipt = (
     );
   }
   return Result.succeed(undefined);
-};
-
-export type HistoryDependencyIssue = {
-  readonly session_id: SessionId;
-  readonly dependency_id: SessionId;
-  readonly reason:
-    | "missing_history"
-    | "missing_reply"
-    | "unusable_context"
-    | "anchor_mismatch"
-    | "context_cycle";
-};
-
-export const inspectHistoryDependencies = (
-  histories: readonly ConversationHistory[],
-): readonly HistoryDependencyIssue[] => {
-  const byId = new Map(histories.map((history) => [history.header.session_id, history]));
-  const issues: HistoryDependencyIssue[] = [];
-  for (const history of histories) {
-    const sessionId = history.header.session_id;
-    const context = history.header.context;
-    const origin = history.header.origin;
-    const anchor = history.header.anchor_reply_id;
-    const references = [
-      ...(context === null ? [] : [{ ...context, kind: "context" as const }]),
-      ...(origin?.kind === "answer" && anchor !== null
-        ? [{ session_id: origin.session_id, reply_id: anchor, kind: "anchor" as const }]
-        : []),
-    ];
-    for (const reference of references) {
-      const dependency = byId.get(reference.session_id);
-      const attempt = dependency?.turns
-        .flatMap((turn) => turn.attempts)
-        .find((attempt) => attempt.accepted.reply_id === reference.reply_id);
-      let reason: HistoryDependencyIssue["reason"] | undefined;
-      if (dependency === undefined) reason = "missing_history";
-      else if (attempt === undefined) reason = "missing_reply";
-      else if (
-        reference.kind === "context" &&
-        (attempt.settlement === null ||
-          attempt.settlement.outcome.status === "failed" ||
-          attempt.settlement.context_messages === null)
-      ) {
-        reason = "unusable_context";
-      } else if (
-        reference.kind === "anchor" &&
-        origin?.kind === "answer" &&
-        (attempt.accepted.exchange_id !== origin.exchange_id ||
-          attempt.settlement === null ||
-          attempt.settlement.outcome.status === "failed")
-      ) {
-        reason = "anchor_mismatch";
-      }
-      if (reason !== undefined)
-        issues.push({ session_id: sessionId, dependency_id: reference.session_id, reason });
-    }
-    const visited = new Set<SessionId>([sessionId]);
-    let parent = context?.session_id;
-    while (parent !== undefined) {
-      if (visited.has(parent)) {
-        issues.push({ session_id: sessionId, dependency_id: parent, reason: "context_cycle" });
-        break;
-      }
-      visited.add(parent);
-      parent = byId.get(parent)?.header.context?.session_id;
-    }
-  }
-  return issues;
 };

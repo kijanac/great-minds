@@ -114,7 +114,9 @@ const decodeRequest = Schema.decodeUnknownEffect(AcceptedReplyRequest, {
 });
 const encodeRequest = Schema.encodeSync(AcceptedReplyRequest, { onExcessProperty: "error" });
 
-export const acceptedRequestFor = (row: ReplyRow) =>
+export const acceptedRequestFor = (
+  row: Pick<ReplyRow, "id" | "userId" | "sessionId" | "request">,
+) =>
   Effect.gen(function* () {
     const request = yield* decodeRequest(row.request).pipe(
       Effect.mapError(
@@ -354,13 +356,6 @@ export const makeReplyAdmission = (
 
       return yield* db.transaction((tx) =>
         Effect.gen(function* () {
-          const [beforeLock] = yield* tx
-            .select()
-            .from(replies)
-            .where(eq(replies.id, command.reply_id))
-            .limit(1);
-          if (beforeLock !== undefined)
-            return yield* replay(beforeLock, userId, vaultId, command, previousReplyId);
           let sessionId: SessionId;
           if (target.kind === "new") {
             const [created] = yield* tx
@@ -484,7 +479,6 @@ export const makeReplyAdmission = (
               vaultId,
               userId,
               sessionId: session.id,
-              kind: "exchange",
               status: "admitting",
               request: encodeRequest(request),
               createdAt: now,

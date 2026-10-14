@@ -35,7 +35,7 @@ export const activeVault = new ActiveVaultSelection();
 export function useVaults() {
   const vaults = createQuery(() => ({
     queryKey: ["vaults", auth.userId],
-    queryFn: fetchVaults,
+    queryFn: ({ signal }) => fetchVaults(signal),
     enabled: auth.isAuthenticated,
   }));
 

@@ -94,7 +94,7 @@
   margin: (x: 21mm, top: 22mm, bottom: 23mm),
   footer: context align(right, text(font: "JetBrains Mono", size: 8pt, fill: muted, counter(page).display("1 / 1", both: true))),
 )
-#set text(font: ("Libre Baskerville", "DejaVu Serif", "DejaVu Sans", "Noto Sans SC"), size: 10.5pt, fill: ink, lang: "en", hyphenate: false)
+#set text(font: ("Libre Baskerville", "DejaVu Serif", "DejaVu Sans", "Noto Sans SC", "Noto Emoji"), size: 10.5pt, fill: ink, lang: "en", hyphenate: false)
 #set par(leading: 0.65em, spacing: 0.9em)
 #set heading(numbering: none)
 #show heading: set block(above: 1.5em, below: 0.7em)
@@ -102,7 +102,7 @@
 #show heading.where(level: 2): set text(size: 15pt)
 #show heading.where(level: 3): set text(size: 12pt)
 #show link: set text(fill: accent)
-#show raw: set text(font: ("JetBrains Mono", "DejaVu Serif", "DejaVu Sans", "Noto Sans SC"), size: 9pt)
+#show raw: set text(font: ("JetBrains Mono", "DejaVu Serif", "DejaVu Sans", "Noto Sans SC", "Noto Emoji"), size: 9pt)
 #text(font: "JetBrains Mono", size: 8pt, fill: muted, tracking: 1pt, "GREAT MINDS / RESEARCH CONVERSATION")
 #render(publication.tree)
 #if cited.len() > 0 {

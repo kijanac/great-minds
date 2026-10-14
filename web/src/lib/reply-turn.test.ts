@@ -20,7 +20,6 @@ const exchange = (overrides: Partial<Exchange> = {}): Exchange => ({
 const snapshot = (overrides: Partial<ReplySnapshot> = {}): ReplySnapshot => ({
   reply_id: replyId,
   session_id: SessionId.make("snapshot-test"),
-  kind: "exchange",
   status: "running",
   version: 8,
   answer: "New partial",

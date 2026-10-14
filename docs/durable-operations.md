@@ -1,6 +1,6 @@
 # Durable operations
 
-Great Minds commits durable product state before work that must survive the originating request or process. Multi-step operations then use Effect workflows with idempotent activities. A single idempotent cleanup side effect may instead use a persisted outbox and maintenance reconciler. Product tables own operation state and dispatch obligations; recorded conversation content is owned by native JSONL. Effect's `cluster_*` journal is execution machinery, not a replacement for either. The [native conversation integration](conversation-workflow-integration.md) is not yet a production cutover and must be deployed only with verified data/API/web/worker migration.
+Great Minds commits durable product state before work that must survive the originating request or process. Multi-step operations then use Effect workflows with idempotent activities. A single idempotent cleanup side effect may instead use a persisted outbox and maintenance reconciler. Product tables own operation state and dispatch obligations; recorded conversation content is owned by native JSONL. Effect's `cluster_*` journal is execution machinery, not a replacement for either. [Conversation authority and cutover requirements](conversations.md) apply to coordinated data/API/web/worker changes.
 
 ## Managed operations
 
@@ -19,7 +19,7 @@ Every workflow acceptance path commits enough input to redispatch work before it
 - Browser file transfer is not a workflow activity. The durable batch exists first; workflow execution begins only after every expected object has a trusted receipt.
 - URL ingest has no browser-byte boundary. The API returns its persisted run immediately, while fetch, conversion, source persistence, and compile intent creation continue in `UrlIngest`.
 - Reply generation uses the browser-minted reply ID as acceptance and workflow key. Create/retry reserves the exact request and mode, saves the native history attempt, and confirms the session receipt before dispatch. Settlement freezes the exact result before publishing JSONL and terminal DB projection. Replaying the same command retains identity; incompatible reuse conflicts. Session endpoints read/project content, change placement/default through Continue, and perform explicit promotion; they do not maintain a second transcript writer.
-- `ReplyGeneration` journals compact prepare/model/tool/finalize decisions. Prepared context and execution state remain at `operations/replies/{replyId}.json`; settled context/tool activity is retained in canonical history for follow-ups. Terminal checkpoints are not currently garbage-collected. The earlier claim that they were removed before terminal state was incorrect.
+- `ReplyGeneration` journals compact prepare/model/tool/finalize decisions. Prepared context and execution state remain at `operations/replies/{replyId}.json`; settled context/tool activity is retained in canonical history for follow-ups. Terminal checkpoints are not currently garbage-collected.
 - Compile cancellation commits terminal product state before workflow interruption. Reply Stop instead commits intent while admitting/running; freeze arbitrates that intent, and a later Stop cannot overwrite a frozen result. Activities guard before side effects because interruption is cooperative.
 - Source deletion atomically records the source ID, vault, and storage path while removing the database graph. The object delete is idempotent and runs best-effort immediately; a startup/periodic reconciler repeats any unfinished cleanup. Storage failure therefore leaves an operator-visible outbox row rather than failing or resurrecting the user-visible deletion. Deletion deliberately creates no compile intent.
 - Large source bodies, uploads, provider transcripts, and tool outputs stay in object storage. Workflow payloads and journal results contain identifiers, cursors, and compact decisions rather than response bodies.
@@ -35,15 +35,6 @@ Provider acceptance is not permission to invoke a fallback after a stream stall 
 Reply requests nest new-session details or an existing session ID under `session`. A new BTW is its own conversation with a document/answer origin, not an optional branch embedded in an existing-session command. Accepted replies always belong to a session. Retry retains the exchange ID and original context parent, but freezes the current future-reply default. The public command no longer controls mode. Saved origin/annotation/cutoff and retained messages supply follow-up context independently of whether the current HTTP request creates a session.
 
 Admission and frozen settlement obligations are reconciled independently of workflow liveness. An absent workflow can be redispatched under the same key; a completed workflow cannot cause another provider call merely to finish publication. Scans use bounded pages and a captured high-water position to revisit old obligations even as new replies arrive.
-
-## Historical reply request migration
-
-The following describes the older nested-request migration, not the native history cutover. Existing historical tools retain their pre-native schemas under `scripts/lib/legacy-session-history.ts`. Native history conversion, exception review, backups, and deployment fencing remain required separately.
-
-
-Deploy the nested request contract with the API and browser together. Stop old API/workflow processes before applying `20260908155003_session_reply_requests`; it rewrites saved requests, requires a session ID, and removes the ephemeral reply kind. Generation checkpoints keep their existing format, so accepted work can resume after the new processes start.
-
-The migration stops transactionally if any historical reply has a null session ID or the ephemeral kind. Before rollout, inspect `SELECT kind, status, count(*) FROM replies WHERE session_id IS NULL OR kind = 'ephemeral' GROUP BY kind, status`. Any matching records need an explicit retention or conversion decision before rollout. The migration preserves those records and does not invent conversations for them.
 
 ## Work that remains outside workflows
 

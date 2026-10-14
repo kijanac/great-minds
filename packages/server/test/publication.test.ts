@@ -4,6 +4,7 @@ import type {
   SessionResponse,
 } from "@great-minds/domain";
 import { Effect, Result } from "effect";
+import { parseOfficeAsync } from "officeparser";
 import { describe, expect, it } from "vitest";
 
 import { publicationExchanges } from "../src/conversation-history/presentation.ts";
@@ -151,7 +152,7 @@ describe("conversation publication", () => {
   it("renders representative Markdown as tagged PDF and rejects missing glyphs", async () => {
     const renderer = await Effect.runPromise(makePdfRenderer(process.env.TYPST_BINARY ?? "typst"));
     const body =
-      '## Evidence\n\n**Strong**, *emphasis*, ~~deleted~~, `inline` and a citation.[^1]\n\n[^1]: FIRST_CITATION [source](https://example.org)\n\n> A quotation.\n\n- [x] Done\n- [ ] Open\n\n1. First\n2. Second\n\n| Claim | Evidence |\n| --- | --- |\n| **Rich cell** | [source][ref] |\n\n[ref]: https://example.org/evidence\n\n![Image description](https://example.org/image.png)\n\n```js\nconst answer = 42;\n```\n\nLiteral #panic("injected") and <script>text</script>.\n\nÉléments Ελληνικά Русский 中文 العربية.\n\n---\n\nEnd.';
+      '## Evidence\n\nPROSEMARKER 💡\n\n**Strong**, *emphasis*, ~~deleted~~, `inline` and a citation.[^1]\n\n[^1]: FIRST_CITATION [source](https://example.org)\n\n> A quotation.\n\n- [x] LISTMARKER Done\n- [ ] Open\n\n1. First\n2. Second\n\n| Claim | Evidence |\n| --- | --- |\n| **TABLEMARKER Rich cell** | [source][ref] |\n\n[ref]: https://example.org/evidence\n\n![Image description](https://example.org/image.png)\n\n```js\nconst answer = 42;\n```\n\nLiteral #panic("injected") and <script>text</script>.\n\nÉléments Ελληνικά Русский 中文 العربية.\n\n---\n\nEnd.';
     const publication = compilePublication(
       [
         {
@@ -166,6 +167,16 @@ describe("conversation publication", () => {
     );
     expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe("%PDF-");
     expect(new TextDecoder().decode(bytes.subarray(-20))).toContain("%%EOF");
+    const text = await parseOfficeAsync(Buffer.from(bytes), { outputErrorToConsole: false });
+    for (const marker of [
+      "PROSEMARKER",
+      "LISTMARKER",
+      "TABLEMARKER",
+      "FIRST_CITATION",
+      "SECOND_CITATION",
+      "💡",
+    ])
+      expect(text).toContain(marker);
     const unsupported = compilePublication(
       [{ origin: null, exchanges: [exchange(1, "မြန်မာစာ")] }],
       links,
@@ -174,5 +185,6 @@ describe("conversation publication", () => {
       Effect.result(renderer.render(unsupported, "a4", new Date("2026-01-01"))),
     );
     expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "ServiceUnavailable" } });
+    expect(unsupported.markdown).toContain("မြန်မာစာ");
   });
 });

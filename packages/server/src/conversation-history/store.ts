@@ -93,14 +93,27 @@ export const makeHistoryStore = (objects: ConditionalObjectStore): HistoryStoreS
       const planned = planHistoryAppend(address.session_id, current?.history ?? null, writes);
       if (Result.isFailure(planned)) return yield* planned.failure;
       const { history, changed } = planned.success;
-      if (changed) {
-        yield* objects.putIfVersion(
+      if (!changed) return { history, written: false };
+      return yield* objects
+        .putIfVersion(
           objectKey(address),
           current?.version ?? null,
           new TextEncoder().encode(history.jsonl),
+        )
+        .pipe(
+          Effect.as({ history, written: true }),
+          Effect.catchTag("ObjectVersionConflict", (conflict) =>
+            Effect.gen(function* () {
+              const latest = yield* read(address, receipt);
+              if (latest !== null) {
+                const replay = planHistoryAppend(address.session_id, latest.history, writes);
+                if (Result.isSuccess(replay) && !replay.success.changed)
+                  return { history: latest.history, written: false };
+              }
+              return yield* conflict;
+            }),
+          ),
         );
-      }
-      return { history, written: changed };
     });
 
   return { read, commit } satisfies HistoryStoreShape;

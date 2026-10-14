@@ -28,7 +28,11 @@ import {
   HistoryInvalid,
   verifyHistoryReceipt,
 } from "./conversation-history/history.ts";
-import { projectSession, publicationExchanges } from "./conversation-history/presentation.ts";
+import {
+  projectSession,
+  publicationExchanges,
+  type PublishedExchange,
+} from "./conversation-history/presentation.ts";
 import { HistoryStore } from "./conversation-history/store.ts";
 import { IngestService } from "./ingest.ts";
 import type { LlmMessage } from "./llm.ts";
@@ -91,7 +95,7 @@ type SessionsServiceShape = {
     userId: Uuid,
     vaultId: Uuid,
     sessionId: SessionId,
-  ) => Effect.Effect<readonly SessionExchangeEvent[], SessionReadError>;
+  ) => Effect.Effect<readonly PublishedExchange[], SessionReadError>;
 };
 
 export class SessionsService extends Context.Service<SessionsService, SessionsServiceShape>()(
@@ -633,7 +637,7 @@ const makeSessions = Effect.gen(function* () {
             )
             .orderBy(asc(sessions.createdAt)),
         );
-        const details = yield* Effect.forEach(rows, sessionDetail);
+        const details = yield* Effect.forEach(rows, sessionDetail, { concurrency: 1 });
         yield* confirmAccess(
           userId,
           vaultId,
@@ -661,7 +665,7 @@ const makeSessions = Effect.gen(function* () {
             )
             .orderBy(asc(sessions.createdAt)),
         );
-        const threads = yield* Effect.forEach(children, sessionDetail);
+        const threads = yield* Effect.forEach(children, sessionDetail, { concurrency: 4 });
         yield* confirmAccess(userId, vaultId, [sessionId, ...children.map((child) => child.id)]);
         return {
           id: sessionId,

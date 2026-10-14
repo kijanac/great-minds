@@ -28,7 +28,7 @@ RUN node --experimental-strip-types packages/server/scripts/install-publication-
 
 FROM workspace AS deploy
 
-RUN rm -rf packages/goldens packages/server/test web
+RUN rm -rf packages/goldens packages/server/test packages/server/scripts web
 RUN rm -rf packages/server/node_modules/@types
 RUN rm -f package.json pnpm-lock.yaml pnpm-workspace.yaml packages/*/tsconfig.json
 

@@ -19,7 +19,7 @@ import {
   vaults,
   wikiArticles,
 } from "@great-minds/database";
-import { SessionExport, SessionId, Uuid } from "@great-minds/domain";
+import { SessionExport, SessionResponse, SessionId, Uuid } from "@great-minds/domain";
 import { and, eq, sql } from "drizzle-orm";
 import { Deferred, Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -38,7 +38,7 @@ import { PdfRenderer } from "../src/publication/pdf.ts";
 import { openLocalConditionalObjectStore } from "../src/storage/local-conditional-object-store.ts";
 import { VaultAccessService } from "../src/vaults.ts";
 import { command } from "./fixtures/reply-admission.ts";
-import { completion } from "./fixtures/reply-settlement.ts";
+import { completion } from "./fixtures/conversation-history.ts";
 import { ConversationTurnFixture, savedConversation } from "./fixtures/saved-conversation.ts";
 import { ClockService, makeTestClock } from "../src/clock.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
@@ -267,7 +267,19 @@ const acceptReadReply = (confirm = true) =>
       const accepted = yield* confirm
         ? admission.accept(id.alice, id.vaultAlpha, input)
         : admission.reserve(id.alice, id.vaultAlpha, input);
-      return { input, accepted };
+      return { input, accepted, admission };
+    }),
+  );
+
+const sessionPath = (sessionId = id.sessionAliceMain) =>
+  `/vaults/${id.vaultAlpha}/sessions/${sessionId}`;
+const historyFile = (sessionId: SessionId) =>
+  join(currentState().storageRoot, "vaults", id.vaultAlpha, "sessions", `${sessionId}.jsonl`);
+const updateReadReply = (replyId: Uuid, values: Partial<typeof replies.$inferInsert>) =>
+  runDb(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db.query((d) => d.update(replies).set(values).where(eq(replies.id, replyId)));
     }),
   );
 
@@ -2011,230 +2023,84 @@ describe("read-only HTTP integration", () => {
         .filter((event) => event.type === "exchange"),
     ).toHaveLength(2);
 
-    // Sessions are personal: a vault member cannot read another member's session.
-    const memberReadsOwnerSession = await api(
-      "GET",
-      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`,
-      bobToken,
-    );
-    expect(memberReadsOwnerSession.status).toBe(404);
-    expect(memberReadsOwnerSession.body).toMatchObject({ detail: "Session not found" });
-
-    const ownerReadsMemberSession = await api(
-      "GET",
-      `/vaults/${id.vaultAlpha}/sessions/${id.sessionBob}`,
-      aliceToken,
-    );
-    expect(ownerReadsMemberSession.status).toBe(404);
-
-    const nonMember = await api(
-      "GET",
-      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`,
-      malloryToken,
-    );
-    expect(nonMember.status).toBe(403);
-
-    const missingEvents = await api(
-      "GET",
-      `/vaults/${id.vaultAlpha}/sessions/s-missing`,
-      aliceToken,
-    );
-    expect(missingEvents.status).toBe(404);
-    expect(missingEvents.body).toMatchObject({ detail: "Session not found" });
-
-    const traversal = await api(
-      "GET",
-      `/vaults/${id.vaultAlpha}/sessions/${encodeURIComponent("s-2\\..")}`,
-      aliceToken,
-    );
-    expect(traversal.status).toBe(422);
-    expect(traversal.body).toMatchObject({ detail: "Invalid path parameter" });
-
-    const unauthenticated = await api(
-      "GET",
-      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`,
-    );
-    expect(unauthenticated.status).toBe(401);
+    for (const [token, sessionId, status] of [
+      [bobToken, id.sessionAliceMain, 404],
+      [aliceToken, id.sessionBob, 404],
+      [malloryToken, id.sessionAliceMain, 403],
+      [aliceToken, "s-missing", 404],
+      [aliceToken, encodeURIComponent("s-2\\.."), 422],
+      [undefined, id.sessionAliceMain, 401],
+    ] as const) {
+      const denied = await api("GET", `/vaults/${id.vaultAlpha}/sessions/${sessionId}`, token);
+      expect(denied.status).toBe(status);
+      expect(denied.body).not.toHaveProperty("events");
+    }
   });
 
-  it("represents reserved admission without pretending its question was already recorded", async () => {
-    const path = join(
-      currentState().storageRoot,
-      "vaults",
-      id.vaultAlpha,
-      "sessions",
-      `${id.sessionAliceMain}.jsonl`,
-    );
-    const before = await readFile(path, "utf8");
-    const { input, accepted } = await acceptReadReply(false);
-    const response = await api(
-      "GET",
-      `/vaults/${id.vaultAlpha}/sessions/${accepted.session_id}`,
-      currentFixture().aliceToken,
-    );
-    expect(response.status).toBe(200);
-    expect(asRecord(response.body).activity).toEqual({
-      reply_id: accepted.reply_id,
-      status: "admitting",
-    });
-    expect(asArray(asRecord(response.body).events)).toContainEqual(
-      expect.objectContaining({
-        reply_id: accepted.reply_id,
-        exId: input.exchange_id,
-        query: input.question,
-        status: "running",
-      }),
-    );
-    expect(await readFile(path, "utf8")).toBe(before);
-  });
-
-  it("keeps unreadable document notes in by-origin results with an unavailable marker", async () => {
-    await rm(
-      join(
-        currentState().storageRoot,
-        "vaults",
-        id.vaultAlpha,
-        "sessions",
-        `${id.sessionAliceMain}.jsonl`,
-      ),
-    );
-    const response = await api(
-      "GET",
-      `/vaults/${id.vaultAlpha}/sessions/by-origin?doc_path=${encodeURIComponent("wiki/alpha-practice.md")}`,
-      currentFixture().aliceToken,
-    );
-    expect(response.status).toBe(200);
-    const note = asArray(response.body)
-      .map(asRecord)
-      .find((detail) => asRecord(detail.session).id === id.sessionAliceMain);
-    expect(note).toMatchObject({ availability: "unavailable" });
-    expect(note).not.toHaveProperty("events");
-  });
-
-  it("loads committed live progress with its attempt version and without private context", async () => {
-    const { accepted } = await acceptReadReply();
-    await runDb(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        yield* db.query((d) =>
-          d
-            .update(replies)
-            .set({
-              answer: "Visible live partial",
-              sources: completion().sources,
-              version: 7,
-            })
-            .where(eq(replies.id, accepted.reply_id)),
-        );
-      }),
-    );
-    const response = await api(
-      "GET",
-      `/vaults/${id.vaultAlpha}/sessions/${accepted.session_id}`,
-      currentFixture().aliceToken,
-    );
-    expect(response.status).toBe(200);
-    expect(asRecord(response.body).activity).toEqual({
-      reply_id: accepted.reply_id,
+  it("projects admission, versioned progress and canonical finalizing content without leaking context or repairing rows", async () => {
+    const before = await readFile(historyFile(id.sessionAliceMain), "utf8");
+    const { input, accepted, admission } = await acceptReadReply(false);
+    const observe = async (activity: string, expected: Record<string, unknown>) => {
+      const response = await api(
+        "GET",
+        sessionPath(accepted.session_id),
+        currentFixture().aliceToken,
+      );
+      expect(response.status).toBe(200);
+      const body = Schema.decodeUnknownSync(SessionResponse)(response.body);
+      expect(body.activity).toEqual({ reply_id: accepted.reply_id, status: activity });
+      expect(body.events).toContainEqual(
+        expect.objectContaining({ reply_id: accepted.reply_id, ...expected }),
+      );
+      expect(response.text).not.toMatch(/context_messages|system_prompt_hash|Stale DB answer/u);
+    };
+    await observe("admitting", {
+      exId: input.exchange_id,
+      query: input.question,
       status: "running",
+      answer: "",
     });
-    expect(asArray(asRecord(response.body).events)).toContainEqual(
-      expect.objectContaining({
-        reply_id: accepted.reply_id,
-        answer: "Visible live partial",
-        version: 7,
-        status: "running",
-        thinking: [{ sources: completion().sources }],
-      }),
-    );
-    expect(response.text).not.toContain("context_messages");
-    expect(response.text).not.toContain("system_prompt_hash");
-  });
-
-  it("shows finalizing until projection catches up and never replaces recorded content with stale progress", async () => {
-    const { accepted } = await acceptReadReply();
-    const path = `/vaults/${id.vaultAlpha}/sessions/${accepted.session_id}`;
-    await runDb(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        yield* db.query((d) =>
-          d
-            .update(replies)
-            .set({ answer: "Committed partial" })
-            .where(eq(replies.id, accepted.reply_id)),
-        );
-        const settlement = yield* ReplySettlement;
-        yield* settlement.begin(accepted.reply_id, {
-          ...completion(),
-          answer: "Recorded final answer",
-        });
-      }),
-    );
-    const frozen = await api("GET", path, currentFixture().aliceToken);
-    expect(frozen.status).toBe(200);
-    expect(asRecord(frozen.body).activity).toEqual({
-      reply_id: accepted.reply_id,
-      status: "settling",
+    expect(await readFile(historyFile(id.sessionAliceMain), "utf8")).toBe(before);
+    await runDb(admission.admit(accepted.reply_id));
+    await updateReadReply(accepted.reply_id, {
+      answer: "Committed partial",
+      sources: completion().sources,
+      version: 7,
     });
-    expect(asArray(asRecord(frozen.body).events)).toContainEqual(
-      expect.objectContaining({
-        reply_id: accepted.reply_id,
-        answer: "Committed partial",
-        status: "running",
-      }),
-    );
-    await runDb(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        const histories = yield* HistoryStore;
-        const [row] = yield* db.query((d) =>
-          d.select().from(replies).where(eq(replies.id, accepted.reply_id)),
-        );
-        const payload = Schema.decodeUnknownSync(HistorySettlementWrite)(row.settlement);
-        yield* histories.commit({ vault_id: id.vaultAlpha, session_id: accepted.session_id }, [
-          payload,
-        ]);
-        yield* db.query((d) =>
-          d
-            .update(replies)
-            .set({
-              status: "running",
-              settlement: null,
-              answer: "Stale DB answer",
-              stopRequested: true,
-            })
-            .where(eq(replies.id, accepted.reply_id)),
-        );
-      }),
-    );
-    const recorded = await api("GET", path, currentFixture().aliceToken);
-    expect(recorded.status).toBe(200);
-    expect(asRecord(recorded.body).activity).toEqual({
-      reply_id: accepted.reply_id,
-      status: "settling",
+    await observe("running", {
+      answer: "Committed partial",
+      status: "running",
+      version: 7,
+      thinking: [{ sources: completion().sources }],
     });
-    expect(asArray(asRecord(recorded.body).events)).toContainEqual(
-      expect.objectContaining({
-        reply_id: accepted.reply_id,
-        answer: "Recorded final answer",
-        status: "completed",
-        error: null,
-      }),
-    );
-    expect(recorded.text).not.toContain("Stale DB answer");
+    const settlement = await runDb(ReplySettlement);
     await runDb(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        const [row] = yield* db.query((d) =>
-          d.select().from(replies).where(eq(replies.id, accepted.reply_id)),
-        );
-        expect(row).toMatchObject({
-          status: "running",
-          answer: "Stale DB answer",
-          stopRequested: true,
-        });
-      }),
+      settlement.begin(accepted.reply_id, { ...completion(), answer: "Recorded final answer" }),
     );
+    await observe("settling", { answer: "Committed partial", status: "running" });
+    const db = await runDb(Database);
+    const histories = await runDb(HistoryStore);
+    const row = () =>
+      runDb(db.query((d) => d.select().from(replies).where(eq(replies.id, accepted.reply_id))));
+    const [frozen] = await row();
+    await runDb(
+      histories.commit({ vault_id: id.vaultAlpha, session_id: accepted.session_id }, [
+        Schema.decodeUnknownSync(HistorySettlementWrite)(frozen.settlement),
+      ]),
+    );
+    await updateReadReply(accepted.reply_id, {
+      status: "running",
+      settlement: null,
+      answer: "Stale DB answer",
+      stopRequested: true,
+    });
+    const stale = await row();
+    await observe("settling", {
+      answer: "Recorded final answer",
+      status: "completed",
+      error: null,
+    });
+    expect(await row()).toEqual(stale);
   });
 
   it.each(["missing", "terminal"] as const)(
@@ -2266,31 +2132,27 @@ describe("read-only HTTP integration", () => {
     },
   );
 
-  it("retains an unreadable child's identity and the readable parent instead of an empty note", async () => {
-    await rm(
-      join(
-        currentState().storageRoot,
-        "vaults",
-        id.vaultAlpha,
-        "sessions",
-        `${id.sessionAliceBtw}.jsonl`,
-      ),
-    );
-    const response = await api(
-      "GET",
-      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`,
-      currentFixture().aliceToken,
-    );
-    expect(response.status).toBe(200);
-    expect(response.text).toContain("Record the passage, the claim, and unresolved questions.");
-    const [child] = asArray(asRecord(response.body).threads).map(asRecord);
-    expect(child).toMatchObject({
-      availability: "unavailable",
-      session: { id: id.sessionAliceBtw },
-    });
-    expect(child).not.toHaveProperty("events");
-    expect(child.detail).toBe("Conversation history is unavailable; no content has been discarded");
-  });
+  it.each(["document", "answer"] as const)(
+    "retains unreadable %s notes instead of offering an empty replacement",
+    async (origin) => {
+      const sessionId = origin === "document" ? id.sessionAliceMain : id.sessionAliceBtw;
+      await rm(historyFile(sessionId));
+      const path =
+        origin === "document"
+          ? `/vaults/${id.vaultAlpha}/sessions/by-origin?doc_path=wiki%2Falpha-practice.md`
+          : sessionPath();
+      const response = await api("GET", path, currentFixture().aliceToken);
+      expect(response.status).toBe(200);
+      if (origin === "answer")
+        expect(response.text).toContain("Record the passage, the claim, and unresolved questions.");
+      const notes = asArray(
+        origin === "document" ? response.body : asRecord(response.body).threads,
+      ).map(asRecord);
+      const note = notes.find((detail) => asRecord(detail.session).id === sessionId);
+      expect(note).toMatchObject({ availability: "unavailable", session: { id: sessionId } });
+      expect(note).not.toHaveProperty("events");
+    },
+  );
 
   it.each(["", "/markdown", "/by-origin"])(
     "rechecks membership after history I/O for %s reads",
@@ -2466,13 +2328,7 @@ describe("read-only HTTP integration", () => {
     expect((await api("POST", `${path}/export`, aliceToken, { paper: "unknown" })).status).toBe(
       422,
     );
-    const child = join(
-      currentState().storageRoot,
-      "vaults",
-      id.vaultAlpha,
-      "sessions",
-      `${id.sessionAliceBtw}.jsonl`,
-    );
+    const child = historyFile(id.sessionAliceBtw);
     const saved = await readFile(child);
     await writeFile(child, "{invalid}\n");
     expect((await api("POST", `${path}/export`, aliceToken, { paper: "a4" })).status).toBe(503);

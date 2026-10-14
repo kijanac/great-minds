@@ -21,10 +21,9 @@ import {
 import { makeHistoryStore, type HistoryStoreShape } from "../../src/conversation-history/store.ts";
 import { openLocalConditionalObjectStore } from "../../src/storage/local-conditional-object-store.ts";
 import { VaultAccessService, VaultAccessServiceLive } from "../../src/vaults.ts";
-import { timestamp } from "./conversation-history.ts";
+import { completion, timestamp } from "./conversation-history.ts";
 import { temporaryDirectory } from "./history-storage.ts";
 import { runHistoryDatabase } from "./reply-history-database.ts";
-import { completion } from "./reply-settlement.ts";
 
 export const command = (overrides: Partial<CreateReplyRequest> = {}): CreateReplyRequest =>
   Schema.decodeUnknownSync(CreateReplyRequest)({
@@ -111,6 +110,15 @@ const setup = Effect.gen(function* () {
     address,
     key,
     finalize,
+    updateReply: (replyId: Uuid, values: Partial<typeof replies.$inferInsert>) =>
+      db.query((client) => client.update(replies).set(values).where(eq(replies.id, replyId))),
+    updateSession: (sessionId: SessionId, values: Partial<typeof sessions.$inferInsert>) =>
+      db.query((client) =>
+        client
+          .update(sessions)
+          .set(values)
+          .where(and(eq(sessions.id, sessionId), eq(sessions.vaultId, vaultId))),
+      ),
     setTime: (value: Date) => {
       now = value;
     },

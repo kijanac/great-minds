@@ -32,9 +32,21 @@ function invitedRole(role: string): InvitedMemberRole {
   throw new Error(`Unknown role: ${role}`);
 }
 
-export async function fetchVaults(): Promise<readonly VaultOverview[]> {
-  const page = await run(api.vaults.listVaults({ query: firstPage }));
-  return page.items;
+export function fetchVaults(signal?: AbortSignal): Promise<readonly VaultOverview[]> {
+  return run(
+    Effect.gen(function* () {
+      const first = yield* api.vaults.listVaults({ query: firstPage });
+      const items = [...first.items];
+      for (let offset = items.length; offset < first.pagination.total;) {
+        const page = yield* api.vaults.listVaults({ query: { limit: firstPage.limit, offset } });
+        if (page.items.length === 0) break;
+        items.push(...page.items);
+        offset += page.items.length;
+      }
+      return items;
+    }),
+    { signal },
+  );
 }
 
 export function createVault(input: CreateVaultInput): Promise<VaultOverview> {

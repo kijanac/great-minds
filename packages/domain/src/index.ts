@@ -1215,7 +1215,6 @@ export type RetryReplyRequest = typeof RetryReplyRequest.Type;
 export const ReplySnapshot = Schema.Struct({
   reply_id: Uuid,
   session_id: SessionId,
-  kind: Schema.Literals(["exchange", "btw"] as const),
   status: ReplyStatus,
   answer: Schema.String,
   sources: Schema.Array(ReplySource),

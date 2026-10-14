@@ -1,4 +1,7 @@
 services:
+  typst:
+    image: ghcr.io/typst/typst:0.15.1@sha256:032e292249bcd378480cc7c142cfa324b63ef8aadeb88d7e7230320c4c9c422f
+    restart: "no"
   db:
     image: pgvector/pgvector:pg18
     restart: "no"

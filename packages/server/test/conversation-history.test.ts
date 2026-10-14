@@ -1,9 +1,12 @@
-import { FileFingerprint, SessionId } from "@great-minds/domain";
-import { Result, Schema } from "effect";
+import { FileFingerprint } from "@great-minds/domain";
+import { Effect, Result, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
-  inspectHistoryDependencies,
+  acceptedRequestFor,
+  type AcceptedReplyRequest,
+} from "../src/conversation-history/admission.ts";
+import {
   parseHistory,
   planHistoryAppend,
   verifyHistoryReceipt,
@@ -19,6 +22,7 @@ import {
   sessionId,
   settlement,
   time,
+  timestamp,
   uuid,
 } from "./fixtures/conversation-history.ts";
 
@@ -26,72 +30,40 @@ const success = <Value, Error>(result: Result.Result<Value, Error>): Value => {
   if (Result.isFailure(result)) throw result.failure;
   return result.success;
 };
-
 const failure = <Value, Error>(result: Result.Result<Value, Error>): Error => {
-  expect(result._tag).toBe("Failure");
   if (Result.isSuccess(result)) throw new Error("Expected failure");
   return result.failure;
 };
-
-const parse = (writes: readonly object[], id = sessionId) =>
-  success(parseHistory(id, historyBytes(writes)));
-
+const parse = (writes: readonly object[]) => success(parseHistory(sessionId, historyBytes(writes)));
 const failed = () =>
-  settlement({
-    outcome: { status: "failed", code: "generation_failed", message: "Answer interrupted." },
-    answer: "Partial answer",
-  });
+  settlement({ outcome: { status: "failed", code: "generation_failed", message: "Interrupted" } });
 
-describe("conversation history format", () => {
+describe("native conversation history", () => {
   it.each(["completed", "stopped", "failed"] as const)(
-    "preserves %s outcomes, Unicode and exact references",
+    "preserves literal %s content, references and provenance",
     (status) => {
       const terminal = status === "failed" ? failed() : settlement({ outcome: { status } });
       const history = parse([header(), attempt(), terminal]);
       expect(history.turns[0].attempts[0].settlement).toMatchObject(terminal);
+      expect(history.header.session_id).toBe(sessionId);
       expect(history.revision).toEqual({
         last_seq: 3,
         sha256: rawFileHash(historyBytes([header(), attempt(), terminal])),
       });
-      expect(history.header.session_id).toBe("history-session");
+      expect(history.turns[0].attempts[0].settlement?.generation?.system_prompt_hash).toEqual({
+        scheme: "gm-prompt-v1",
+        value: promptContentHash("Be concise. é 漢字"),
+      });
+      expect(promptContentHash("Be concise. é 漢字")).not.toBe(sha256Hex("Be concise. é 漢字"));
     },
   );
 
-  it("distinguishes a completed empty answer from a pending attempt", () => {
-    const pending = parse([header(), attempt()]);
-    const completed = parse([header(), attempt(), settlement({ answer: "" })]);
-    expect(pending.turns[0].attempts[0].settlement).toBeNull();
-    expect(completed.turns[0].attempts[0].settlement?.outcome.status).toBe("completed");
-  });
-
-  it("retains failed attempts without selecting them over a later accepted retry", () => {
-    const history = parse([
-      header(),
-      attempt(),
-      failed(),
-      attempt({ reply_id: uuid(102), previous_attempt_id: replyId }),
-      settlement({ reply_id: uuid(102) }),
-    ]);
-    expect(history.turns).toHaveLength(1);
-    expect(projectSession(history)[1]).toMatchObject({ reply_id: uuid(102), status: "completed" });
-    expect(history.turns[0].attempts.map((value) => value.settlement?.outcome.status)).toEqual([
-      "failed",
-      "completed",
-    ]);
-  });
-
-  it("keeps acceptance order when an older attempt settles after its replacement", () => {
-    const history = parse([
-      header(),
-      attempt(),
-      attempt({ reply_id: uuid(102), previous_attempt_id: replyId }),
-      settlement({ reply_id: uuid(102) }),
-      failed(),
-    ]);
-    expect(projectSession(history)[1]).toMatchObject({ reply_id: uuid(102), status: "completed" });
-  });
-
-  it("orders turns by acceptance rather than settlement or timestamp", () => {
+  it("orders by acceptance and selects the latest attempt despite older timestamps and late settlements", () => {
+    const retry = attempt({
+      reply_id: uuid(103),
+      previous_attempt_id: replyId,
+      question: "A literal historical revision",
+    });
     const history = parse([
       header(),
       attempt(),
@@ -101,22 +73,54 @@ describe("conversation history format", () => {
         accepted_at: time("2020-01-01T00:00:00.000Z"),
       }),
       settlement({ reply_id: uuid(102) }),
-      settlement(),
+      retry,
+      settlement({ reply_id: uuid(103) }),
+      failed(),
     ]);
     expect(history.turns.map((turn) => turn.exchange_id)).toEqual([uuid(201), uuid(202)]);
+    expect(projectSession(history)[1]).toMatchObject({
+      reply_id: uuid(103),
+      status: "completed",
+      query: retry.question,
+    });
+    expect(
+      history.turns[0].attempts.map(({ accepted, settlement }) => [
+        accepted.question,
+        settlement?.outcome.status,
+      ]),
+    ).toEqual([
+      [attempt().question, "failed"],
+      [retry.question, "completed"],
+    ]);
+  });
+
+  it("distinguishes pending, empty completion, unknown metadata and known empty context", () => {
+    expect(parse([header(), attempt()]).turns[0].attempts[0].settlement).toBeNull();
+    const unknown = parse([
+      header(),
+      attempt({ accepted_at: null }),
+      settlement({ answer: "", settled_at: null, context_messages: null, generation: null }),
+    ]);
+    expect(unknown.turns[0].attempts[0]).toMatchObject({
+      accepted: { accepted_at: null },
+      settlement: {
+        answer: "",
+        outcome: { status: "completed" },
+        settled_at: null,
+        context_messages: null,
+        generation: null,
+      },
+    });
+    expect(
+      parse([header(), attempt(), settlement({ context_messages: [] })]).turns[0].attempts[0]
+        .settlement?.context_messages,
+    ).toEqual([]);
   });
 
   it.each([
+    [[{ ...header(), version: 2 }, attempt()], "unsupported_format"],
+    [[header(), attempt(), { type: "new-event" }], "invalid_record"],
     [
-      "unsupported format",
-      [header({ version: 1 }), attempt()].map((value, index) =>
-        index === 0 ? { ...value, version: 2 } : value,
-      ),
-      "unsupported_format",
-    ],
-    ["unknown type", [header(), attempt(), { type: "new-event" }], "invalid_record"],
-    [
-      "unknown nested field",
       [
         header(),
         attempt(),
@@ -124,24 +128,15 @@ describe("conversation history format", () => {
       ],
       "invalid_record",
     ],
+    [[header(), { ...attempt(), accepted_at: "2026-02-30T00:00:00.000Z" }], "invalid_record"],
+    [[header(), { ...attempt(), reply_id: "../escape" }], "invalid_record"],
+    [[header({ session_id: parentId }), attempt()], "header"],
+    [[header(), attempt(), attempt()], "duplicate_record"],
+    [[header(), settlement()], "missing_attempt"],
+    [[header(), attempt({ parent_reply_id: uuid(404) })], "context_parent"],
+    [[header(), attempt({ parent_reply_id: replyId })], "context_parent"],
+    [[header(), attempt(), attempt({ reply_id: uuid(102) })], "attempt_predecessor"],
     [
-      "invalid timestamp",
-      [header(), { ...attempt(), accepted_at: "2026-02-30T00:00:00.000Z" }],
-      "invalid_record",
-    ],
-    ["unsafe UUID", [header(), { ...attempt(), reply_id: "../escape" }], "invalid_record"],
-    ["wrong session identity", [header({ session_id: parentId }), attempt()], "header"],
-    ["duplicate record", [header(), attempt(), attempt()], "duplicate_record"],
-    ["settlement without attempt", [header(), settlement()], "missing_attempt"],
-    ["missing parent", [header(), attempt({ parent_reply_id: uuid(404) })], "context_parent"],
-    ["self-parent", [header(), attempt({ parent_reply_id: replyId })], "context_parent"],
-    [
-      "wrong predecessor",
-      [header(), attempt(), attempt({ reply_id: uuid(102) })],
-      "attempt_predecessor",
-    ],
-    [
-      "failed context parent",
       [
         header(),
         attempt(),
@@ -151,7 +146,6 @@ describe("conversation history format", () => {
       "context_parent",
     ],
     [
-      "unsettled context parent",
       [
         header(),
         attempt(),
@@ -159,9 +153,8 @@ describe("conversation history format", () => {
       ],
       "context_parent",
     ],
-    ["header alone", [header()], "empty_history"],
+    [[header()], "empty_history"],
     [
-      "inverted source range",
       [
         header(),
         attempt(),
@@ -170,7 +163,6 @@ describe("conversation history format", () => {
       "source_range",
     ],
     [
-      "unknown generation field",
       [
         header(),
         attempt(),
@@ -178,138 +170,78 @@ describe("conversation history format", () => {
       ],
       "invalid_record",
     ],
-  ] as const)(
-    "rejects %s rather than recovering a seemingly complete prefix",
-    (_name, writes, reason) => {
-      expect(failure(parseHistory(sessionId, historyBytes(writes)))).toMatchObject({
-        _tag: "HistoryInvalid",
-        reason,
-      });
-    },
-  );
+  ] as const)("rejects malformed record case %# without prefix salvage", (writes, reason) => {
+    expect(failure(parseHistory(sessionId, historyBytes(writes)))).toMatchObject({
+      _tag: "HistoryInvalid",
+      reason,
+    });
+  });
 
-  it("rejects missing newlines, invalid UTF-8, blank lines and malformed middle lines", () => {
+  it("rejects damaged framing, sequence gaps and misplaced headers", () => {
     const bytes = historyBytes([header(), attempt()]);
     const text = new TextDecoder().decode(bytes);
+    const encode = (text: string) => new TextEncoder().encode(text);
     for (const [input, reason] of [
       [bytes.slice(0, -1), "missing_newline"],
       [new Uint8Array([0xff, 0x0a]), "invalid_utf8"],
-      [new TextEncoder().encode(text + "\n"), "blank_line"],
-      [
-        new TextEncoder().encode(text + "{\n" + JSON.stringify(settlement()) + "\n"),
-        "invalid_json",
-      ],
+      [encode(text + "\n"), "blank_line"],
+      [encode(text + "{\n" + JSON.stringify(settlement()) + "\n"), "invalid_json"],
       [new Uint8Array(), "empty_history"],
+      [
+        encode(
+          `${JSON.stringify({ ...header(), seq: 1 })}\n${JSON.stringify({ ...attempt(), seq: 3 })}\n`,
+        ),
+        "sequence",
+      ],
+      [historyBytes([attempt(), header()]), "unsupported_format"],
     ] as const) {
-      expect(failure(parseHistory(sessionId, input))).toMatchObject({ reason });
+      const error = failure(parseHistory(sessionId, input));
+      expect(error).toMatchObject({ reason });
+      if (reason === "sequence") expect(error.line).toBe(2);
     }
   });
 
-  it("rejects gaps in sequence numbers and misplaced headers", () => {
-    const text = `${JSON.stringify({ ...header(), seq: 1 })}\n${JSON.stringify({ ...attempt(), seq: 3 })}\n`;
-    expect(failure(parseHistory(sessionId, new TextEncoder().encode(text)))).toMatchObject({
-      reason: "sequence",
-      line: 2,
-    });
-    expect(failure(parseHistory(sessionId, historyBytes([attempt(), header()])))).toMatchObject({
-      reason: "unsupported_format",
-    });
-  });
-
-  it("preserves absent metadata without inventing execution claims", () => {
-    const history = parse([
-      header(),
-      attempt({ accepted_at: null }),
-      settlement({
-        settled_at: null,
-        context_messages: null,
-        generation: null,
-      }),
-    ]);
-    expect(history.turns[0].attempts[0].settlement?.generation).toBeNull();
-    expect(history.turns[0].attempts[0].settlement?.context_messages).toBeNull();
-    const stopped = parse([
-      header(),
-      attempt(),
-      settlement({
-        outcome: { status: "stopped" },
-        answer: "",
-        sources: [],
-        context_messages: [],
-        generation: null,
-      }),
-    ]);
-    expect(stopped.turns[0].attempts[0].settlement?.context_messages).toEqual([]);
-  });
-
-  it("keeps historical question differences on their own attempts", () => {
-    const history = parse([
-      header(),
-      attempt(),
-      failed(),
-      attempt({
-        reply_id: uuid(102),
-        previous_attempt_id: replyId,
-        question: "A historical changed question",
-      }),
-    ]);
-    expect(history.turns[0].attempts.map((value) => value.accepted.question)).toEqual([
-      attempt().question,
-      "A historical changed question",
-    ]);
-  });
-
-  it("verifies the actual byte prefix named by a history receipt", () => {
+  it("verifies both current and older byte-prefix receipts", () => {
     const first = parse([header(), attempt()]);
     const next = success(planHistoryAppend(sessionId, first, [settlement()])).history;
-    expect(verifyHistoryReceipt(next, first.revision)._tag).toBe("Success");
-    expect(verifyHistoryReceipt(next, next.revision)._tag).toBe("Success");
     expect(failure(verifyHistoryReceipt(first, next.revision))).toMatchObject({
       reason: "history_receipt",
     });
-    expect(
-      failure(
-        verifyHistoryReceipt(next, {
-          ...first.revision,
-          sha256: Schema.decodeUnknownSync(FileFingerprint)("0".repeat(64)),
-        }),
-      ),
-    ).toMatchObject({ reason: "history_receipt" });
+    for (const revision of [first.revision, next.revision]) {
+      expect(verifyHistoryReceipt(next, revision)._tag).toBe("Success");
+      expect(
+        failure(
+          verifyHistoryReceipt(next, {
+            ...revision,
+            sha256: Schema.decodeUnknownSync(FileFingerprint)("0".repeat(64)),
+          }),
+        ),
+      ).toMatchObject({ reason: "history_receipt" });
+    }
   });
 
-  it("preserves the namespaced prompt hash scheme instead of assuming raw text SHA-256", () => {
-    const history = parse([header(), attempt(), settlement()]);
-    const prepared = history.turns[0].attempts[0].settlement?.generation;
-    expect(prepared).toMatchObject({
-      system_prompt_hash: {
-        scheme: "gm-prompt-v1",
-        value: promptContentHash("Be concise. é 漢字"),
-      },
-    });
-    expect(promptContentHash("Be concise. é 漢字")).not.toBe(sha256Hex("Be concise. é 漢字"));
-  });
-});
-
-describe("conversation history append planning", () => {
-  it("creates header and attempt as one validated write, with deterministic bytes", () => {
-    const writes = [header(), attempt()];
-    const first = success(planHistoryAppend(sessionId, null, writes));
-    const again = success(planHistoryAppend(sessionId, null, writes));
-    expect(first).toEqual(again);
-    expect(first.changed).toBe(true);
+  it("plans atomic deterministic batches with detached inputs and semantic replay", () => {
     expect(failure(planHistoryAppend(sessionId, null, [header()]))).toMatchObject({
       reason: "empty_history",
     });
-  });
-
-  it("treats equal identity and content as a no-op, even with reordered object properties", () => {
-    const history = parse([header(), attempt(), settlement()]);
+    const source = { ...settlement().sources[0] };
+    const terminal = { ...settlement(), sources: [source] };
+    const writes = [header(), attempt(), terminal, terminal];
+    const first = success(planHistoryAppend(sessionId, null, writes));
+    expect(first).toEqual(success(planHistoryAppend(sessionId, null, writes)));
+    expect(first.changed).toBe(true);
+    expect(first.history.revision.last_seq).toBe(3);
+    source.title = "Changed by caller";
+    expect(first.history.turns[0].attempts[0].settlement?.sources[0].title).toBe(
+      "Original source title",
+    );
+    expect(first.history.jsonl).not.toContain("Changed by caller");
     const { answer, ...rest } = settlement();
     const replay = success(
-      planHistoryAppend(sessionId, history, [header(), attempt(), { answer, ...rest }]),
+      planHistoryAppend(sessionId, first.history, [header(), attempt(), { answer, ...rest }]),
     );
-    expect(replay).toEqual({ changed: false, history });
-    expect(replay.history).toBe(history);
+    expect(replay.changed).toBe(false);
+    expect(replay.history).toBe(first.history);
   });
 
   it.each([
@@ -318,7 +250,7 @@ describe("conversation history append planning", () => {
     { ...settlement(), settled_at: time("2026-10-10T13:00:00.000Z") },
     { ...attempt(), exchange_id: uuid(999) },
     { ...attempt(), question: "Conflicting accepted question" },
-  ] as const)("rejects different content for an existing identity", (write) => {
+  ] as const)("rejects changed content for an existing identity", (write) => {
     const history = parse([header(), attempt(), settlement()]);
     expect(failure(planHistoryAppend(sessionId, history, [write]))).toMatchObject({
       _tag: "HistoryConflict",
@@ -326,79 +258,61 @@ describe("conversation history append planning", () => {
     expect(history.turns[0].attempts[0].settlement?.answer).toBe(settlement().answer);
   });
 
-  it("deduplicates an identical delivery inside one batch without consuming sequence numbers", () => {
-    const result = success(
-      planHistoryAppend(sessionId, null, [header(), attempt(), settlement(), settlement()]),
-    );
-    expect(result.history.revision.last_seq).toBe(3);
-  });
-
-  it("does not retain mutable input objects when planning a write", () => {
-    const source = { ...settlement().sources[0] };
-    const terminal = { ...settlement(), sources: [source] };
-    const history = success(
-      planHistoryAppend(sessionId, null, [header(), attempt(), terminal]),
-    ).history;
-    source.title = "Changed by caller";
-    expect(history.turns[0].attempts[0].settlement?.sources[0].title).toBe("Original source title");
-    expect(history.jsonl).not.toContain("Changed by caller");
-  });
-});
-
-describe("history context dependencies", () => {
-  const child = (id: SessionId, parent: SessionId) =>
-    parse(
-      [
-        header({ session_id: id, context: { session_id: parent, reply_id: replyId } }),
-        attempt(),
-        settlement(),
-      ],
-      id,
-    );
-
-  it("reports absent context without discarding the child's own readable history", () => {
-    const history = child(sessionId, parentId);
-    expect(history.turns[0].attempts[0].settlement?.answer).toBe(settlement().answer);
-    expect(inspectHistoryDependencies([history])).toEqual([
-      { session_id: sessionId, dependency_id: parentId, reason: "missing_history" },
-    ]);
-  });
-
-  it("finds inherited context cycles without recursive traversal", () => {
-    const issues = inspectHistoryDependencies([
-      child(sessionId, parentId),
-      child(parentId, sessionId),
-    ]);
-    expect(issues.map((issue) => issue.reason)).toEqual(["context_cycle", "context_cycle"]);
-  });
-
-  it("does not confuse the annotated answer with a different fixed context cutoff", () => {
-    const parent = parse(
-      [
-        header({ session_id: parentId }),
-        attempt(),
-        settlement(),
-        attempt({ reply_id: uuid(102), exchange_id: uuid(202), parent_reply_id: replyId }),
-        settlement({ reply_id: uuid(102) }),
-      ],
-      parentId,
-    );
-    const history = parse([
-      header({
-        origin: {
-          kind: "answer",
-          session_id: parentId,
-          exchange_id: uuid(201),
-          anchor: "same quote",
-          paragraph: "same quote",
-          paragraph_index: 0,
+  it("parses accepted descriptors and rejects malformed or mismatched frozen identity without database setup", async () => {
+    const request = {
+      version: 1,
+      mode: "query",
+      header: header(),
+      attempt: { ...attempt(), accepted_at: timestamp },
+      command: {
+        reply_id: replyId,
+        exchange_id: uuid(201),
+        question: attempt().question,
+        origin_scope: "vault",
+        session: {
+          kind: "new",
+          idempotency_key: "descriptor",
+          conversation_kind: "session",
+          origin_scope: "vault",
         },
-        anchor_reply_id: replyId,
-        context: { session_id: parentId, reply_id: uuid(102) },
-      }),
-      attempt({ reply_id: uuid(103) }),
-      settlement({ reply_id: uuid(103) }),
-    ]);
-    expect(inspectHistoryDependencies([history, parent])).toEqual([]);
+      },
+    } satisfies AcceptedReplyRequest;
+    const row = { id: replyId, userId: request.header.author_id, sessionId, request };
+    expect(await Effect.runPromise(acceptedRequestFor(row))).toEqual(request);
+    for (const invalid of [
+      { ...request, version: 2 },
+      { ...request, extra: true },
+      { ...request, mode: null },
+      { ...request, attempt: { ...request.attempt, accepted_at: null } },
+    ])
+      expect(
+        failure(
+          await Effect.runPromise(Effect.result(acceptedRequestFor({ ...row, request: invalid }))),
+        ),
+      ).toMatchObject({ reason: "request_payload" });
+    for (const invalid of [
+      { ...request, header: { ...request.header, author_id: uuid(99) } },
+      {
+        ...request,
+        header: {
+          ...request.header,
+          origin: {
+            kind: "document",
+            doc_path: "wiki/other.md",
+            origin_scope: "vault",
+            anchor: "changed",
+            paragraph: "changed",
+            paragraph_index: 0,
+          },
+        },
+      },
+      { ...request, attempt: { ...request.attempt, parent_reply_id: uuid(99) } },
+      { ...request, attempt: { ...request.attempt, previous_attempt_id: uuid(99) } },
+    ])
+      expect(
+        failure(
+          await Effect.runPromise(Effect.result(acceptedRequestFor({ ...row, request: invalid }))),
+        ),
+      ).toMatchObject({ reason: "request_identity" });
   });
 });

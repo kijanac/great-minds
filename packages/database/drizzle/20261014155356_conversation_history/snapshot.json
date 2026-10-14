@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "0b88738c-caf3-4ca2-94ee-55a56ad4d59d",
+  "id": "7c5704fa-17d8-4e52-9ed0-f5a15cf8e880",
   "prevIds": [
-    "36781090-4db7-47c7-a8e7-57f67accefce"
+    "dd2c932d-21ff-4e03-8dc0-32f4c4ba0b57"
   ],
   "ddl": [
     {
@@ -1617,19 +1617,6 @@
       "generated": null,
       "identity": null,
       "name": "session_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "replies"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "kind",
       "entityType": "columns",
       "schema": "public",
       "table": "replies"
@@ -6006,13 +5993,6 @@
       "entityType": "checks",
       "schema": "public",
       "table": "file_ingest_files"
-    },
-    {
-      "value": "\"kind\" IN ('exchange', 'btw')",
-      "name": "replies_kind_check",
-      "entityType": "checks",
-      "schema": "public",
-      "table": "replies"
     },
     {
       "value": "\"status\" IN ('admitting', 'running', 'settling', 'completed', 'failed', 'stopped')",

@@ -240,22 +240,25 @@ describe("native reply workflow restart recovery", () => {
     60_000,
   );
 
-  it.each([false, true])(
-    "recovers saved admission with stop requested=%s without generating before confirmation",
-    (stopRequested) =>
-      withReply(false, async (f) => {
-        const first = f.start("save-admission");
-        await waitForOutput(first, "REPLY admission saved");
-        expect(await operation(f.replyId)).toMatchObject({ status: "admitting" });
+  it.each(["admitting", "stopped", "running"] as const)(
+    "recovers %s admission without generating before confirmation or losing undispatched work",
+    (state) =>
+      withReply(state === "running", async (f) => {
+        if (state !== "running") {
+          const first = f.start("save-admission");
+          await waitForOutput(first, "REPLY admission saved");
+          expect(await operation(f.replyId)).toMatchObject({ status: "admitting" });
+          if (state === "stopped") await f.stop();
+          await killRunner(first);
+        }
         expect(await f.markers()).toEqual([]);
         expect(historyOf(await f.history()).records).toHaveLength(2);
-        if (stopRequested) await f.stop();
-        await killRunner(first);
         const resumed = await waitForExit(f.start("resume-admission"));
         expect(resumed.code, resumed.output).toBe(0);
-        expect(await f.markers()).toEqual(stopRequested ? [] : ["model:resume-admission"]);
+        expect(await f.markers()).toEqual(state === "stopped" ? [] : ["model:resume-admission"]);
         expect(await operation(f.replyId)).toMatchObject({
-          status: stopRequested ? "stopped" : "completed",
+          status: state === "stopped" ? "stopped" : "completed",
+          answer: state === "stopped" ? "" : "Saved once.",
           settlement: null,
         });
         expect(historyOf(await f.history()).records).toHaveLength(3);

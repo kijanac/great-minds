@@ -65,6 +65,12 @@ export function prepareSessionExport(vaultId: Uuid, sessionId: SessionId, paper:
   );
 }
 
+export function readSessionMarkdown(vaultId: Uuid, sessionId: SessionId) {
+  return withApiErrors(
+    api.sessions.readSessionMarkdown({ params: { vault_id: vaultId, session_id: sessionId } }),
+  );
+}
+
 export function promoteExchange(
   sessionId: SessionId,
   exchangeId: Uuid,
