@@ -42,6 +42,8 @@ export type AppConfigShape = {
   readonly goldensClock: Option.Option<Date>;
   readonly embeddingModel: string;
   readonly corsOrigins: readonly string[];
+  readonly publicWebUrl: URL;
+  readonly typstBinary: string;
   readonly suppressAuth: boolean;
   readonly allowPrivateUrlFetch: boolean;
   readonly serverHost: string;
@@ -158,6 +160,10 @@ const appConfig = Config.all({
         .filter((origin) => origin.length > 0),
     ),
   ),
+  publicWebUrl: Config.url("PUBLIC_WEB_URL").pipe(
+    Config.withDefault(new URL("http://localhost:5173")),
+  ),
+  typstBinary: nonEmptyString("TYPST_BINARY").pipe(Config.withDefault("typst")),
   suppressAuth: Config.boolean("SUPPRESS_AUTH").pipe(Config.withDefault(false)),
   allowPrivateUrlFetch: Config.boolean("ALLOW_PRIVATE_URL_FETCH").pipe(Config.withDefault(false)),
   serverHost: nonEmptyString("HOST").pipe(Config.withDefault("0.0.0.0")),
@@ -171,6 +177,15 @@ const appConfig = Config.all({
             new SchemaIssue.InvalidValue({
               message: "WEBAUTHN_ORIGINS must contain at least one origin",
             }),
+          ),
+        ),
+      );
+    }
+    if (config.publicWebUrl.protocol !== "http:" && config.publicWebUrl.protocol !== "https:") {
+      return Effect.fail(
+        new Config.ConfigError(
+          new Schema.SchemaError(
+            new SchemaIssue.InvalidValue({ message: "PUBLIC_WEB_URL must use HTTP or HTTPS" }),
           ),
         ),
       );

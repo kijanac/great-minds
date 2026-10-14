@@ -28,6 +28,8 @@ projects:
                 value: /data
               - key: CORS_ORIGINS
                 value: https://great-minds-web.onrender.com,https://greatmind.dev,https://www.greatmind.dev
+              - key: PUBLIC_WEB_URL
+                value: https://greatmind.dev
               - key: WEBAUTHN_RP_ID
                 value: greatmind.dev
               - key: WEBAUTHN_RP_NAME

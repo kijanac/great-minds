@@ -77,6 +77,8 @@ const config: AppConfigShape = {
   goldensClock: Option.none(),
   embeddingModel: "test",
   corsOrigins: [],
+  publicWebUrl: new URL("http://localhost:5173"),
+  typstBinary: "typst",
   suppressAuth: false,
   allowPrivateUrlFetch: false,
   serverHost: "127.0.0.1",

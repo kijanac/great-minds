@@ -26,14 +26,22 @@
     "drizzle-orm": "1.0.0-rc.5-169397b",
     "effect": "4.0.0-rc.112",
     "fs-native-extensions": "1.5.1",
+    "github-slugger": "2.0.0",
     "ipaddr.js": "2.5.0",
     "jose": "6.2.3",
     "jsdom": "29.1.1",
+    "mdast-util-to-string": "4.0.0",
     "officeparser": "5.2.2",
+    "remark-gfm": "4.0.1",
+    "remark-parse": "11.0.0",
+    "remark-stringify": "11.0.0",
     "undici": "8.10.0",
+    "unified": "11.0.5",
+    "unist-util-visit": "5.1.0",
     "yaml": "2.9.0"
   },
   "devDependencies": {
-    "@types/jsdom": "28.0.3"
+    "@types/jsdom": "28.0.3",
+    "@types/mdast": "4.0.4"
   }
 }

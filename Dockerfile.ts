@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1
 
+FROM ghcr.io/typst/typst:0.15.1@sha256:032e292249bcd378480cc7c142cfa324b63ef8aadeb88d7e7230320c4c9c422f AS typst
+
 FROM node:24-slim AS workspace
 
 ENV CI=true
@@ -22,6 +24,7 @@ RUN pnpm install --filter @great-minds/server... --prod --frozen-lockfile --igno
 COPY packages/database/ packages/database/
 COPY packages/domain/ packages/domain/
 COPY packages/server/ packages/server/
+RUN node --experimental-strip-types packages/server/scripts/install-publication-fonts.ts
 
 FROM workspace AS deploy
 
@@ -41,6 +44,7 @@ ENV NODE_ENV=production \
     PORT=8787
 
 WORKDIR /app
+COPY --from=typst /bin/typst /usr/local/bin/typst
 COPY --from=deploy --chown=app:app /workspace/ ./
 
 USER app

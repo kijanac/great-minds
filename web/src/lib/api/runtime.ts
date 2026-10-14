@@ -131,7 +131,10 @@ export const makeApi = (options: ApiOptions) => {
     return abortAware(Stream.toAsyncIterableWith(withStreamErrors(halted), context), signal);
   };
 
-  return { api, http, externalHttp, run, stream };
+  const fork = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof services>>) =>
+    runtime.runFork(effect);
+
+  return { api, http, externalHttp, run, fork, stream };
 };
 
 export type Api = ReturnType<typeof makeApi>["api"];

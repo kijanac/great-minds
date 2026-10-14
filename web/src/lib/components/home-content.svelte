@@ -2,11 +2,9 @@
   import { goto, replaceState } from "$app/navigation";
   import type { SessionId, SessionResponse } from "@great-minds/domain";
   import Download from "@lucide/svelte/icons/download";
-  import FileText from "@lucide/svelte/icons/file-text";
   import Home from "@lucide/svelte/icons/home";
-  import Printer from "@lucide/svelte/icons/printer";
   import Share2 from "@lucide/svelte/icons/share-2";
-  import { onDestroy, untrack } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { crossfade, fade } from "svelte/transition";
 
@@ -18,9 +16,9 @@
   import VaultSwitcher from "$lib/components/vault-switcher.svelte";
   import SearchBar from "$lib/components/search-bar.svelte";
   import SessionThread from "$lib/components/session-thread.svelte";
+  import SessionExport from "$lib/components/session-export.svelte";
   import ShareDialog from "$lib/components/share-dialog.svelte";
   import { Button } from "$lib/components/ui/button";
-  import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
   import { useActiveJob } from "$lib/hooks/use-active-job.svelte";
   import { useHealthReport } from "$lib/hooks/use-health-report.svelte";
   import { createLinkInterceptor } from "$lib/hooks/use-link-interceptor";
@@ -28,8 +26,7 @@
   import { useSessions } from "$lib/hooks/use-sessions.svelte";
   import { useVaultCounts } from "$lib/hooks/use-vault-counts.svelte";
   import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
-  import { MENU_ITEM_CLASS, POPOVER_SURFACE_CLASS } from "$lib/control-styles";
-  import { downloadSessionMarkdown } from "$lib/session-markdown";
+  import { useSessionExport } from "$lib/hooks/use-session-export.svelte";
   import { Session } from "$lib/session.svelte";
   import type { SourceRef } from "$lib/types";
 
@@ -63,6 +60,23 @@
     onSessionCreated: handleSessionCreated,
   });
   onDestroy(session.destroy);
+  const publication = useSessionExport(() => session.sessionId);
+  let exportButton = $state<HTMLButtonElement | HTMLAnchorElement | null>(null);
+  async function closeExport() {
+    publication.close();
+    await tick();
+    exportButton?.focus();
+  }
+  const exportBusy = $derived(
+    session.phase !== "done" ||
+      session.thread.some((exchange) =>
+        exchange.btws.some(
+          (btw) =>
+            btw.activity !== null ||
+            btw.exchanges.some((turn) => turn.status === "running"),
+        ),
+      ),
+  );
   let query = $state(initial.initialQuery ?? session.thread[0]?.query ?? "");
 
   const [send, receive] = crossfade({
@@ -128,7 +142,7 @@
     {/if}
   {/snippet}
 
-  <div class="print-root relative flex h-screen overflow-hidden">
+  <div class="relative flex h-screen overflow-hidden">
     <div class="relative flex min-w-0 flex-1 flex-col overflow-hidden">
       {#if isActive}
         <div
@@ -169,133 +183,119 @@
                 {/snippet}
               </ShareDialog>
             {/if}
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger>
-                {#snippet child({ props })}
-                  <Button
-                    {...props}
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="download session"
-                    title="Download session"
-                    class="shrink-0 text-muted-foreground hover:bg-transparent hover:text-gold"
-                  >
-                    <Download size={14} />
-                  </Button>
-                {/snippet}
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Content
-                side="bottom"
-                align="end"
-                sideOffset={8}
-                class={`w-auto min-w-0 p-1 ${POPOVER_SURFACE_CLASS}`}
-              >
-                <DropdownMenu.Item
-                  onclick={() => window.print()}
-                  class={`${MENU_ITEM_CLASS} cursor-pointer gap-2`}
-                >
-                  <Printer class="size-3.5" />
-                  download as PDF
-                </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  disabled={session.sessionId === null}
-                  onclick={() => {
-                    if (session.sessionId) {
-                      void downloadSessionMarkdown(
-                        session.sessionId,
-                        session.thread,
-                      );
-                    }
-                  }}
-                  class={`${MENU_ITEM_CLASS} cursor-pointer gap-2`}
-                >
-                  <FileText class="size-3.5" />
-                  export as markdown
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Root>
+            <Button
+              variant="ghost"
+              disabled={session.sessionId === null ||
+                exportBusy ||
+                publication.pending}
+              title={exportBusy
+                ? "Available when the conversation and notes finish saving"
+                : "Export conversation"}
+              aria-label="Export conversation"
+              bind:ref={exportButton}
+              onclick={() => {
+                selectedCard = null;
+                publication.prepare();
+              }}
+              class="min-h-11 shrink-0 rounded-sm font-mono text-xs text-muted-foreground hover:bg-transparent hover:text-gold"
+            >
+              <Download size={14} /> Export
+            </Button>
           </div>
         </div>
       {/if}
 
       <div class="relative min-h-0 flex-1 overflow-hidden">
-        {#if !isActive}
-          <div
-            class="absolute inset-0 flex flex-col items-center justify-center px-4 pb-12 md:px-10"
-            out:fade={{ duration: 150 }}
-          >
-            <div class="mb-6 flex items-center gap-1.5">
-              {#if currentVault}
-                <Button
-                  variant="outline"
-                  onclick={() => void goto("/library")}
-                  class="h-auto gap-2.5 rounded-sm border-ink-border px-4 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-warm-faint hover:border-gold-dim hover:text-warm"
-                >
-                  {currentVault.name}
-                  {#if counts.articleTotal !== null && counts.sourceTotal !== null}
-                    <span class="text-warm-ghost">
-                      {counts.articleTotal} article{counts.articleTotal === 1
-                        ? ""
-                        : "s"} · {counts.sourceTotal} source{counts.sourceTotal ===
-                      1
-                        ? ""
-                        : "s"} →
-                    </span>
-                  {/if}
-                </Button>
-                <HealthIndicator
-                  status={health.status}
-                  count={health.count}
-                  onOpen={() => void goto("/health")}
-                />
-              {/if}
-              <VaultSwitcher />
-            </div>
-
-            <div
-              class="flex w-full max-w-[640px] items-center gap-3"
-              out:send={{ key: "search-bar" }}
-            >
-              <div class="min-w-0 flex-1">
-                <SearchBar
-                  bind:query
-                  phase={session.phase}
-                  onSubmit={submit}
-                  recentSessions={sessions.data?.items ?? []}
-                  sessionsLoading={sessions.isLoading}
-                  submissionFailed={session.submission.status === "failed"}
-                  onQueryChange={session.clearSubmissionFailure}
-                  onSessionClick={(id) => void goto(`/sessions/${id}`)}
-                  onViewAllSessions={() => void goto("/sessions")}
-                />
-              </div>
-            </div>
-
-            {#if currentVault?.owner_id === auth.userId}
-              <div
-                class="flex min-h-[360px] w-full max-w-[800px] flex-col items-center justify-start pt-10"
-              >
-                <IngestionFlow
-                  hasActivePipeline={activeJob.data ?? false}
-                  vaultName={currentVault.name}
-                />
-              </div>
-            {/if}
-          </div>
-        {:else}
-          <div
-            class="flex h-full min-h-0 flex-col"
-            in:fade={{ duration: 200, delay: 100 }}
-          >
-            <SessionThread
-              {session}
-              activeCard={selectedCard?.label ?? null}
-              panelDocked={!!selectedCard}
-              onCardClick={toggleCard}
-              onLinkClick={handleLinkClick}
-            />
-          </div>
+        {#if publication.open}
+          <SessionExport
+            pending={publication.pending}
+            error={publication.error}
+            prepared={publication.prepared}
+            paper={publication.paper}
+            onPaperChange={publication.changePaper}
+            onPrepare={publication.prepare}
+            onClose={() => void closeExport()}
+          />
         {/if}
+        <div class="h-full" hidden={publication.open}>
+          {#if !isActive}
+            <div
+              class="absolute inset-0 flex flex-col items-center justify-center px-4 pb-12 md:px-10"
+              out:fade={{ duration: 150 }}
+            >
+              <div class="mb-6 flex items-center gap-1.5">
+                {#if currentVault}
+                  <Button
+                    variant="outline"
+                    onclick={() => void goto("/library")}
+                    class="h-auto gap-2.5 rounded-sm border-ink-border px-4 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-warm-faint hover:border-gold-dim hover:text-warm"
+                  >
+                    {currentVault.name}
+                    {#if counts.articleTotal !== null && counts.sourceTotal !== null}
+                      <span class="text-warm-ghost">
+                        {counts.articleTotal} article{counts.articleTotal === 1
+                          ? ""
+                          : "s"} · {counts.sourceTotal} source{counts.sourceTotal ===
+                        1
+                          ? ""
+                          : "s"} →
+                      </span>
+                    {/if}
+                  </Button>
+                  <HealthIndicator
+                    status={health.status}
+                    count={health.count}
+                    onOpen={() => void goto("/health")}
+                  />
+                {/if}
+                <VaultSwitcher />
+              </div>
+
+              <div
+                class="flex w-full max-w-[640px] items-center gap-3"
+                out:send={{ key: "search-bar" }}
+              >
+                <div class="min-w-0 flex-1">
+                  <SearchBar
+                    bind:query
+                    phase={session.phase}
+                    onSubmit={submit}
+                    recentSessions={sessions.data?.items ?? []}
+                    sessionsLoading={sessions.isLoading}
+                    submissionFailed={session.submission.status === "failed"}
+                    onQueryChange={session.clearSubmissionFailure}
+                    onSessionClick={(id) => void goto(`/sessions/${id}`)}
+                    onViewAllSessions={() => void goto("/sessions")}
+                  />
+                </div>
+              </div>
+
+              {#if currentVault?.owner_id === auth.userId}
+                <div
+                  class="flex min-h-[360px] w-full max-w-[800px] flex-col items-center justify-start pt-10"
+                >
+                  <IngestionFlow
+                    hasActivePipeline={activeJob.data ?? false}
+                    vaultName={currentVault.name}
+                  />
+                </div>
+              {/if}
+            </div>
+          {:else}
+            <div
+              class="flex h-full min-h-0 flex-col"
+              in:fade={{ duration: 200, delay: 100 }}
+            >
+              <SessionThread
+                {session}
+                activeCard={selectedCard?.label ?? null}
+                panelDocked={!!selectedCard}
+                onCardClick={toggleCard}
+                onLinkClick={handleLinkClick}
+              />
+            </div>
+          {/if}
+        </div>
       </div>
     </div>
   </div>

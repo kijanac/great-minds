@@ -59,9 +59,9 @@ These notes collect a thread of design work around reducing Great Minds' exposur
   - Integrity checks, projection watermarks, manifest commits, compile snapshots, sessions, and encrypted sync preparation.
 
 - [Session publication and export rewrite](./session-publication-and-export-rewrite-proposal.md)
-  - Proposed replacement of live-app printing with an immutable conversation snapshot, shared publication compiler, and isolated document view.
-  - Revised Stage 2 includes canonical terminal history, content metadata, unified settlement, and verified data/API migration; breaking changes are permitted where they simplify the result.
-  - Staged citation, typesetting, PDF-generation, testing, and deletion work, with explicit disclosure policy for Markdown/public-share consumers.
+  - Historical staging rationale and synthetic Chromium/Typst investigations; the private Typst export flow is now implemented locally.
+  - [Current publication guide](../session-publication.md): one prepared PDF/Markdown copy, scoped process and browser resources, provisioning, verification, and known output limitations.
+  - Reuses native bounded readers rather than an atomic snapshot service; public sharing and promotion remain unchanged. No production migration or deployment is authorized.
 
 - [Conversation history: Stage 2A contract and migration](./conversation-history-contract-and-migration.md)
   - Concrete implementation draft against `main` at `fe332ba`: versioned JSONL records, app-state separation, per-attempt provenance, admission/settlement protocol, and shared reads.

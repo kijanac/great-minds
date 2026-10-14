@@ -2055,14 +2055,43 @@ Errors: `403 Forbidden`, `404 NotFound`, `503 ServiceUnavailable` (unavailable o
 
 Auth: required.
 
-Renders the caller's private session as Markdown from canonical history, not a `.md` sidecar. Running, stopped, and failed responses are labelled explicitly. Child conversations are not automatically included; bearer sharing uses a narrower completed/stopped selection.
+Renders the caller's saved root conversation and all directly attached saved BTW threads, including continued threads, from canonical history rather than `.md` sidecars. Includes recorded passage context and prose citations, not drafts, Thinking/source-activity panels, retained model context, or recursively linked conversations. Saved stopped/failed partial prose is included without operational badges. Included content must have finished generating and saving; an unreadable required child blocks the export. Public sharing and promotion retain their separate, narrower policies.
 
 Path parameters: `vault_id` (`Uuid`), `session_id` (`SessionId`).
 
-Response: `200` with content type `text/markdown` and the rendered session
-as the body.
+Response: `200` with content type `text/markdown` and the rendered conversation as the body. Uses `Cache-Control: private, no-store` and `X-Content-Type-Options: nosniff`. This independent read does not invoke the PDF renderer; use the preparation endpoint below when Markdown and PDF must come from exactly the same prepared content.
 
-Errors: `403 Forbidden`, `404 NotFound`, `503 ServiceUnavailable`, `422 Validation`.
+Errors: `403 Forbidden`, `404 NotFound`, `409 Conflict` (included content still generating/saving), `503 ServiceUnavailable` (required history unavailable), `422 Validation`.
+
+#### POST /v1/vaults/:vault_id/sessions/:session_id/export
+
+Auth: required; caller must own the conversation and remain a vault member.
+
+Prepares one fixed reading copy using the same private inclusion/readiness policy as Markdown above. Root and direct-child reads are separate authorized observations, not an atomic database/object-store snapshot. Does not create a share, promote content, or persist an export job/artifact.
+
+Path parameters: `vault_id` (`Uuid`), `session_id` (`SessionId`).
+
+Request body (`SessionExportRequest`):
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `paper` | `"a4"` \| `"us-letter"` | yes | PDF paper size. |
+
+Response: `200` JSON (`SessionExport`):
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `title` | string | First root question, or `"Conversation"`. |
+| `prepared_at` | ISO 8601 string | Preparation time, not source-version provenance. |
+| `paper` | `"a4"` \| `"us-letter"` | Requested paper size. |
+| `markdown` | string | Markdown of this prepared content. |
+| `pdf` | base64 string | PDF bytes of the same prepared content; standard base64, not base64url. |
+
+The response is not `application/pdf`. Decode `pdf` for preview/download and reuse those bytes rather than calling the endpoint again. Uses `Cache-Control: private, no-store` and `X-Content-Type-Options: nosniff`. Cancellation interrupts rendering; clients must not automatically retry an interrupted preparation. An explicit new request prepares current saved content again.
+
+Private source links require access to the original vault. Images are linked descriptions in PDF, not fetched assets. See [publication setup and limitations](docs/session-publication.md).
+
+Errors: `403 Forbidden`, `404 NotFound`, `409 Conflict` (included content still generating/saving), `503 ServiceUnavailable` (required history unavailable, renderer busy, or PDF preparation failed), `422 Validation`. Ordinary authentication failures remain `401 Unauthorized`.
 
 #### POST /v1/vaults/:vault_id/sessions/:session_id/continue
 
@@ -2664,6 +2693,7 @@ Every error body has the same shape:
 | GET | `/v1/vaults/:vault_id/sessions/by-origin` | required | sessions |
 | GET | `/v1/vaults/:vault_id/sessions/:session_id` | required | sessions |
 | GET | `/v1/vaults/:vault_id/sessions/:session_id/markdown` | required | sessions |
+| POST | `/v1/vaults/:vault_id/sessions/:session_id/export` | required | sessions |
 | POST | `/v1/vaults/:vault_id/sessions/:session_id/continue` | required | sessions |
 | POST | `/v1/vaults/:vault_id/replies` | required | replies |
 | POST | `/v1/vaults/:vault_id/replies/:reply_id/retry` | required | replies |

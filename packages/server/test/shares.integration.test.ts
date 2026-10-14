@@ -137,6 +137,8 @@ const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   goldensClock: Option.none(),
   embeddingModel: "qwen/qwen3-embedding-8b",
   corsOrigins: ["http://localhost:5173"],
+  publicWebUrl: new URL("http://localhost:5173"),
+  typstBinary: "typst",
   suppressAuth: false,
   allowPrivateUrlFetch: true,
   serverHost: "127.0.0.1",

@@ -43,6 +43,8 @@ import {
   ReplyWorkflowLive,
 } from "./replies.ts";
 import { SessionsService, SessionsServiceLive } from "./sessions.ts";
+import { PdfRenderer, PdfRendererLive } from "./publication/pdf.ts";
+import { SessionExportsService, SessionExportsServiceLive } from "./publication/service.ts";
 import { SharesService, SharesServiceLive } from "./shares.ts";
 import {
   SourceDeletionReconcilerLoopLive,
@@ -101,6 +103,8 @@ export type AppLayerServices =
   | CostsService
   | DocumentsService
   | SessionsService
+  | SessionExportsService
+  | PdfRenderer
   | SharesService
   | LanguageModel
   | EmbeddingsService
@@ -122,6 +126,7 @@ export type AppLayerServices =
 export type AppLayerOverrides = {
   readonly config?: Layer.Layer<AppConfig>;
   readonly histories?: Layer.Layer<HistoryStore>;
+  readonly pdfRenderer?: Layer.Layer<PdfRenderer>;
   readonly clock?: Layer.Layer<ClockService>;
   readonly mailer?: Layer.Layer<Mailer>;
   readonly logger?: Layer.Layer<StructuredLogger>;
@@ -202,6 +207,13 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     Layer.provideMerge(IngestLive),
     Layer.provideMerge(ProposalsLive),
     Layer.provideMerge(SourceDocumentsLive),
+    Layer.provideMerge(BaseLive),
+  );
+  const ExportsLive = SessionExportsServiceLive.pipe(
+    Layer.provideMerge(
+      (overrides.pdfRenderer ?? PdfRendererLive).pipe(Layer.provideMerge(BaseLive)),
+    ),
+    Layer.provideMerge(SessionsLive),
     Layer.provideMerge(BaseLive),
   );
   const QueryLive = QueryServiceLive.pipe(
@@ -301,6 +313,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
       Layer.provideMerge(BaseLive),
     ),
     SessionsLive,
+    ExportsLive,
     SharesLive,
     QueryLive,
     RepliesLive,

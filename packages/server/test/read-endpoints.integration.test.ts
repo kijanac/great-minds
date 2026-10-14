@@ -19,9 +19,9 @@ import {
   vaults,
   wikiArticles,
 } from "@great-minds/database";
-import { SessionId, Uuid } from "@great-minds/domain";
+import { SessionExport, SessionId, Uuid } from "@great-minds/domain";
 import { and, eq, sql } from "drizzle-orm";
-import { Effect, Layer, Option, Redacted, Schema } from "effect";
+import { Deferred, Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { makeAppLayer, type AppLayerServices } from "../src/app-layer.ts";
@@ -34,6 +34,7 @@ import {
   type HistoryAddress,
 } from "../src/conversation-history/store.ts";
 import { RandomBytesService } from "../src/random.ts";
+import { PdfRenderer } from "../src/publication/pdf.ts";
 import { openLocalConditionalObjectStore } from "../src/storage/local-conditional-object-store.ts";
 import { VaultAccessService } from "../src/vaults.ts";
 import { command } from "./fixtures/reply-admission.ts";
@@ -103,6 +104,9 @@ const aliceApiKey = "gm_alice_read_key";
 type TestServices = AppLayerServices;
 
 let afterHistoryRead: ((address: HistoryAddress) => Effect.Effect<void>) | undefined;
+let pdfRenders = 0;
+let pdfWait: { started: Deferred.Deferred<void>; interrupted: Deferred.Deferred<void> } | null =
+  null;
 const readHistoriesLive = (directory: string) =>
   Layer.effect(
     HistoryStore,
@@ -208,6 +212,8 @@ const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   goldensClock: Option.none(),
   embeddingModel: "qwen/qwen3-embedding-8b",
   corsOrigins: ["http://localhost:5173"],
+  publicWebUrl: new URL("http://localhost:5173"),
+  typstBinary: "typst",
   suppressAuth: false,
   allowPrivateUrlFetch: false,
   serverHost: "127.0.0.1",
@@ -221,6 +227,20 @@ const buildTestState = async () => {
   const appLayer = makeAppLayer({
     config: configLayer,
     histories: readHistoriesLive(storageRoot),
+    pdfRenderer: Layer.succeed(PdfRenderer, {
+      render: () =>
+        Effect.gen(function* () {
+          pdfRenders += 1;
+          const waiting = pdfWait;
+          if (waiting !== null) {
+            yield* Deferred.succeed(waiting.started, undefined);
+            yield* Effect.never.pipe(
+              Effect.onInterrupt(() => Deferred.succeed(waiting.interrupted, undefined)),
+            );
+          }
+          return new TextEncoder().encode("%PDF-controlled-renderer");
+        }),
+    }),
     clock: clock.layer,
     mailer: makeTestMailer().layer,
     logger: StructuredLoggerLive,
@@ -970,7 +990,13 @@ const seedFixtures = async (): Promise<Fixture> => {
   };
 };
 
-const rawApi = async (method: string, path: string, bearer?: string, body?: unknown) => {
+const rawApi = async (
+  method: string,
+  path: string,
+  bearer?: string,
+  body?: unknown,
+  signal?: AbortSignal,
+) => {
   const headers = new Headers();
   if (bearer !== undefined) {
     headers.set("authorization", `Bearer ${bearer}`);
@@ -981,6 +1007,7 @@ const rawApi = async (method: string, path: string, bearer?: string, body?: unkn
   return fetch(`${currentState().started.url}/v1${path}`, {
     method,
     headers,
+    signal,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 };
@@ -1038,6 +1065,8 @@ describe("read-only HTTP integration", () => {
 
   beforeEach(async () => {
     afterHistoryRead = undefined;
+    pdfRenders = 0;
+    pdfWait = null;
     currentState().clock.set(initialTime);
     await resetDatabase();
     await resetStorage();
@@ -2397,6 +2426,60 @@ describe("read-only HTTP integration", () => {
       `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}/markdown`,
     );
     expect(unauthenticated.status).toBe(401);
+  });
+
+  it("prepares one private export with attached notes and refuses unauthorized, unreadable, or active input", async () => {
+    const { aliceToken, bobToken, malloryToken } = currentFixture();
+    const path = `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`;
+    const response = await rawApi("POST", `${path}/export`, aliceToken, { paper: "us-letter" });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    const prepared = Schema.decodeUnknownSync(SessionExport)(await response.json());
+    expect(prepared.paper).toBe("us-letter");
+    expect(new TextDecoder().decode(prepared.pdf)).toBe("%PDF-controlled-renderer");
+    expect(prepared.markdown).toContain("It gives the group something specific to test.");
+    expect(prepared.markdown).toContain("Keep claims proportional to the evidence.");
+    expect(prepared.markdown).not.toContain("Raw source grounds the discussion.");
+    const markdown = await rawApi("GET", `${path}/markdown`, aliceToken);
+    expect(await markdown.text()).toBe(prepared.markdown);
+    const waiting = {
+      started: Effect.runSync(Deferred.make<void>()),
+      interrupted: Effect.runSync(Deferred.make<void>()),
+    };
+    pdfWait = waiting;
+    const abort = new AbortController();
+    const cancelled = expect(
+      rawApi("POST", `${path}/export`, aliceToken, { paper: "a4" }, abort.signal),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    await Effect.runPromise(Deferred.await(waiting.started));
+    abort.abort();
+    await cancelled;
+    await Effect.runPromise(Deferred.await(waiting.interrupted));
+    pdfWait = null;
+    for (const [token, status] of [
+      [undefined, 401],
+      [bobToken, 404],
+      [malloryToken, 403],
+    ] as const) {
+      expect((await api("POST", `${path}/export`, token, { paper: "a4" })).status).toBe(status);
+    }
+    expect((await api("POST", `${path}/export`, aliceToken, { paper: "unknown" })).status).toBe(
+      422,
+    );
+    const child = join(
+      currentState().storageRoot,
+      "vaults",
+      id.vaultAlpha,
+      "sessions",
+      `${id.sessionAliceBtw}.jsonl`,
+    );
+    const saved = await readFile(child);
+    await writeFile(child, "{invalid}\n");
+    expect((await api("POST", `${path}/export`, aliceToken, { paper: "a4" })).status).toBe(503);
+    await writeFile(child, saved);
+    await acceptReadReply();
+    expect((await api("POST", `${path}/export`, aliceToken, { paper: "a4" })).status).toBe(409);
+    expect(pdfRenders).toBe(2);
   });
 
   it("lists raw sources with search, source-type facets, nullability, and authz", async () => {

@@ -1,5 +1,5 @@
-import { Forbidden, Unauthorized, Uuid } from "@great-minds/domain";
-import { Effect, Layer, Stream } from "effect";
+import { Forbidden, SessionId, Unauthorized, Uuid } from "@great-minds/domain";
+import { Effect, Fiber, Layer, Stream } from "effect";
 import { HttpClientRequest } from "effect/unstable/http";
 import { describe, expect, it } from "vitest";
 
@@ -74,6 +74,38 @@ const tokenPair = (suffix: string) => ({
 const unauthorized = () => json(401, { _tag: "Unauthorized", detail: "Token expired" });
 
 describe("makeApi", () => {
+  it("aborts the export HTTP request when its owning fiber is interrupted", async () => {
+    const started = Promise.withResolvers<Request>();
+    let aborts = 0;
+    const fetchImpl: typeof fetch = (input, init) => {
+      const request = new Request(input, init);
+      started.resolve(request);
+      return new Promise<Response>((_, reject) => {
+        request.signal.addEventListener(
+          "abort",
+          () => {
+            aborts += 1;
+            reject(new DOMException("Aborted", "AbortError"));
+          },
+          { once: true },
+        );
+      });
+    };
+    const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
+    const { api, fork } = makeApi({ baseUrl, fetch: fetchImpl, tokens: tokens.layer });
+    const owner = fork(
+      api.sessions.prepareSessionExport({
+        params: { vault_id: vaultId, session_id: SessionId.make("saved") },
+        payload: { paper: "a4" },
+      }),
+    );
+    const request = await started.promise;
+    expect(await request.json()).toEqual({ paper: "a4" });
+    await Effect.runPromise(Fiber.interrupt(owner));
+    expect(request.signal.aborted).toBe(true);
+    expect(aborts).toBe(1);
+  });
+
   it("keeps API, refresh, stream, and upload requests within their CORS header contracts", async () => {
     const sent: Request[] = [];
     const fetchImpl: typeof fetch = async (input, init) => {

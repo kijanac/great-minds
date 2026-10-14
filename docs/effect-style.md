@@ -196,6 +196,12 @@ Decoding happens at HTTP handlers and storage reads. Core functions take refined
 
 `Effect.runPromise` / `Effect.runPromiseExit` appear only at process entrypoints, the test harness, and the frontend query seam. A grep for `runPromise` returns a short, stable list.
 
+### Deferred review: frontend Effect/Promise consistency
+
+Existing frontend API helpers execute the generated Effect client through `web/src/lib/api/runtime.ts` and return Promises. The new publication flow is intended to retain Effect-based orchestration until the frontend execution boundary. This introduces a potential inconsistency to revisit after the publication slice, not an established defect in every Promise-returning helper.
+
+Review where execution should occur across API helpers, composables, TanStack Query, and Svelte lifecycles, including cancellation, typed failures, and resource cleanup. Decide whether the different shapes are deliberate interoperability boundaries or should converge on one convention. Native Promise adapters remain legitimate; avoid Effect → Promise → Effect round trips merely to match syntax. A broader frontend API migration is deferred, not part of the publication implementation.
+
 ## Implicit semantics, written down
 
 Effect makes these configurable; the code states them.

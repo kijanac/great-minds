@@ -867,6 +867,21 @@ export const SessionMarkdown = Schema.String.pipe(
 );
 export type SessionMarkdown = typeof SessionMarkdown.Type;
 
+export const PublicationPaper = Schema.Literals(["a4", "us-letter"]);
+export type PublicationPaper = typeof PublicationPaper.Type;
+
+export const SessionExportRequest = Schema.Struct({ paper: PublicationPaper });
+export type SessionExportRequest = typeof SessionExportRequest.Type;
+
+export const SessionExport = Schema.Struct({
+  title: Schema.String,
+  prepared_at: IsoDateTime,
+  paper: PublicationPaper,
+  markdown: Schema.String,
+  pdf: Schema.Uint8ArrayFromBase64,
+});
+export type SessionExport = typeof SessionExport.Type;
+
 export const PromoteExchangeResponse = Schema.Struct({
   mode: Schema.Literals(["ingested", "proposed"] as const),
   path: Schema.String,
@@ -1878,7 +1893,13 @@ export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
       session_id: SessionId,
     },
     success: SessionMarkdown,
-    error: [...ForbiddenNotFoundValidationErrors, ServiceUnavailableResponse],
+    error: [...ForbiddenNotFoundValidationErrors, ConflictResponse, ServiceUnavailableResponse],
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("prepareSessionExport", "/vaults/:vault_id/sessions/:session_id/export", {
+    params: { vault_id: Uuid, session_id: SessionId },
+    payload: SessionExportRequest,
+    success: SessionExport,
+    error: [...ForbiddenNotFoundValidationErrors, ConflictResponse, ServiceUnavailableResponse],
   }).middleware(AuthMiddleware),
 );
 

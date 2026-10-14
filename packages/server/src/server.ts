@@ -44,6 +44,7 @@ import { ProposalsService } from "./proposals.ts";
 import { QueryService } from "./query.ts";
 import { RepliesService } from "./replies.ts";
 import { SessionsService } from "./sessions.ts";
+import { SessionExportsService } from "./publication/service.ts";
 import { SharesService } from "./shares.ts";
 import { parseCanonicalSourceUrl } from "./source-identity.ts";
 import { UrlIngestService } from "./url-ingest.ts";
@@ -731,7 +732,11 @@ const SessionsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "session
       Effect.gen(function* () {
         const sessions = yield* SessionsService;
         const current = yield* CurrentAuth;
-        return yield* sessions.continueAsSession(current.user_id, params.vault_id, params.session_id);
+        return yield* sessions.continueAsSession(
+          current.user_id,
+          params.vault_id,
+          params.session_id,
+        );
       }),
     )
     .handle("promoteSessionExchange", ({ params }) =>
@@ -773,9 +778,16 @@ const SessionsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "session
     )
     .handle("readSessionMarkdown", ({ params }) =>
       Effect.gen(function* () {
-        const sessions = yield* SessionsService;
+        const exports = yield* SessionExportsService;
         const current = yield* CurrentAuth;
-        return yield* sessions.readMarkdown(current.user_id, params.vault_id, params.session_id);
+        return yield* exports.readMarkdown(current.user_id, params.vault_id, params.session_id);
+      }),
+    )
+    .handle("prepareSessionExport", ({ params, payload }) =>
+      Effect.gen(function* () {
+        const exports = yield* SessionExportsService;
+        const current = yield* CurrentAuth;
+        return yield* exports.prepare(current.user_id, params.vault_id, params.session_id, payload);
       }),
     ),
 );
@@ -866,6 +878,15 @@ const StreamHeadersLive = HttpRouter.middleware(
       const request = yield* HttpServerRequest.HttpServerRequest;
       const response = yield* effect;
       const pathname = new URL(request.url, "http://localhost").pathname;
+      if (
+        pathname.startsWith("/v1/vaults/") &&
+        /\/sessions\/[^/]+\/(export|markdown)$/u.test(pathname)
+      ) {
+        return HttpServerResponse.setHeaders(response, {
+          "Cache-Control": "private, no-store",
+          "X-Content-Type-Options": "nosniff",
+        });
+      }
       if (
         response.status === 200 &&
         pathname.startsWith("/v1/vaults/") &&

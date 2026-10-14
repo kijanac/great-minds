@@ -169,7 +169,6 @@
 >
   <div
     bind:this={content}
-    id="session-print"
     class="mx-auto max-w-[740px] px-4 pt-7 pb-5 md:px-10"
   >
     {#if originHref}
@@ -206,7 +205,7 @@
           <ThreadTurn query={exchange.query}>
             {#snippet actions()}
               {#if session.sessionId && exchange.answer && (exchange.status === "completed" || exchange.status === "stopped")}
-                <span class="print:hidden">
+                <span>
                   <PromoteButton
                     sessionId={session.sessionId}
                     exchangeId={exchange.id}
@@ -215,7 +214,7 @@
               {/if}
             {/snippet}
 
-            <div class="print:hidden">
+            <div>
               <ThinkingSection
                 blocks={exchange.thinking}
                 streaming={exchange.status === "running" &&

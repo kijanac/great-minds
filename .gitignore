@@ -25,3 +25,4 @@ marxism_corpus/
 
 # Local tool caches
 .pnpm-store/
+/packages/server/assets/publication-fonts/

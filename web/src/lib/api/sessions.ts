@@ -2,6 +2,7 @@ import {
   type OriginScope,
   type OriginSessionDetail,
   type PromoteExchangeResponse,
+  type PublicationPaper,
   type SessionEvent,
   type SessionOrigin,
   type SessionOverview,
@@ -13,6 +14,7 @@ import {
 
 import { api, run } from "./app";
 import { selectedVault } from "./selected-vault";
+import { withApiErrors } from "./runtime";
 
 export type { OriginScope, SessionEvent, SessionOrigin };
 export type SessionSummary = SessionOverview;
@@ -54,10 +56,11 @@ export function continueAsSession(sessionId: SessionId): Promise<void> {
   );
 }
 
-export function loadSessionMarkdown(sessionId: SessionId): Promise<string> {
-  return run(
-    api.sessions.readSessionMarkdown({
-      params: { vault_id: selectedVault(), session_id: sessionId },
+export function prepareSessionExport(vaultId: Uuid, sessionId: SessionId, paper: PublicationPaper) {
+  return withApiErrors(
+    api.sessions.prepareSessionExport({
+      params: { vault_id: vaultId, session_id: sessionId },
+      payload: { paper },
     }),
   );
 }

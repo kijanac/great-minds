@@ -88,6 +88,9 @@ importers:
       fs-native-extensions:
         specifier: 1.5.1
         version: 1.5.1
+      github-slugger:
+        specifier: 2.0.0
+        version: 2.0.0
       ipaddr.js:
         specifier: 2.5.0
         version: 2.5.0
@@ -97,12 +100,30 @@ importers:
       jsdom:
         specifier: 29.1.1
         version: 29.1.1(@noble/hashes@1.8.0)
+      mdast-util-to-string:
+        specifier: 4.0.0
+        version: 4.0.0
       officeparser:
         specifier: 5.2.2
         version: 5.2.2
+      remark-gfm:
+        specifier: 4.0.1
+        version: 4.0.1
+      remark-parse:
+        specifier: 11.0.0
+        version: 11.0.0
+      remark-stringify:
+        specifier: 11.0.0
+        version: 11.0.0
       undici:
         specifier: 8.10.0
         version: 8.10.0
+      unified:
+        specifier: 11.0.5
+        version: 11.0.5
+      unist-util-visit:
+        specifier: 5.1.0
+        version: 5.1.0
       yaml:
         specifier: 2.9.0
         version: 2.9.0
@@ -110,6 +131,9 @@ importers:
       '@types/jsdom':
         specifier: 28.0.3
         version: 28.0.3
+      '@types/mdast':
+        specifier: 4.0.4
+        version: 4.0.4
 
   web:
     dependencies:
@@ -146,6 +170,9 @@ importers:
       effect:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112
+      github-slugger:
+        specifier: 2.0.0
+        version: 2.0.0
       jose:
         specifier: 6.2.3
         version: 6.2.3
@@ -3095,6 +3122,9 @@ packages:
 
   get-tsconfig@4.14.0:
     resolution: {integrity: sha512-yTb+8DXzDREzgvYmh6s9vHsSVCHeC0G3PI5bEXNBHtmshPnO+S5O7qgLEOn0I5QvMy6kpZN8K1NKGyilLb93wA==}
+
+  github-slugger@2.0.0:
+    resolution: {integrity: sha512-IaOQ9puYtjrkq7Y0Ygl9KDZnrf/aiUJYUpVf89y8kyaxbRG7Y1SrX/jaumrv81vc61+kiMempujsM3Yw7w5qcw==}
 
   glob-parent@5.1.2:
     resolution: {integrity: sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow==}
@@ -7248,6 +7278,8 @@ snapshots:
   get-tsconfig@4.14.0:
     dependencies:
       resolve-pkg-maps: 1.0.0
+
+  github-slugger@2.0.0: {}
 
   glob-parent@5.1.2:
     dependencies:

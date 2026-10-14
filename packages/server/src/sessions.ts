@@ -28,11 +28,7 @@ import {
   HistoryInvalid,
   verifyHistoryReceipt,
 } from "./conversation-history/history.ts";
-import {
-  projectSession,
-  publicationExchanges,
-  renderSessionMarkdown,
-} from "./conversation-history/presentation.ts";
+import { projectSession, publicationExchanges } from "./conversation-history/presentation.ts";
 import { HistoryStore } from "./conversation-history/store.ts";
 import { IngestService } from "./ingest.ts";
 import type { LlmMessage } from "./llm.ts";
@@ -91,11 +87,6 @@ type SessionsServiceShape = {
     vaultId: Uuid,
     sessionId: SessionId,
   ) => Effect.Effect<SessionResponse, SessionReadError>;
-  readonly readMarkdown: (
-    userId: Uuid,
-    vaultId: Uuid,
-    sessionId: SessionId,
-  ) => Effect.Effect<string, SessionReadError>;
   readonly readPublication: (
     userId: Uuid,
     vaultId: Uuid,
@@ -679,13 +670,6 @@ const makeSessions = Effect.gen(function* () {
           origin_title: originTitle,
           threads,
         };
-      }),
-    readMarkdown: (userId, vaultId, sessionId) =>
-      Effect.gen(function* () {
-        yield* access.requireMember(userId, vaultId);
-        return renderSessionMarkdown(
-          projectSession(yield* ownedHistory(userId, vaultId, sessionId)),
-        );
       }),
     readPublication,
   } satisfies SessionsServiceShape;

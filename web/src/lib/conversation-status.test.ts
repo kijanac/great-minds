@@ -2,6 +2,7 @@ import { SessionId, Uuid } from "@great-minds/domain";
 import { render } from "svelte/server";
 import { describe, expect, it, vi } from "vitest";
 import BtwThread from "$lib/components/btw-thread.svelte";
+import SessionExport from "$lib/components/session-export.svelte";
 import type { ThreadLike } from "$lib/types";
 
 const thread = (overrides: Partial<ThreadLike> = {}): ThreadLike => ({
@@ -29,6 +30,30 @@ const markup = (btw: ThreadLike) =>
   render(BtwThread, { props: { btw, onReply: vi.fn(), onRetry: vi.fn() } }).body;
 
 describe("conversation status markup", () => {
+  it("previews and downloads the same prepared PDF with a paired Markdown download", () => {
+    const html = render(SessionExport, {
+      props: {
+        pending: false,
+        error: null,
+        paper: "a4",
+        onPaperChange: vi.fn(),
+        onPrepare: vi.fn(),
+        onClose: vi.fn(),
+        prepared: {
+          title: "Reading copy",
+          preparedAt: new Date("2026-01-01"),
+          filename: "reading-copy",
+          pdfUrl: "blob:prepared-pdf",
+          markdownUrl: "blob:prepared-markdown",
+        },
+      },
+    }).body;
+    expect(html).toMatch(/<iframe[^>]*src="blob:prepared-pdf"/u);
+    expect(html).toMatch(/<a[^>]*href="blob:prepared-pdf"[^>]*download="reading-copy.pdf"/u);
+    expect(html).toMatch(/<a[^>]*href="blob:prepared-markdown"[^>]*download="reading-copy.md"/u);
+    expect(html).toContain("Refresh copy");
+  });
+
   it("does not present an empty completed answer as a failed generation", () => {
     const html = markup(thread());
     expect(html).toContain("The response completed without an answer.");
