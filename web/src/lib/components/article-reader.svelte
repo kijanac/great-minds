@@ -313,6 +313,7 @@
         onClose={() => (selectedCard = null)}
         onFullScreen={() => void maximizePanel()}
         onOpenPath={openPanelPath}
+        onLinkClick={handleLinkClick}
       />
     {/if}
   {/snippet}

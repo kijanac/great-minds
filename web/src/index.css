@@ -198,7 +198,7 @@
   --secondary: #c8c0b0;
   --secondary-foreground: #1a1510;
   --muted: #c8c0b0;
-  --muted-foreground: #5a5040;
+  --muted-foreground: var(--warm-ghost);
   --accent: #7a5c10;
   --accent-foreground: #f0e8d8;
   --destructive: #8a3030;
@@ -207,16 +207,16 @@
   --ring: #8a7030;
 
   /* Gold accent scale */
-  --gold: #7a5c10;
+  --gold: #644a10;
   --gold-hover: #5a4008;
   --gold-dim: #c8b890;
-  --gold-muted: #9a8450;
+  --gold-muted: #5b4d2d;
 
   /* Warm text scale */
   --warm: #1a1510;
   --warm-dim: #3a3028;
-  --warm-faint: #5a4e40;
-  --warm-ghost: #6a5e4c;
+  --warm-faint: #514636;
+  --warm-ghost: #594d3c;
 
   /* Ink surface scale */
   --ink: #d5ccbc;
@@ -257,7 +257,7 @@
   --secondary: #111111;
   --secondary-foreground: #e0d8c8;
   --muted: #141414;
-  --muted-foreground: #7a6a50;
+  --muted-foreground: var(--warm-ghost);
   --accent: #c9a96e;
   --accent-foreground: #0c0c0c;
   --destructive: #7a3030;
@@ -269,13 +269,13 @@
   --gold: #c9a96e;
   --gold-hover: #dbbf84;
   --gold-dim: #5a4830;
-  --gold-muted: #8a7a58;
+  --gold-muted: #9a885f;
 
   /* Warm text scale */
   --warm: #e0d8c8;
   --warm-dim: #b0a898;
   --warm-faint: #9a9080;
-  --warm-ghost: #6a5a48;
+  --warm-ghost: #9a8870;
 
   /* Ink surface scale */
   --ink: #0c0c0c;

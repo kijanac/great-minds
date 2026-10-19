@@ -30,9 +30,11 @@
         card={card.selectedCard}
         content={health.panel.data ?? null}
         loading={health.panel.isLoading}
+        context="citation"
         onClose={card.close}
-        onFullScreen={() => void goto(`/doc/${card.selectedCard?.label}`)}
+        onFullScreen={card.maximize}
         onOpenPath={card.openPath}
+        onLinkClick={card.onLinkClick}
       />
     {/if}
   {/snippet}

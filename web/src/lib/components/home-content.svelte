@@ -129,6 +129,7 @@
         onClose={() => (selectedCard = null)}
         onFullScreen={() => void goto(`/doc/${selectedCard?.label}`)}
         onOpenPath={(path) => void goto(`/doc/${path}`)}
+        onLinkClick={handleLinkClick}
       />
     {/if}
   {/snippet}
@@ -215,19 +216,26 @@
               class="absolute inset-0 flex flex-col items-center justify-center px-4 pb-12 md:px-10"
               out:fade={{ duration: 150 }}
             >
-              <div class="mb-6 flex items-center gap-1.5">
+              <div
+                class="mb-6 flex w-full max-w-[640px] items-center justify-center gap-1.5"
+              >
                 {#if currentVault}
                   <Button
                     variant="outline"
                     onclick={() => void goto("/library")}
-                    class="h-auto gap-2.5 rounded-sm border-ink-border px-4 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-warm-faint hover:border-gold-dim hover:text-warm"
+                    class="h-auto min-w-0 shrink flex-col items-start gap-1 rounded-sm border-ink-border px-4 py-1.5 text-left font-mono text-[length:var(--text-chrome)] tracking-[0.14em] whitespace-normal text-warm-faint hover:border-gold-dim hover:text-warm sm:flex-row sm:items-center sm:gap-2.5"
                   >
-                    {currentVault.name}
+                    <span class="min-w-0 [overflow-wrap:anywhere]"
+                      >{currentVault.name}</span
+                    >
                     {#if counts.articleTotal !== null && counts.sourceTotal !== null}
-                      <span class="text-warm-ghost">
-                        {counts.articleTotal} article{counts.articleTotal === 1
+                      <span
+                        class="text-warm-ghost group-hover/button:text-warm"
+                      >
+                        {counts.articleTotal}&nbsp;article{counts.articleTotal ===
+                        1
                           ? ""
-                          : "s"} · {counts.sourceTotal} source{counts.sourceTotal ===
+                          : "s"} · {counts.sourceTotal}&nbsp;source{counts.sourceTotal ===
                         1
                           ? ""
                           : "s"} →

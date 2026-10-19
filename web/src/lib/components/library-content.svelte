@@ -16,6 +16,7 @@
     activeType: string;
     activeTag: string;
     search: string;
+    showCounts: boolean;
     sourceFacets: SourceTypeFacet[];
     totalCount: number;
     articleTotal: number;
@@ -86,6 +87,7 @@
     totalCount={library.totalCount}
     articleTotal={library.articleTotal}
     sourceFacets={library.sourceFacets}
+    showCounts={library.showCounts}
     {readingRoomTotal}
     onChange={actions.chooseType}
     onClearTag={actions.clearTag}

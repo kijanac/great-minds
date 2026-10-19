@@ -57,12 +57,13 @@
       variant="ghost"
       size="sm"
       onclick={() => (userOverride = !open)}
-      class="h-auto gap-1.5 p-0 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-muted hover:bg-transparent hover:text-gold"
+      aria-expanded={open}
+      class="h-auto min-w-0 max-w-full items-start gap-1.5 p-0 text-left font-mono text-[length:var(--text-chrome)] tracking-[0.1em] whitespace-normal text-gold-muted hover:bg-transparent hover:text-gold"
     >
       {#if open}
-        <ChevronDown size={10} />
+        <ChevronDown size={10} class="mt-0.5" />
       {:else}
-        <ChevronRight size={10} />
+        <ChevronRight size={10} class="mt-0.5" />
       {/if}
       {#if streaming}
         <span class="animate-[pulse-fade_1.6s_ease-in-out_infinite]">

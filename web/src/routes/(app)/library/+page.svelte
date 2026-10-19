@@ -70,17 +70,11 @@
         card={card.selectedCard}
         content={library.panel.data ?? null}
         loading={library.panel.isLoading}
+        context="citation"
         onClose={card.close}
-        onFullScreen={() => {
-          const selected = card.selectedCard;
-          if (!selected) return;
-          void goto(
-            selected.type === "raw" && selected.document_id
-              ? `/source/${selected.document_id}`
-              : `/doc/${selected.label}`,
-          );
-        }}
+        onFullScreen={card.maximize}
         onOpenPath={card.openPath}
+        onLinkClick={card.onLinkClick}
       />
     {/if}
   {/snippet}

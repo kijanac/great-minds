@@ -17,6 +17,7 @@
     onClose,
     onFullScreen,
     onOpenPath,
+    onLinkClick,
   }: {
     card: SourceRef;
     content: PanelContent | null;
@@ -27,6 +28,7 @@
     onClose: () => void;
     onFullScreen: () => void;
     onOpenPath: (path: string) => void;
+    onLinkClick: (event: MouseEvent) => void;
   } = $props();
 
   // Citation-opened cards carry no wire title; the chunk heading is the
@@ -91,7 +93,7 @@
     </div>
     <span
       title={card.label}
-      class="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-interactive-dim uppercase"
+      class="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost uppercase"
     >
       {subtitle}
     </span>
@@ -107,7 +109,12 @@
           <Skeleton class="h-4 w-2/3 bg-ink-raised" />
         </div>
       {:else if content?.mode === "doc"}
-        <MarkdownView source={content.body} variant="panel" stripBlockRefs />
+        <MarkdownView
+          source={content.body}
+          variant="panel"
+          stripBlockRefs
+          {onLinkClick}
+        />
       {:else if content?.mode === "chunks"}
         <div class="space-y-5">
           {#if content.chunks.length === 0}
@@ -128,6 +135,7 @@
                   source={chunk.body}
                   variant="panel"
                   stripBlockRefs
+                  {onLinkClick}
                 />
               </div>
             {/each}

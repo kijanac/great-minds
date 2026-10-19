@@ -34,7 +34,7 @@
     onclick={onOpen}
     title={issueLabel}
     aria-label={`${issueLabel}; open health`}
-    class="h-[18px] min-w-[18px] rounded-full bg-gold/20 px-1 font-mono text-[10px] leading-none text-gold hover:bg-gold/30 hover:text-gold"
+    class="h-[18px] min-w-[18px] rounded-full bg-gold/5 px-1 font-mono text-[10px] leading-none text-gold hover:bg-gold/10 hover:text-gold dark:bg-gold/20 dark:hover:bg-gold/30"
   >
     {count}
   </Button>

@@ -113,11 +113,8 @@ export function useLibrary(
   const panel = usePanelContent(selectedCard);
 
   const sourceFacets = $derived([...(facets.data?.facets.source_types ?? [])]);
-  const sourceTotal = $derived(sourceFacets.reduce((sum, facet) => sum + facet.count, 0));
+  const sourceTotal = $derived(facets.data?.pagination.total ?? 0);
   const articleTotal = $derived(articles.data?.pages[0]?.pagination.total ?? 0);
-  // Header count reflects the current search/tag scope; the facet chips keep
-  // whole-vault counts (the facets response ignores search — API behavior).
-  const sourceListTotal = $derived(sources.data?.pages[0]?.pagination.total ?? sourceTotal);
   // Wiki pin: a wiki article whose title or slug matches the active tag
   // (case-insensitive), surfaced from the already-fetched articles as a
   // distinct synthesis row. Absence is normal.
@@ -230,7 +227,9 @@ export function useLibrary(
     clearTag,
     deleteSource,
     get headerCount() {
-      return articleTotal + sourceListTotal;
+      if (activeType === LIBRARY_ALL) return articleTotal + sourceTotal;
+      if (activeType === LIBRARY_ARTICLES) return articleTotal;
+      return sources.data?.pages[0]?.pagination.total ?? 0;
     },
     get loading() {
       return articles.isLoading || sources.isLoading || facets.isLoading;
@@ -248,6 +247,9 @@ export function useLibrary(
     },
     setSearch(value: string) {
       search = value;
+    },
+    get showCounts() {
+      return searchQuery === "";
     },
     get sourceFacets() {
       return sourceFacets;

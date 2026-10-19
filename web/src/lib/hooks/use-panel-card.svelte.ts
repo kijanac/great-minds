@@ -1,3 +1,5 @@
+import { goto } from "$app/navigation";
+import { createLinkInterceptor } from "$lib/hooks/use-link-interceptor";
 import type { SourceDocumentSummary, SourceRef, WikiArticleOverview } from "$lib/types";
 
 export function usePanelCard() {
@@ -39,7 +41,7 @@ export function usePanelCard() {
     };
   }
 
-  function openPath(path: string) {
+  function openPath(path: string, chunk: number | null = null) {
     selectedCard = {
       type: path.startsWith("wiki/") ? "article" : "raw",
       label: path,
@@ -48,7 +50,21 @@ export function usePanelCard() {
       scope: null,
       path: null,
       thinking: null,
+      ranges: chunk === null ? undefined : [{ start: chunk, end: chunk }],
+      full: chunk === null,
     };
+  }
+
+  function maximize() {
+    const card = selectedCard;
+    if (!card) return;
+    const range = card.ranges?.length === 1 ? card.ranges[0] : null;
+    const hash = range && range.start === range.end ? `#^p${range.start}` : "";
+    void goto(
+      card.type === "raw" && card.document_id
+        ? `/source/${card.document_id}${hash}`
+        : `/doc/${card.label}${hash}`,
+    );
   }
 
   return {
@@ -58,6 +74,8 @@ export function usePanelCard() {
     close() {
       selectedCard = null;
     },
+    maximize,
+    onLinkClick: createLinkInterceptor(({ path, chunk }) => openPath(path, chunk)),
     openArticle,
     openPath,
     openSource,

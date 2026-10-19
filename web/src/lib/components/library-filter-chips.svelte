@@ -19,6 +19,7 @@
     articleTotal,
     sourceFacets,
     readingRoomTotal,
+    showCounts,
     onChange,
     onClearTag,
   }: {
@@ -28,6 +29,7 @@
     articleTotal: number;
     sourceFacets: SourceTypeFacet[];
     readingRoomTotal: number;
+    showCounts: boolean;
     onChange: (value: string) => void;
     onClearTag: () => void;
   } = $props();
@@ -58,18 +60,18 @@
     class="flex-wrap"
   >
     <ToggleGroup.Item value={LIBRARY_ALL} class={FILTER_CHIP_CLASS}>
-      all · {totalCount}
+      all{showCounts ? ` · ${totalCount}` : ""}
     </ToggleGroup.Item>
     <ToggleGroup.Item value={LIBRARY_ARTICLES} class={FILTER_CHIP_CLASS}>
-      articles · {articleTotal}
+      articles{showCounts ? ` · ${articleTotal}` : ""}
     </ToggleGroup.Item>
     {#each sourceFacets as facet (facet.value)}
       <ToggleGroup.Item value={facet.value} class={FILTER_CHIP_CLASS}>
-        {facet.value} · {facet.count}
+        {facet.value}{showCounts ? ` · ${facet.count}` : ""}
       </ToggleGroup.Item>
     {/each}
     <ToggleGroup.Item value={LIBRARY_READING_ROOM} class={FILTER_CHIP_CLASS}>
-      reading room · {readingRoomTotal}
+      reading room{showCounts ? ` · ${readingRoomTotal}` : ""}
     </ToggleGroup.Item>
   </ToggleGroup.Root>
 </div>
