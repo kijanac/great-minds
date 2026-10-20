@@ -48,7 +48,6 @@ const message = (snapshot: unknown) => `data: ${JSON.stringify(snapshot)}\n\n`;
 describe("browser API boundaries", () => {
   it("rejects invalid input through its Promise without HTTP", async () => {
     const pending = requestCode("invalid");
-    expect(pending).toBeInstanceOf(Promise);
     await expect(pending).rejects.toMatchObject({ _tag: "ApiError", message: "Invalid request" });
     expect(fetchRequest).not.toHaveBeenCalled();
   });

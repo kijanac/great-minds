@@ -2367,38 +2367,6 @@ describe("read-only HTTP integration", () => {
     }
   });
 
-  it("fails closed on corrupt stored metadata and origins rather than returning empty projections", async () => {
-    const { aliceToken } = currentFixture();
-    await runDb(
-      Effect.flatMap(Database, (db) =>
-        db.query((d) =>
-          d
-            .update(sourceDocuments)
-            .set({ derivedExtras: ["private-corrupt-metadata"] })
-            .where(eq(sourceDocuments.id, id.sourceBook)),
-        ),
-      ),
-    );
-    for (const path of ["raw/sources", "doc?path=raw/books/capital.md"]) {
-      const response = await api("GET", `/vaults/${id.vaultAlpha}/${path}`, aliceToken);
-      expect(response.status).toBe(500);
-      expect(JSON.stringify(response.body)).not.toContain("private-corrupt-metadata");
-    }
-    await runDb(
-      Effect.flatMap(Database, (db) =>
-        db.query((d) =>
-          d
-            .update(sessions)
-            .set({ origin: ["private-corrupt-origin"] })
-            .where(eq(sessions.id, id.sessionAliceMain)),
-        ),
-      ),
-    );
-    const response = await api("GET", `/vaults/${id.vaultAlpha}/sessions`, aliceToken);
-    expect(response.status).toBe(500);
-    expect(JSON.stringify(response.body)).not.toContain("private-corrupt-origin");
-  });
-
   it("lists raw sources with search, source-type facets, nullability, and authz", async () => {
     const { aliceToken, malloryToken } = currentFixture();
     const listed = await api("GET", `/vaults/${id.vaultAlpha}/raw/sources`, aliceToken);

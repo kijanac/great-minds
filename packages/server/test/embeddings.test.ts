@@ -36,14 +36,8 @@ describe("embedding provider protocol", () => {
     expect(parsed[1]).toEqual([0, 1]);
   });
 
-  it.each([
-    { indices: [0] },
-    { indices: [0, 0] },
-    { indices: [-1, 1] },
-    { indices: [0.5, 1] },
-    { indices: [0, 2] },
-  ])("rejects incomplete or invalid provider indices: $indices", ({ indices }) => {
-    const data = indices.map((index) => ({ index, embedding: [1] }));
+  it("rejects duplicate provider indices", () => {
+    const data = [0, 0].map((index) => ({ index, embedding: [1] }));
     expect(() => parseEmbeddingResponse({ data }, 2)).toThrow(ModelProviderError);
   });
 

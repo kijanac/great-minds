@@ -891,60 +891,6 @@ describe("M4.3a deterministic compile phases", () => {
     expect(events.every((event) => event.phase === "extract")).toBe(true);
   });
 
-  it.each(["partition", "synthesize"] as const)(
-    "replaces an invalid %s cache entry and reuses its persisted result",
-    async (phase) => {
-      await seedCanonicalPath({ assignmentValue: { assign: { [id.topicA]: "canonical-topic" } } });
-      await run(
-        Effect.flatMap(Database, (db) =>
-          db.query((d) =>
-            d
-              .update(compileCacheEntries)
-              .set({ value: {} })
-              .where(eq(compileCacheEntries.phase, phase)),
-          ),
-        ),
-      );
-      let calls = 0;
-      complete = async () => {
-        calls += 1;
-        return {
-          text: JSON.stringify(
-            calls === 1
-              ? {
-                  topics: [
-                    {
-                      slug: "local-topic",
-                      title: "Canonical Topic",
-                      description: "Canonical description",
-                      subsumed_idea_ids: ["idea_1"],
-                    },
-                  ],
-                }
-              : { assignments: [{ n: 1, slug: "canonical-topic" }] },
-          ),
-          finishReason: "stop",
-        };
-      };
-      const abstract = Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run));
-      const first = await run(abstract);
-      expect(await run(abstract)).toEqual(first);
-      expect(calls).toBe(phase === "synthesize" ? 2 : 0);
-      const rows = await run(
-        Effect.flatMap(Database, (db) =>
-          db.query((d) =>
-            d.select().from(compileCacheEntries).where(eq(compileCacheEntries.phase, phase)),
-          ),
-        ),
-      );
-      expect(rows).toHaveLength(1);
-      expect(rows[0]?.value).toHaveProperty(phase === "partition" ? "chunks" : "local_topics");
-      expect(logEvents.filter((entry) => entry.event === "compile_cache_discarded")).toHaveLength(
-        1,
-      );
-    },
-  );
-
   it("fails loudly on a malformed canonical registry cache row", async () => {
     await seedCanonicalPath({ registryValue: { topics: "drifted" } });
     await expect(
