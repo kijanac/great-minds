@@ -2338,6 +2338,35 @@ describe("read-only HTTP integration", () => {
     expect(pdfRenders).toBe(2);
   });
 
+  it("pages every source exactly once when a bulk import gives sources tied timestamps", async () => {
+    const { aliceToken } = currentFixture();
+    const sources = Array.from({ length: 137 }, (_, index) => ({
+      id: uuid(`11111111-0000-4000-8000-${index.toString(16).padStart(12, "0")}`),
+      vaultId: id.vaultAlpha,
+      filePath: `raw/docs/page-${index}.md`,
+      fileHash: `file-${index}`,
+      bodyHash: `body-${index}`,
+      sourceType: "document",
+      updatedAt: new Date(index < 80 ? "2026-07-09T12:00:00Z" : "2026-07-08T12:00:00Z"),
+    }));
+    await runDb(Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db.query((d) => d.delete(sourceDocuments).where(eq(sourceDocuments.vaultId, id.vaultAlpha)));
+      yield* db.query((d) => d.insert(sourceDocuments).values([...sources].reverse()));
+    }));
+    for (const limit of [50, 37]) {
+      const ids: unknown[] = [];
+      for (let offset = 0; offset < sources.length; offset += limit) {
+        const response = await api("GET", `/vaults/${id.vaultAlpha}/raw/sources?limit=${limit}&offset=${offset}`, aliceToken);
+        expect(response.status).toBe(200);
+        const page = asPage(response.body);
+        expect(page.pagination).toEqual({ limit, offset, total: sources.length });
+        ids.push(...itemRecords(page).map((source) => source.id));
+      }
+      expect(ids).toEqual(sources.map((source) => source.id));
+    }
+  });
+
   it("lists raw sources with search, source-type facets, nullability, and authz", async () => {
     const { aliceToken, malloryToken } = currentFixture();
     const listed = await api("GET", `/vaults/${id.vaultAlpha}/raw/sources`, aliceToken);

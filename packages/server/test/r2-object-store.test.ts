@@ -1,3 +1,6 @@
+import { Readable } from "node:stream";
+
+import { S3Client } from "@aws-sdk/client-s3";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -25,6 +28,60 @@ describe("R2 whole-object storage", () => {
     bucket.write("wiki/a.md", encode("Readable\n"));
     const store = makeObjectStore(bucket.client, "bucket");
     expect(decode(await Effect.runPromise(store.get("wiki/a.md")))).toBe("Readable\n");
+  });
+
+  it("fails partial bulk deletion and lets a later attempt remove the remaining objects", async () => {
+    const remaining = new Set(["vault/removed.md", "vault/denied.md"]);
+    let deny = true;
+    const client = new S3Client({
+      region: "auto",
+      endpoint: "http://fake-r2.invalid",
+      credentials: { accessKeyId: "test", secretAccessKey: "test" },
+      forcePathStyle: true,
+      requestHandler: {
+        handle: async (request: { method: string }) => {
+          let body: string;
+          if (request.method === "GET") {
+            body = `<ListBucketResult><IsTruncated>false</IsTruncated>${[...remaining].map((key) => `<Contents><Key>${key}</Key></Contents>`).join("")}</ListBucketResult>`;
+          } else {
+            expect(request.method).toBe("POST");
+            const results = [...remaining].map((key) => {
+              if (deny && key === "vault/denied.md")
+                return `<Error><Key>${key}</Key><Code>AccessDenied</Code></Error>`;
+              remaining.delete(key);
+              return `<Deleted><Key>${key}</Key></Deleted>`;
+            });
+            body = `<DeleteResult>${results.join("")}</DeleteResult>`;
+          }
+          return {
+            response: {
+              statusCode: 200,
+              headers: { "content-type": "application/xml" },
+              body: Readable.from([body]),
+            },
+          };
+        },
+      },
+    });
+    try {
+      const store = makeObjectStore(client, "bucket");
+      const partial = await Effect.runPromise(Effect.result(store.removePrefix("vault/")));
+      expect(partial).toMatchObject({
+        _tag: "Failure",
+        failure: {
+          _tag: "StorageBackendError",
+          operation: "delete",
+          key: "vault/",
+          errorType: "PartialDelete",
+        },
+      });
+      expect([...remaining]).toEqual(["vault/denied.md"]);
+      deny = false;
+      await Effect.runPromise(store.removePrefix("vault/"));
+      expect(remaining.size).toBe(0);
+    } finally {
+      client.destroy();
+    }
   });
 
   it("distinguishes a missing object from a failed read", async () => {

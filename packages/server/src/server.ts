@@ -201,6 +201,14 @@ const AuthMiddlewareLive = Layer.effect(
   })),
 );
 
+const passkeyEnrollmentAuth = Effect.gen(function* () {
+  const current = yield* CurrentAuth;
+  if (current.credential_kind !== "jwt") {
+    return yield* new Forbidden({ detail: "Passkey enrollment requires session authentication" });
+  }
+  return current;
+});
+
 const MetaHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "meta", (handlers) =>
   handlers.handle("health", () => Effect.succeed({ status: "ok" as const })),
 );
@@ -228,14 +236,14 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
     .handle("passkeyRegisterOptions", () =>
       Effect.gen(function* () {
         const passkeys = yield* PasskeysService;
-        const current = yield* CurrentAuth;
+        const current = yield* passkeyEnrollmentAuth;
         return yield* passkeys.registrationOptions(current.user_id, current.email);
       }),
     )
     .handle("registerPasskey", ({ payload }) =>
       Effect.gen(function* () {
         const passkeys = yield* PasskeysService;
-        const current = yield* CurrentAuth;
+        const current = yield* passkeyEnrollmentAuth;
         return yield* passkeys.register(current.user_id, payload);
       }),
     )

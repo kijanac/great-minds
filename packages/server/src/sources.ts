@@ -85,7 +85,7 @@ export const SourcesServiceLive = Layer.effect(
             .select()
             .from(sourceDocuments)
             .where(where)
-            .orderBy(desc(sourceDocuments.updatedAt))
+            .orderBy(desc(sourceDocuments.updatedAt), sourceDocuments.id)
             .limit(query.limit)
             .offset(query.offset));
           const facetWhere = and(

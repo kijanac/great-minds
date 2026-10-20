@@ -111,7 +111,7 @@ const deletePrefix = (client: S3Client, bucket: string, prefix: string) =>
         object.Key === undefined ? [] : [{ Key: object.Key }],
       );
       if (objects.length > 0) {
-        yield* objectRequest("delete", prefix, WRITE_TIMEOUT, (signal) =>
+        const deleted = yield* objectRequest("delete", prefix, WRITE_TIMEOUT, (signal) =>
           client.send(
             new DeleteObjectsCommand({
               Bucket: bucket,
@@ -120,6 +120,14 @@ const deletePrefix = (client: S3Client, bucket: string, prefix: string) =>
             { abortSignal: signal },
           ),
         );
+        if (deleted.Errors?.length) {
+          return yield* new StorageBackendError({
+            operation: "delete",
+            key: prefix,
+            errorType: "PartialDelete",
+            message: `R2 failed to delete ${deleted.Errors.length} objects`,
+          });
+        }
       }
       continuationToken = page.IsTruncated === true ? page.NextContinuationToken : undefined;
     } while (continuationToken !== undefined);

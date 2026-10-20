@@ -5,7 +5,7 @@ import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 
-import { makeAuthenticate, makeAuthMiddlewareClient } from "./auth-middleware";
+import { AuthClient, AuthMiddlewareClientLive, makeAuthenticate } from "./auth-middleware";
 import type { StreamFailure } from "./sse";
 import { TokenStore } from "./token-store";
 
@@ -37,7 +37,12 @@ export const withApiErrors = <A, R>(effect: Effect.Effect<A, ClientFailure, R>) 
   effect.pipe(
     Effect.catchTags({
       HttpClientError: (error) =>
-        Effect.fail(new ApiError({ message: transportMessage(error.reason), cause: error })),
+        Effect.fail(
+          new ApiError({
+            message: transportMessage(error.reason),
+            cause: error,
+          }),
+        ),
       SchemaError: (error) =>
         Effect.fail(new ApiError({ message: "Unexpected response", cause: error })),
     }),
@@ -47,7 +52,12 @@ const withStreamErrors = <A, R>(stream: Stream.Stream<A, StreamFailure, R>) =>
   stream.pipe(
     Stream.catchTags({
       HttpClientError: (error) =>
-        Stream.fail(new ApiError({ message: transportMessage(error.reason), cause: error })),
+        Stream.fail(
+          new ApiError({
+            message: transportMessage(error.reason),
+            cause: error,
+          }),
+        ),
       SchemaError: (error) =>
         Stream.fail(new ApiError({ message: "Unexpected response", cause: error })),
       SseError: (error) => Stream.fail(new ApiError({ message: "Stream failed", cause: error })),
@@ -98,14 +108,20 @@ export const makeApi = (options: ApiOptions) => {
     Layer.succeed(HttpClient.TracerPropagationEnabled, false),
     options.tokens,
   );
-  const services = makeAuthMiddlewareClient(options.baseUrl).pipe(Layer.provideMerge(transport));
+  const authentication = Layer.effect(AuthClient, makeAuthenticate(options.baseUrl)).pipe(
+    Layer.provideMerge(transport),
+  );
+  const services = AuthMiddlewareClientLive.pipe(Layer.provideMerge(authentication));
   const runtime = ManagedRuntime.make(services);
   const context = runtime.runSync(runtime.contextEffect);
   const api = runtime.runSync(HttpApiClient.make(GreatMindsApi, { baseUrl: options.baseUrl }));
-  const authenticate = runtime.runSync(makeAuthenticate(options.baseUrl));
+  const authenticate = runtime.runSync(AuthClient);
   const transportClient = runtime.runSync(HttpClient.HttpClient);
   const authenticatedClient = HttpClient.transform(transportClient, (_, request) =>
-    authenticate({ request, next: (authenticated) => transportClient.execute(authenticated) }),
+    authenticate({
+      request,
+      next: (authenticated) => transportClient.execute(authenticated),
+    }),
   );
   const http = HttpClient.mapRequest(
     authenticatedClient,
@@ -127,8 +143,8 @@ export const makeApi = (options: ApiOptions) => {
   ): AsyncIterable<A> => {
     const events = Stream.toAsyncIterableWith(withStreamErrors(source), context);
     if (signal === undefined) return events;
-    const halted = Stream.haltWhen(source, abortedSignal(signal));
-    return abortAware(Stream.toAsyncIterableWith(withStreamErrors(halted), context), signal);
+    const interrupted = Stream.interruptWhen(source, abortedSignal(signal));
+    return abortAware(Stream.toAsyncIterableWith(withStreamErrors(interrupted), context), signal);
   };
 
   const fork = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof services>>) =>

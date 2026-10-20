@@ -6,7 +6,9 @@ import { describe, expect, it } from "vitest";
 import { ApiError, makeApi } from "./runtime";
 import { TokenStore, type StoredTokens } from "./token-store";
 
-const vaultId = Uuid.make("018f6a2e-0000-7000-8000-000000000001", { disableChecks: true });
+const vaultId = Uuid.make("018f6a2e-0000-7000-8000-000000000001", {
+  disableChecks: true,
+});
 const baseUrl = "http://test.local/api";
 
 interface RecordedRequest {
@@ -16,19 +18,36 @@ interface RecordedRequest {
   readonly body: string;
 }
 
-function memoryTokens(initial: StoredTokens) {
+function memoryTokens(initial: Omit<StoredTokens, "session">) {
   const state = { ...initial };
+  let generation = 0;
+  let session: string | null = null;
   const layer = Layer.succeed(TokenStore, {
-    read: Effect.sync(() => ({ ...state })),
+    read: Effect.sync(() => ({ ...state, session })),
     write: (tokens) =>
       Effect.sync(() => {
+        session = String(++generation);
         state.access = tokens.access_token;
         state.refresh = tokens.refresh_token;
       }),
     clear: Effect.sync(() => {
+      session = null;
       state.access = null;
       state.refresh = null;
     }),
+    replaceIfCurrent: (expected, tokens) =>
+      Effect.sync(() => {
+        if (
+          session !== expected.session ||
+          state.access !== expected.access ||
+          state.refresh !== expected.refresh
+        )
+          return false;
+        if (tokens === null) session = null;
+        state.access = tokens?.access_token ?? null;
+        state.refresh = tokens?.refresh_token ?? null;
+        return true;
+      }),
   });
   return { layer, state };
 }
@@ -92,7 +111,11 @@ describe("makeApi", () => {
       });
     };
     const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
-    const { api, fork } = makeApi({ baseUrl, fetch: fetchImpl, tokens: tokens.layer });
+    const { api, fork } = makeApi({
+      baseUrl,
+      fetch: fetchImpl,
+      tokens: tokens.layer,
+    });
     const owner = fork(
       api.sessions.prepareSessionExport({
         params: { vault_id: vaultId, session_id: SessionId.make("saved") },
@@ -127,7 +150,13 @@ describe("makeApi", () => {
     await run(api.vaults.getVault({ params: { vault_id: vaultId } }));
     await run(http.get(`/vaults/${vaultId}`));
     await collect(
-      stream(Stream.unwrap(api.jobs.streamJob({ params: { vault_id: vaultId, job_id: vaultId } }))),
+      stream(
+        Stream.unwrap(
+          api.jobs.streamJob({
+            params: { vault_id: vaultId, job_id: vaultId },
+          }),
+        ),
+      ),
     );
     await run(
       externalHttp.execute(
@@ -149,7 +178,11 @@ describe("makeApi", () => {
   it("attaches the stored bearer token and decodes the contract response", async () => {
     const { fetchImpl, requests } = fetchResponding(() => json(200, vaultDetail));
     const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
-    const { api, run } = makeApi({ baseUrl, fetch: fetchImpl, tokens: tokens.layer });
+    const { api, run } = makeApi({
+      baseUrl,
+      fetch: fetchImpl,
+      tokens: tokens.layer,
+    });
 
     const detail = await run(api.vaults.getVault({ params: { vault_id: vaultId } }));
 
@@ -164,13 +197,17 @@ describe("makeApi", () => {
     ]);
   });
 
-  it("refreshes once on 401 and retries with the renewed token", async () => {
+  it("refreshes a stored session without a generation and retries once with the renewed token", async () => {
     const { fetchImpl, requests } = fetchResponding((request) => {
       if (request.url.endsWith("/auth/refresh")) return json(200, tokenPair("2"));
       return request.authorization === "Bearer access-2" ? json(200, vaultDetail) : unauthorized();
     });
     const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
-    const { api, run } = makeApi({ baseUrl, fetch: fetchImpl, tokens: tokens.layer });
+    const { api, run } = makeApi({
+      baseUrl,
+      fetch: fetchImpl,
+      tokens: tokens.layer,
+    });
 
     const detail = await run(api.vaults.getVault({ params: { vault_id: vaultId } }));
 
@@ -184,7 +221,7 @@ describe("makeApi", () => {
     expect(tokens.state).toEqual({ access: "access-2", refresh: "refresh-2" });
   });
 
-  it("shares one refresh across concurrent 401s", async () => {
+  it("shares one refresh across concurrent generated-client and raw-client 401s", async () => {
     let refreshes = 0;
     const { fetchImpl } = fetchResponding((request) => {
       if (request.url.endsWith("/auth/refresh")) {
@@ -194,22 +231,108 @@ describe("makeApi", () => {
       return request.authorization === "Bearer access-2" ? json(200, vaultDetail) : unauthorized();
     });
     const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
-    const { api, run } = makeApi({ baseUrl, fetch: fetchImpl, tokens: tokens.layer });
+    const { api, http, run } = makeApi({
+      baseUrl,
+      fetch: fetchImpl,
+      tokens: tokens.layer,
+    });
     const getVault = () => run(api.vaults.getVault({ params: { vault_id: vaultId } }));
 
-    await Promise.all([getVault(), getVault(), getVault()]);
+    await Promise.all([getVault(), getVault(), run(http.get(`/vaults/${vaultId}`))]);
 
     expect(refreshes).toBe(1);
+  });
+
+  it.each(["logout", "new login", "same-credential login"] as const)(
+    "does not renew or replay an old request after %s",
+    async (action) => {
+      const started = Promise.withResolvers<void>();
+      const response = Promise.withResolvers<Response>();
+      const { fetchImpl, requests } = fetchResponding(() => {
+        started.resolve();
+        return response.promise;
+      });
+      const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
+      const { api, run } = makeApi({
+        baseUrl,
+        fetch: fetchImpl,
+        tokens: tokens.layer,
+      });
+      const pending = run(api.vaults.getVault({ params: { vault_id: vaultId } })).catch(
+        (error: unknown) => error,
+      );
+      await started.promise;
+      await run(
+        Effect.flatMap(TokenStore, (store) =>
+          action === "logout"
+            ? store.clear
+            : store.write(tokenPair(action === "same-credential login" ? "1" : "new-user")),
+        ),
+      );
+      response.resolve(unauthorized());
+      expect(await pending).toBeInstanceOf(Unauthorized);
+      expect(requests).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    ["logout", "success"],
+    ["logout", "unauthorized"],
+    ["logout", "offline"],
+    ["new login", "success"],
+    ["new login", "unauthorized"],
+    ["new login", "offline"],
+  ] as const)("ignores a stale refresh after %s when it ends with %s", async (action, outcome) => {
+    const started = Promise.withResolvers<void>();
+    const response = Promise.withResolvers<Response>();
+    const { fetchImpl, requests } = fetchResponding((request) => {
+      if (request.url.endsWith("/auth/refresh")) {
+        started.resolve();
+        return response.promise;
+      }
+      return unauthorized();
+    });
+    const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
+    const { api, run } = makeApi({
+      baseUrl,
+      fetch: fetchImpl,
+      tokens: tokens.layer,
+    });
+    const pending = run(api.vaults.getVault({ params: { vault_id: vaultId } })).catch(
+      (error: unknown) => error,
+    );
+    await started.promise;
+    await run(
+      Effect.flatMap(TokenStore, (store) =>
+        action === "logout" ? store.clear : store.write(tokenPair("new-user")),
+      ),
+    );
+    if (outcome === "offline") response.reject(new TypeError("offline"));
+    else response.resolve(outcome === "success" ? json(200, tokenPair("2")) : unauthorized());
+    expect(await pending).toBeInstanceOf(Unauthorized);
+    expect(tokens.state).toEqual(
+      action === "logout"
+        ? { access: null, refresh: null }
+        : { access: "access-new-user", refresh: "refresh-new-user" },
+    );
+    expect(requests.filter((request) => !request.url.endsWith("/auth/refresh"))).toHaveLength(1);
   });
 
   it("clears the session and surfaces Unauthorized when refresh is rejected", async () => {
     const { fetchImpl } = fetchResponding((request) =>
       request.url.endsWith("/auth/refresh")
-        ? json(401, { _tag: "Unauthorized", detail: "Invalid or expired refresh token" })
+        ? json(401, {
+            _tag: "Unauthorized",
+            detail: "Invalid or expired refresh token",
+          })
         : unauthorized(),
     );
     const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
-    const { api, run } = makeApi({ baseUrl, fetch: fetchImpl, tokens: tokens.layer });
+    const { api, run } = makeApi({
+      baseUrl,
+      fetch: fetchImpl,
+      tokens: tokens.layer,
+    });
 
     const failure = await run(api.vaults.getVault({ params: { vault_id: vaultId } })).catch(
       (error: unknown) => error,
@@ -226,7 +349,11 @@ describe("makeApi", () => {
         : unauthorized(),
     );
     const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
-    const { api, run } = makeApi({ baseUrl, fetch: fetchImpl, tokens: tokens.layer });
+    const { api, run } = makeApi({
+      baseUrl,
+      fetch: fetchImpl,
+      tokens: tokens.layer,
+    });
 
     const failure = await run(api.vaults.getVault({ params: { vault_id: vaultId } })).catch(
       (error: unknown) => error,
@@ -238,10 +365,17 @@ describe("makeApi", () => {
 
   it("decodes declared errors into catchable domain errors", async () => {
     const { fetchImpl } = fetchResponding(() =>
-      json(403, { _tag: "Forbidden", detail: "Only vault members can perform this action" }),
+      json(403, {
+        _tag: "Forbidden",
+        detail: "Only vault members can perform this action",
+      }),
     );
     const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
-    const { api, run } = makeApi({ baseUrl, fetch: fetchImpl, tokens: tokens.layer });
+    const { api, run } = makeApi({
+      baseUrl,
+      fetch: fetchImpl,
+      tokens: tokens.layer,
+    });
 
     const recovered = await run(
       api.vaults
@@ -261,8 +395,16 @@ describe("makeApi", () => {
     const server = fetchResponding(() => json(500, { detail: "hidden" }));
     const offline = fetchResponding(() => Promise.reject(new TypeError("offline")));
 
-    const onServer = makeApi({ baseUrl, fetch: server.fetchImpl, tokens: tokens.layer });
-    const whenOffline = makeApi({ baseUrl, fetch: offline.fetchImpl, tokens: tokens.layer });
+    const onServer = makeApi({
+      baseUrl,
+      fetch: server.fetchImpl,
+      tokens: tokens.layer,
+    });
+    const whenOffline = makeApi({
+      baseUrl,
+      fetch: offline.fetchImpl,
+      tokens: tokens.layer,
+    });
     const getVault = ({ api, run }: typeof onServer) =>
       run(api.vaults.getVault({ params: { vault_id: vaultId } })).catch((error: unknown) => error);
 
@@ -277,7 +419,11 @@ describe("makeApi", () => {
   it("sends unauthenticated requests without a bearer and returns the 401 as Unauthorized", async () => {
     const { fetchImpl, requests } = fetchResponding(() => unauthorized());
     const tokens = memoryTokens({ access: null, refresh: null });
-    const { api, run } = makeApi({ baseUrl, fetch: fetchImpl, tokens: tokens.layer });
+    const { api, run } = makeApi({
+      baseUrl,
+      fetch: fetchImpl,
+      tokens: tokens.layer,
+    });
 
     const failure = await run(api.vaults.getVault({ params: { vault_id: vaultId } })).catch(
       (error: unknown) => error,
@@ -333,10 +479,20 @@ describe("makeApi streams", () => {
       ]),
     );
     const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
-    const { api, stream } = makeApi({ baseUrl, fetch: fetchImpl, tokens: tokens.layer });
+    const { api, stream } = makeApi({
+      baseUrl,
+      fetch: fetchImpl,
+      tokens: tokens.layer,
+    });
 
     const events = await collect(
-      stream(Stream.unwrap(api.jobs.streamJob({ params: { vault_id: vaultId, job_id: vaultId } }))),
+      stream(
+        Stream.unwrap(
+          api.jobs.streamJob({
+            params: { vault_id: vaultId, job_id: vaultId },
+          }),
+        ),
+      ),
     );
 
     expect(events.map((event) => [event.event, event.data])).toEqual([
@@ -355,13 +511,21 @@ describe("makeApi streams", () => {
       }),
     );
     const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
-    const { api, stream } = makeApi({ baseUrl, fetch: fetchImpl, tokens: tokens.layer });
+    const { api, stream } = makeApi({
+      baseUrl,
+      fetch: fetchImpl,
+      tokens: tokens.layer,
+    });
     const controller = new AbortController();
 
     const seen: string[] = [];
     const consume = async () => {
       for await (const event of stream(
-        Stream.unwrap(api.jobs.streamJob({ params: { vault_id: vaultId, job_id: vaultId } })),
+        Stream.unwrap(
+          api.jobs.streamJob({
+            params: { vault_id: vaultId, job_id: vaultId },
+          }),
+        ),
         controller.signal,
       )) {
         seen.push(event.data);
@@ -374,10 +538,57 @@ describe("makeApi streams", () => {
     expect(cancelled).toBe(true);
   });
 
+  it("interrupts a blocked stream pull and cancels its response body", async () => {
+    const pulling = Promise.withResolvers<void>();
+    let cancelled = false;
+    const { fetchImpl } = fetchResponding(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>(
+            {
+              pull() {
+                pulling.resolve();
+              },
+              cancel() {
+                cancelled = true;
+              },
+            },
+            { highWaterMark: 0 },
+          ),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+    );
+    const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
+    const { api, stream } = makeApi({
+      baseUrl,
+      fetch: fetchImpl,
+      tokens: tokens.layer,
+    });
+    const controller = new AbortController();
+    const pending = collect(
+      stream(
+        Stream.unwrap(
+          api.jobs.streamJob({
+            params: { vault_id: vaultId, job_id: vaultId },
+          }),
+        ),
+        controller.signal,
+      ),
+    ).catch((error: unknown) => error);
+    await pulling.promise;
+    controller.abort();
+    expect(await pending).toMatchObject({ name: "AbortError" });
+    expect(cancelled).toBe(true);
+  });
+
   it("rejects an aborted request as an interruption", async () => {
     const { fetchImpl } = fetchResponding(() => new Promise<Response>(() => undefined));
     const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
-    const { api, run } = makeApi({ baseUrl, fetch: fetchImpl, tokens: tokens.layer });
+    const { api, run } = makeApi({
+      baseUrl,
+      fetch: fetchImpl,
+      tokens: tokens.layer,
+    });
     const controller = new AbortController();
 
     const pending = run(api.vaults.getVault({ params: { vault_id: vaultId } }), {

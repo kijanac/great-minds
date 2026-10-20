@@ -199,7 +199,8 @@ Example:
 Auth: none.
 
 Exchanges a code for a token pair. The first time a given email verifies a
-code, a user account is created. The code is single-use and expires.
+code, a user account is created. The code is single-use and expires. Only
+one concurrent verification can consume it.
 
 Request body (`VerifyCodeInput`):
 
@@ -233,7 +234,8 @@ Errors: `401 Unauthorized` (invalid or expired code), `422 Validation`.
 Auth: none.
 
 Exchanges a refresh token for a new token pair. The presented refresh token
-is revoked and a new one is issued (rotation).
+is revoked and a new one is issued in the same transaction (rotation).
+Concurrent reuse of the presented token receives `401 Unauthorized`.
 
 Request body (`RefreshInput`):
 
@@ -252,7 +254,7 @@ base64url-encoded binary values.
 
 #### POST /v1/auth/passkeys/register-options
 
-Auth: required.
+Auth: JWT session required. API keys are not accepted.
 
 Starts passkey registration for the authenticated user.
 
@@ -274,11 +276,11 @@ Response: `200` with a `PasskeyRegistrationOptions` object:
 | `attestationFormats` | array (optional) | `"fido-u2f"`, `"packed"`, `"android-safetynet"`, `"android-key"`, `"tpm"`, `"apple"`, `"none"`. |
 | `extensions` | object (optional) | Client extension inputs: `appid` (string), `credProps` (boolean), `hmacCreateSecret` (boolean), `minPinLength` (boolean). |
 
-Errors: `401 Unauthorized`.
+Errors: `401 Unauthorized`, `403 Forbidden` (API-key authentication).
 
 #### POST /v1/auth/passkeys/register
 
-Auth: required.
+Auth: JWT session required. API keys are not accepted.
 
 Completes passkey registration. Sends the authenticator's response to the
 server; the passkey is stored for the authenticated user.
@@ -305,7 +307,7 @@ Response: `201 Created` with a `Passkey`:
 | `last_used_at` | ISO 8601 or `null` | Last use time (nullable). |
 | `transports` | array | Subset of `"ble"`, `"cable"`, `"hybrid"`, `"internal"`, `"nfc"`, `"smart-card"`, `"usb"`. |
 
-Errors: `422 Validation`.
+Errors: `401 Unauthorized`, `403 Forbidden` (API-key authentication), `422 Validation`.
 
 #### POST /v1/auth/passkeys/options
 

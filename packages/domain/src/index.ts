@@ -1392,11 +1392,12 @@ export const AuthApiGroup = HttpApiGroup.make("auth").add(
   }),
   HttpApiEndpoint.post("passkeyRegisterOptions", "/auth/passkeys/register-options", {
     success: PasskeyRegistrationOptions,
+    error: ForbiddenResponse,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("registerPasskey", "/auth/passkeys/register", {
     payload: PasskeyRegistration,
     success: CreatedPasskey,
-    error: ValidationErrors,
+    error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("passkeyAuthenticationOptions", "/auth/passkeys/options", {
     success: PasskeyAuthenticationOptions,

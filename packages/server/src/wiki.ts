@@ -85,7 +85,7 @@ export const WikiServiceLive = Layer.effect(
           .select()
           .from(wikiArticles)
           .where(where)
-          .orderBy(orderBy)
+          .orderBy(orderBy, wikiArticles.id)
           .limit(params.limit)
           .offset(params.offset));
         return pageEnvelope(rows.map(articleOverview), params, oneTotal(countRows));

@@ -147,8 +147,8 @@ export const AuthServiceLive = Layer.effect(
               Effect.gen(function* () {
                 if (!config.suppressAuth) {
                   const matches = yield* tx
-                    .select()
-                    .from(authCodes)
+                    .update(authCodes)
+                    .set({ used: true })
                     .where(
                       and(
                         eq(authCodes.email, email),
@@ -157,12 +157,10 @@ export const AuthServiceLive = Layer.effect(
                         gt(authCodes.expiresAt, now),
                       ),
                     )
-                    .limit(1);
-                  const match = matches[0];
-                  if (match === undefined) {
+                    .returning({ id: authCodes.id });
+                  if (matches[0] === undefined) {
                     return yield* new Unauthorized({ detail: "Invalid or expired code" });
                   }
-                  yield* tx.update(authCodes).set({ used: true }).where(eq(authCodes.id, match.id));
                 }
 
                 const created = yield* tx
@@ -194,8 +192,8 @@ export const AuthServiceLive = Layer.effect(
             .transaction((tx) =>
               Effect.gen(function* () {
                 const matches = yield* tx
-                  .select()
-                  .from(refreshTokens)
+                  .update(refreshTokens)
+                  .set({ revoked: true })
                   .where(
                     and(
                       eq(refreshTokens.tokenHash, sha256Hex(refreshToken)),
@@ -203,17 +201,13 @@ export const AuthServiceLive = Layer.effect(
                       gt(refreshTokens.expiresAt, now),
                     ),
                   )
-                  .limit(1);
+                  .returning({ userId: refreshTokens.userId });
                 const match = matches[0];
                 if (match === undefined) {
                   return yield* new Unauthorized({
                     detail: "Invalid or expired refresh token",
                   });
                 }
-                yield* tx
-                  .update(refreshTokens)
-                  .set({ revoked: true })
-                  .where(eq(refreshTokens.id, match.id));
                 const accessToken = yield* tokens.issueAccessToken(match.userId, now);
                 const nextRefreshToken = yield* generateRefreshToken;
                 yield* tx.insert(refreshTokens).values({

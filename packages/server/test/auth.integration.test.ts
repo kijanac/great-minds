@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   apiKeys,
@@ -12,8 +15,8 @@ import {
   webauthnCredentials,
 } from "@great-minds/database";
 import { type TokenPair, Uuid } from "@great-minds/domain";
-import { and, desc, eq, ne } from "drizzle-orm";
-import { Effect, Layer, Option, Redacted, Schema } from "effect";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { Deferred, Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { ClockService, makeTestClock } from "../src/clock.ts";
@@ -22,6 +25,7 @@ import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { startServer } from "../src/server.ts";
 import { makeAppLayer } from "../src/app-layer.ts";
+import { replyHistoryTestDatabaseUrl, runHistoryDatabase } from "./fixtures/reply-history-database.ts";
 
 const initialTime = new Date("2026-07-09T12:00:00.000Z");
 
@@ -31,6 +35,7 @@ type TestState = {
   readonly started: Awaited<ReturnType<typeof startServer>>;
   readonly clock: ReturnType<typeof makeTestClock>;
   readonly mailer: ReturnType<typeof makeTestMailer>;
+  readonly storageRoot: string;
 };
 
 type ApiResponse = {
@@ -48,15 +53,7 @@ const currentState = () => {
   return state;
 };
 
-const databaseUrl = () => {
-  const value = process.env.DATABASE_URL;
-  if (value === undefined || value.length === 0) {
-    throw new Error("DATABASE_URL is required for integration tests");
-  }
-  return value;
-};
-
-const testConfig = (url: string): AppConfigShape => ({
+const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   databaseUrl: Redacted.make(url),
   jwtSecret: Redacted.make("integration-test-jwt-secret"),
   jwtAccessExpiryMinutes: 30,
@@ -67,7 +64,7 @@ const testConfig = (url: string): AppConfigShape => ({
   webauthnRpName: "Great Minds",
   resendApiKey: Option.none(),
   resendFromEmail: Option.none(),
-  dataDir: "/tmp/great-minds-auth-storage",
+  dataDir,
   storageBackend: "local",
   r2AccountId: Option.none(),
   r2AccessKeyId: Option.none(),
@@ -106,7 +103,9 @@ const testConfig = (url: string): AppConfigShape => ({
 const buildTestState = async () => {
   const clock = makeTestClock(initialTime);
   const mailer = makeTestMailer();
-  const configLayer = Layer.succeed(AppConfig, testConfig(databaseUrl()));
+  await runHistoryDatabase(Effect.void);
+  const storageRoot = await mkdtemp(join(tmpdir(), "great-minds-auth-"));
+  const configLayer = Layer.succeed(AppConfig, testConfig(replyHistoryTestDatabaseUrl, storageRoot));
   const appLayer = makeAppLayer({
     config: configLayer,
     clock: clock.layer,
@@ -114,7 +113,7 @@ const buildTestState = async () => {
     logger: StructuredLoggerLive,
   });
   const started = await startServer({ layer: appLayer, host: "127.0.0.1", port: 0 });
-  return { started, clock, mailer } satisfies TestState;
+  return { started, clock, mailer, storageRoot } satisfies TestState;
 };
 
 const runDb = <A>(effect: Effect.Effect<A, unknown, TestDbServices>) =>
@@ -152,6 +151,46 @@ const api = async (
   const text = await response.text();
   const parsed = text === "" ? undefined : (JSON.parse(text) as unknown);
   return { status: response.status, body: parsed, text };
+};
+
+const raceCredential = async (
+  table: typeof authCodes | typeof refreshTokens,
+  request: () => Promise<ApiResponse>,
+) => {
+  const locked = Deferred.makeUnsafe<void>();
+  const release = Deferred.makeUnsafe<void>();
+  const holder = runDb(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db.transaction((tx) =>
+        Effect.gen(function* () {
+          yield* tx.execute(sql`select id from ${table} for update`);
+          yield* Deferred.succeed(locked, undefined);
+          yield* Deferred.await(release);
+        }),
+      );
+    }),
+  );
+  await Promise.race([Effect.runPromise(Deferred.await(locked)), holder]);
+  const responses = [request(), request()];
+  try {
+    await expect.poll(
+      () => runDb(Effect.gen(function* () {
+        const db = yield* Database;
+        const rows = yield* db.query((d) => d
+          .select({ total: sql<number>`count(*)::int` })
+          .from(sql`pg_stat_activity`)
+          .where(sql`datname = current_database() and wait_event_type = 'Lock'`));
+        return rows[0]?.total;
+      })),
+      { timeout: 5_000 },
+    ).toBe(2);
+  } finally {
+    await Effect.runPromise(Deferred.succeed(release, undefined));
+    await holder;
+    await Promise.allSettled(responses);
+  }
+  return Promise.all(responses);
 };
 
 const rawApi = async (method: string, path: string, body?: unknown): Promise<ApiResponse> => {
@@ -315,6 +354,7 @@ describe("auth HTTP integration", () => {
     state = undefined;
     if (current !== undefined) {
       await current.started.close();
+      await rm(current.storageRoot, { recursive: true, force: true });
     }
   });
 
@@ -465,6 +505,25 @@ describe("auth HTTP integration", () => {
     });
     expect(expired.status).toBe(401);
     expect(expired.body).toMatchObject({ detail: "Invalid or expired refresh token" });
+  });
+
+  it.each(["code", "refresh token"] as const)("consumes a %s once under contended HTTP requests", async (kind) => {
+    const email = "concurrent@example.com";
+    let responses: ApiResponse[];
+    if (kind === "code") {
+      await api("POST", "/auth/request-code", { email });
+      const code = latestCode();
+      responses = await raceCredential(authCodes, () => api("POST", "/auth/verify-code", { email, code }));
+    } else {
+      const pair = await signIn(email);
+      responses = await raceCredential(refreshTokens, () => api("POST", "/auth/refresh", { refresh_token: pair.refresh_token }));
+    }
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 401]);
+    const remaining = await runDb(Effect.gen(function* () {
+      const db = yield* Database;
+      return yield* db.query((d) => d.select().from(refreshTokens).where(eq(refreshTokens.revoked, false)));
+    }));
+    expect(remaining).toHaveLength(1);
   });
 
   it("authenticates protected routes with JWT and bearer API keys and rejects missing or expired credentials", async () => {
@@ -642,6 +701,33 @@ describe("auth HTTP integration", () => {
     expect(unauthenticatedList.status).toBe(401);
     const unauthenticatedDelete = await api("DELETE", `/auth/passkeys/${randomUUID()}`);
     expect(unauthenticatedDelete.status).toBe(401);
+  });
+
+  it("requires session credentials at both passkey enrollment boundaries without consuming the challenge", async () => {
+    const pair = await signIn("passkey-key-boundary@example.com");
+    const created = await api("POST", "/auth/api-keys", { label: "automation" }, pair.access_token);
+    const key = asString(asRecord(created.body).raw_key, "raw_key");
+    const options = await api("POST", "/auth/passkeys/register-options", undefined, pair.access_token);
+    const challenge = asString(asRecord(options.body).challenge, "challenge");
+    const before = await runDb(Effect.gen(function* () {
+      const db = yield* Database;
+      return yield* db.query((d) => d.select().from(webauthnChallenges));
+    }));
+    const deniedOptions = await api("POST", "/auth/passkeys/register-options", undefined, key);
+    const deniedRegister = await api(
+      "POST", "/auth/passkeys/register", failedRegistration(challenge), key,
+    );
+    expect([deniedOptions.status, deniedRegister.status]).toEqual([403, 403]);
+    const after = await runDb(Effect.gen(function* () {
+      const db = yield* Database;
+      return yield* db.query((d) => d.select().from(webauthnChallenges));
+    }));
+    expect(after).toEqual(before);
+    const sessionRegister = await api(
+      "POST", "/auth/passkeys/register", failedRegistration(challenge), pair.access_token,
+    );
+    expect(sessionRegister.status).toBe(422);
+    expect(sessionRegister.body).toMatchObject({ detail: "Passkey registration could not be verified" });
   });
 
   it("consumes registration challenges once even when cryptographic verification fails", async () => {
