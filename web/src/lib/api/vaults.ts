@@ -10,27 +10,17 @@ import {
   type VaultDetail,
   type Uuid,
 } from "@great-minds/domain";
-import { Effect, Schema } from "effect";
+import { Effect } from "effect";
 
 import { api, run } from "./app";
+import { decodeInput } from "./runtime";
 
 export type { VaultConfig, VaultConfigUpdate, VaultDetail };
 export type Membership = MemberWithEmail;
 export type VaultOverview = Vault;
 export type CreateVaultInput = VaultCreate;
 
-const email = Schema.decodeSync(Email);
 const firstPage = { limit: 50, offset: 0 } as const;
-
-function memberRole(role: string): MemberRole {
-  if (Schema.is(MemberRole)(role)) return role;
-  throw new Error(`Unknown role: ${role}`);
-}
-
-function invitedRole(role: string): InvitedMemberRole {
-  if (Schema.is(InvitedMemberRole)(role)) return role;
-  throw new Error(`Unknown role: ${role}`);
-}
 
 export function fetchVaults(signal?: AbortSignal): Promise<readonly VaultOverview[]> {
   return run(
@@ -70,18 +60,25 @@ export function inviteMember(
   role: string = "editor",
 ): Promise<Membership> {
   return run(
-    api.vaults.inviteVaultMember({
-      params: { vault_id: vaultId },
-      payload: { email: email(address), role: invitedRole(role) },
+    Effect.gen(function* () {
+      const email = yield* decodeInput(Email, address);
+      const invitedRole = yield* decodeInput(InvitedMemberRole, role);
+      return yield* api.vaults.inviteVaultMember({
+        params: { vault_id: vaultId },
+        payload: { email, role: invitedRole },
+      });
     }),
   );
 }
 
 export function updateMemberRole(vaultId: Uuid, userId: Uuid, role: string): Promise<Membership> {
   return run(
-    api.vaults.updateVaultMember({
-      params: { vault_id: vaultId, member_user_id: userId },
-      payload: { role: memberRole(role) },
+    Effect.gen(function* () {
+      const memberRole = yield* decodeInput(MemberRole, role);
+      return yield* api.vaults.updateVaultMember({
+        params: { vault_id: vaultId, member_user_id: userId },
+        payload: { role: memberRole },
+      });
     }),
   );
 }

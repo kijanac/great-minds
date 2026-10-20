@@ -51,6 +51,22 @@ export class CompilePhaseFailed extends Schema.TaggedError<CompilePhaseFailed>()
 
 export const CompileWorkflowError = Schema.Union([CompilePhaseNotPorted, CompilePhaseFailed]);
 
+export const LocalTopic = Schema.Struct({
+  localTopicId: Uuid,
+  chunkIdx: Schema.Int,
+  slug: Schema.String,
+  title: Schema.String,
+  description: Schema.String,
+  subsumedIdeaIds: Schema.Array(Uuid),
+}).pipe(
+  Schema.encodeKeys({
+    localTopicId: "local_topic_id",
+    chunkIdx: "chunk_idx",
+    subsumedIdeaIds: "subsumed_idea_ids",
+  }),
+);
+export type LocalTopic = typeof LocalTopic.Type;
+
 export const ValidatedTopic = Schema.Struct({
   topicId: Uuid,
   slug: Schema.String,

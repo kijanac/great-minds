@@ -2,11 +2,8 @@ import { Uuid } from "@great-minds/domain";
 import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
-import {
-  applyNestingFloor,
-  findNestingViolations,
-  type LocalTopic,
-} from "../src/compile-llm-core.ts";
+import { applyNestingFloor, findNestingViolations } from "../src/compile-llm-core.ts";
+import type { LocalTopic } from "../src/compile-contract.ts";
 
 const uuid = Schema.decodeSync(Uuid);
 const idFor = (label: string) =>

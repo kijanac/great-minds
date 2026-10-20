@@ -18,29 +18,23 @@ import {
   type DocResponse,
   type LinkedArticles,
   type LinkQuery,
-  type SourceDocument,
   type Uuid,
   type WikiArticle,
 } from "@great-minds/domain";
 import { alias } from "drizzle-orm/pg-core";
 import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
-import { Context, Effect, Layer } from "effect";
+import { Context, Data, Effect, Layer } from "effect";
 
 import { ContentStorage, vaultOwner } from "./storage.ts";
-import { sourceSummary, wikiOverview, wikiSlug } from "./document-metadata.ts";
+import { readSourceDocument, wikiOverview, wikiSlug } from "./document-metadata.ts";
 import { VaultAccessService } from "./vaults.ts";
 
 const MAX_CHUNK_SPAN = 100;
 
-export class DocumentRegistryMismatch extends Error {
+export class DocumentRegistryMismatch extends Data.TaggedError("DocumentRegistryMismatch")<{
   readonly path: string;
-
-  constructor(path: string) {
-    super(`Document on disk lacks a registry row: ${path}`);
-    this.name = "DocumentRegistryMismatch";
-    this.path = path;
-  }
-}
+  readonly message: string;
+}> {}
 
 type DocumentsServiceShape = {
   readonly readDocument: (
@@ -82,25 +76,6 @@ const wikiArticle = (row: typeof wikiArticles.$inferSelect): WikiArticle => ({
   created_at: row.createdAt,
   updated_at: row.updatedAt,
   slug: wikiSlug(row.filePath),
-});
-
-const sourceDocument = (row: typeof sourceDocuments.$inferSelect): SourceDocument => ({
-  ...sourceSummary(row),
-  kind: "source",
-  vault_id: row.vaultId,
-  body_hash: row.bodyHash,
-  etag: row.etag,
-  canonical_url: row.canonicalUrl,
-  provenance_session_id: row.provenanceSessionId,
-  provenance_exchange_id: row.provenanceExchangeId,
-  provenance_session_query: row.provenanceSessionQuery,
-  provenance_source_doc_path: row.provenanceSourceDocPath,
-  provenance_source_anchor: row.provenanceSourceAnchor,
-  provenance_source_paragraph_index: row.provenanceSourceParagraphIndex,
-  provenance_anchored_to: row.provenanceAnchoredTo,
-  provenance_anchored_section: row.provenanceAnchoredSection,
-  provenance_intent: row.provenanceIntent,
-  created_at: row.createdAt,
 });
 
 const stripFrontmatter = (content: string) => {
@@ -172,7 +147,7 @@ export const DocumentsServiceLive = Layer.effect(
           .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, filePath)))
           .limit(1));
         const row = first(rows);
-        return row === undefined ? undefined : sourceDocument(row);
+        return row === undefined ? undefined : yield* readSourceDocument(row);
       });
 
     const getSourceById = (vaultId: Uuid, sourceId: Uuid) =>
@@ -183,7 +158,7 @@ export const DocumentsServiceLive = Layer.effect(
           .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.id, sourceId)))
           .limit(1));
         const row = first(rows);
-        return row === undefined ? undefined : sourceDocument(row);
+        return row === undefined ? undefined : yield* readSourceDocument(row);
       });
 
     const readArchivedWiki = (vaultId: Uuid, filePath: string) =>
@@ -268,7 +243,10 @@ export const DocumentsServiceLive = Layer.effect(
           }
         }
 
-        throw new DocumentRegistryMismatch(safePath);
+        throw new DocumentRegistryMismatch({
+          path: safePath,
+          message: `Document on disk lacks a registry row: ${safePath}`,
+        });
       });
 
     const readSource = (userId: Uuid, vaultId: Uuid, sourceId: Uuid) =>

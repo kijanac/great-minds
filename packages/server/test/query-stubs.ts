@@ -30,7 +30,8 @@ type StreamScript =
 
 type CompleteScript = ModelCompletion | Effect.Effect<ModelCompletion, unknown>;
 
-export const retryableModelError = (message = "rate limited") => new RetryableModelError(message);
+export const retryableModelError = (message = "rate limited") =>
+  new RetryableModelError({ message });
 
 export const toolCallPart = (
   index: number,

@@ -150,15 +150,17 @@ export const makeObjectStore = (
           isMissing(error) ? new ObjectMissing({ key }) : storeFailure("read", key, error),
         ),
       );
-      if (response.Body === undefined) {
-        return yield* storageBackendError(
-          "read",
+      const body = response.Body;
+      if (body === undefined) {
+        return yield* new StorageBackendError({
+          operation: "read",
           key,
-          new Error(`R2 object ${key} returned no body`),
-        );
+          errorType: "MissingBody",
+          message: `R2 object ${key} returned no body`,
+        });
       }
       const bytes = yield* Effect.tryPromise({
-        try: () => response.Body!.transformToByteArray(),
+        try: () => body.transformToByteArray(),
         catch: (error) => storageBackendError("read", key, error),
       }).pipe(
         Effect.timeout(READ_TIMEOUT),
@@ -201,11 +203,12 @@ export const makeObjectStore = (
       Effect.gen(function* () {
         const object = yield* getVersioned(key);
         if (object.etag === undefined || object.etag.length === 0) {
-          return yield* storageBackendError(
-            "read",
+          return yield* new StorageBackendError({
+            operation: "read",
             key,
-            new Error("Conditional read requires an ETag"),
-          );
+            errorType: "MissingVersion",
+            message: "Conditional read requires an ETag",
+          });
         }
         return { bytes: object.bytes, version: object.etag };
       }),

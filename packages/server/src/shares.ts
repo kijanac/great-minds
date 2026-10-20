@@ -9,7 +9,6 @@ import {
   type SharedAnnotation,
   type SharedShareDetail,
   SessionId,
-  SessionOrigin as SessionOriginSchema,
   type Uuid,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
@@ -20,7 +19,7 @@ import { renderSessionMarkdown } from "./conversation-history/presentation.ts";
 import { StructuredLogger } from "./logging.ts";
 import { parseFrontmatter, stripAnchors } from "./markdown.ts";
 import { RandomBytesService, formatUuid7 } from "./random.ts";
-import { SessionsService } from "./sessions.ts";
+import { readSessionOrigin, SessionsService } from "./sessions.ts";
 import { UserDocumentsService } from "./user-documents.ts";
 
 type ShareRow = typeof shares.$inferSelect;
@@ -53,7 +52,6 @@ const shareOverview = (row: ShareRow): ShareOverview => ({
   revoked_at: row.revokedAt,
 });
 
-const decodeSessionOrigin = Schema.decodeUnknownSync(Schema.NullOr(SessionOriginSchema));
 const sessionIdOf = Schema.decodeSync(SessionId);
 
 export const SharesServiceLive = Layer.effect(
@@ -106,7 +104,7 @@ export const SharesServiceLive = Layer.effect(
         );
         const annotations: SharedAnnotation[] = [];
         for (const row of rows) {
-          const origin = decodeSessionOrigin(row.origin);
+          const origin = yield* readSessionOrigin(row.origin);
           if (origin === null) {
             continue;
           }

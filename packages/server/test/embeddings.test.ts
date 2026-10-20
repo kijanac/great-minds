@@ -36,6 +36,17 @@ describe("embedding provider protocol", () => {
     expect(parsed[1]).toEqual([0, 1]);
   });
 
+  it.each([
+    { indices: [0] },
+    { indices: [0, 0] },
+    { indices: [-1, 1] },
+    { indices: [0.5, 1] },
+    { indices: [0, 2] },
+  ])("rejects incomplete or invalid provider indices: $indices", ({ indices }) => {
+    const data = indices.map((index) => ({ index, embedding: [1] }));
+    expect(() => parseEmbeddingResponse({ data }, 2)).toThrow(ModelProviderError);
+  });
+
   it("rejects malformed provider vectors with a typed provider error", () => {
     expect(() =>
       parseEmbeddingResponse({ data: [{ index: 0, embedding: "not base64" }] }, 1),

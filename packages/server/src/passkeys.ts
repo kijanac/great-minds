@@ -10,7 +10,6 @@ import { decodeClientDataJSON, isoBase64URL, isoUint8Array } from "@simplewebaut
 import type {
   AuthenticationExtensionsClientOutputs,
   AuthenticationResponseJSON,
-  AuthenticatorTransportFuture,
   Base64URLString,
   RegistrationResponseJSON,
 } from "@simplewebauthn/server";
@@ -18,6 +17,7 @@ import { Database, webauthnChallenges, webauthnCredentials } from "@great-minds/
 import {
   AuthenticatorTransport,
   NotFound,
+  Passkey,
   PasskeyAuthenticationOptions,
   PasskeyRegistrationOptions,
   Unauthorized,
@@ -26,13 +26,12 @@ import {
 } from "@great-minds/domain";
 import type {
   Email,
-  Passkey,
   PasskeyAuthentication,
   PasskeyRegistration,
   TokenPair,
 } from "@great-minds/domain";
 import { and, desc, eq, isNull, lte } from "drizzle-orm";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer, Schema, Struct } from "effect";
 
 import { AuthService } from "./auth.ts";
 import { ClockService } from "./clock.ts";
@@ -67,18 +66,15 @@ const CHALLENGE_EXPIRY_MINUTES = 2;
 
 const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60 * 1000);
 
-const jsonProtocolValue = (value: unknown): unknown => JSON.parse(JSON.stringify(value)) as unknown;
+const readTransports = Schema.decodeUnknownEffect(
+  Schema.mutable(Schema.Array(AuthenticatorTransport)),
+);
 
-const transportsFromDatabase = (transports: readonly string[]) =>
-  Schema.decodeUnknownSync(Schema.Array(AuthenticatorTransport))(transports);
-
-const passkeyResponse = (row: CredentialRow): Passkey => ({
-  id: row.id,
-  name: row.name,
-  created_at: row.createdAt,
-  last_used_at: row.lastUsedAt,
-  transports: transportsFromDatabase(row.transports),
-});
+const PasskeyFromRow = Schema.Struct(Struct.map(Passkey.fields, Schema.toType)).pipe(
+  Schema.encodeKeys({ created_at: "createdAt", last_used_at: "lastUsedAt" }),
+);
+const readPasskey = (row: CredentialRow) =>
+  Schema.decodeUnknownEffect(PasskeyFromRow)(row).pipe(Effect.orDie);
 
 const registrationResponse = ({
   name: _name,
@@ -190,6 +186,15 @@ export const PasskeysServiceLive = Layer.effect(
             })
             .from(webauthnCredentials)
             .where(eq(webauthnCredentials.userId, userId)));
+          const excludeCredentials = yield* Effect.forEach(credentials, (credential) =>
+            readTransports(credential.transports).pipe(
+              Effect.map((transports) => ({
+                id: credential.credentialId as Base64URLString,
+                transports,
+              })),
+              Effect.orDie,
+            ),
+          );
           const options = yield* Effect.tryPromise(() =>
             generateRegistrationOptions({
               rpName: config.webauthnRpName,
@@ -198,20 +203,18 @@ export const PasskeysServiceLive = Layer.effect(
               userName: email,
               userDisplayName: email,
               attestationType: "none",
-              excludeCredentials: credentials.map((credential) => ({
-                id: credential.credentialId as Base64URLString,
-                transports: transportsFromDatabase(
-                  credential.transports,
-                ) as AuthenticatorTransportFuture[],
-              })),
+              excludeCredentials,
               authenticatorSelection: {
                 residentKey: "required",
                 userVerification: "required",
               },
             }),
           ).pipe(Effect.orDie);
-          yield* persistChallenge(options.challenge, "registration", userId, now);
-          return Schema.decodeUnknownSync(PasskeyRegistrationOptions)(jsonProtocolValue(options));
+          const parsed = yield* Schema.decodeEffect(
+            Schema.fromJsonString(PasskeyRegistrationOptions),
+          )(JSON.stringify(options)).pipe(Effect.orDie);
+          yield* persistChallenge(parsed.challenge, "registration", userId, now);
+          return parsed;
         }),
       register: (userId, registration) =>
         Effect.gen(function* () {
@@ -254,7 +257,7 @@ export const PasskeysServiceLive = Layer.effect(
           if (row === undefined) {
             throw new Error("WebAuthn credential insert returned no row");
           }
-          return passkeyResponse(row);
+          return yield* readPasskey(row);
         }),
       authenticationOptions: () =>
         Effect.gen(function* () {
@@ -267,8 +270,11 @@ export const PasskeysServiceLive = Layer.effect(
               userVerification: "required",
             }),
           ).pipe(Effect.orDie);
-          yield* persistChallenge(options.challenge, "authentication", null, now);
-          return Schema.decodeUnknownSync(PasskeyAuthenticationOptions)(jsonProtocolValue(options));
+          const parsed = yield* Schema.decodeEffect(
+            Schema.fromJsonString(PasskeyAuthenticationOptions),
+          )(JSON.stringify(options)).pipe(Effect.orDie);
+          yield* persistChallenge(parsed.challenge, "authentication", null, now);
+          return parsed;
         }),
       verify: (authentication) =>
         Effect.gen(function* () {
@@ -290,6 +296,9 @@ export const PasskeysServiceLive = Layer.effect(
           if (credential === undefined) {
             return yield* failAuthentication("Credential is unknown");
           }
+          const transports = yield* readTransports(credential.transports).pipe(
+            Effect.catch((error) => failAuthentication(errorMessage(error), credential.userId)),
+          );
           const verification = yield* Effect.tryPromise({
             try: () =>
               verifyAuthenticationResponse({
@@ -301,9 +310,7 @@ export const PasskeysServiceLive = Layer.effect(
                   id: credential.credentialId as Base64URLString,
                   publicKey: isoBase64URL.toBuffer(credential.publicKey),
                   counter: credential.signCount,
-                  transports: transportsFromDatabase(
-                    credential.transports,
-                  ) as AuthenticatorTransportFuture[],
+                  transports,
                 },
               }),
             catch: (error) => error,
@@ -323,14 +330,15 @@ export const PasskeysServiceLive = Layer.effect(
           return yield* auth.issueTokenPair(credential.userId);
         }),
       list: (userId) =>
-        db.query((d) =>
-          d
-            .select()
-            .from(webauthnCredentials)
-            .where(eq(webauthnCredentials.userId, userId))
-            .orderBy(desc(webauthnCredentials.createdAt))
-            .pipe(Effect.map((rows) => rows.map(passkeyResponse))),
-        ),
+        db
+          .query((d) =>
+            d
+              .select()
+              .from(webauthnCredentials)
+              .where(eq(webauthnCredentials.userId, userId))
+              .orderBy(desc(webauthnCredentials.createdAt)),
+          )
+          .pipe(Effect.flatMap((rows) => Effect.forEach(rows, readPasskey))),
       delete: (userId, credentialId) =>
         Effect.gen(function* () {
           const rows = yield* db.query((d) => d

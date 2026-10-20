@@ -23,8 +23,8 @@ import {
 } from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
 import { eq, sql } from "drizzle-orm";
-import { Effect, Layer, Option, Redacted, Schema } from "effect";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { Effect, Exit, Layer, Option, Redacted, Schema } from "effect";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
   canonicalizeAssignCacheKey,
@@ -32,6 +32,7 @@ import {
   partitionCacheKey,
   renderCacheKey,
   synthesizeCacheKey,
+  topicContentHash,
   type ValidatedTopic,
 } from "../src/compile-contract.ts";
 import { CompilePhases, CompilePhasesLive } from "../src/compile-phases.ts";
@@ -53,6 +54,10 @@ import { PipelineRunsServiceLive } from "../src/pipeline-runs.ts";
 import { RandomBytesLive } from "../src/random.ts";
 import { SourceDocumentsServiceLive } from "../src/source-documents.ts";
 import { ContentStorage, StorageFileMissing } from "../src/storage.ts";
+import {
+  replyHistoryTestDatabaseUrl,
+  runHistoryDatabase,
+} from "./fixtures/reply-history-database.ts";
 
 const uuid = Schema.decodeUnknownSync(Uuid);
 
@@ -72,15 +77,9 @@ const id = {
   articleB: uuid("20000000-0000-4000-8000-000000000012"),
 } as const;
 
-const databaseUrl = () => {
-  const value = process.env.DATABASE_URL;
-  if (value === undefined || value.length === 0) throw new Error("DATABASE_URL is required");
-  return value;
-};
-
 const dataDir = await mkdtemp(join(tmpdir(), "gm-compile-phases-"));
 const config: AppConfigShape = {
-  databaseUrl: Redacted.make(databaseUrl()),
+  databaseUrl: Redacted.make(replyHistoryTestDatabaseUrl),
   jwtSecret: Redacted.make("compile-phase-secret"),
   jwtAccessExpiryMinutes: 30,
   jwtRefreshExpiryDays: 7,
@@ -136,6 +135,7 @@ const defaultEmbed = async (texts: readonly string[]) => {
   return texts.map(() => [1, ...Array.from({ length: 1023 }, () => 0)]);
 };
 let embed = defaultEmbed;
+let failWritePath: string | null = null;
 let complete = async (_input: CompleteInput): Promise<ModelCompletion> => {
   throw new Error("unexpected compile LLM call");
 };
@@ -156,7 +156,10 @@ const StorageLive = Layer.succeed(ContentStorage, {
       : Effect.succeed(content);
   },
   writeText: (_vaultId, path, content) =>
-    Effect.sync(() => files.set(path, content)).pipe(Effect.asVoid),
+    Effect.sync(() => {
+      files.set(path, content);
+      if (path === failWritePath) throw new Error("compile replay write fault");
+    }),
   exists: (_vaultId, path) => Effect.succeed(files.has(path)),
   deletePath: (_vaultId, path) => Effect.sync(() => files.delete(path)).pipe(Effect.asVoid),
   clear: () => Effect.void,
@@ -174,10 +177,15 @@ const SourceDocumentsLive = SourceDocumentsServiceLive.pipe(
   Layer.provideMerge(BaseLive),
 );
 const EmbeddingsLive = Layer.succeed(EmbeddingsService, {
-  embed: (texts) => Effect.tryPromise({
-    try: () => embed(texts),
-    catch: (error) => new EmbeddingBatchFailed(error),
-  }),
+  embed: (texts) =>
+    Effect.tryPromise({
+      try: () => embed(texts),
+      catch: (cause) =>
+        new EmbeddingBatchFailed({
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+    }),
 });
 const LanguageModelLive = Layer.succeed(LanguageModel, {
   hasApiKey: true,
@@ -437,6 +445,8 @@ const validated: readonly ValidatedTopic[] = [
 ];
 
 describe("M4.3a deterministic compile phases", () => {
+  beforeAll(() => runHistoryDatabase(Effect.void));
+
   afterAll(async () => {
     await rm(dataDir, { recursive: true, force: true });
   });
@@ -447,6 +457,7 @@ describe("M4.3a deterministic compile phases", () => {
     embeddingRequests.length = 0;
     logEvents.length = 0;
     embed = defaultEmbed;
+    failWritePath = null;
     complete = async () => {
       throw new Error("unexpected compile LLM call");
     };
@@ -486,16 +497,16 @@ describe("M4.3a deterministic compile phases", () => {
     );
   });
 
-const fullCard = (ideas: readonly unknown[]) => ({
-  title: "",
-  precis: "",
-  author: null,
-  published_date: null,
-  genre: null,
-  tags: [],
-  derived_extras: {},
-  ideas,
-});
+  const fullCard = (ideas: readonly unknown[]) => ({
+    title: "",
+    precis: "",
+    author: null,
+    published_date: null,
+    genre: null,
+    tags: [],
+    derived_extras: {},
+    ideas,
+  });
 
   it("records per-call extract provenance, prompt content, and the embedding model", async () => {
     const canonicalUrl = "https://example.com/source";
@@ -557,6 +568,86 @@ const fullCard = (ideas: readonly unknown[]) => ({
       source_id: id.source,
       canonical_url: canonicalUrl,
     });
+  });
+
+  it("repairs extract projections after a lost write acknowledgment without regenerating identities or embeddings", async () => {
+    const path = "raw/docs/source.md";
+    files.set(path, `---\nsource_id: ${id.source}\n---\n# Source\n\nBody\n`);
+    await seedSourceAndIdeas();
+    let modelCalls = 0;
+    complete = async () => {
+      modelCalls += 1;
+      return {
+        text: JSON.stringify({
+          ...fullCard([
+            {
+              kind: "concept",
+              label: "Current",
+              description: "Current idea",
+              anchors: [{ claim: "Current claim", quote: "Body" }],
+            },
+          ]),
+          title: "Recovered title",
+          precis: "Recovered precis",
+          tags: ["recovered"],
+        }),
+        finishReason: "stop",
+      };
+    };
+    const extract = Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run));
+    failWritePath = path;
+    try {
+      expect(Exit.isFailure(await run(Effect.exit(extract)))).toBe(true);
+    } finally {
+      failWritePath = null;
+    }
+    const state = () =>
+      run(
+        Effect.gen(function* () {
+          const db = yield* Database;
+          return {
+            cache: yield* db.query((d) => d.select().from(compileCacheEntries)),
+            ideas: yield* db.query((d) => d.select().from(ideas)),
+            anchors: yield* db.query((d) => d.select().from(anchors)),
+            source: yield* db.query((d) => d.select().from(sourceDocuments)),
+          };
+        }),
+      );
+    const partial = await state();
+    expect(partial.cache).toHaveLength(1);
+    const persistedIdea = partial.ideas.find((idea) => idea.label === "Current");
+    expect(persistedIdea).toBeDefined();
+    embeddingRequests.length = 0;
+    await run(extract);
+    const repaired = await state();
+    expect(repaired.cache).toEqual(partial.cache);
+    expect(repaired.ideas).toEqual([persistedIdea]);
+    expect(repaired.anchors).toEqual([
+      {
+        ideaId: persistedIdea?.ideaId,
+        position: 0,
+        claim: "Current claim",
+        quote: "Body",
+        chunkIndex: 0,
+      },
+    ]);
+    expect(repaired.source[0]).toMatchObject({
+      title: "Recovered title",
+      precis: "Recovered precis",
+      tags: ["recovered"],
+      fileHash: fileContentHash(files.get(path)!),
+    });
+    expect(parseFrontmatter(files.get(path)!).frontmatter).toMatchObject({
+      title: "Recovered title",
+      precis: "Recovered precis",
+      tags: ["recovered"],
+    });
+    await run(extract);
+    const replayed = await state();
+    expect(replayed.ideas).toEqual(repaired.ideas);
+    expect(replayed.anchors).toEqual(repaired.anchors);
+    expect(embeddingRequests).toHaveLength(0);
+    expect(modelCalls).toBe(1);
   });
 
   it("isolates malformed extract output per document under the strict contract", async () => {
@@ -621,18 +712,33 @@ const fullCard = (ideas: readonly unknown[]) => ({
     });
   });
 
-  it("marks a malformed extract cache row failed without refetching the LLM", async () => {
-    files.set("raw/docs/source.md", "# Source\n\nBody\n");
-    await insertSource(id.source, "raw/docs/source.md", "cached-body");
+  it.each([
+    { title: "drifted" },
+    { ...fullCard([]), document_id: id.sourceB },
+    {
+      ...fullCard([
+        {
+          idea_id: id.ideaA,
+          document_id: id.sourceB,
+          kind: "concept",
+          label: "Foreign idea",
+          description: "Wrong source",
+        },
+      ]),
+      document_id: id.source,
+    },
+  ])("rejects malformed or foreign extract cache without refetching the LLM: %j", async (card) => {
+    const path = "raw/docs/source.md";
+    const content = "# Source\n\nBody\n";
+    files.set(path, content);
+    await insertSource(id.source, path, "cached-body");
     const template = (await defaultPrompt("extract"))
       .replace("{kinds}", "person, event, organization, concept")
       .replace("{vault_enriched_fields}", "");
     await run(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(compileCacheEntries)
-          .values({
+      Effect.flatMap(Database, (db) =>
+        db.query((d) =>
+          d.insert(compileCacheEntries).values({
             vaultId: id.vault,
             phase: "extract",
             cacheKey: contentHash(
@@ -641,24 +747,26 @@ const fullCard = (ideas: readonly unknown[]) => ({
               `prompt=${promptContentHash(template)}`,
               `model=${config.extractModel}`,
             ),
-            value: { source_card: { title: "drifted" } },
-          }))
-          .pipe(Effect.orDie);
-      }),
+            value: { source_card: card },
+          }),
+        ),
+      ),
     );
     let calls = 0;
     complete = async () => {
       calls += 1;
-      return { text: JSON.stringify({ ideas: [] }), finishReason: "stop" };
+      throw new Error("unexpected model call for an existing cache row");
     };
-
     await run(Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run)));
-
     expect(calls).toBe(0);
     expect(logEvents).toContainEqual({
       event: "doc_failed",
       fields: expect.objectContaining({ error_type: "MalformedCompileCache" }),
     });
+    expect(files.get(path)).toBe(content);
+    expect(
+      await run(Effect.flatMap(Database, (db) => db.query((d) => d.select().from(ideas)))),
+    ).toEqual([]);
   });
 
   it("fails extract loudly on a non-timeout embedding error", async () => {
@@ -726,6 +834,32 @@ const fullCard = (ideas: readonly unknown[]) => ({
     expect(rows).toEqual([]);
   });
 
+  it.each(["fenced", "truncated"] as const)(
+    "handles %s model JSON at the compile boundary",
+    async (kind) => {
+      files.set("raw/docs/source.md", "# Source\n\nBody\n");
+      await insertSource(id.source, "raw/docs/source.md", "json-body");
+      let calls = 0;
+      complete = async () => {
+        calls += 1;
+        const text = JSON.stringify(fullCard([]));
+        return {
+          text: kind === "fenced" ? `\`\`\`json\n${text}\n\`\`\`` : text,
+          finishReason: kind === "truncated" ? "length" : "stop",
+        };
+      };
+      await run(Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run)));
+      expect(calls).toBe(1);
+      const cached = await run(
+        Effect.flatMap(Database, (db) => db.query((d) => d.select().from(compileCacheEntries))),
+      );
+      expect(cached).toHaveLength(kind === "fenced" ? 1 : 0);
+      expect(logEvents.filter((entry) => entry.event === "doc_failed")).toHaveLength(
+        kind === "fenced" ? 0 : 1,
+      );
+    },
+  );
+
   it("warns on a JSON parse retry without logging the malformed response", async () => {
     files.set("raw/docs/source.md", "# Source\n\nBody\n");
     await insertSource(id.source, "raw/docs/source.md", "retry-body");
@@ -745,7 +879,7 @@ const fullCard = (ideas: readonly unknown[]) => ({
       document_id: id.source,
       attempt: 1,
       max_attempts: 2,
-      error_type: "SyntaxError",
+      error_type: "MalformedLlmOutput",
     });
     expect(JSON.stringify(retry)).not.toContain("malformed-secret-shaped-output");
     const events = await run(
@@ -757,6 +891,60 @@ const fullCard = (ideas: readonly unknown[]) => ({
     expect(events.every((event) => event.phase === "extract")).toBe(true);
   });
 
+  it.each(["partition", "synthesize"] as const)(
+    "replaces an invalid %s cache entry and reuses its persisted result",
+    async (phase) => {
+      await seedCanonicalPath({ assignmentValue: { assign: { [id.topicA]: "canonical-topic" } } });
+      await run(
+        Effect.flatMap(Database, (db) =>
+          db.query((d) =>
+            d
+              .update(compileCacheEntries)
+              .set({ value: {} })
+              .where(eq(compileCacheEntries.phase, phase)),
+          ),
+        ),
+      );
+      let calls = 0;
+      complete = async () => {
+        calls += 1;
+        return {
+          text: JSON.stringify(
+            calls === 1
+              ? {
+                  topics: [
+                    {
+                      slug: "local-topic",
+                      title: "Canonical Topic",
+                      description: "Canonical description",
+                      subsumed_idea_ids: ["idea_1"],
+                    },
+                  ],
+                }
+              : { assignments: [{ n: 1, slug: "canonical-topic" }] },
+          ),
+          finishReason: "stop",
+        };
+      };
+      const abstract = Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run));
+      const first = await run(abstract);
+      expect(await run(abstract)).toEqual(first);
+      expect(calls).toBe(phase === "synthesize" ? 2 : 0);
+      const rows = await run(
+        Effect.flatMap(Database, (db) =>
+          db.query((d) =>
+            d.select().from(compileCacheEntries).where(eq(compileCacheEntries.phase, phase)),
+          ),
+        ),
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.value).toHaveProperty(phase === "partition" ? "chunks" : "local_topics");
+      expect(logEvents.filter((entry) => entry.event === "compile_cache_discarded")).toHaveLength(
+        1,
+      );
+    },
+  );
+
   it("fails loudly on a malformed canonical registry cache row", async () => {
     await seedCanonicalPath({ registryValue: { topics: "drifted" } });
     await expect(
@@ -764,12 +952,15 @@ const fullCard = (ideas: readonly unknown[]) => ({
     ).rejects.toThrow("canonicalize_registry cache row");
   });
 
-  it("fails loudly on a malformed canonical assignment cache row", async () => {
-    await seedCanonicalPath({ assignmentValue: { assign: [] } });
-    await expect(
-      run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run))),
-    ).rejects.toThrow("canonicalize_assign cache row");
-  });
+  it.each([{ assign: [] }, { assign: { "not-a-uuid": "canonical-topic" } }])(
+    "fails loudly on malformed canonical assignment keys or shape: %j",
+    async (assignmentValue) => {
+      await seedCanonicalPath({ assignmentValue });
+      await expect(
+        run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run))),
+      ).rejects.toThrow("canonicalize_assign cache row");
+    },
+  );
 
   it("fails loudly when the assignment prompt omits its unique subtopics placeholder", async () => {
     await seedCanonicalPath({});
@@ -1227,6 +1418,100 @@ const fullCard = (ideas: readonly unknown[]) => ({
         error_type: "Error",
       }),
     });
+    let calls = 0;
+    complete = async () => {
+      calls += 1;
+      return {
+        text: JSON.stringify({ body: "# Beta\n\nRepaired.", tags: [" Beta Tag ", "beta-tag"] }),
+        finishReason: "stop",
+      };
+    };
+    const repair = Effect.flatMap(CompilePhases, (phases) =>
+      phases.render(id.vault, id.run, [invalid]),
+    );
+    await run(repair);
+    const first = files.get("wiki/invalid.md");
+    expect(first).toContain("# Beta\n\nRepaired.");
+    expect(parseFrontmatter(first!).frontmatter.tags).toEqual(["beta-tag"]);
+    files.delete("wiki/invalid.md");
+    await run(repair);
+    expect(files.get("wiki/invalid.md")).toBe(first);
+    expect(calls).toBe(1);
+  });
+
+  it("repairs render SQL and search projections after a lost write acknowledgment without another model call", async () => {
+    await seedSourceAndIdeas();
+    const topic = validated[0]!;
+    await run(
+      Effect.flatMap(Database, (db) =>
+        db.query((d) =>
+          d.insert(topics).values({
+            topicId: topic.topicId,
+            vaultId: id.vault,
+            slug: topic.slug,
+            title: topic.title,
+            description: topic.description,
+          }),
+        ),
+      ),
+    );
+    let modelCalls = 0;
+    complete = async () => {
+      modelCalls += 1;
+      return {
+        text: JSON.stringify({ body: "# Alpha\n\nRecovered article.", tags: ["recovered"] }),
+        finishReason: "stop",
+      };
+    };
+    const render = Effect.flatMap(CompilePhases, (phases) =>
+      phases.render(id.vault, id.run, [topic]),
+    );
+    failWritePath = "wiki/alpha.md";
+    try {
+      expect(Exit.isFailure(await run(Effect.exit(render)))).toBe(true);
+    } finally {
+      failWritePath = null;
+    }
+    const state = () =>
+      run(
+        Effect.gen(function* () {
+          const db = yield* Database;
+          return {
+            cache: yield* db.query((d) => d.select().from(compileCacheEntries)),
+            articles: yield* db.query((d) => d.select().from(wikiArticles)),
+            topics: yield* db.query((d) => d.select().from(topics)),
+            search: yield* db.query((d) => d.select().from(searchIndex)),
+          };
+        }),
+      );
+    const partial = await state();
+    expect(partial.cache).toHaveLength(1);
+    expect(files.get("wiki/alpha.md")).toContain("Recovered article.");
+    await run(render);
+    const repaired = await state();
+    expect(repaired.cache).toEqual(partial.cache);
+    expect(repaired.articles).toHaveLength(1);
+    expect(repaired.articles[0]).toMatchObject({
+      topicId: topic.topicId,
+      archived: false,
+      fileHash: fileContentHash(files.get("wiki/alpha.md")!),
+      bodyHash: bodyContentHash("# Alpha\n\nRecovered article.\n"),
+    });
+    expect(repaired.topics[0]).toMatchObject({
+      articleStatus: "rendered",
+      renderedFromHash: topicContentHash(topic),
+    });
+    expect(repaired.search.length).toBeGreaterThan(0);
+    expect(new Set(repaired.search.map((chunk) => chunk.path))).toEqual(new Set(["wiki/alpha.md"]));
+    const embeddings = embeddingRequests.length;
+    await run(render);
+    const replayed = await state();
+    expect(replayed.articles.map((article) => article.id)).toEqual(
+      repaired.articles.map((article) => article.id),
+    );
+    expect(replayed.search).toEqual(repaired.search);
+    expect(embeddingRequests).toHaveLength(embeddings);
+    expect(modelCalls).toBe(1);
   });
 
   it("writes compile LLM cost before publish and publish adds no rows", async () => {

@@ -40,8 +40,11 @@ import {
   serializeFrontmatter,
 } from "./markdown.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
-import { sourceIdentityFromFrontmatter } from "./source-identity.ts";
-import { SourceDocumentsService } from "./source-documents.ts";
+import {
+  parseSourceDocument,
+  type ParsedSourceDocument,
+  SourceDocumentsService,
+} from "./source-documents.ts";
 import { ContentStorage, vaultOwner } from "./storage.ts";
 import { RandomBytesService } from "./random.ts";
 
@@ -167,7 +170,7 @@ export const CompilePhasesLive = Layer.effect(
 
         if (scope === "raw") {
           const seenSourcePaths = new Map<Uuid, string>();
-          const refresh: { readonly filePath: string; readonly content: string }[] = [];
+          const refresh: ParsedSourceDocument[] = [];
           for (const file of files) {
             const filename = file.path.slice(file.path.lastIndexOf("/") + 1);
             if (filename.startsWith("_")) continue;
@@ -185,15 +188,14 @@ export const CompilePhasesLive = Layer.effect(
             } else {
               const content = yield* storage.readText(vaultOwner(vaultId), file.path);
               contentByPath.set(file.path, content);
-              sourceId = sourceIdentityFromFrontmatter(
-                parseFrontmatter(content).frontmatter,
-              ).sourceId;
+              const candidate = parseSourceDocument(vaultId, file.path, content);
+              sourceId = candidate.id;
               if (document !== undefined && document.id !== sourceId) {
                 throw new Error(
                   `Source identity mismatch at ${file.path}: registered ${document.id}, stored ${sourceId}`,
                 );
               }
-              refresh.push({ filePath: file.path, content });
+              refresh.push(candidate);
             }
             const previousPath = seenSourcePaths.get(sourceId);
             if (previousPath !== undefined && previousPath !== file.path) {
@@ -204,11 +206,7 @@ export const CompilePhasesLive = Layer.effect(
             seenSourcePaths.set(sourceId, file.path);
           }
           for (const document of refresh) {
-            yield* sourceDocumentsWrite.refreshFromStorage(
-              vaultId,
-              document.filePath,
-              document.content,
-            );
+            yield* sourceDocumentsWrite.refresh(document);
           }
           documents = yield* db.query((d) => d
             .select({

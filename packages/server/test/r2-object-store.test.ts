@@ -23,11 +23,15 @@ describe("R2 whole-object storage", () => {
     ]);
   });
 
-  it("does not require an ETag for an ordinary read", async () => {
+  it("requires an ETag only for conditional reads", async () => {
     const bucket = makeFakeBucket({ omitEtag: true });
     bucket.write("wiki/a.md", encode("Readable\n"));
     const store = makeObjectStore(bucket.client, "bucket");
     expect(decode(await Effect.runPromise(store.get("wiki/a.md")))).toBe("Readable\n");
+    expect(await Effect.runPromise(Effect.result(store.getVersioned("wiki/a.md")))).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "StorageBackendError", errorType: "MissingVersion" },
+    });
   });
 
   it("fails partial bulk deletion and lets a later attempt remove the remaining objects", async () => {

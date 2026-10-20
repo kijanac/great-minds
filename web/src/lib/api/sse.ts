@@ -1,5 +1,5 @@
 import type { DomainError } from "@great-minds/domain";
-import { Data, Duration, Effect, Stream, type Schema } from "effect";
+import { Data, Duration, Effect, Schema, Stream } from "effect";
 import type * as Sse from "effect/unstable/encoding/Sse";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 
@@ -17,13 +17,19 @@ const reconnectDelay = (attempt: number) => Duration.millis(Math.min(1000 * 2 **
 const reconnectable = (error: HttpClientError.HttpClientError) =>
   error.reason._tag === "TransportError";
 
-export const followUntil = <A>(
-  connect: Stream.Stream<A, StreamFailure>,
-  isTerminal: (event: A) => boolean,
+export const followSnapshots = <A>(
+  connect: Stream.Stream<Sse.EventEncoded, StreamFailure>,
+  schema: Schema.Decoder<A>,
+  isTerminal: (snapshot: A) => boolean,
 ): Stream.Stream<A, StreamFailure> => {
+  const decode = Schema.decodeEffect(Schema.fromJsonString(schema));
+
   function attempt(count: number): Stream.Stream<A, StreamFailure> {
     return connect.pipe(
       Stream.concat(Stream.fail(new Disconnected())),
+      Stream.takeWhile((event) => event.event !== "done"),
+      Stream.filter((event) => event.event === "message" && event.data.length > 0),
+      Stream.mapEffect((event) => decode(event.data)),
       Stream.takeUntil(isTerminal),
       Stream.catchTags({
         Disconnected: () => reconnectAfter(reconnectDelay(count), count),

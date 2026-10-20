@@ -26,11 +26,7 @@ type SourceDocumentsServiceShape = {
     content: string,
     clientHash: FileFingerprint | null,
   ) => Effect.Effect<Uuid>;
-  readonly refreshFromStorage: (
-    vaultId: Uuid,
-    filePath: string,
-    content: string,
-  ) => Effect.Effect<Uuid>;
+  readonly refresh: (source: ParsedSourceDocument) => Effect.Effect<Uuid>;
   readonly batchIndex: (
     vaultId: Uuid,
     documents: readonly {
@@ -43,18 +39,12 @@ type SourceDocumentsServiceShape = {
     vaultId: Uuid,
     clientHashes: readonly FileFingerprint[],
   ) => Effect.Effect<readonly FileFingerprint[]>;
-  readonly getById: (
-    vaultId: Uuid,
-    sourceId: Uuid,
-  ) => Effect.Effect<SourceDocumentRow | undefined>;
+  readonly getById: (vaultId: Uuid, sourceId: Uuid) => Effect.Effect<SourceDocumentRow | undefined>;
   readonly getByPath: (
     vaultId: Uuid,
     filePath: string,
   ) => Effect.Effect<SourceDocumentRow | undefined>;
-  readonly deleteSource: (
-    vaultId: Uuid,
-    sourceId: Uuid,
-  ) => Effect.Effect<boolean>;
+  readonly deleteSource: (vaultId: Uuid, sourceId: Uuid) => Effect.Effect<boolean>;
   readonly reconcileDeletionsOnce: () => Effect.Effect<number>;
 };
 
@@ -82,11 +72,11 @@ const numberField = (frontmatter: Record<string, unknown>, key: string) => {
   return null;
 };
 
-const sourceRow = (
+export const parseSourceDocument = (
   vaultId: Uuid,
   filePath: string,
   content: string,
-  clientHash: FileFingerprint | null,
+  clientHash: FileFingerprint | null = null,
 ) => {
   const parsed = parseFrontmatter(content);
   const identity = sourceIdentityFromFrontmatter(parsed.frontmatter);
@@ -117,6 +107,8 @@ const sourceRow = (
     title: documentTitle(parsed.body),
   };
 };
+
+export type ParsedSourceDocument = Readonly<ReturnType<typeof parseSourceDocument>>;
 
 const ingestSet = {
   filePath: sql`excluded.file_path`,
@@ -204,21 +196,18 @@ export const SourceDocumentsServiceLive = Layer.effect(
         .limit(1))
         .pipe(Effect.map((rows) => rows[0]));
 
-    const index = (
-      vaultId: Uuid,
-      filePath: string,
-      content: string,
-      clientHash: FileFingerprint | null,
-    ) =>
+    const upsert = (source: typeof sourceDocuments.$inferInsert) =>
       Effect.gen(function* () {
-        const rows = yield* db.query((d) => d
-          .insert(sourceDocuments)
-          .values(sourceRow(vaultId, filePath, content, clientHash))
-          .onConflictDoUpdate({
-            target: sourceDocuments.id,
-            set: ingestSet,
-          })
-          .returning({ id: sourceDocuments.id }));
+        const rows = yield* db.query((d) =>
+          d
+            .insert(sourceDocuments)
+            .values(source)
+            .onConflictDoUpdate({
+              target: sourceDocuments.id,
+              set: ingestSet,
+            })
+            .returning({ id: sourceDocuments.id }),
+        );
         const row = rows[0];
         if (row === undefined) {
           throw new Error("source document upsert returned no row");
@@ -227,10 +216,11 @@ export const SourceDocumentsServiceLive = Layer.effect(
       });
 
     return {
-      index,
-      refreshFromStorage: (vaultId, filePath, content) =>
+      index: (vaultId, filePath, content, clientHash) =>
+        Effect.suspend(() => upsert(parseSourceDocument(vaultId, filePath, content, clientHash))),
+      refresh: (candidate) =>
         Effect.gen(function* () {
-          const candidate = sourceRow(vaultId, filePath, content, null);
+          const { vaultId, filePath } = candidate;
           const registeredPath = yield* db.query((d) => d
             .select({ id: sourceDocuments.id })
             .from(sourceDocuments)
@@ -243,23 +233,29 @@ export const SourceDocumentsServiceLive = Layer.effect(
             );
           }
           const existing = yield* getById(vaultId, candidate.id);
-          const clientHash = existing?.clientHash ?? null;
-          return yield* index(vaultId, filePath, content, clientHash as FileFingerprint | null);
+          return yield* upsert({ ...candidate, clientHash: existing?.clientHash ?? null });
         }),
       batchIndex: (vaultId, documents) =>
         Effect.gen(function* () {
           if (documents.length === 0) return;
-          yield* db.query((d) => d
-            .insert(sourceDocuments)
-            .values(
-              documents.map((document) =>
-                sourceRow(vaultId, document.filePath, document.content, document.clientHash),
-              ),
-            )
-            .onConflictDoUpdate({
-              target: sourceDocuments.id,
-              set: ingestSet,
-            }));
+          yield* db.query((d) =>
+            d
+              .insert(sourceDocuments)
+              .values(
+                documents.map((document) =>
+                  parseSourceDocument(
+                    vaultId,
+                    document.filePath,
+                    document.content,
+                    document.clientHash,
+                  ),
+                ),
+              )
+              .onConflictDoUpdate({
+                target: sourceDocuments.id,
+                set: ingestSet,
+              }),
+          );
         }),
       existingClientHashes: (vaultId, clientHashes) =>
         Effect.gen(function* () {
@@ -280,11 +276,16 @@ export const SourceDocumentsServiceLive = Layer.effect(
         }),
       getById,
       getByPath: (vaultId, filePath) =>
-        db.query((d) => d
-          .select()
-          .from(sourceDocuments)
-          .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, filePath)))
-          .limit(1))
+        db
+          .query((d) =>
+            d
+              .select()
+              .from(sourceDocuments)
+              .where(
+                and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, filePath)),
+              )
+              .limit(1),
+          )
           .pipe(Effect.map((rows) => rows[0])),
       deleteSource: (vaultId, sourceId) =>
         Effect.gen(function* () {

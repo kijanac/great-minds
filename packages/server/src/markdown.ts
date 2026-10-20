@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Option, Schema } from "effect";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import type { SessionExchangeEvent, SessionOrigin, Uuid } from "@great-minds/domain";
@@ -58,23 +58,20 @@ const walkBlocks = (content: string): readonly Block[] => {
 const FRONTMATTER_RE = /^---\n(.+?)\n---\n/s;
 const WIKI_LINK_RE = /\[([^\]]*)\]\((wiki\/[^)]+\.md)\)/g;
 
-const decodeFrontmatter = (value: unknown): Record<string, unknown> => {
-  try {
-    return decodeFrontmatterRecord(value);
-  } catch {
-    return {};
-  }
-};
-
-const decodeFrontmatterRecord = Schema.decodeUnknownSync(
+const decodeFrontmatterRecord = Schema.decodeUnknownOption(
   Schema.Record(Schema.String, Schema.Unknown),
 );
 
-export const parseFrontmatter = (content: string) => {
+export const parseFrontmatter = (
+  content: string,
+): {
+  readonly frontmatter: Record<string, unknown>;
+  readonly body: string;
+} => {
   const match = FRONTMATTER_RE.exec(content);
   if (match === null) return { frontmatter: {}, body: content } as const;
   return {
-    frontmatter: decodeFrontmatter(parseYaml(match[1] ?? "")),
+    frontmatter: Option.getOrElse(decodeFrontmatterRecord(parseYaml(match[1] ?? "")), () => ({})),
     body: content.slice(match[0].length),
   } as const;
 };

@@ -1,5 +1,5 @@
 import type { Uuid } from "@great-minds/domain";
-import { Effect, Schema } from "effect";
+import { Effect, Option, Schema } from "effect";
 import { parse as parseYaml } from "yaml";
 
 import { type ContentStorage, vaultOwner } from "./storage.ts";
@@ -24,50 +24,39 @@ export const defaultVaultConfigFile: VaultConfigFile = {
   enrichedFields: [],
 };
 
-const decodeOr =
-  <A>(decode: (value: unknown) => A, fallback: A) =>
-  (value: unknown): A => {
-    try {
-      return decode(value);
-    } catch {
-      return fallback;
-    }
-  };
-
-const decodeDocument = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
-const decodeRecordField = decodeOr(
-  Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown)),
-  undefined,
-);
-const decodeStringField = Schema.decodeUnknownSync(Schema.String);
-const decodeStringsField = Schema.decodeUnknownSync(Schema.Array(Schema.String));
-const decodeBooleanField = Schema.decodeUnknownSync(Schema.Boolean);
+const decodeRecordField = Schema.decodeUnknownOption(Schema.Record(Schema.String, Schema.Unknown));
+const decodeStringField = Schema.decodeUnknownOption(Schema.String);
+const decodeStringsField = Schema.decodeUnknownOption(Schema.Array(Schema.String));
+const decodeBooleanField = Schema.decodeUnknownOption(Schema.Boolean);
 
 export const parseVaultConfigFile = (content: string): VaultConfigFile => {
-  let document: Record<string, unknown>;
+  let yaml: unknown;
   try {
-    document = decodeDocument(parseYaml(content));
+    yaml = parseYaml(content);
   } catch {
     return defaultVaultConfigFile;
   }
-  const kinds = decodeOr(decodeStringsField, defaultVaultConfigFile.kinds)(document.kinds).filter(
-    (kind) => kind.length > 0,
-  );
-  const metadata = decodeRecordField(document.metadata) ?? {};
+  const document = Option.getOrUndefined(decodeRecordField(yaml));
+  if (document === undefined) return defaultVaultConfigFile;
+  const kinds = Option.getOrElse(
+    decodeStringsField(document.kinds),
+    () => defaultVaultConfigFile.kinds,
+  ).filter((kind) => kind.length > 0);
+  const metadata = Option.getOrElse(decodeRecordField(document.metadata), () => ({}));
   const enrichedFields: EnrichedField[] = [];
   for (const [name, raw] of Object.entries(metadata)) {
-    const spec = decodeRecordField(raw);
+    const spec = Option.getOrUndefined(decodeRecordField(raw));
     if (spec === undefined) continue;
     enrichedFields.push({
       name,
       type: spec.type === "list" ? "list" : "string",
-      description: decodeOr(decodeStringField, "")(spec.description),
+      description: Option.getOrElse(decodeStringField(spec.description), () => ""),
     });
   }
   return {
-    thematicHint: decodeOr(decodeStringField, "")(document.thematic_hint),
+    thematicHint: Option.getOrElse(decodeStringField(document.thematic_hint), () => ""),
     kinds: kinds.length > 0 ? kinds : defaultVaultConfigFile.kinds,
-    webSearch: decodeOr(decodeBooleanField, false)(document.web_search),
+    webSearch: Option.getOrElse(decodeBooleanField(document.web_search), () => false),
     enrichedFields,
   };
 };

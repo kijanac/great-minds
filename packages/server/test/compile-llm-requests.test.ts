@@ -6,7 +6,6 @@ import { describe, expect, it } from "vitest";
 import {
   assignmentsResponseFormat,
   codePointLength,
-  decodeCompileJsonCompletion,
   extractResponseFormat,
   normalizePythonWhitespace,
   registryResponseFormat,
@@ -123,35 +122,6 @@ describe("compile LLM request composition", () => {
       responseFormat: "json_object",
       requestProfile: "compile",
     });
-  });
-});
-
-describe("compile structured-output decoding", () => {
-  it("accepts the JSON fencing tolerated by Python", () => {
-    expect(
-      decodeCompileJsonCompletion("fixture-model", {
-        text: '```json\n{"topics":[]}\n```',
-        finishReason: "stop",
-      }),
-    ).toEqual({ topics: [] });
-  });
-
-  it("keeps malformed JSON loud", () => {
-    expect(() =>
-      decodeCompileJsonCompletion("fixture-model", {
-        text: "{not-json}",
-        finishReason: "stop",
-      }),
-    ).toThrow(SyntaxError);
-  });
-
-  it("keeps token-limit truncation loud before parsing", () => {
-    expect(() =>
-      decodeCompileJsonCompletion("fixture-model", {
-        text: '{"topics":[]}',
-        finishReason: "length",
-      }),
-    ).toThrow("fixture-model output hit the token limit (finish_reason=length) and was truncated");
   });
 });
 

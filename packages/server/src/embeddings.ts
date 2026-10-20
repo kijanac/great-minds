@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 
-import { Context, Effect, Layer, Schedule, Schema } from "effect";
+import { Context, Data, Effect, Layer, Schedule, Schema } from "effect";
 
 import { AppConfig, optionalRedactedValue } from "./config.ts";
 import { ModelProviderError } from "./llm.ts";
@@ -17,16 +17,10 @@ export class EmbeddingsService extends Context.Service<EmbeddingsService, Embedd
   "@great-minds/server/EmbeddingsService",
 ) {}
 
-export class EmbeddingBatchFailed extends Error {
-  readonly _tag = "EmbeddingBatchFailed";
-  readonly cause: unknown;
-
-  constructor(cause: unknown) {
-    super(cause instanceof Error ? cause.message : String(cause));
-    this.name = this._tag;
-    this.cause = cause;
-  }
-}
+export class EmbeddingBatchFailed extends Data.TaggedError("EmbeddingBatchFailed")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
 
 export const isTimeoutError = (error: unknown): boolean => {
   if (typeof error !== "object" || error === null) return false;
@@ -48,11 +42,15 @@ const decodeBase64Float32Le = (embedding: string): readonly number[] => {
     embedding.length % 4 !== 0 ||
     !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(embedding)
   ) {
-    throw new ModelProviderError("embedding provider returned invalid base64 vector data");
+    throw new ModelProviderError({
+      message: "embedding provider returned invalid base64 vector data",
+    });
   }
   const bytes = Buffer.from(embedding, "base64");
   if (bytes.length === 0 || bytes.length % Float32Array.BYTES_PER_ELEMENT !== 0) {
-    throw new ModelProviderError("embedding provider returned invalid float32 vector bytes");
+    throw new ModelProviderError({
+      message: "embedding provider returned invalid float32 vector bytes",
+    });
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const decoded = Array.from(
@@ -60,7 +58,9 @@ const decodeBase64Float32Le = (embedding: string): readonly number[] => {
     (_, index) => view.getFloat32(index * Float32Array.BYTES_PER_ELEMENT, true),
   );
   if (decoded.some((value) => !Number.isFinite(value))) {
-    throw new ModelProviderError("embedding provider returned non-finite float32 vector data");
+    throw new ModelProviderError({
+      message: "embedding provider returned non-finite float32 vector data",
+    });
   }
   return decoded;
 };
@@ -72,7 +72,7 @@ const decodeEmbedding = (embedding: string | readonly number[]): readonly number
   if (embedding.length > 0 && embedding.every((value) => Number.isFinite(value))) {
     return embedding;
   }
-  throw new ModelProviderError("embedding provider returned an invalid vector");
+  throw new ModelProviderError({ message: "embedding provider returned an invalid vector" });
 };
 
 const EmbeddingResponse = Schema.Struct({
@@ -83,37 +83,40 @@ const EmbeddingResponse = Schema.Struct({
     }),
   ),
 });
-const decodeEmbeddingResponse = Schema.decodeUnknownSync(EmbeddingResponse);
+const decodeEmbeddingResponse = Schema.decodeUnknownResult(EmbeddingResponse);
 
 export const parseEmbeddingResponse = (
   value: unknown,
   expectedCount: number,
 ): readonly (readonly number[])[] => {
-  let response: typeof EmbeddingResponse.Type;
-  try {
-    response = decodeEmbeddingResponse(value);
-  } catch {
-    throw new ModelProviderError("embedding provider returned an unexpected response shape");
+  const decoded = decodeEmbeddingResponse(value);
+  if (decoded._tag === "Failure") {
+    throw new ModelProviderError({
+      message: "embedding provider returned an unexpected response shape",
+      issue: decoded.failure.issue,
+    });
   }
-  if (response.data.length !== expectedCount) {
-    throw new ModelProviderError("embedding provider returned an unexpected data shape");
+  if (decoded.success.data.length !== expectedCount) {
+    throw new ModelProviderError({
+      message: "embedding provider returned an unexpected data shape",
+    });
   }
-  const indexed = response.data.map((item) => {
-    if (!Number.isInteger(item.index) || item.index < 0 || item.index >= expectedCount) {
-      throw new ModelProviderError("embedding provider returned an invalid index");
+  const indexed = decoded.success.data
+    .map((item) => {
+      if (!Number.isInteger(item.index) || item.index < 0 || item.index >= expectedCount) {
+        throw new ModelProviderError({ message: "embedding provider returned an invalid index" });
+      }
+      return {
+        index: item.index,
+        embedding: truncateAndNormalize(decodeEmbedding(item.embedding)),
+      };
+    })
+    .toSorted((left, right) => left.index - right.index);
+  return indexed.map((item, index) => {
+    if (item.index !== index) {
+      throw new ModelProviderError({ message: "embedding provider returned duplicate indices" });
     }
-    return { index: item.index, embedding: truncateAndNormalize(decodeEmbedding(item.embedding)) };
-  });
-  const byIndex = new Map(indexed.map((item) => [item.index, item.embedding]));
-  if (byIndex.size !== expectedCount) {
-    throw new ModelProviderError("embedding provider returned duplicate indices");
-  }
-  return Array.from({ length: expectedCount }, (_, index) => {
-    const embedding = byIndex.get(index);
-    if (embedding === undefined) {
-      throw new ModelProviderError("embedding provider omitted an index");
-    }
-    return embedding;
+    return item.embedding;
   });
 };
 
@@ -130,7 +133,9 @@ export const EmbeddingsLive = Layer.effect(
     return {
       embed: (texts) => {
         if (apiKey === undefined) {
-          return Effect.fail(new EmbeddingBatchFailed(new ModelProviderError("OpenRouter API key is not configured")));
+          return Effect.fail(
+            new EmbeddingBatchFailed({ message: "OpenRouter API key is not configured" }),
+          );
         }
         return Effect.tryPromise({
           try: async (signal) => {
@@ -144,11 +149,17 @@ export const EmbeddingsLive = Layer.effect(
               signal: AbortSignal.any([signal, AbortSignal.timeout(embeddingTimeoutMs)]),
             });
             if (!response.ok) {
-              throw new ModelProviderError(`embedding provider returned ${response.status}`);
+              throw new ModelProviderError({
+                message: `embedding provider returned ${response.status}`,
+              });
             }
             return parseEmbeddingResponse(await response.json(), texts.length);
           },
-          catch: (error) => new EmbeddingBatchFailed(error),
+          catch: (cause) =>
+            new EmbeddingBatchFailed({
+              message: cause instanceof Error ? cause.message : String(cause),
+              cause,
+            }),
         }).pipe(Effect.retry(embeddingRetry));
       },
     } satisfies EmbeddingsShape;

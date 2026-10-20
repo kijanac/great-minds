@@ -1,5 +1,5 @@
 import { GreatMindsApi, type DomainError } from "@great-minds/domain";
-import { Data, Effect, Layer, ManagedRuntime, Stream, type Schema } from "effect";
+import { Data, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
@@ -16,7 +16,12 @@ export class ApiError extends Data.TaggedError("ApiError")<{
 
 export type RequestFailure = DomainError | ApiError;
 
-type ClientFailure = DomainError | HttpClientError.HttpClientError | Schema.SchemaError;
+type ClientFailure = RequestFailure | HttpClientError.HttpClientError | Schema.SchemaError;
+
+export const decodeInput = <A>(schema: Schema.Decoder<A>, value: unknown) =>
+  Schema.decodeUnknownEffect(schema)(value).pipe(
+    Effect.mapError((cause) => new ApiError({ message: "Invalid request", cause })),
+  );
 
 const transportMessage = (reason: HttpClientError.HttpClientErrorReason): string => {
   switch (reason._tag) {

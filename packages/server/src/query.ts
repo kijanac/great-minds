@@ -20,7 +20,7 @@ import {
   Uuid,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, gte, ilike, lte, ne, or, sql, type SQL } from "drizzle-orm";
-import { Cause, Context, Effect, Layer, Option, Schema, Stream } from "effect";
+import { Cause, Context, Data, Effect, Layer, Option, Schema, Stream } from "effect";
 
 import { AppConfig } from "./config.ts";
 import { readVaultConfig, type VaultConfigFile } from "./vault-config.ts";
@@ -32,6 +32,7 @@ import {
   LanguageModel,
   LlmMessageSchema,
   LlmToolDefinitionSchema,
+  ModelProviderError,
   type LlmMessage,
   type LlmToolDefinition,
   stripJsonFence,
@@ -234,22 +235,14 @@ type ToolResult = {
 
 type SafeLogFields = Record<string, string | number | boolean | null | undefined>;
 
-class ToolMiss extends Error {
-  readonly toolMessage: string;
+class ToolMiss extends Data.TaggedError("ToolMiss")<{
+  readonly message: string;
+}> {}
 
-  constructor(toolMessage: string) {
-    super(toolMessage);
-    this.name = "ToolMiss";
-    this.toolMessage = toolMessage;
-  }
-}
-
-class MalformedToolArgs extends Error {
-  constructor(toolName: string) {
-    super(`Malformed tool args for ${toolName}`);
-    this.name = "MalformedToolArgs";
-  }
-}
+class MalformedToolArgs extends Data.TaggedError("MalformedToolArgs")<{
+  readonly message: string;
+  readonly issue: Schema.SchemaError["issue"];
+}> {}
 
 const sanitizedStreamError = "Something went wrong while answering. Try again in a minute.";
 const readWholeLimit = 20_000;
@@ -423,17 +416,18 @@ const queryDocumentsTool = (tags: readonly string[]): LlmToolDefinition => ({
   },
 });
 
-const asObjectArgs = (json: string, toolName: string) => {
-  try {
-    return decodeToolArgs(json);
-  } catch {
-    throw new MalformedToolArgs(toolName);
-  }
-};
-
-const decodeToolArgs = Schema.decodeUnknownSync(
-  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
-);
+const parseToolArgs = (json: string, toolName: string) =>
+  Schema.decodeEffect(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)))(
+    json,
+  ).pipe(
+    Effect.mapError(
+      (error) =>
+        new MalformedToolArgs({
+          message: `Malformed tool args for ${toolName}`,
+          issue: error.issue,
+        }),
+    ),
+  );
 
 const truthyEntries = (args: Record<string, unknown>) =>
   Object.entries(args).filter(([, value]) => Boolean(value));
@@ -443,7 +437,6 @@ const WebFactExtraction = Schema.Struct({
     Schema.Struct({ index: Schema.Number, facts: Schema.Array(Schema.String) }),
   ),
 });
-const decodeWebFactExtraction = Schema.decodeUnknownSync(WebFactExtraction);
 
 export const QueryServiceLive = Layer.effect(
   QueryService,
@@ -685,7 +678,7 @@ export const QueryServiceLive = Layer.effect(
             ? storage.readText(userOwner(context.userId), path)
             : storage.readText(vaultOwner(context.vaultId), path);
         const content = yield* read.pipe(
-          Effect.mapError(() => new ToolMiss(`Document not found: ${path}`)),
+          Effect.mapError(() => new ToolMiss({ message: `Document not found: ${path}` })),
         );
         const source = emitSource
           ? yield* sourceEvent(context, { name: "read_document", args: { path } })
@@ -913,11 +906,9 @@ export const QueryServiceLive = Layer.effect(
             .orderBy(asc(searchIndex.chunkIndex)),
         );
         if (chunks.length === 0) {
-          return yield* Effect.fail(
-            new ToolMiss(
-              `No indexed paragraphs at ${path} for chunks ${start}-${end}. Check the path and range against a search hit or document outline.`,
-            ),
-          );
+          return yield* new ToolMiss({
+            message: `No indexed paragraphs at ${path} for chunks ${start}-${end}. Check the path and range against a search hit or document outline.`,
+          });
         }
         const sections = chunks.map((chunk) => {
           const heading = chunk.heading.length > 0 ? `${chunk.heading}\n` : "";
@@ -937,11 +928,9 @@ export const QueryServiceLive = Layer.effect(
     const linkedArticlesTool = (context: QueryExecutionState, path: string) =>
       Effect.gen(function* () {
         if (!path.startsWith("wiki/")) {
-          return yield* Effect.fail(
-            new ToolMiss(
-              `${path} is not a wiki article — the link graph only covers wiki articles. Use search_content to find related material.`,
-            ),
-          );
+          return yield* new ToolMiss({
+            message: `${path} is not a wiki article — the link graph only covers wiki articles. Use search_content to find related material.`,
+          });
         }
         const sourceRows = yield* db.query((d) =>
           d
@@ -958,7 +947,7 @@ export const QueryServiceLive = Layer.effect(
         );
         const source = first(sourceRows);
         if (source === undefined) {
-          return yield* Effect.fail(new ToolMiss(`Article not found: ${path}`));
+          return yield* new ToolMiss({ message: `Article not found: ${path}` });
         }
         const outgoing = yield* db.query((d) =>
           d
@@ -1222,7 +1211,17 @@ export const QueryServiceLive = Layer.effect(
           ],
         });
         addUsageCost(context, completion.usage);
-        const parsed = decodeWebFactExtraction(JSON.parse(stripJsonFence(completion.text)));
+        const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(WebFactExtraction))(
+          stripJsonFence(completion.text),
+        ).pipe(
+          Effect.mapError(
+            (error) =>
+              new ModelProviderError({
+                message: "Invalid web fact extraction response",
+                issue: error.issue,
+              }),
+          ),
+        );
         return new Map<number, readonly string[]>(
           parsed.results.map((item) => [item.index, item.facts]),
         );
@@ -1390,28 +1389,25 @@ export const QueryServiceLive = Layer.effect(
               .sort(([left], [right]) => left - right)
               .map(([, toolCall]) => toolCall);
             const toolCalls: QueryPreparedToolCall[] = [];
-            try {
-              for (const toolCall of rawToolCalls) {
-                const args = asObjectArgs(toolCall.arguments, toolCall.name);
-                const tool = previewQueryTool({ name: toolCall.name, args });
-                const pendingSource = Option.isSome(tool)
-                  ? pendingSourceEvent(tool.value)
-                  : undefined;
-                toolCalls.push({
-                  ...toolCall,
-                  args,
-                  ...(pendingSource === undefined ? {} : { pendingSource }),
-                });
-              }
-            } catch (error) {
-              if (error instanceof MalformedToolArgs) {
+            for (const toolCall of rawToolCalls) {
+              const parsed = yield* Effect.result(parseToolArgs(toolCall.arguments, toolCall.name));
+              if (parsed._tag === "Failure") {
                 return {
                   kind: "failed",
                   state: context,
-                  error: error.message,
+                  error: parsed.failure.message,
                 } satisfies QueryModelAttemptResult;
               }
-              throw error;
+              const args = parsed.success;
+              const tool = previewQueryTool({ name: toolCall.name, args });
+              const pendingSource = Option.isSome(tool)
+                ? pendingSourceEvent(tool.value)
+                : undefined;
+              toolCalls.push({
+                ...toolCall,
+                args,
+                ...(pendingSource === undefined ? {} : { pendingSource }),
+              });
             }
             messages.push({
               role: "assistant",
@@ -1482,14 +1478,14 @@ export const QueryServiceLive = Layer.effect(
         context.trace.toolCalls += 1;
         const result = yield* Effect.gen(function* () {
           const tool = yield* decodeQueryTool(toolCall).pipe(
-            Effect.mapError((error) => new ToolMiss(error.message)),
+            Effect.mapError((error) => new ToolMiss({ message: error.message })),
           );
           return yield* dispatchTool(context, tool);
         }).pipe(
           Effect.catchCause((cause) => {
             const error = causeError(cause);
             if (error instanceof ToolMiss) {
-              return Effect.succeed<ToolResult>({ content: error.toolMessage });
+              return Effect.succeed<ToolResult>({ content: error.message });
             }
             if (isInterruptOnly(cause)) {
               return Effect.failCause(cause);
@@ -1520,9 +1516,7 @@ export const QueryServiceLive = Layer.effect(
       Effect.gen(function* () {
         const content = yield* readDocumentTool(context, originPath, originScope, false).pipe(
           Effect.map((result) => result.content),
-          Effect.catch((error) =>
-            error instanceof ToolMiss ? Effect.succeed(error.toolMessage) : Effect.fail(error),
-          ),
+          Effect.catchTag("ToolMiss", (error) => Effect.succeed(error.message)),
         );
         const toolCallId = `origin-${randomUUID().replaceAll("-", "").slice(0, 8)}`;
         return [

@@ -8,6 +8,7 @@ import { ClockService } from "./clock.ts";
 import { AppConfig } from "./config.ts";
 
 const encoder = new TextEncoder();
+const AccessTokenClaims = Schema.Struct({ type: Schema.Literal("access"), sub: Uuid });
 
 type TokenServiceShape = {
   readonly issueAccessToken: (userId: Uuid, now: Date) => Effect.Effect<string>;
@@ -32,30 +33,25 @@ export const TokenServiceLive = Layer.effect(
         Effect.promise(() =>
           new SignJWT({
             sub: userId,
-            type: "access"
+            type: "access",
           })
             .setProtectedHeader({ alg: "HS256", typ: "JWT" })
             .setIssuedAt(seconds(now))
             .setExpirationTime(seconds(now) + config.jwtAccessExpiryMinutes * 60)
-            .sign(secretKey(config.jwtSecret))
+            .sign(secretKey(config.jwtSecret)),
         ),
       verifyAccessToken: (token) =>
         Effect.gen(function* () {
           const now = yield* clock.now;
-          return yield* Effect.tryPromise({
-            try: async () => {
-              const verified = await jwtVerify(token, secretKey(config.jwtSecret), {
-                algorithms: ["HS256"],
-                currentDate: now
-              });
-              if (verified.payload.type !== "access") {
-                throw new Error("not access token");
-              }
-              return Schema.decodeUnknownSync(Uuid)(verified.payload.sub);
-            },
-            catch: () => new Unauthorized({ detail: "Invalid credentials" })
-          });
-        })
+          const verified = yield* Effect.tryPromise(() =>
+            jwtVerify(token, secretKey(config.jwtSecret), {
+              algorithms: ["HS256"],
+              currentDate: now,
+            }),
+          );
+          const claims = yield* Schema.decodeUnknownEffect(AccessTokenClaims)(verified.payload);
+          return claims.sub;
+        }).pipe(Effect.mapError(() => new Unauthorized({ detail: "Invalid credentials" }))),
     } satisfies TokenServiceShape;
-  })
+  }),
 );

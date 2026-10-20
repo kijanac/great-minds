@@ -12,7 +12,7 @@ import {
 import { and, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
-import { sourceSummary } from "./document-metadata.ts";
+import { readSourceSummary } from "./document-metadata.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { ProposalsService } from "./proposals.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
@@ -105,10 +105,14 @@ export const SourcesServiceLive = Layer.effect(
             .orderBy(desc(sql`count(*)`)));
 
           return {
-            ...pageEnvelope(rows.map(sourceSummary), query, oneTotal(countRows)),
+            ...pageEnvelope(
+              yield* Effect.forEach(rows, readSourceSummary),
+              query,
+              oneTotal(countRows),
+            ),
             facets: {
-              source_types: facetRows
-            }
+              source_types: facetRows,
+            },
           };
         }),
       deleteSource: (userId, vaultId, sourceId) =>
@@ -140,7 +144,7 @@ export const SourcesServiceLive = Layer.effect(
             filePath: source.filePath,
             title: source.title
           });
-        })
+        }),
     } satisfies SourcesServiceShape;
-  })
+  }),
 );

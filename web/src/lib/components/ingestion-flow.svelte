@@ -52,7 +52,7 @@
 
   interface HashedIngestableFile extends FileBase {
     status: "unique" | "duplicate-in-batch" | "duplicate-in-vault";
-    hash: string;
+    hash: HashedFile["hash"];
     selected: boolean;
   }
 
@@ -268,7 +268,7 @@
   function applyHash(
     current: IngestableFile[],
     id: Uuid,
-    hash: string,
+    hash: HashedFile["hash"],
   ): IngestableFile[] {
     const duplicate = current.some(
       (file) => file.id !== id && isHashedFile(file) && file.hash === hash,

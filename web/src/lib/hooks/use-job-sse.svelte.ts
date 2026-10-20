@@ -209,16 +209,13 @@ export function useJobSSE(
 
     async function follow() {
       try {
-        for await (const event of followJob(jobKey, vaultKey, controller.signal)) {
-          if (event._tag === "Ended") {
-            if (!terminal) {
-              terminal = true;
-              overallError = "Pipeline ended without terminal status";
-              invalidateActivePipeline(vaultKey);
-            }
-            return;
-          }
-          applySnapshot(event.snapshot);
+        for await (const snapshot of followJob(jobKey, vaultKey, controller.signal)) {
+          applySnapshot(snapshot);
+        }
+        if (!terminal && !controller.signal.aborted) {
+          terminal = true;
+          overallError = "Pipeline ended without terminal status";
+          invalidateActivePipeline(vaultKey);
         }
       } catch (error) {
         if (controller.signal.aborted) return;

@@ -5,7 +5,7 @@ import {
   type UserSuggestionIntent,
   type UserSuggestionResult,
 } from "@great-minds/domain";
-import { Effect, Schema } from "effect";
+import { Effect } from "effect";
 import { HttpBody, HttpClientRequest } from "effect/unstable/http";
 
 import { newUuid } from "../ids";
@@ -17,7 +17,6 @@ import { selectedVault } from "./selected-vault";
 
 export type { FileIngestBatch, UserSuggestionIntent, UserSuggestionResult };
 
-const fingerprint = Schema.decodeSync(FileFingerprint);
 const PUT_CONCURRENCY = 4;
 
 export type FileIngestPhase = "uploading" | "processing" | "error";
@@ -37,35 +36,39 @@ export interface FileIngestProgress {
   failures?: UploadFailure[];
 }
 
-export async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
+export async function sha256Hex(bytes: ArrayBuffer): Promise<FileFingerprint> {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return FileFingerprint.make(
+    Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join(""),
+  );
 }
 
-export async function hashFile(file: File): Promise<string> {
+export async function hashFile(file: File): Promise<FileFingerprint> {
   return sha256Hex(await file.arrayBuffer());
 }
 
-export function checkDupes(clientHashes: string[]): Promise<Set<string>> {
+export function checkDupes(
+  clientHashes: readonly FileFingerprint[],
+): Promise<Set<FileFingerprint>> {
   if (clientHashes.length === 0) return Promise.resolve(new Set());
   return run(
     api.ingest
       .checkFileIngestDupes({
         params: { vault_id: selectedVault() },
-        payload: { client_hashes: clientHashes.map((hash) => fingerprint(hash)) },
+        payload: { client_hashes: clientHashes },
       })
       .pipe(
-        Effect.map((response) => new Set<string>(response.existing)),
-        Effect.catch(() => Effect.succeed(new Set<string>())),
+        Effect.map((response) => new Set(response.existing)),
+        Effect.catch(() => Effect.succeed(new Set<FileFingerprint>())),
       ),
   );
 }
 
 export interface HashedFile {
   file: File;
-  hash: string;
+  hash: FileFingerprint;
 }
 
 export const hashFiles = (files: readonly File[]): Promise<readonly HashedFile[]> =>
@@ -81,7 +84,7 @@ const manifestFor = (hashedFiles: readonly HashedFile[]) =>
   hashedFiles.map(({ file, hash }) => ({
     name: file.name,
     size: file.size,
-    hash: fingerprint(hash),
+    hash,
     mimetype: file.type,
   }));
 
@@ -134,10 +137,10 @@ const uploadViaPresignedUrl = (url: string, file: File) =>
 
 const isSuccessStatus = (status: number) => status >= 200 && status < 300;
 
-type UploadResult = { ok: true; hash: string } | { ok: false; failure: UploadFailure };
+type UploadResult = { ok: true; hash: FileFingerprint } | { ok: false; failure: UploadFailure };
 
 const uploadOne =
-  (batch: FileIngestBatch, fileByHash: ReadonlyMap<string, File>) =>
+  (batch: FileIngestBatch, fileByHash: ReadonlyMap<FileFingerprint, File>) =>
   (target: FileIngestBatch["targets"][number]) => {
     const manifestFile = batch.files.find((file) => file.hash === target.hash);
     const file = fileByHash.get(target.hash);

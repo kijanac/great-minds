@@ -1,22 +1,28 @@
 import { Email, type TokenPair } from "@great-minds/domain";
-import { Effect, Schema } from "effect";
+import { Effect } from "effect";
 
 import { api, run } from "./app";
 import { TokenStore } from "./token-store";
-
-const email = Schema.decodeSync(Email);
+import { decodeInput } from "./runtime";
 const storeSession = (tokens: TokenPair) =>
   Effect.flatMap(TokenStore, (store) => store.write(tokens));
 
 export function requestCode(address: string): Promise<void> {
-  return run(api.auth.requestCode({ payload: { email: email(address) } }));
+  return run(
+    Effect.gen(function* () {
+      const email = yield* decodeInput(Email, address);
+      yield* api.auth.requestCode({ payload: { email } });
+    }),
+  );
 }
 
 export function loginWithCode(address: string, code: string): Promise<void> {
   return run(
-    api.auth
-      .verifyCode({ payload: { email: email(address), code } })
-      .pipe(Effect.flatMap(storeSession)),
+    Effect.gen(function* () {
+      const email = yield* decodeInput(Email, address);
+      const tokens = yield* api.auth.verifyCode({ payload: { email, code } });
+      yield* storeSession(tokens);
+    }),
   );
 }
 

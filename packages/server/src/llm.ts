@@ -1,4 +1,4 @@
-import { Context, Duration, Effect, Layer, Schedule, Schema } from "effect";
+import { Context, Data, Duration, Effect, Layer, Schedule, Schema } from "effect";
 
 import { AppConfig, optionalRedactedValue } from "./config.ts";
 
@@ -104,22 +104,15 @@ export class LanguageModel extends Context.Service<LanguageModel, LanguageModelS
   "@great-minds/server/LanguageModel",
 ) {}
 
-export class RetryableModelError extends Error {
+export class RetryableModelError extends Data.TaggedError("RetryableModelError")<{
+  readonly message: string;
   readonly retryAfterMs?: number;
+}> {}
 
-  constructor(message: string, options: { readonly retryAfterMs?: number } = {}) {
-    super(message);
-    this.name = "RetryableModelError";
-    this.retryAfterMs = options.retryAfterMs;
-  }
-}
-
-export class ModelProviderError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ModelProviderError";
-  }
-}
+export class ModelProviderError extends Data.TaggedError("ModelProviderError")<{
+  readonly message: string;
+  readonly issue?: Schema.SchemaError["issue"];
+}> {}
 
 export const isRetryableModelError = (error: unknown) => error instanceof RetryableModelError;
 
@@ -225,7 +218,7 @@ const readWithTimeout = async <A>(promise: Promise<A>) => {
       promise,
       new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(() => {
-          reject(new ModelProviderError("model stream stalled"));
+          reject(new ModelProviderError({ message: "model stream stalled" }));
         }, streamChunkTimeoutMs);
       }),
     ]);
@@ -253,13 +246,16 @@ const postChat = async (apiUrl: string, apiKey: string, body: unknown, signal?: 
     signal,
   });
   if (response.status === 429) {
-    throw new RetryableModelError("model provider rate limited request", {
+    throw new RetryableModelError({
+      message: "model provider rate limited request",
       retryAfterMs: retryAfterMs(response.headers),
     });
   }
   if (!response.ok) {
     const detail = await safeResponseText(response);
-    throw new ModelProviderError(`model provider returned ${response.status}: ${detail}`);
+    throw new ModelProviderError({
+      message: `model provider returned ${response.status}: ${detail}`,
+    });
   }
   return response;
 };
@@ -318,7 +314,7 @@ const toolCallDeltas = (
 
 export async function* parseOpenRouterStream(response: Response): AsyncIterable<ModelStreamPart> {
   if (response.body === null) {
-    throw new ModelProviderError("model provider returned no stream body");
+    throw new ModelProviderError({ message: "model provider returned no stream body" });
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -347,7 +343,7 @@ export async function* parseOpenRouterStream(response: Response): AsyncIterable<
       const chunk = decodeWireStreamChunk(JSON.parse(data));
       const choice = chunk.choices?.[0];
       if (chunk.error != null || choice?.finish_reason === "error") {
-        throw new ModelProviderError("model provider failed while streaming");
+        throw new ModelProviderError({ message: "model provider failed while streaming" });
       }
       if (chunk.id !== undefined && chunk.id !== null) {
         generationId = chunk.id;
@@ -370,7 +366,7 @@ export async function* parseOpenRouterStream(response: Response): AsyncIterable<
   }
 
   if (finishReason === null || finishReason.length === 0) {
-    throw new ModelProviderError("model stream ended without a finish reason");
+    throw new ModelProviderError({ message: "model stream ended without a finish reason" });
   }
   yield { type: "finish", finishReason, generationId, usage };
 }
@@ -381,7 +377,7 @@ export const LanguageModelLive = Layer.effect(
     const apiKey = optionalRedactedValue(config.openRouterApiKey);
     const requireApiKey = () => {
       if (apiKey === undefined) {
-        throw new ModelProviderError("OpenRouter API key is not configured");
+        throw new ModelProviderError({ message: "OpenRouter API key is not configured" });
       }
       return apiKey;
     };

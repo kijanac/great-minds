@@ -102,20 +102,10 @@ export class SessionsService extends Context.Service<SessionsService, SessionsSe
   "@great-minds/server/SessionsService",
 ) {}
 
-const decodeSessionOrigin = Schema.decodeUnknownSync(Schema.NullOr(SessionOriginSchema));
+export const readSessionOrigin = (value: unknown) =>
+  Schema.decodeUnknownEffect(Schema.NullOr(SessionOriginSchema))(value).pipe(Effect.orDie);
 const kindFor = (row: SessionRow) =>
   row.placement === "inline" ? ("btw" as const) : ("session" as const);
-const sessionOverview = (row: SessionRow, originTitle: string | null): SessionOverview => ({
-  id: row.id,
-  kind: kindFor(row),
-  query: row.query,
-  created_at: row.createdAt,
-  updated_at: row.updatedAt,
-  user_id: row.userId,
-  origin: decodeSessionOrigin(row.origin),
-  origin_title: originTitle,
-});
-
 const stubToolResults = (messages: readonly LlmMessage[]): readonly LlmMessage[] =>
   messages.map((message) =>
     message.role === "tool"
@@ -398,10 +388,25 @@ const makeSessions = Effect.gen(function* () {
       return (yield* sourceDocuments.getByPath(vaultId, origin.doc_path))?.title ?? null;
     });
 
+  const readOverview = (row: SessionRow) =>
+    Effect.gen(function* () {
+      const origin = yield* readSessionOrigin(row.origin);
+      const originTitle = yield* originTitleFor(row.userId, row.vaultId, origin);
+      return {
+        id: row.id,
+        kind: kindFor(row),
+        query: row.query,
+        created_at: row.createdAt,
+        updated_at: row.updatedAt,
+        user_id: row.userId,
+        origin,
+        origin_title: originTitle,
+      } satisfies SessionOverview;
+    });
+
   const sessionDetail = (row: SessionRow) =>
     Effect.gen(function* () {
-      const title = yield* originTitleFor(row.userId, row.vaultId, decodeSessionOrigin(row.origin));
-      const session = sessionOverview(row, title);
+      const session = yield* readOverview(row);
       return yield* readContent(row).pipe(
         Effect.map((content): OriginSessionDetail => ({
           availability: "available",
@@ -611,14 +616,7 @@ const makeSessions = Effect.gen(function* () {
             .limit(params.limit)
             .offset(params.offset),
         );
-        const overviews: SessionOverview[] = [];
-        for (const row of rows)
-          overviews.push(
-            sessionOverview(
-              row,
-              yield* originTitleFor(userId, vaultId, decodeSessionOrigin(row.origin)),
-            ),
-          );
+        const overviews = yield* Effect.forEach(rows, readOverview, { concurrency: 1 });
         return pageEnvelope(overviews, params, oneTotal(counts));
       }),
     listSessionsByOrigin: (userId, vaultId, docPath) =>
@@ -650,7 +648,8 @@ const makeSessions = Effect.gen(function* () {
         yield* access.requireMember(userId, vaultId);
         const row = yield* requireSessionOwner(userId, vaultId, sessionId);
         const content = yield* readContent(row);
-        const originTitle = yield* originTitleFor(userId, vaultId, decodeSessionOrigin(row.origin));
+        const origin = yield* readSessionOrigin(row.origin);
+        const originTitle = yield* originTitleFor(userId, vaultId, origin);
         const children = yield* db.query((d) =>
           d
             .select()

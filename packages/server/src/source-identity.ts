@@ -16,26 +16,26 @@ const decodeUuid = Schema.decodeUnknownSync(Uuid);
 export const parseCanonicalSourceUrl = (
   rawUrl: string,
 ): Effect.Effect<CanonicalSourceUrl, BadRequest> =>
-  Effect.try({
-    try: () => {
-      const trimmed = rawUrl.trim();
-      const candidate = /^[a-z][a-z\d+.-]*:/i.test(trimmed)
-        ? trimmed
-        : `https://${trimmed}`;
-      const parsed = new URL(candidate);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        throw new Error("URL must use HTTP or HTTPS");
-      }
-      if (parsed.username !== "" || parsed.password !== "") {
-        throw new Error("URL credentials are not supported");
-      }
-      parsed.hash = "";
-      return parsed.href as CanonicalSourceUrl;
-    },
-    catch: (error) =>
-      new BadRequest({
-        detail: `Invalid source URL: ${error instanceof Error ? error.message : String(error)}`,
-      }),
+  Effect.gen(function* () {
+    const trimmed = rawUrl.trim();
+    const candidate = /^[a-z][a-z\d+.-]*:/i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    const parsed = yield* Effect.try({
+      try: () => new URL(candidate),
+      catch: (error) =>
+        new BadRequest({
+          detail: `Invalid source URL: ${error instanceof Error ? error.message : String(error)}`,
+        }),
+    });
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return yield* new BadRequest({ detail: "Invalid source URL: URL must use HTTP or HTTPS" });
+    }
+    if (parsed.username !== "" || parsed.password !== "") {
+      return yield* new BadRequest({
+        detail: "Invalid source URL: URL credentials are not supported",
+      });
+    }
+    parsed.hash = "";
+    return parsed.href as CanonicalSourceUrl;
   });
 
 export const sourceIdForKey = (vaultId: Uuid, key: string): Uuid => {

@@ -19,7 +19,7 @@ export async function loadPanelContent(
   card: SourceRef,
   scope: DocumentScope,
   signal?: AbortSignal,
-): Promise<PanelContent | null> {
+): Promise<PanelContent> {
   if (scope === "personal") {
     const document = await readPersonalDocument(card.label, signal);
     return { mode: "doc", body: document.body };

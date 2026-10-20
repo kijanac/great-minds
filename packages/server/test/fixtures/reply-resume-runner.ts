@@ -65,7 +65,7 @@ const SearchLive = Layer.succeed(ParallelSearchService, {
     Effect.gen(function* () {
       yield* Effect.promise(() => appendFile(markerPath, `tool:${mode}\n`, "utf8"));
       if (mode !== "save-result" && mode !== "fail-result")
-        return yield* Effect.fail(new Error("Tool must not be repeated"));
+        return yield* Effect.die(new Error("Tool must not be repeated"));
       return [];
     }),
 });

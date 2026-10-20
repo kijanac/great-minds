@@ -8,9 +8,9 @@ import {
   topicMembership,
   topics,
 } from "@great-minds/database";
-import { isUuid, Uuid } from "@great-minds/domain";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { Effect, Fiber, Schema, Semaphore } from "effect";
+import { Uuid } from "@great-minds/domain";
+import { and, asc, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
+import { Data, Effect, Fiber, Schema, SchemaGetter, Semaphore } from "effect";
 
 import type { AppConfigShape } from "./config.ts";
 import {
@@ -18,6 +18,7 @@ import {
   canonicalizeAssignCacheKey,
   canonicalizeRegistryCacheKey,
   EXTRACT_STEP_LABELS,
+  LocalTopic,
   partitionCacheKey,
   RENDER_STEP_LABELS,
   renderCacheKey,
@@ -26,10 +27,10 @@ import {
   type ArchiveTransition,
   type ValidatedTopic,
 } from "./compile-contract.ts";
-import { contentHash, promptContentHash } from "./crypto.ts";
+import { contentHash, fileContentHash, promptContentHash } from "./crypto.ts";
 import { type EmbeddingsService, isTimeoutError, vectorLiteral } from "./embeddings.ts";
 import { errorDetails as describeError } from "./error-details.ts";
-import { type LanguageModel, type LlmMessage, type ModelCompletion, stripJsonFence } from "./llm.ts";
+import { type LanguageModel, type LlmMessage, stripJsonFence } from "./llm.ts";
 import { recordPrompt } from "./llm-costs.ts";
 import type { StructuredLogger } from "./logging.ts";
 import { markdownParagraphs, parseFrontmatter, serializeFrontmatter } from "./markdown.ts";
@@ -50,32 +51,19 @@ type RandomService = RandomBytesService["Service"];
 type Clock = ClockService["Service"];
 type Logger = StructuredLogger["Service"];
 
-class MalformedLlmOutput extends Error {
-  readonly _tag = "MalformedLlmOutput";
+class MalformedLlmOutput extends Data.TaggedError("MalformedLlmOutput")<{
+  readonly message: string;
+  readonly issue?: Schema.SchemaError["issue"];
+}> {}
 
-  constructor(message: string) {
-    super(message);
-    this.name = this._tag;
-  }
-}
+class MalformedCompileCache extends Data.TaggedError("MalformedCompileCache")<{
+  readonly message: string;
+  readonly issue?: Schema.SchemaError["issue"];
+}> {}
 
-class MalformedCompileCache extends Error {
-  readonly _tag = "MalformedCompileCache";
-
-  constructor(message: string) {
-    super(message);
-    this.name = this._tag;
-  }
-}
-
-class MalformedPromptTemplate extends Error {
-  readonly _tag = "MalformedPromptTemplate";
-
-  constructor(message: string) {
-    super(message);
-    this.name = this._tag;
-  }
-}
+class MalformedPromptTemplate extends Data.TaggedError("MalformedPromptTemplate")<{
+  readonly message: string;
+}> {}
 
 const errorDetails = (error: unknown): { readonly errorType: string; readonly message: string } => {
   if (
@@ -90,49 +78,6 @@ const errorDetails = (error: unknown): { readonly errorType: string; readonly me
   return describeError(error);
 };
 
-type Anchor = {
-  readonly claim: string;
-  readonly quote: string;
-  readonly chunkIndex: number | null;
-};
-
-type Idea = {
-  readonly ideaId: Uuid;
-  readonly documentId: Uuid;
-  readonly kind: string;
-  readonly label: string;
-  readonly description: string;
-  readonly anchors: readonly Anchor[];
-};
-
-type SourceCard = {
-  readonly documentId: Uuid;
-  readonly title: string;
-  readonly precis: string;
-  readonly author: string | null;
-  readonly publishedDate: string | null;
-  readonly genre: string | null;
-  readonly tags: readonly string[];
-  readonly derivedExtras: Record<string, unknown>;
-  readonly ideas: readonly Idea[];
-};
-
-export type LocalTopic = {
-  readonly localTopicId: Uuid;
-  readonly chunkIdx: number;
-  readonly slug: string;
-  readonly title: string;
-  readonly description: string;
-  readonly subsumedIdeaIds: readonly Uuid[];
-};
-
-type RegistryTopic = {
-  readonly slug: string;
-  readonly title: string;
-  readonly description: string;
-  readonly linkTargetTitles: readonly string[];
-};
-
 type CanonicalDraft = {
   readonly slug: string;
   readonly title: string;
@@ -145,26 +90,6 @@ type SourceRow = typeof sourceDocuments.$inferSelect;
 
 const nullableString = (value: string | null) =>
   value !== null && value.length > 0 ? value : null;
-
-const decodeOr =
-  <A>(decode: (value: unknown) => A) =>
-  (value: unknown): A | undefined => {
-    try {
-      return decode(value);
-    } catch {
-      return undefined;
-    }
-  };
-
-const contractDecoder =
-  <A>(phase: string, decode: (value: unknown) => A) =>
-  (value: unknown): A => {
-    try {
-      return decode(value);
-    } catch {
-      throw new MalformedLlmOutput(`${phase} response does not match its contract`);
-    }
-  };
 
 const ExtractResponse = Schema.Struct({
   title: Schema.String,
@@ -183,7 +108,6 @@ const ExtractResponse = Schema.Struct({
   ),
   derived_extras: Schema.Record(Schema.String, Schema.Unknown),
 });
-const decodeExtractResponse = contractDecoder("extract", Schema.decodeUnknownSync(ExtractResponse));
 
 const SynthesisResponse = Schema.Struct({
   topics: Schema.optionalKey(
@@ -199,7 +123,6 @@ const SynthesisResponse = Schema.Struct({
     ),
   ),
 });
-const decodeSynthesisResponse = contractDecoder("synthesize", Schema.decodeUnknownSync(SynthesisResponse));
 
 const RegistryResponse = Schema.Struct({
   topics: Schema.Array(
@@ -210,12 +133,10 @@ const RegistryResponse = Schema.Struct({
     }),
   ),
 });
-const decodeRegistryResponse = contractDecoder("canonicalize_registry", Schema.decodeUnknownSync(RegistryResponse));
 
 const AssignmentsResponse = Schema.Struct({
   assignments: Schema.Array(Schema.Struct({ n: Schema.Int, slug: Schema.String })),
 });
-const decodeAssignmentsResponse = contractDecoder("canonicalize_assign", Schema.decodeUnknownSync(AssignmentsResponse));
 
 const CleanupResponse = Schema.Struct({
   slug_renames: Schema.optionalKey(
@@ -239,79 +160,105 @@ const CleanupResponse = Schema.Struct({
     ),
   ),
 });
-const decodeCleanupResponse = contractDecoder("validate_cleanup", Schema.decodeUnknownSync(CleanupResponse));
 
 const RenderResponse = Schema.Struct({
   body: Schema.String,
   tags: Schema.Array(Schema.String),
 });
-const decodeRenderResponse = contractDecoder("render", Schema.decodeUnknownSync(RenderResponse));
-
-const CachedAnchor = Schema.Struct({
+const Anchor = Schema.Struct({
   claim: Schema.String,
   quote: Schema.String,
-  chunk_index: Schema.optionalKey(Schema.NullOr(Schema.Int)),
-});
+  chunkIndex: Schema.NullOr(Schema.Int).pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
+  ),
+}).pipe(Schema.encodeKeys({ chunkIndex: "chunk_index" }));
+type Anchor = typeof Anchor.Type;
 
-const CachedIdea = Schema.Struct({
-  idea_id: Uuid,
-  document_id: Uuid,
+const Idea = Schema.Struct({
+  ideaId: Uuid,
+  documentId: Uuid,
   kind: Schema.String,
   label: Schema.String,
   description: Schema.String,
-  anchors: Schema.optionalKey(Schema.Array(CachedAnchor)),
-});
+  anchors: Schema.Array(Anchor).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
+}).pipe(Schema.encodeKeys({ ideaId: "idea_id", documentId: "document_id" }));
+type Idea = typeof Idea.Type;
 
-const CachedSourceCard = Schema.Struct({
-  document_id: Uuid,
+const MetadataText = Schema.NullOr(Schema.String).pipe(
+  Schema.decodeTo(Schema.NullOr(Schema.String), {
+    decode: SchemaGetter.transform(nullableString),
+    encode: SchemaGetter.transform((value) => value),
+  }),
+  Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
+);
+
+const SourceCard = Schema.Struct({
+  documentId: Uuid,
   title: Schema.String,
   precis: Schema.String,
-  author: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  published_date: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  genre: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  tags: Schema.optionalKey(Schema.Array(Schema.String)),
-  derived_extras: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
-  ideas: Schema.Array(CachedIdea),
-});
-const decodeExtractCacheRow = decodeOr(
-  Schema.decodeUnknownSync(Schema.Struct({ source_card: CachedSourceCard })),
-);
+  author: MetadataText,
+  publishedDate: MetadataText,
+  genre: MetadataText,
+  tags: Schema.Array(Schema.String).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
+  derivedExtras: Schema.Record(Schema.String, Schema.Unknown).pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed({})),
+  ),
+  ideas: Schema.Array(Idea),
+})
+  .pipe(
+    Schema.encodeKeys({
+      documentId: "document_id",
+      publishedDate: "published_date",
+      derivedExtras: "derived_extras",
+    }),
+  )
+  .check(
+    Schema.makeFilter((card) => card.ideas.every((idea) => idea.documentId === card.documentId)),
+  );
+type SourceCard = typeof SourceCard.Type;
 
-const CachedLocalTopic = Schema.Struct({
-  local_topic_id: Uuid,
-  chunk_idx: Schema.Int,
+const RegistryTopic = Schema.Struct({
   slug: Schema.String,
   title: Schema.String,
   description: Schema.String,
-  subsumed_idea_ids: Schema.Array(Uuid),
-});
-const decodeSynthesizeCacheRow = decodeOr(
-  Schema.decodeUnknownSync(Schema.Struct({ local_topics: Schema.Array(CachedLocalTopic) })),
+  linkTargetTitles: Schema.Array(Schema.String),
+}).pipe(Schema.encodeKeys({ linkTargetTitles: "link_target_titles" }));
+type RegistryTopic = typeof RegistryTopic.Type;
+
+const RenderTags = Schema.Array(Schema.String).pipe(
+  Schema.decodeTo(Schema.Array(Schema.NonEmptyString), {
+    decode: SchemaGetter.transform((tags) => [
+      ...new Set(tags.map((tag) => tag.trim().toLowerCase().replaceAll(" ", "-"))),
+    ]),
+    encode: SchemaGetter.transform((tags) => tags),
+  }),
 );
 
-const decodePartitionCacheRow = decodeOr(
-  Schema.decodeUnknownSync(
-    Schema.Struct({ chunks: Schema.Array(Schema.Array(Uuid)) }),
+const CacheSchemas = {
+  extract: Schema.Struct({ sourceCard: SourceCard }).pipe(
+    Schema.encodeKeys({ sourceCard: "source_card" }),
   ),
-);
-
-const CachedRegistryTopic = Schema.Struct({
-  slug: Schema.String,
-  title: Schema.String,
-  description: Schema.String,
-  link_target_titles: Schema.Array(Schema.String),
-});
-const decodeRegistryCacheRow = decodeOr(
-  Schema.decodeUnknownSync(Schema.Struct({ topics: Schema.Array(CachedRegistryTopic) })),
-);
-
-const decodeAssignCacheRow = decodeOr(
-  Schema.decodeUnknownSync(
-    Schema.Struct({ assign: Schema.Record(Schema.String, Schema.String) }),
+  partition: Schema.Struct({
+    chunks: Schema.Array(Schema.Array(Uuid)),
+    kInitial: Schema.optionalKey(Schema.Int),
+    totalTokens: Schema.optionalKey(Schema.Int),
+  }).pipe(Schema.encodeKeys({ kInitial: "k_initial", totalTokens: "total_tokens" })),
+  synthesize: Schema.Struct({ localTopics: Schema.Array(LocalTopic) }).pipe(
+    Schema.encodeKeys({ localTopics: "local_topics" }),
   ),
-);
-
-const decodeRenderCacheRow = decodeOr(Schema.decodeUnknownSync(RenderResponse));
+  canonicalize_registry: Schema.Struct({ topics: Schema.Array(RegistryTopic) }),
+  canonicalize_assign: Schema.Struct({
+    assign: Schema.Record(Schema.String, Schema.String).pipe(
+      Schema.decodeTo(Schema.ReadonlyMap(Uuid, Schema.String), {
+        decode: SchemaGetter.transform((entries) => new Map(Object.entries(entries))),
+        encode: SchemaGetter.transform((entries) => Object.fromEntries(entries)),
+      }),
+    ),
+  }),
+  render: Schema.Struct({ body: Schema.String, tags: RenderTags }),
+};
+type CachePhase = keyof typeof CacheSchemas;
+type CacheValue<Phase extends CachePhase> = (typeof CacheSchemas)[Phase]["Type"];
 
 const compareText = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 
@@ -440,91 +387,6 @@ const formatEnrichedFields = (fields: readonly EnrichedField[]) =>
     })
     .join("\n");
 
-export const decodeCompileJsonCompletion = (model: string, completion: ModelCompletion) => {
-  if (completion.finishReason === "length") {
-    throw new Error(
-      `${model} output hit the token limit (finish_reason=length) and was truncated — the request is too large for a single completion`,
-    );
-  }
-  return JSON.parse(stripJsonFence(completion.text.trim())) as unknown;
-};
-
-const toSourceCard = (source: typeof CachedSourceCard.Type): SourceCard | undefined => {
-  const parsedIdeas: Idea[] = [];
-  for (const idea of source.ideas) {
-    parsedIdeas.push({
-      ideaId: idea.idea_id,
-      documentId: idea.document_id,
-      kind: idea.kind,
-      label: idea.label,
-      description: idea.description,
-      anchors: (idea.anchors ?? []).map((anchor) => ({
-        claim: anchor.claim,
-        quote: anchor.quote,
-        chunkIndex: anchor.chunk_index ?? null,
-      })),
-    });
-  }
-  return {
-    documentId: source.document_id,
-    title: source.title,
-    precis: source.precis,
-    author: nullableString(source.author ?? null),
-    publishedDate: nullableString(source.published_date ?? null),
-    genre: nullableString(source.genre ?? null),
-    tags: source.tags ?? [],
-    derivedExtras: { ...source.derived_extras },
-    ideas: parsedIdeas,
-  };
-};
-
-const dumpSourceCard = (card: SourceCard) => ({
-  document_id: card.documentId,
-  title: card.title,
-  precis: card.precis,
-  author: card.author,
-  published_date: card.publishedDate,
-  genre: card.genre,
-  tags: [...card.tags],
-  derived_extras: card.derivedExtras,
-  ideas: card.ideas.map((idea) => ({
-    idea_id: idea.ideaId,
-    document_id: idea.documentId,
-    kind: idea.kind,
-    label: idea.label,
-    description: idea.description,
-    anchors: idea.anchors.map((anchor) => ({
-      claim: anchor.claim,
-      quote: anchor.quote,
-      chunk_index: anchor.chunkIndex,
-    })),
-  })),
-});
-
-const decodeCachedLocalTopics = decodeOr(Schema.decodeUnknownSync(Schema.Array(CachedLocalTopic)));
-
-const parseLocalTopics = (value: unknown): readonly LocalTopic[] | undefined => {
-  const decoded = decodeCachedLocalTopics(value);
-  if (decoded === undefined) return undefined;
-  return decoded.map((topic) => ({
-    localTopicId: topic.local_topic_id,
-    chunkIdx: topic.chunk_idx,
-    slug: topic.slug,
-    title: topic.title,
-    description: topic.description,
-    subsumedIdeaIds: topic.subsumed_idea_ids,
-  }));
-};
-
-const dumpLocalTopic = (topic: LocalTopic) => ({
-  local_topic_id: topic.localTopicId,
-  chunk_idx: topic.chunkIdx,
-  slug: topic.slug,
-  title: topic.title,
-  description: topic.description,
-  subsumed_idea_ids: [...topic.subsumedIdeaIds],
-});
-
 type CompileLlmCoreOptions = {
   readonly config: AppConfigShape;
   readonly db: DatabaseService;
@@ -560,19 +422,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
     return formatUuid7(timestamp, bytes);
   });
 
-  const jsonCall = <A>(input: {
-    readonly vaultId: Uuid;
-    readonly runId: Uuid;
-    readonly phase: string;
-    readonly promptHash: string;
-    readonly model: string;
-    readonly messages: readonly LlmMessage[];
-    readonly temperature: number;
-    readonly responseFormat: Record<string, unknown>;
-    readonly decode: (value: unknown) => A;
-    readonly maxParseRetries?: number;
-    readonly logFields?: Record<string, string | number>;
-  }): Effect.Effect<A, unknown> =>
+  const jsonCall: JsonCall = (input) =>
     Effect.gen(function* () {
       const totalAttempts = (input.maxParseRetries ?? 1) + 1;
       for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
@@ -599,20 +449,22 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
             generationId: completion.generationId ?? null,
           }));
         if (completion.finishReason === "length") {
-          return yield* Effect.try({
-            try: () => input.decode(decodeCompileJsonCompletion(input.model, completion)),
-            catch: (error) => error,
+          return yield* new MalformedLlmOutput({
+            message: `${input.model} output hit the token limit (finish_reason=length) and was truncated — the request is too large for a single completion`,
           });
         }
         const decoded = yield* Effect.result(
-          Effect.try({
-            try: () => input.decode(decodeCompileJsonCompletion(input.model, completion)),
-            catch: (error) => error,
-          }),
+          Schema.decodeEffect(Schema.fromJsonString(input.schema))(
+            stripJsonFence(completion.text.trim()),
+          ),
         );
         if (decoded._tag === "Success") return decoded.success;
-        if (attempt === totalAttempts) return yield* Effect.fail(decoded.failure);
-        const details = errorDetails(decoded.failure);
+        const error = new MalformedLlmOutput({
+          message: `${input.phase} response does not match its contract`,
+          issue: decoded.failure.issue,
+        });
+        if (attempt === totalAttempts) return yield* error;
+        const details = errorDetails(error);
         yield* logger.warn("json_llm_parse_retry", {
           run_id: input.runId,
           model: input.model,
@@ -626,25 +478,63 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       return yield* Effect.die(new Error("jsonCall retry loop exited without resolution"));
     });
 
-  const putCache = (vaultId: Uuid, phase: string, cacheKey: string, value: unknown) =>
-    db.query((d) => d
-      .insert(compileCacheEntries)
-      .values({ vaultId, phase, cacheKey, value })
-      .onConflictDoNothing());
+  const putCache: CachePutter = (vaultId, phase, cacheKey, value) =>
+    Effect.gen(function* () {
+      const encoded = yield* Schema.encodeEffect(CacheSchemas[phase])(value).pipe(Effect.orDie);
+      yield* db.query((d) =>
+        d
+          .insert(compileCacheEntries)
+          .values({ vaultId, phase, cacheKey, value: encoded })
+          .onConflictDoNothing(),
+      );
+    });
 
-  const getCache = (vaultId: Uuid, phase: string, cacheKey: string) =>
-    db.query((d) => d
-      .select({ value: compileCacheEntries.value })
-      .from(compileCacheEntries)
-      .where(
-        and(
-          eq(compileCacheEntries.vaultId, vaultId),
-          eq(compileCacheEntries.phase, phase),
-          eq(compileCacheEntries.cacheKey, cacheKey),
-        ),
-      )
-      .limit(1))
-      .pipe(Effect.map((rows) => rows[0]?.value));
+  const getCache: CacheGetter = (vaultId, phase, cacheKey) =>
+    Effect.gen(function* () {
+      while (true) {
+        const [row] = yield* db.query((d) =>
+          d
+            .select({ id: compileCacheEntries.id, value: compileCacheEntries.value })
+            .from(compileCacheEntries)
+            .where(
+              and(
+                eq(compileCacheEntries.vaultId, vaultId),
+                eq(compileCacheEntries.phase, phase),
+                eq(compileCacheEntries.cacheKey, cacheKey),
+              ),
+            )
+            .limit(1),
+        );
+        if (row === undefined) return undefined;
+        const decoded = yield* Effect.result(
+          Schema.decodeUnknownEffect(CacheSchemas[phase])(row.value),
+        );
+        if (decoded._tag === "Success") return decoded.success;
+        const error = new MalformedCompileCache({
+          message: `${phase} cache row ${cacheKey} is malformed`,
+          issue: decoded.failure.issue,
+        });
+        if (phase !== "partition" && phase !== "synthesize" && phase !== "render")
+          return yield* error;
+        const removed = yield* db.query((d) =>
+          d
+            .delete(compileCacheEntries)
+            .where(
+              and(eq(compileCacheEntries.id, row.id), eq(compileCacheEntries.value, row.value)),
+            )
+            .returning({ id: compileCacheEntries.id }),
+        );
+        if (removed.length === 0) continue;
+        yield* logger.warn("compile_cache_discarded", {
+          vault_id: vaultId,
+          phase,
+          cache_key: cacheKey,
+          cache_entry_id: row.id,
+          error_type: error._tag,
+        });
+        return undefined;
+      }
+    });
 
   const extract = (vaultId: Uuid, runId: Uuid) =>
     Effect.gen(function* () {
@@ -671,23 +561,12 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
         }),
       );
 
-      const outcomes: (
-        | { readonly kind: "failed" }
-        | { readonly kind: "cached"; readonly documentId: Uuid; readonly card: SourceCard }
-        | {
-            readonly kind: "fresh";
-            readonly documentId: Uuid;
-            readonly card: SourceCard;
-            readonly cacheKey: string;
-          }
-      )[] = [];
-
+      const ready: { readonly document: SourceRow; readonly card: SourceCard }[] = [];
       let documentsCompleted = 0;
-      const extractSemaphore = yield* Semaphore.make(config.compileEnrichConcurrency);
-      const extractFibers = [];
-      for (const document of documents) {
-        extractFibers.push(
-          yield* Effect.gen(function* () {
+      yield* Effect.forEach(
+        documents,
+        (document) =>
+          Effect.gen(function* () {
             const result = yield* Effect.result(
               Effect.gen(function* () {
                 const cacheKey = contentHash(
@@ -696,26 +575,11 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
                   `prompt=${promptHash}`,
                   `model=${config.extractModel}`,
                 );
-                const cachedValue = yield* getCache(vaultId, "extract", cacheKey);
-                if (cachedValue !== undefined) {
-                  const cached = decodeExtractCacheRow(cachedValue);
-                  const cachedCard =
-                    cached === undefined ? undefined : toSourceCard(cached.source_card);
-                  if (cachedCard === undefined) {
-                    return yield* Effect.fail(
-                      new MalformedCompileCache(`extract cache row ${cacheKey} is malformed`),
-                    );
-                  }
-                  return {
-                    kind: "cached",
-                    documentId: document.id,
-                    card: cachedCard,
-                  } as const;
-                }
-                const content = yield* storage.readText(vaultOwner(vaultId), document.filePath);
-                const body = parseFrontmatter(content).body;
-                const data = yield* extractSemaphore.withPermit(
-                  jsonCall({
+                let cached = yield* getCache(vaultId, "extract", cacheKey);
+                if (cached === undefined) {
+                  const content = yield* storage.readText(vaultOwner(vaultId), document.filePath);
+                  const body = parseFrontmatter(content).body;
+                  const data = yield* jsonCall({
                     vaultId,
                     runId,
                     phase: "extract",
@@ -726,78 +590,73 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
                     ],
                     temperature: 0.2,
                     responseFormat,
-                    decode: decodeExtractResponse,
+                    schema: ExtractResponse,
                     logFields: { document_id: document.id, path: document.filePath },
-                  }),
-                );
-                const card = yield* validateExtractOutput(
-                  data,
-                  document.id,
-                  vaultConfig.kinds,
-                  body,
-                  mintUuid7,
-                );
-                return {
-                  kind: "fresh",
-                  documentId: document.id,
-                  card,
-                  cacheKey,
-                } as const;
+                  });
+                  const card = yield* buildSourceCard(
+                    data,
+                    document.id,
+                    vaultConfig.kinds,
+                    body,
+                    mintUuid7,
+                  );
+                  yield* putCache(vaultId, "extract", cacheKey, { sourceCard: card });
+                  cached = yield* getCache(vaultId, "extract", cacheKey);
+                  if (cached === undefined)
+                    return yield* new MalformedCompileCache({
+                      message: `extract cache row ${cacheKey} is missing after persistence`,
+                    });
+                }
+                if (cached.sourceCard.documentId !== document.id)
+                  return yield* new MalformedCompileCache({
+                    message: `extract cache row ${cacheKey} belongs to another document`,
+                  });
+                return cached.sourceCard;
               }),
             );
-            if (result._tag === "Success") return result.success;
-            const details = errorDetails(result.failure);
-            yield* logger.warn("doc_failed", {
-              vault_id: vaultId,
-              run_id: runId,
-              document_id: document.id,
-              path: document.filePath,
-              error_type: details.errorType,
-              error: details.message.slice(0, 300),
-            });
-            return { kind: "failed" } as const;
-          }).pipe(
-            Effect.tap((outcome) =>
-              Effect.gen(function* () {
-                outcomes.push(outcome);
-                documentsCompleted += 1;
-                yield* pipeline.updateProgress(
-                  runId,
-                  "extract",
-                  "progress",
-                  progressSteps(EXTRACT_STEP_LABELS, "extract_cards", {
-                    counts: { extract_cards: [documentsCompleted, documents.length] },
-                  }),
-                );
+            if (result._tag === "Success") {
+              ready.push({ document, card: result.success });
+            } else {
+              const details = errorDetails(result.failure);
+              yield* logger.warn("doc_failed", {
+                vault_id: vaultId,
+                run_id: runId,
+                document_id: document.id,
+                path: document.filePath,
+                error_type: details.errorType,
+                error: details.message.slice(0, 300),
+              });
+            }
+            documentsCompleted += 1;
+            yield* pipeline.updateProgress(
+              runId,
+              "extract",
+              "progress",
+              progressSteps(EXTRACT_STEP_LABELS, "extract_cards", {
+                counts: { extract_cards: [documentsCompleted, documents.length] },
               }),
-            ),
-            Effect.forkChild({ startImmediately: true }),
-          ),
-        );
-      }
-      yield* Effect.forEach(extractFibers, Fiber.join, { discard: true });
+            );
+          }),
+        { concurrency: config.compileEnrichConcurrency, discard: true },
+      );
 
       const existing = new Set(
-        (yield* db.query((d) => d
-          .select({ id: ideas.ideaId })
-          .from(ideas)
-          .where(eq(ideas.vaultId, vaultId)))).map((row) => row.id),
+        (yield* db.query((d) =>
+          d
+            .select({ id: ideas.ideaId })
+            .from(ideas)
+            .where(
+              and(
+                eq(ideas.vaultId, vaultId),
+                eq(ideas.embeddingModel, config.embeddingModel),
+                isNotNull(ideas.embedding),
+              ),
+            ),
+        )).map((row) => row.id),
       );
-      const fresh = outcomes.filter(
-        (outcome): outcome is Extract<(typeof outcomes)[number], { kind: "fresh" }> =>
-          outcome.kind === "fresh",
+      const embeddingInputs = ready.flatMap(({ card }) =>
+        card.ideas.filter((idea) => !existing.has(idea.ideaId)),
       );
-      for (const outcome of fresh) {
-        yield* putCache(vaultId, "extract", outcome.cacheKey, {
-          source_card: dumpSourceCard(outcome.card),
-        });
-      }
-      const embeddingInputs = outcomes.flatMap((outcome) => {
-        if (outcome.kind === "failed") return [];
-        return outcome.card.ideas
-          .filter((idea) => outcome.kind === "fresh" || !existing.has(idea.ideaId))
-          .map((idea) => ({ documentId: outcome.documentId, idea }));
-      });
 
       yield* pipeline.updateProgress(
         runId,
@@ -812,24 +671,11 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
         }),
       );
 
-      if (fresh.length > 0) {
-        yield* db.query((d) => d
-          .delete(ideas)
-          .where(
-            inArray(
-              ideas.documentId,
-              fresh.map((outcome) => outcome.documentId),
-            ),
-          ));
-      }
-
       let embeddedCount = 0;
       for (let offset = 0; offset < embeddingInputs.length; offset += 50) {
         const batch = embeddingInputs.slice(offset, offset + 50);
         const embedded = yield* Effect.result(
-          embeddings.embed(
-            batch.map(({ idea }) => `${idea.label}. ${idea.description}`.trim()),
-          ),
+          embeddings.embed(batch.map((idea) => `${idea.label}. ${idea.description}`.trim())),
         );
         if (embedded._tag === "Failure") {
           if (!isTimeoutError(embedded.failure)) return yield* Effect.fail(embedded.failure);
@@ -848,10 +694,10 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           const embedding = embedded.success[index];
           return embedding === undefined || embedding.length === 0 ? [] : [{ input, embedding }];
         });
-        const ideaRows = paired.map(({ input: { documentId, idea }, embedding }) => ({
+        const ideaRows = paired.map(({ input: idea, embedding }) => ({
           ideaId: idea.ideaId,
           vaultId,
-          documentId,
+          documentId: idea.documentId,
           kind: idea.kind,
           label: idea.label,
           description: idea.description,
@@ -880,24 +726,6 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
               ),
             ),
         );
-        yield* db.query((d) => d
-          .delete(anchors)
-          .where(
-            inArray(
-              anchors.ideaId,
-              ideaRows.map((row) => row.ideaId),
-            ),
-          ));
-        const anchorRows = paired.flatMap(({ input: { idea } }) =>
-          idea.anchors.map((anchor, position) => ({
-            ideaId: idea.ideaId,
-            position,
-            claim: anchor.claim,
-            quote: anchor.quote,
-            chunkIndex: anchor.chunkIndex,
-          })),
-        );
-        if (anchorRows.length > 0) yield* db.query((d) => d.insert(anchors).values(anchorRows));
         embeddedCount += paired.length;
         yield* pipeline.updateProgress(
           runId,
@@ -913,10 +741,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
         );
       }
 
-      const documentsById = new Map(documents.map((document) => [document.id, document]));
-      for (const outcome of fresh) {
-        const document = documentsById.get(outcome.documentId);
-        if (document === undefined) throw new Error(`document ${outcome.documentId} disappeared`);
+      for (const { document, card } of ready) {
         const existingContent = yield* storage.readText(vaultOwner(vaultId), document.filePath);
         const body = parseFrontmatter(existingContent).body;
         const frontmatter: Record<string, unknown> = {
@@ -934,13 +759,13 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           anchored_to: document.provenanceAnchoredTo,
           anchored_section: document.provenanceAnchoredSection,
           intent: document.provenanceIntent,
-          title: outcome.card.title,
-          precis: outcome.card.precis,
-          author: outcome.card.author,
-          date: outcome.card.publishedDate,
-          genre: outcome.card.genre,
-          tags: outcome.card.tags.length > 0 ? [...outcome.card.tags] : null,
-          ...outcome.card.derivedExtras,
+          title: card.title,
+          precis: card.precis,
+          author: card.author,
+          date: card.publishedDate,
+          genre: card.genre,
+          tags: card.tags.length > 0 ? [...card.tags] : null,
+          ...card.derivedExtras,
         };
         const nextContent = serializeFrontmatter(
           Object.fromEntries(
@@ -951,20 +776,72 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           ),
           body,
         );
-        yield* storage.writeText(vaultOwner(vaultId), document.filePath, nextContent);
-        yield* db.query((d) => d
-          .update(sourceDocuments)
-          .set({
-            title: outcome.card.title,
-            precis: outcome.card.precis,
-            author: outcome.card.author,
-            publishedDate: outcome.card.publishedDate,
-            genre: outcome.card.genre,
-            tags: [...outcome.card.tags],
-            derivedExtras: outcome.card.derivedExtras,
-            updatedAt: sql`now()`,
-          })
-          .where(eq(sourceDocuments.id, document.id)));
+        if (nextContent !== existingContent) {
+          yield* storage.writeText(vaultOwner(vaultId), document.filePath, nextContent);
+        }
+        yield* db.transaction((tx) =>
+          Effect.gen(function* () {
+            const current = yield* tx
+              .select({ id: sourceDocuments.id })
+              .from(sourceDocuments)
+              .where(
+                and(
+                  eq(sourceDocuments.id, document.id),
+                  eq(sourceDocuments.filePath, document.filePath),
+                  eq(sourceDocuments.bodyHash, document.bodyHash),
+                ),
+              )
+              .for("update");
+            if (current.length === 0) return;
+            const ideaIds = card.ideas.map((idea) => idea.ideaId);
+            const stale = yield* tx
+              .select({ id: ideas.ideaId })
+              .from(ideas)
+              .where(
+                and(
+                  eq(ideas.documentId, document.id),
+                  ideaIds.length === 0 ? undefined : notInArray(ideas.ideaId, ideaIds),
+                ),
+              );
+            if (stale.length > 0) {
+              const staleIds = stale.map((idea) => idea.id);
+              yield* tx.delete(topicMembership).where(inArray(topicMembership.ideaId, staleIds));
+              yield* tx.delete(ideas).where(inArray(ideas.ideaId, staleIds));
+            }
+            const persisted = yield* tx
+              .select({ id: ideas.ideaId })
+              .from(ideas)
+              .where(eq(ideas.documentId, document.id));
+            const present = new Set(persisted.map((idea) => idea.id));
+            if (persisted.length > 0) {
+              yield* tx.delete(anchors).where(inArray(anchors.ideaId, [...present]));
+              const rows = card.ideas
+                .filter((idea) => present.has(idea.ideaId))
+                .flatMap((idea) =>
+                  idea.anchors.map((anchor, position) => ({
+                    ideaId: idea.ideaId,
+                    position,
+                    ...anchor,
+                  })),
+                );
+              if (rows.length > 0) yield* tx.insert(anchors).values(rows);
+            }
+            yield* tx
+              .update(sourceDocuments)
+              .set({
+                fileHash: fileContentHash(nextContent),
+                title: card.title,
+                precis: card.precis,
+                author: card.author,
+                publishedDate: card.publishedDate,
+                genre: card.genre,
+                tags: [...card.tags],
+                derivedExtras: card.derivedExtras,
+                updatedAt: sql`now()`,
+              })
+              .where(eq(sourceDocuments.id, document.id));
+          }),
+        );
       }
 
       yield* pipeline.updateProgress(
@@ -1025,7 +902,7 @@ const PYTHON_WHITESPACE = new RegExp(
 export const normalizePythonWhitespace = (value: string) =>
   value.replace(PYTHON_WHITESPACE, " ").replace(/^ | $/g, "");
 
-const validateExtractOutput = (
+const buildSourceCard = (
   data: typeof ExtractResponse.Type,
   documentId: Uuid,
   allowedKinds: readonly string[],
@@ -1084,22 +961,22 @@ type JsonCall = <A>(input: {
   readonly messages: readonly LlmMessage[];
   readonly temperature: number;
   readonly responseFormat: Record<string, unknown>;
-  readonly decode: (value: unknown) => A;
+  readonly schema: Schema.Decoder<A>;
   readonly maxParseRetries?: number;
   readonly logFields?: Record<string, string | number>;
 }) => Effect.Effect<A, unknown>;
 
-type CacheGetter = (
+type CacheGetter = <Phase extends CachePhase>(
   vaultId: Uuid,
-  phase: string,
+  phase: Phase,
   cacheKey: string,
-) => Effect.Effect<unknown, unknown>;
-type CachePutter = (
+) => Effect.Effect<CacheValue<Phase> | undefined, MalformedCompileCache>;
+type CachePutter = <Phase extends CachePhase>(
   vaultId: Uuid,
-  phase: string,
+  phase: Phase,
   cacheKey: string,
-  value: unknown,
-) => Effect.Effect<unknown, unknown>;
+  value: CacheValue<Phase>,
+) => Effect.Effect<void>;
 
 type AbstractOptions = {
   readonly vaultId: Uuid;
@@ -1268,9 +1145,7 @@ const partitionIdeas = (options: AbstractOptions, contexts: readonly IdeaContext
     if (contexts.length === 0) return [] as readonly (readonly Uuid[])[];
     const ids = contexts.map((idea) => idea.ideaId).toSorted();
     const cacheKey = partitionCacheKey(ids, options.config.compilePartitionTargetTokens);
-    const cached = decodePartitionCacheRow(
-      yield* options.getCache(options.vaultId, "partition", cacheKey),
-    );
+    const cached = yield* options.getCache(options.vaultId, "partition", cacheKey);
     if (cached !== undefined) return cached.chunks;
     const tokens = contexts.map(estimateTokens);
     const totalTokens = tokens.reduce((sum, value) => sum + value, 0);
@@ -1305,8 +1180,8 @@ const partitionIdeas = (options: AbstractOptions, contexts: readonly IdeaContext
     const result = chunks.map((chunk) => chunk.map(ideaAt));
     yield* options.putCache(options.vaultId, "partition", cacheKey, {
       chunks: result,
-      k_initial: k,
-      total_tokens: totalTokens,
+      kInitial: k,
+      totalTokens,
     });
     return result;
   });
@@ -1693,12 +1568,8 @@ const synthesizeTopics = (
             promptHash,
             model: options.config.mapModel,
           });
-          const cached = decodeSynthesizeCacheRow(
-            yield* options.getCache(options.vaultId, "synthesize", cacheKey),
-          );
-          const cachedTopics =
-            cached === undefined ? undefined : parseLocalTopics(cached.local_topics);
-          if (cachedTopics !== undefined) return cachedTopics;
+          const cached = yield* options.getCache(options.vaultId, "synthesize", cacheKey);
+          if (cached !== undefined) return cached.localTopics;
           const present = chunk.flatMap((ideaId) => {
             const idea = contextsById.get(ideaId);
             return idea === undefined ? [] : [idea];
@@ -1718,7 +1589,7 @@ const synthesizeTopics = (
                 ],
                 temperature: 0.3,
                 responseFormat: jsonObjectResponseFormat,
-                decode: decodeSynthesisResponse,
+                schema: SynthesisResponse,
                 logFields: { chunk_idx: chunkIdx },
               }),
             ),
@@ -1753,7 +1624,7 @@ const synthesizeTopics = (
             withPermit: (effect) => synthesizeSemaphore.withPermit(effect),
           });
           yield* options.putCache(options.vaultId, "synthesize", cacheKey, {
-            local_topics: resolved.map(dumpLocalTopic),
+            localTopics: resolved,
           });
           return resolved;
         }).pipe(
@@ -2003,7 +1874,7 @@ const resolveChunkGranularity = (options: AbstractOptions, input: ChunkGranulari
             messages: [{ role: "user", content }],
             temperature: 0.3,
             responseFormat: jsonObjectResponseFormat,
-            decode: decodeSynthesisResponse,
+            schema: SynthesisResponse,
             logFields: { chunk_idx: input.chunkIdx, phase: "synthesize_revise" },
           }),
         ),
@@ -2086,7 +1957,7 @@ const resolveChunkGranularity = (options: AbstractOptions, input: ChunkGranulari
             messages: [{ role: "user", content }],
             temperature: 0.3,
             responseFormat: jsonObjectResponseFormat,
-            decode: decodeSynthesisResponse,
+            schema: SynthesisResponse,
             logFields: { chunk_idx: input.chunkIdx, phase: "synthesize_decompose" },
           }),
         ),
@@ -2220,13 +2091,6 @@ export const premergeTopics = (
     .toSorted((left, right) => compareText(left.slug, right.slug));
 };
 
-const dumpRegistryTopic = (topic: RegistryTopic) => ({
-  slug: topic.slug,
-  title: topic.title,
-  description: topic.description,
-  link_target_titles: [...topic.linkTargetTitles],
-});
-
 const slugifyRegistry = (title: string, seen: Set<string>) => {
   const base =
     title
@@ -2267,31 +2131,14 @@ const canonicalizeTopics = (
       thematicHint,
       model: options.config.reduceModel,
     });
-    const cachedRegistryValue = yield* options.getCache(
+    const cachedRegistry = yield* options.getCache(
       options.vaultId,
       "canonicalize_registry",
       registryCacheKey,
     );
     let registry: readonly RegistryTopic[];
-    if (cachedRegistryValue !== undefined) {
-      const cachedRegistry = decodeRegistryCacheRow(cachedRegistryValue);
-      const parsed =
-        cachedRegistry === undefined
-          ? undefined
-          : cachedRegistry.topics.map((topic) => ({
-              slug: topic.slug,
-              title: topic.title,
-              description: topic.description,
-              linkTargetTitles: topic.link_target_titles,
-            }));
-      if (parsed === undefined) {
-        return yield* Effect.fail(
-          new MalformedCompileCache(
-            `canonicalize_registry cache row ${registryCacheKey} is malformed`,
-          ),
-        );
-      }
-      registry = parsed;
+    if (cachedRegistry !== undefined) {
+      registry = cachedRegistry.topics;
     } else {
       const hintBlock = thematicHint.trim()
         ? `The wiki's editorial lens for this vault:\n\n${thematicHint.trim()}\n\n`
@@ -2319,7 +2166,7 @@ const canonicalizeTopics = (
         ],
         temperature: 0.2,
         responseFormat: registryResponseFormat,
-        decode: decodeRegistryResponse,
+        schema: RegistryResponse,
         logFields: { vault_id: options.vaultId, phase: "canonicalize_registry" },
       });
       const seen = new Set<string>();
@@ -2336,7 +2183,7 @@ const canonicalizeTopics = (
         ];
       });
       yield* options.putCache(options.vaultId, "canonicalize_registry", registryCacheKey, {
-        topics: registry.map(dumpRegistryTopic),
+        topics: registry,
       });
     }
     if (registry.length === 0) return [];
@@ -2358,15 +2205,13 @@ const canonicalizeTopics = (
     const marker = "{subtopics_block}";
     const splitTemplate = assignTemplate.split(marker);
     if (splitTemplate.length !== 2) {
-      return yield* Effect.fail(
-        new MalformedPromptTemplate(
-          `canonicalize_assign prompt must contain exactly one ${marker} placeholder`,
-        ),
-      );
+      return yield* new MalformedPromptTemplate({
+        message: `canonicalize_assign prompt must contain exactly one ${marker} placeholder`,
+      });
     }
     const [head, tail] = splitTemplate as [string, string];
     const prefix = head.replace("{registry_block}", registryBlock);
-    const assignment = new Map<string, string>();
+    const assignment = new Map<Uuid, string>();
     for (let offset = 0; offset < ordered.length; offset += 30) {
       const batch = ordered.slice(offset, offset + 30);
       const cacheKey = canonicalizeAssignCacheKey({
@@ -2375,18 +2220,9 @@ const canonicalizeTopics = (
         promptHash: assignPromptHash,
         model: options.config.reduceModel,
       });
-      const cachedValue = yield* options.getCache(options.vaultId, "canonicalize_assign", cacheKey);
-      if (cachedValue !== undefined) {
-        const cached = decodeAssignCacheRow(cachedValue);
-        if (
-          cached === undefined ||
-          Object.keys(cached.assign).some((localId) => !isUuid(localId))
-        ) {
-          return yield* Effect.fail(
-            new MalformedCompileCache(`canonicalize_assign cache row ${cacheKey} is malformed`),
-          );
-        }
-        for (const [localId, slug] of Object.entries(cached.assign)) {
+      const cached = yield* options.getCache(options.vaultId, "canonicalize_assign", cacheKey);
+      if (cached !== undefined) {
+        for (const [localId, slug] of cached.assign) {
           assignment.set(localId, slug);
         }
         continue;
@@ -2411,7 +2247,7 @@ const canonicalizeTopics = (
         ],
         temperature: 0.1,
         responseFormat: assignmentsResponseFormat,
-        decode: decodeAssignmentsResponse,
+        schema: AssignmentsResponse,
         maxParseRetries: 2,
         logFields: {
           vault_id: options.vaultId,
@@ -2419,13 +2255,13 @@ const canonicalizeTopics = (
           batch_offset: offset,
         },
       });
-      const batchAssign: Record<string, string> = {};
+      const batchAssign = new Map<Uuid, string>();
       for (const item of data.assignments) {
         if (item.n >= 1 && item.n <= batch.length && slugs.has(item.slug)) {
           const localId = batch[item.n - 1]?.localTopicId;
           if (localId !== undefined) {
             assignment.set(localId, item.slug);
-            batchAssign[localId] = item.slug;
+            batchAssign.set(localId, item.slug);
           }
         }
       }
@@ -2607,7 +2443,7 @@ const validateTopics = (
         ],
         temperature: 0.1,
         responseFormat: jsonObjectResponseFormat,
-        decode: decodeCleanupResponse,
+        schema: CleanupResponse,
         logFields: { vault_id: options.vaultId, phase: "validate_cleanup" },
       });
       for (const rename of data.slug_renames ?? []) {
@@ -2638,11 +2474,9 @@ const validateTopics = (
       seen.add(canonical.slug);
     }
     if (duplicates.length > 0) {
-      return yield* Effect.fail(
-        new MalformedLlmOutput(
-          `validate: cleanup LLM did not resolve all slug collisions: [${duplicates.map((slug) => `'${slug}'`).join(", ")}]`,
-        ),
-      );
+      return yield* new MalformedLlmOutput({
+        message: `validate: cleanup LLM did not resolve all slug collisions: [${duplicates.map((slug) => `'${slug}'`).join(", ")}]`,
+      });
     }
     const existingBySlug = new Map(existing.map((topic) => [topic.slug, topic]));
     const disposed = new Set([
@@ -2790,11 +2624,6 @@ const runRender = (options: RenderOptions) =>
     const promptTemplate = yield* loadPrompt(options.storage, options.vaultId, "render");
     const promptHash = promptContentHash(promptTemplate);
     yield* recordPrompt(options.db, promptHash, promptTemplate);
-    const existingWiki = new Set(
-      (yield* options.storage.listMarkdown(vaultOwner(options.vaultId), "wiki")).map(
-        (file) => file.path,
-      ),
-    );
     const toRender: ValidatedTopic[] = [];
     let materialized = 0;
     for (const [index, topic] of options.validated.entries()) {
@@ -2803,13 +2632,10 @@ const runRender = (options: RenderOptions) =>
         promptHash,
         model: options.config.renderModel,
       });
-      const cachedRow = decodeRenderCacheRow(
-        yield* options.getCache(options.vaultId, "render", cacheKey),
-      );
-      const cached = cachedRow === undefined ? undefined : normalizeRenderOutput(cachedRow);
+      const cached = yield* options.getCache(options.vaultId, "render", cacheKey);
       if (cached === undefined) {
         toRender.push(topic);
-      } else if (!existingWiki.has(`wiki/${topic.slug}.md`)) {
+      } else {
         yield* options.materializeArticle(options.vaultId, options.runId, topic, cached);
         materialized += 1;
       }
@@ -2916,7 +2742,7 @@ const runRender = (options: RenderOptions) =>
                   messages: [{ role: "user", content: prompt }],
                   temperature: 0.3,
                   responseFormat: jsonObjectResponseFormat,
-                  decode: decodeRenderResponse,
+                  schema: RenderResponse,
                   logFields: { topic_id: topic.topicId, topic_slug: topic.slug },
                 }),
               ),
@@ -2935,15 +2761,19 @@ const runRender = (options: RenderOptions) =>
             }
             const processed = yield* Effect.result(
               Effect.gen(function* () {
-                const output = normalizeRenderOutput(result.success);
-                if (output === undefined) {
-                  return yield* Effect.fail(new MalformedLlmOutput("invalid render output"));
-                }
-                const body = postprocessBody(output.body, numbered);
-                if (body === undefined) {
-                  return yield* Effect.fail(new MalformedLlmOutput("invalid render body"));
-                }
-                return { body, tags: output.tags } as const;
+                const tags = yield* Schema.decodeUnknownEffect(RenderTags)(
+                  result.success.tags,
+                ).pipe(
+                  Effect.mapError(
+                    (error) =>
+                      new MalformedLlmOutput({
+                        message: "invalid render output",
+                        issue: error.issue,
+                      }),
+                  ),
+                );
+                const body = yield* postprocessBody(result.success.body, numbered);
+                return { body, tags };
               }),
             );
             if (processed._tag === "Failure") {
@@ -2959,7 +2789,6 @@ const runRender = (options: RenderOptions) =>
               return false;
             }
             const finalOutput = processed.success;
-            yield* options.materializeArticle(options.vaultId, options.runId, topic, finalOutput);
             yield* options.putCache(
               options.vaultId,
               "render",
@@ -2970,6 +2799,7 @@ const runRender = (options: RenderOptions) =>
               }),
               finalOutput,
             );
+            yield* options.materializeArticle(options.vaultId, options.runId, topic, finalOutput);
             return true;
           }).pipe(
             Effect.tap((success) =>
@@ -3040,16 +2870,6 @@ const runRender = (options: RenderOptions) =>
     );
   });
 
-const normalizeRenderOutput = (value: typeof RenderResponse.Type) => {
-  const tags: string[] = [];
-  for (const raw of value.tags) {
-    const tag = raw.trim().toLowerCase().replaceAll(" ", "-");
-    if (tag.length === 0) return undefined;
-    if (!tags.includes(tag)) tags.push(tag);
-  }
-  return { body: value.body, tags } as const;
-};
-
 const sourceLabel = (document: SourceRow) => {
   const title = document.title?.trim() || "Untitled";
   const date = document.publishedDate?.trim() ?? "";
@@ -3107,34 +2927,37 @@ const renderIdeaBlock = (
   return lines.join("\n");
 };
 
-const postprocessBody = (rawBody: string, numbered: readonly NumberedAnchor[]) => {
-  const body = rawBody.trim();
-  if (body.length === 0 || body.startsWith("---") || !/^# /m.test(body)) return undefined;
-  const sources = new Map(numbered.map((anchor) => [anchor.number, anchor]));
-  const used: number[] = [];
-  for (const match of body.matchAll(/\[\^(\d+)\]/g)) {
-    const number = Number.parseInt(match[1] ?? "", 10);
-    if (sources.has(number) && !used.includes(number)) used.push(number);
-  }
-  const remap = new Map(used.map((number, index) => [number, index + 1]));
-  const renumbered = body
-    .replace(/\[\^(\d+)\]/g, (_match, raw: string) => {
-      const display = remap.get(Number.parseInt(raw, 10));
-      return display === undefined ? "" : `[^${display}]`;
-    })
-    .replace(/ {2,}/g, " ");
-  if (used.length === 0) return `${renumbered.trimEnd()}\n`;
-  const lines = ["", "---", ""];
-  used.forEach((original, index) => {
-    const source = sources.get(original);
-    if (source === undefined) return;
-    const link =
-      source.document === undefined
-        ? "unknown source"
-        : `[${sourceLabel(source.document)}](${source.document.filePath}${
-            source.anchor.chunkIndex === null ? "" : `#^p${source.anchor.chunkIndex}`
-          })`;
-    lines.push(`[^${index + 1}]: ${link} — "${source.anchor.quote.trim()}"`);
+const postprocessBody = (rawBody: string, numbered: readonly NumberedAnchor[]) =>
+  Effect.gen(function* () {
+    const body = rawBody.trim();
+    if (body.length === 0 || body.startsWith("---") || !/^# /m.test(body)) {
+      return yield* new MalformedLlmOutput({ message: "invalid render body" });
+    }
+    const sources = new Map(numbered.map((anchor) => [anchor.number, anchor]));
+    const used: number[] = [];
+    for (const match of body.matchAll(/\[\^(\d+)\]/g)) {
+      const number = Number.parseInt(match[1] ?? "", 10);
+      if (sources.has(number) && !used.includes(number)) used.push(number);
+    }
+    const remap = new Map(used.map((number, index) => [number, index + 1]));
+    const renumbered = body
+      .replace(/\[\^(\d+)\]/g, (_match, raw: string) => {
+        const display = remap.get(Number.parseInt(raw, 10));
+        return display === undefined ? "" : `[^${display}]`;
+      })
+      .replace(/ {2,}/g, " ");
+    if (used.length === 0) return `${renumbered.trimEnd()}\n`;
+    const lines = ["", "---", ""];
+    used.forEach((original, index) => {
+      const source = sources.get(original);
+      if (source === undefined) return;
+      const link =
+        source.document === undefined
+          ? "unknown source"
+          : `[${sourceLabel(source.document)}](${source.document.filePath}${
+              source.anchor.chunkIndex === null ? "" : `#^p${source.anchor.chunkIndex}`
+            })`;
+      lines.push(`[^${index + 1}]: ${link} — "${source.anchor.quote.trim()}"`);
+    });
+    return `${renumbered.trimEnd()}\n${lines.join("\n")}\n`;
   });
-  return `${renumbered.trimEnd()}\n${lines.join("\n")}\n`;
-};
