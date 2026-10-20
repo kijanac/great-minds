@@ -197,7 +197,7 @@
         </div>
       {/if}
 
-      <div class="relative min-h-0 flex-1 overflow-hidden">
+      <main class="relative min-h-0 flex-1 overflow-hidden">
         {#if publication.open}
           <SessionExport
             pending={publication.pending}
@@ -296,7 +296,7 @@
             </div>
           {/if}
         </div>
-      </div>
+      </main>
     </div>
   </div>
 </PanelHost>
