@@ -41,13 +41,15 @@ describe("saved passage anchors", () => {
       context: "The claim matters. The claim needs evidence.",
     },
     { name: "quote without context", quote: "clear claim", context: null },
-  ])("keeps the saved selection and available context visible: $name", ({ quote, context }) => {
-    const { body } = render(SessionPassage, { props: { quote, context } });
+  ])("shows the saved selection with optional surrounding context: $name", ({ quote, context }) => {
+    const { body } = render(SessionPassage, { props: { quote, context, href: null } });
     expect(body.match(/<mark\b[^>]*>([\s\S]*?)<\/mark>/)?.[1]).toBe(quote);
-    if (context) expect(body.replace(/<[^>]*>/g, "")).toContain(context);
-    if (context === null || uniqueQuoteSpan(context, quote)) {
-      expect(body.split(quote)).toHaveLength(2);
-    }
+    expect(body.split(quote)).toHaveLength(2);
+    if (context) {
+      expect(body).toContain("Show surrounding passage");
+      expect(body).toContain('aria-expanded="false"');
+      expect(body.replace(/<[^>]*>/g, "")).not.toContain(context);
+    } else expect(body).not.toContain("Show surrounding passage");
   });
 
   it("exposes one keyboard trigger across formatting while preserving linked text", () => {

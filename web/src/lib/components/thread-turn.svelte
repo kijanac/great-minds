@@ -3,11 +3,9 @@
 
   let {
     query,
-    actions,
     children,
   }: {
     query: string;
-    actions?: Snippet;
     children: Snippet;
   } = $props();
 </script>
@@ -25,7 +23,6 @@
       >
       {query}
     </p>
-    {@render actions?.()}
   </div>
   {@render children()}
 </div>

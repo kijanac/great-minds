@@ -40,7 +40,7 @@
   >
     <span class="min-w-0 flex-1">
       <span
-        class="block truncate font-serif text-[length:var(--text-body)] text-warm-dim transition-colors group-hover:text-warm"
+        class="block font-serif text-[length:var(--text-body)] text-warm-dim transition-colors group-hover:text-warm [overflow-wrap:anywhere]"
       >
         {displayTitle(source.file_path, source.title)}
       </span>

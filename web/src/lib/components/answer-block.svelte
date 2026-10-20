@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Uuid } from "@great-minds/domain";
-  import { tick } from "svelte";
+  import { tick, type Snippet } from "svelte";
 
   import { findQuoteRange } from "$lib/anchor";
   import {
@@ -23,6 +23,8 @@
 
   let {
     text,
+    documentTitle = null,
+    header,
     exchangeId,
     btws,
     streaming,
@@ -42,6 +44,8 @@
     onToggleThread,
   }: {
     text: string;
+    documentTitle?: string | null;
+    header?: Snippet<[showTitle: boolean]>;
     exchangeId: Uuid;
     btws: ThreadLike[];
     streaming: boolean;
@@ -101,6 +105,15 @@
     streaming ? { tree: emptyRoot(), misses: [] } : parseSettled(displayText),
   );
   const fullTree = $derived(fullParsed.tree);
+  const leadingTitle = $derived.by(() => {
+    const first = fullTree.children?.[0];
+    return (
+      !!documentTitle &&
+      first?.tagName === "h1" &&
+      nodeText(first).replace(/\s+/g, " ").trim() ===
+        documentTitle.replace(/\s+/g, " ").trim()
+    );
+  });
   const anchorMisses = $derived(
     streaming ? stableParsed.misses : fullParsed.misses,
   );
@@ -333,6 +346,12 @@
     };
   });
 
+  function nodeText(node: HastNode): string {
+    return node.type === "text"
+      ? (node.value ?? "")
+      : (node.children ?? []).map(nodeText).join("");
+  }
+
   function emptyRoot(): HastNode {
     return { type: "root", children: [] };
   }
@@ -396,7 +415,9 @@
   resetKey={`${streaming}:${displayText}`}
   {onLinkClick}
   {marginDots}
-  class="select-text"
+  class={leadingTitle
+    ? "select-text [&>h1:first-child]:mb-3 [&>h1:first-child]:text-[length:var(--text-title)]"
+    : "select-text"}
 >
   {#snippet children({
     footnoteMode,
@@ -406,6 +427,7 @@
     onFootnoteHover,
     onFootnoteToggle,
   })}
+    {#if !leadingTitle}{@render header?.(true)}{/if}
     {#if streaming}
       {#each stableTree.children ?? [] as node, index (node.position?.start?.offset == null ? `fallback:${index}` : `offset:${node.position.start.offset}`)}
         {@const offset = node.position?.start?.offset}
@@ -458,6 +480,7 @@
           {onFootnoteHover}
           {onFootnoteToggle}
         />
+        {#if index === 0 && leadingTitle}{@render header?.(false)}{/if}
         {#if offset != null}
           {#each bodyThreads.filter((btw) => btw.anchor.blockOffset === offset) as btw (btw.id)}
             <BtwThread

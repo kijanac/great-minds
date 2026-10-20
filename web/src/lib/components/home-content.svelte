@@ -25,7 +25,11 @@
   import { usePanelContent } from "$lib/hooks/use-panel-content.svelte";
   import { useSessions } from "$lib/hooks/use-sessions.svelte";
   import { useVaultCounts } from "$lib/hooks/use-vault-counts.svelte";
-  import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
+  import {
+    activeVault,
+    useVaultDetail,
+    useVaults,
+  } from "$lib/hooks/use-vault.svelte";
   import { useSessionExport } from "$lib/hooks/use-session-export.svelte";
   import { Session } from "$lib/session.svelte";
   import type { SourceRef } from "$lib/types";
@@ -79,6 +83,10 @@
   );
 
   const isActive = $derived(session.phase !== "idle");
+  const vaultDetail = useVaultDetail(
+    () => activeVault.id,
+    () => isActive,
+  );
   const panelQuery = usePanelContent(() => selectedCard);
   const handleLinkClick = createLinkInterceptor((citation) => {
     selectedCard = {
@@ -289,6 +297,7 @@
               <SessionThread
                 {session}
                 activeCard={selectedCard?.label ?? null}
+                vaultRole={vaultDetail.data?.role ?? null}
                 panelDocked={!!selectedCard}
                 onCardClick={toggleCard}
                 onLinkClick={handleLinkClick}

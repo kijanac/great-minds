@@ -20,6 +20,7 @@
   let {
     document,
     scope,
+    showTitle = true,
     promotionAction = null,
     archived = false,
     supersededBy = null,
@@ -31,6 +32,7 @@
   }: {
     document: Article;
     scope: DocumentScope;
+    showTitle?: boolean;
     promotionAction?: PromotionAction | null;
     archived?: boolean;
     supersededBy?: string | null;
@@ -204,7 +206,7 @@
         </p>
       {/if}
     </div>
-  {:else}
+  {:else if showTitle}
     <h1
       class="group mb-3 min-w-0 text-[length:var(--text-title)] font-bold text-foreground"
     >

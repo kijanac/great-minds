@@ -207,6 +207,7 @@
   function startBtw() {
     if (!popover || !docThreads) return;
     docThreads.startThread(popover);
+    dismissHint();
     popover = null;
     window.getSelection()?.removeAllRanges();
   }
@@ -214,6 +215,7 @@
   function startSuggestion() {
     if (!popover || !suggestionMode) return;
     suggestionTarget = popover;
+    dismissHint();
     popover = null;
     window.getSelection()?.removeAllRanges();
   }
@@ -351,9 +353,9 @@
               >
                 tip
               </Badge>
-              highlight any text to start a
-              <span class="text-btw">btw</span>
-              thread{#if suggestionMode}{" or suggest a change"}{/if}
+              highlight text to ask beside the passage with
+              <span class="text-btw">btw</span
+              >{#if suggestionMode}{", or suggest a change"}{/if}
             </p>
             <Button
               variant="ghost"

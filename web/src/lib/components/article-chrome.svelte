@@ -74,7 +74,7 @@
         disabled={!queryText.trim()}
         class="h-auto rounded-none bg-gold px-3 py-[9px] font-mono text-[length:var(--text-chrome)] font-medium tracking-[0.12em] text-primary-foreground hover:bg-gold-hover disabled:bg-interactive-ghost disabled:text-muted-foreground disabled:opacity-100"
       >
-        QUERY
+        ASK
       </Button>
     </div>
   </header>

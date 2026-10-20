@@ -6,6 +6,6 @@ An answer BTW inherits the latest usable selected parent when its first question
 
 Continue changes placement to standalone and the future reply default to query. It preserves the conversation ID, history, passage, inherited context and already accepted reply mode. The conversation then appears in the session list, and its origin links to it. Direct links to an inline BTW return to its origin. Ownership is checked, and repeating Continue is idempotent.
 
-The continued conversation opens with its passage visible and selection highlighted. Inline BTWs and sessions share message presentation. Collapsed BTWs retain passage highlights with keyboard activation. An ambiguous repeated quote uses the paragraph marker rather than silently highlighting the wrong occurrence.
+The continued conversation opens with its question and selected quotation visible; surrounding passage context can be expanded without changing the saved or inherited context. Inline BTWs and sessions share message presentation. Collapsed BTWs retain passage highlights with keyboard activation. An ambiguous repeated quote uses the paragraph marker rather than silently highlighting the wrong occurrence.
 
 See [conversation authority, publication and cutover requirements](conversations.md). Historical conversion/recovery procedures and their evidence belong to the separate migration bundle, not the native runtime.

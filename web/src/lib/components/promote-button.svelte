@@ -1,70 +1,54 @@
 <script lang="ts">
-  import type {
-    PromoteExchangeResponse,
-    SessionId,
-    Uuid,
-  } from "@great-minds/domain";
+  import type { SessionId, Uuid } from "@great-minds/domain";
 
-  import { errorMessage } from "$lib/api/errors";
-  import { promoteExchange } from "$lib/api/sessions";
   import { Button } from "$lib/components/ui/button";
-
-  type State =
-    | { kind: "idle" }
-    | { kind: "pending" }
-    | { kind: "done"; result: PromoteExchangeResponse }
-    | { kind: "error"; message: string };
+  import { useExchangePromotion } from "$lib/hooks/use-sessions.svelte";
 
   let {
     sessionId,
     exchangeId,
+    role,
   }: {
     sessionId: SessionId;
     exchangeId: Uuid;
+    role: "owner" | "editor";
   } = $props();
 
-  let state = $state<State>({ kind: "idle" });
-
-  async function promote() {
-    state = { kind: "pending" };
-    try {
-      state = {
-        kind: "done",
-        result: await promoteExchange(sessionId, exchangeId),
-      };
-    } catch (error) {
-      state = {
-        kind: "error",
-        message: errorMessage(error, "Failed to promote"),
-      };
-    }
-  }
+  const promotion = useExchangePromotion();
 </script>
 
-{#if state.kind === "done"}
+{#if promotion.result}
   <span
+    role="status"
     class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint"
   >
-    {state.result.mode === "ingested"
-      ? state.result.title
-        ? `saved as "${state.result.title}"`
-        : "saved as source"
+    {promotion.result.mode === "ingested"
+      ? promotion.result.title
+        ? `added to vault as “${promotion.result.title}”`
+        : "added to vault"
       : "submitted for review"}
   </span>
-{:else if state.kind === "error"}
+{:else if promotion.error}
   <span
+    role="status"
     class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-destructive"
   >
-    {state.message}
+    {promotion.error}
   </span>
 {:else}
   <Button
     variant="ghost"
     size="sm"
-    onclick={() => void promote()}
-    disabled={state.kind === "pending"}
-    class="h-auto px-2 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
+    onclick={() => promotion.promote(sessionId, exchangeId)}
+    disabled={promotion.pending}
+    class="h-auto px-0 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
   >
-    {state.kind === "pending" ? "saving…" : "save as source"}
+    {role === "owner"
+      ? promotion.pending
+        ? "adding…"
+        : "add to vault"
+      : promotion.pending
+        ? "submitting…"
+        : "submit for review"}
   </Button>
 {/if}

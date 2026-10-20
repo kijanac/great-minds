@@ -18,13 +18,13 @@
 >
   <span class="min-w-0 flex-1">
     <span
-      class="block truncate font-serif text-[length:var(--text-body)] text-warm-dim transition-colors group-hover:text-warm"
+      class="block font-serif text-[length:var(--text-body)] text-warm-dim transition-colors group-hover:text-warm [overflow-wrap:anywhere]"
     >
       {article.title}
     </span>
     {#if article.precis}
       <span
-        class="mt-1 line-clamp-2 block font-serif text-[length:var(--text-small)] text-warm-ghost"
+        class="mt-1 line-clamp-2 font-serif text-[length:var(--text-small)] text-warm-ghost"
       >
         {article.precis}
       </span>

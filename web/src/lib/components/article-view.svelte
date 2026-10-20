@@ -61,20 +61,9 @@
 </script>
 
 <article class="mx-auto max-w-[740px] px-4 pt-6 pb-20 select-text md:px-10">
-  <DocHeader
-    {document}
-    {scope}
-    {promotionAction}
-    {archived}
-    {supersededBy}
-    {onSupersessorClick}
-    {threads}
-    {jumpableThreads}
-    {onThreadJump}
-    onThreadOpen={onOpenSession}
-  />
   <AnswerBlock
     text={body}
+    documentTitle={document.kind === "reference" ? null : document.title}
     exchangeId={documentId}
     btws={threads}
     streaming={false}
@@ -91,7 +80,23 @@
     {expandedThreads}
     {onToggleThread}
     onBtwOpenSession={onOpenSession}
-  />
+  >
+    {#snippet header(showTitle)}
+      <DocHeader
+        {document}
+        {scope}
+        {showTitle}
+        {promotionAction}
+        {archived}
+        {supersededBy}
+        {onSupersessorClick}
+        {threads}
+        {jumpableThreads}
+        {onThreadJump}
+        onThreadOpen={onOpenSession}
+      />
+    {/snippet}
+  </AnswerBlock>
   {#if !archived && related.length > 0}
     <footer class="mt-14 border-t border-ink-subtle pt-6">
       <div

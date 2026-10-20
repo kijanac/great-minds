@@ -1,6 +1,7 @@
 <script lang="ts">
   import { browser } from "$app/environment";
   import { page } from "$app/state";
+  import type { MemberRole } from "@great-minds/domain";
   import { tick } from "svelte";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
 
@@ -25,12 +26,14 @@
   let {
     session,
     activeCard,
+    vaultRole = null,
     panelDocked = false,
     onCardClick,
     onLinkClick,
   }: {
     session: Session;
     activeCard: string | null;
+    vaultRole?: MemberRole | null;
     panelDocked?: boolean;
     onCardClick: (source: SourceRef) => void;
     onLinkClick?: (event: MouseEvent) => void;
@@ -117,6 +120,7 @@
   });
   const showHint = $derived(
     !hintDismissed &&
+      !origin?.anchor &&
       session.phase === "done" &&
       session.submission.status !== "failed" &&
       session.thread.length === 1 &&
@@ -171,7 +175,7 @@
     bind:this={content}
     class="mx-auto max-w-[740px] px-4 pt-7 pb-5 md:px-10"
   >
-    {#if originHref}
+    {#if originHref && !origin?.anchor}
       <div class="mb-6">
         <a
           href={originHref}
@@ -189,7 +193,6 @@
     {/if}
 
     {#if origin?.anchor}
-      <SessionPassage quote={origin.anchor} context={origin.paragraph} />
       <ThreadSurface>{@render conversation()}</ThreadSurface>
     {:else}
       {@render conversation()}
@@ -203,16 +206,14 @@
           {/if}
 
           <ThreadTurn query={exchange.query}>
-            {#snippet actions()}
-              {#if session.sessionId && exchange.answer && (exchange.status === "completed" || exchange.status === "stopped")}
-                <span>
-                  <PromoteButton
-                    sessionId={session.sessionId}
-                    exchangeId={exchange.id}
-                  />
-                </span>
-              {/if}
-            {/snippet}
+            {#if index === 0 && origin?.anchor}
+              <SessionPassage
+                quote={origin.anchor}
+                context={origin.paragraph}
+                href={originHref}
+                sourceTitle={session.originTitle ?? undefined}
+              />
+            {/if}
 
             <div>
               <ThinkingSection
@@ -257,6 +258,16 @@
                 The response completed without an answer.
               </p>
             {/if}
+
+            {#if session.sessionId && exchange.answer && (exchange.status === "completed" || exchange.status === "stopped") && (vaultRole === "owner" || vaultRole === "editor")}
+              <div class="mt-4">
+                <PromoteButton
+                  sessionId={session.sessionId}
+                  exchangeId={exchange.id}
+                  role={vaultRole}
+                />
+              </div>
+            {/if}
           </ThreadTurn>
         </div>
       {/each}
@@ -278,9 +289,8 @@
         >
           tip
         </Badge>
-        highlight any text in the answer to
-        <span class="text-warm-dim">follow up</span>
-        or start a <span class="text-btw">btw</span> thread
+        highlight text to <span class="text-warm-dim">add to reply</span>, or
+        ask beside the passage with <span class="text-btw">btw</span>
       </p>
       <Button
         variant="ghost"
@@ -337,10 +347,16 @@
     info={session.popover}
     onDismiss={session.clearPopover}
     onFollowUp={() => {
-      if (session.popover) session.addChip(session.popover.quote);
+      if (session.popover) {
+        session.addChip(session.popover.quote);
+        dismissHint();
+      }
     }}
     onBtw={() => {
-      if (session.popover) session.startBtw(session.popover);
+      if (session.popover) {
+        session.startBtw(session.popover);
+        dismissHint();
+      }
     }}
   />
 {/if}

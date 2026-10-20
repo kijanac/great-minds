@@ -71,7 +71,7 @@
       onclick={onFollowUp}
       class="h-auto max-w-full rounded-none px-3.5 py-[9px] font-mono text-[length:var(--text-chrome)] tracking-[0.1em] whitespace-normal text-popover-foreground [overflow-wrap:anywhere] hover:bg-interactive-dim hover:text-gold"
     >
-      + follow up
+      add to reply
     </Button>
   {/if}
   <Button

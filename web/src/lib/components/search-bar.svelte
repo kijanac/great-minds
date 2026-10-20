@@ -75,7 +75,7 @@
         disabled={!query.trim()}
         class="h-auto rounded-none bg-gold px-[18px] py-[13px] font-mono text-[length:var(--text-chrome)] font-medium tracking-[0.1em] text-primary-foreground hover:bg-gold-hover disabled:bg-interactive-ghost disabled:text-muted-foreground disabled:opacity-100"
       >
-        query
+        ask
       </Button>
     {/if}
   </div>
