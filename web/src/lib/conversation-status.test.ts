@@ -1,6 +1,7 @@
 import { SessionId, Uuid } from "@great-minds/domain";
 import { render } from "svelte/server";
 import { describe, expect, it, vi } from "vitest";
+import AnswerBlock from "$lib/components/answer-block.svelte";
 import BtwThread from "$lib/components/btw-thread.svelte";
 import type { ThreadLike } from "$lib/types";
 
@@ -29,6 +30,23 @@ const markup = (btw: ThreadLike) =>
   render(BtwThread, { props: { btw, onReply: vi.fn(), onRetry: vi.fn() } }).body;
 
 describe("conversation status markup", () => {
+  it("keeps an unsent BTW reachable when collapsed without exposing saved threads", () => {
+    const draft = thread({ id: "draft-note", conversation: null, draft: true, exchanges: [] });
+    const html = render(AnswerBlock, {
+      props: {
+        text: "Passage",
+        exchangeId: Uuid.make("00000000-0000-4000-8000-000000000001"),
+        btws: [draft, thread()],
+        streaming: false,
+        expandedThreads: new Set<string>(),
+      },
+    }).body;
+    expect(html).toContain('data-btw-id="draft-note"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain('data-btw-id="saved-note"');
+    expect(html).toContain('hidden=""');
+  });
+
   it("does not present an empty completed answer as a failed generation", () => {
     const html = markup(thread());
     expect(html).toContain("The response completed without an answer.");

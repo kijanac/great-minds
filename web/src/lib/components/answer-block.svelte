@@ -464,7 +464,7 @@
               {btw}
               open={isOpen(btw.id)}
               onOpenChange={() => toggleThread(btw.id)}
-              hideWhenClosed
+              hideWhenClosed={!btw.draft}
               {readOnly}
               onReply={onBtwReply}
               onRetry={onBtwRetry}
