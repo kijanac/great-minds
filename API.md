@@ -1253,7 +1253,10 @@ Errors: `403 Forbidden`, `404 NotFound`, `422 Validation`.
 Auth: required.
 
 Reviews a proposal: approves or rejects it. Approved proposals are applied
-to the vault; rejected proposals are closed.
+to the vault; rejected proposals are closed. Exactly one decision is accepted
+per proposal: a concurrent or repeated review returns `409 Conflict`, and the
+returned status is the accepted decision even if applying it to the vault is
+still being completed.
 
 Path parameters: `vault_id` (`Uuid`), `proposal_id` (`Uuid`).
 

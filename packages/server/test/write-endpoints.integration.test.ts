@@ -36,7 +36,7 @@ import {
 } from "@great-minds/database";
 import { CreateReplyRequest, SessionId, type SessionOrigin, Uuid } from "@great-minds/domain";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { Deferred, Effect, Layer, Option, Redacted, Schema } from "effect";
+import { Deferred, Effect, Fiber, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { makeAppLayer } from "../src/app-layer.ts";
@@ -51,6 +51,7 @@ import { FileIngestBatches } from "../src/file-ingest-batches.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { parseFrontmatter } from "../src/markdown.ts";
+import { ProposalsService } from "../src/proposals.ts";
 import { makeTestRandomBytes } from "../src/random.ts";
 import { startServer } from "../src/server.ts";
 import { SessionsService } from "../src/sessions.ts";
@@ -108,6 +109,7 @@ type TestServices =
   | Database
   | ClockService
   | FileIngestBatches
+  | ProposalsService
   | SessionsService
   | SourceDocumentsService
   | StructuredLogger
@@ -305,6 +307,75 @@ const userFileExists = (userId: string, path: string) =>
 
 const proposalFileExists = (proposalId: string) =>
   fileExists(join(currentState().storageRoot, "proposals", `${proposalId}.md`));
+
+const proposalRow = (proposalId: Uuid) =>
+  runDb(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      const rows = yield* db.query((d) =>
+        d.select().from(sourceProposals).where(eq(sourceProposals.id, proposalId)),
+      );
+      const row = rows[0];
+      if (row === undefined) throw new Error(`proposal ${proposalId} not found`);
+      return row;
+    }),
+  );
+
+const acceptDecisionWithoutFinishing = (proposalId: Uuid, status: "APPROVED" | "REJECTED") =>
+  runDb(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db.query((d) =>
+        d
+          .update(sourceProposals)
+          .set({ status, reviewedAt: sql`now()` })
+          .where(and(eq(sourceProposals.id, proposalId), eq(sourceProposals.status, "PENDING"))),
+      );
+    }),
+  );
+
+const reconcileReviews = () =>
+  runDb(Effect.flatMap(ProposalsService, (proposals) => proposals.reconcileReviewsOnce()));
+
+const blockedProposalReviews = () =>
+  runDb(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      const rows = yield* db.query((d) =>
+        d
+          .select({ total: sql<number>`count(*)::int` })
+          .from(sql`pg_stat_activity`)
+          .where(sql`wait_event_type = 'Lock' and query like ${'update "source_proposals"%'}`),
+      );
+      return rows[0]?.total ?? 0;
+    }),
+  );
+
+const holdProposalRowLock = async (proposalId: Uuid) => {
+  const runtime = currentState().started.runtime;
+  const locked = await runtime.runPromise(Deferred.make<void>());
+  const release = await runtime.runPromise(Deferred.make<void>());
+  const holder = runtime.runFork(
+    Effect.flatMap(Database, (db) =>
+      db.transaction((tx) =>
+        Effect.gen(function* () {
+          yield* tx
+            .select({ id: sourceProposals.id })
+            .from(sourceProposals)
+            .where(eq(sourceProposals.id, proposalId))
+            .for("update");
+          yield* Deferred.succeed(locked, undefined);
+          yield* Deferred.await(release);
+        }),
+      ),
+    ),
+  );
+  await runtime.runPromise(Deferred.await(locked));
+  return async () => {
+    await runtime.runPromise(Deferred.succeed(release, undefined));
+    await runtime.runPromise(Fiber.join(holder));
+  };
+};
 
 const issueToken = (userId: Uuid) =>
   runDb(
@@ -1049,6 +1120,118 @@ describe("M3.1 write endpoint integration", () => {
     });
     expect(rejected.status).toBe(200);
     expect(await proposalFileExists(rejectId)).toBe(false);
+  });
+
+  it("accepts exactly one of two concurrent review decisions", async () => {
+    const { aliceToken, bobToken } = currentFixture();
+    const created = await api("POST", `/vaults/${id.vault}/proposals`, bobToken, {
+      content: "Contested proposal body.",
+      content_type: "texts",
+      title: "Contested Proposal",
+    });
+    expect(created.status).toBe(201);
+    const proposalId = decodeUuid(String(asRecord(created.body).id));
+    const proposalPath = `/vaults/${id.vault}/proposals/${proposalId}`;
+
+    const releaseLock = await holdProposalRowLock(proposalId);
+    const reviews: Promise<ApiResponse>[] = [];
+    try {
+      reviews.push(api("PATCH", proposalPath, aliceToken, { status: "approved" }));
+      await waitFor(blockedProposalReviews, (total) => total === 1);
+      reviews.push(api("PATCH", proposalPath, aliceToken, { status: "rejected" }));
+      await waitFor(blockedProposalReviews, (total) => total === 2);
+    } finally {
+      await releaseLock();
+      await Promise.allSettled(reviews);
+    }
+    const [approved, rejected] = await Promise.all(reviews);
+    expect(approved?.status).toBe(200);
+    expect(asRecord(approved?.body).status).toBe("approved");
+    expect(rejected?.status).toBe(409);
+
+    const row = await proposalRow(proposalId);
+    expect(row.status).toBe("APPROVED");
+    expect(row.reviewedAt).not.toBeNull();
+    expect(row.completedAt).not.toBeNull();
+    expect(await readVaultFile(id.vault, row.destPath)).toContain("Contested proposal body.");
+    expect(await proposalFileExists(proposalId)).toBe(true);
+    expect(await countTable(sourceDocuments)).toBe(1);
+    expect(await countTable(compileIntents)).toBe(1);
+  });
+
+  it("finishes accepted decisions whose requests died before completing them", async () => {
+    const { aliceToken, bobToken } = currentFixture();
+    const approvedCreate = await api("POST", `/vaults/${id.vault}/proposals`, bobToken, {
+      content: "Orphaned approval body.",
+      content_type: "texts",
+    });
+    const rejectedCreate = await api("POST", `/vaults/${id.vault}/proposals`, bobToken, {
+      content: "Orphaned rejection body.",
+      content_type: "texts",
+    });
+    const approvedId = decodeUuid(String(asRecord(approvedCreate.body).id));
+    const rejectedId = decodeUuid(String(asRecord(rejectedCreate.body).id));
+    await acceptDecisionWithoutFinishing(approvedId, "APPROVED");
+    await acceptDecisionWithoutFinishing(rejectedId, "REJECTED");
+
+    const fetched = await api("GET", `/vaults/${id.vault}/proposals/${approvedId}`, aliceToken);
+    expect(asRecord(fetched.body).status).toBe("approved");
+    const flip = await api("PATCH", `/vaults/${id.vault}/proposals/${approvedId}`, aliceToken, {
+      status: "rejected",
+    });
+    expect(flip.status).toBe(409);
+    const repeat = await api("PATCH", `/vaults/${id.vault}/proposals/${approvedId}`, aliceToken, {
+      status: "approved",
+    });
+    expect(repeat.status).toBe(409);
+    expect(await countTable(sourceDocuments)).toBe(0);
+    expect(await proposalFileExists(rejectedId)).toBe(true);
+
+    expect(await reconcileReviews()).toBe(2);
+    const approvedRow = await proposalRow(approvedId);
+    expect(approvedRow.status).toBe("APPROVED");
+    expect(approvedRow.completedAt).not.toBeNull();
+    expect(await readVaultFile(id.vault, approvedRow.destPath)).toContain(
+      "Orphaned approval body.",
+    );
+    expect(await countTable(sourceDocuments)).toBe(1);
+    expect(await countTable(compileIntents)).toBe(1);
+    expect(await proposalFileExists(approvedId)).toBe(true);
+    const rejectedRow = await proposalRow(rejectedId);
+    expect(rejectedRow.status).toBe("REJECTED");
+    expect(rejectedRow.completedAt).not.toBeNull();
+    expect(await proposalFileExists(rejectedId)).toBe(false);
+    expect(await reconcileReviews()).toBe(0);
+  });
+
+  it("completes an accepted approval without publishing once its source lifetime has ended", async () => {
+    const { bobToken } = currentFixture();
+    const created = await api("POST", `/vaults/${id.vault}/proposals`, bobToken, {
+      content: "Retired lifetime body.",
+      content_type: "texts",
+    });
+    const proposalId = decodeUuid(String(asRecord(created.body).id));
+    await acceptDecisionWithoutFinishing(proposalId, "APPROVED");
+    const accepted = await proposalRow(proposalId);
+    await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db.query((d) =>
+          d
+            .update(sourceIncarnations)
+            .set({ deletedAt: sql`now()` })
+            .where(eq(sourceIncarnations.id, accepted.sourceIncarnationId!)),
+        );
+      }),
+    );
+
+    expect(await reconcileReviews()).toBe(1);
+    const row = await proposalRow(proposalId);
+    expect(row.status).toBe("APPROVED");
+    expect(row.completedAt).not.toBeNull();
+    expect(await vaultFileExists(id.vault, row.destPath)).toBe(false);
+    expect(await countTable(sourceDocuments)).toBe(0);
+    expect(await countTable(compileIntents)).toBe(0);
   });
 
   it("deletes sources directly and through idempotent editor deletion requests", async () => {

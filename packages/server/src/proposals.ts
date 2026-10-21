@@ -21,16 +21,19 @@ import {
   type ProposalUpdate,
   Uuid,
 } from "@great-minds/domain";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
-import { Context, Effect, Layer } from "effect";
+import { and, asc, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { Cause, Context, Effect, Layer } from "effect";
 import { stringify as stringifyYaml } from "yaml";
 
+import { backgroundLoop } from "./background-loop.ts";
+import { StructuredLogger } from "./logging.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { identifySourceMarkdown } from "./source-identity.ts";
 import { ProposalStorage } from "./storage.ts";
 import {
   admitSource,
   retainSource,
+  retireSource,
   type SourceAdmission,
   SourceDocumentsService,
 } from "./source-documents.ts";
@@ -84,6 +87,7 @@ type ProposalsServiceShape = {
     proposalId: Uuid,
     input: ProposalUpdate,
   ) => Effect.Effect<Proposal, Conflict | Forbidden | NotFound>;
+  readonly reconcileReviewsOnce: () => Effect.Effect<number>;
 };
 
 export class ProposalsService extends Context.Service<ProposalsService, ProposalsServiceShape>()(
@@ -160,6 +164,7 @@ export const ProposalsServiceLive = Layer.effect(
     const access = yield* VaultAccessService;
     const proposalStorage = yield* ProposalStorage;
     const sourceDocuments = yield* SourceDocumentsService;
+    const logger = yield* StructuredLogger;
 
     const insertProposal = (
       tx: TransactionClient,
@@ -225,6 +230,120 @@ export const ProposalsServiceLive = Layer.effect(
           set: { vaultId: sql`compile_intents.vault_id` },
         })
         .returning({ id: compileIntents.id }));
+
+    const claimDecision = (
+      tx: TransactionClient,
+      proposalId: Uuid,
+      status: Exclude<DbProposal["status"], "PENDING">,
+    ) =>
+      Effect.gen(function* () {
+        const rows = yield* tx
+          .update(sourceProposals)
+          .set({ status, reviewedAt: sql`now()` })
+          .where(and(eq(sourceProposals.id, proposalId), eq(sourceProposals.status, "PENDING")))
+          .returning();
+        const accepted = rows[0];
+        if (accepted === undefined) {
+          return yield* new Conflict({ detail: "Proposal already reviewed" });
+        }
+        return accepted;
+      });
+
+    const acceptApproval = (proposal: DbProposal, incarnationId: Uuid) =>
+      db.transaction((tx) =>
+        Effect.gen(function* () {
+          const accepted = yield* claimDecision(tx, proposal.id, "APPROVED");
+          const source = yield* retainSource(tx, proposal.vaultId, incarnationId);
+          if (proposal.contentType !== SOURCE_DELETION_CONTENT_TYPE) {
+            return { accepted, retired: null };
+          }
+          const retired = yield* retireSource(tx, source.vaultId, source.id, source.incarnationId);
+          if (retired === null) {
+            return yield* new Conflict({
+              detail: "The source changed before this deletion was approved",
+            });
+          }
+          return { accepted, retired };
+        }),
+      );
+
+    const acceptRejection = (proposal: DbProposal) =>
+      db.transaction((tx) => claimDecision(tx, proposal.id, "REJECTED"));
+
+    const publishApproved = (proposal: DbProposal) =>
+      Effect.gen(function* () {
+        if (proposal.sourceIncarnationId === null) {
+          throw new Error(`approved proposal ${proposal.id} has no saved source admission`);
+        }
+        const source = yield* sourceDocuments
+          .admission(proposal.vaultId, proposal.sourceIncarnationId)
+          .pipe(Effect.catchTag("Conflict", () => Effect.succeed(undefined)));
+        if (source === undefined) return;
+        const rendered = yield* proposalStorage
+          .readText(proposalStagingPath(proposal.id))
+          .pipe(Effect.orDie);
+        yield* sourceDocuments.write(source, rendered, null);
+        yield* ensureCompileIntent(proposal.vaultId);
+      });
+
+    const markCompleted = (proposalId: Uuid) =>
+      Effect.gen(function* () {
+        const rows = yield* db.query((d) =>
+          d
+            .update(sourceProposals)
+            .set({ completedAt: sql`coalesce(${sourceProposals.completedAt}, now())` })
+            .where(eq(sourceProposals.id, proposalId))
+            .returning(),
+        );
+        const completed = rows[0];
+        if (completed === undefined) {
+          throw new Error(`reviewed proposal ${proposalId} not found`);
+        }
+        return completed;
+      });
+
+    const finishReview = (proposal: DbProposal) =>
+      Effect.gen(function* () {
+        if (proposal.status === "PENDING") {
+          throw new Error(`proposal ${proposal.id} has no accepted decision to finish`);
+        }
+        if (
+          proposal.status === "APPROVED" &&
+          proposal.contentType !== SOURCE_DELETION_CONTENT_TYPE
+        ) {
+          yield* publishApproved(proposal);
+        } else {
+          yield* proposalStorage.deletePath(proposalStagingPath(proposal.id));
+        }
+        return yield* markCompleted(proposal.id);
+      });
+
+    const settleReview = (proposal: DbProposal) =>
+      finishReview(proposal).pipe(
+        Effect.catchTag("Conflict", (conflict) =>
+          logger
+            .warn("proposal_review.completion_deferred", {
+              proposal_id: proposal.id,
+              vault_id: proposal.vaultId,
+              error_message: conflict.detail,
+            })
+            .pipe(Effect.as(proposal)),
+        ),
+      );
+
+    const reconcileReview = (proposal: DbProposal) =>
+      settleReview(proposal).pipe(
+        Effect.asVoid,
+        Effect.catchCause((cause) => {
+          if (cause.reasons.length > 0 && cause.reasons.every(Cause.isInterruptReason))
+            return Effect.interrupt;
+          return logger.warn("proposal_review.reconciliation_deferred", {
+            proposal_id: proposal.id,
+            vault_id: proposal.vaultId,
+            error_message: Cause.pretty(cause),
+          });
+        }),
+      );
 
     return {
       createRendered,
@@ -356,45 +475,47 @@ export const ProposalsServiceLive = Layer.effect(
           if (proposal.status !== "PENDING") {
             return yield* new Conflict({ detail: "Proposal already reviewed" });
           }
-          if (input.status === "approved") {
-            if (proposal.sourceIncarnationId === null) {
-              return yield* new Conflict({
-                detail: "This proposal predates source ownership tracking. Submit a new proposal.",
-              });
-            }
-            const source = yield* sourceDocuments.admission(vaultId, proposal.sourceIncarnationId);
-            if (proposal.contentType === SOURCE_DELETION_CONTENT_TYPE) {
-              const deleted = yield* sourceDocuments.deleteSource(
-                vaultId,
-                source.id,
-                source.incarnationId,
-              );
-              if (!deleted)
-                return yield* new Conflict({
-                  detail: "The source changed before this deletion was approved",
-                });
-              yield* proposalStorage.deletePath(proposalStagingPath(proposal.id));
-            } else {
-              const rendered = yield* proposalStorage
-                .readText(proposalStagingPath(proposal.id))
-                .pipe(Effect.orDie);
-              yield* sourceDocuments.write(source, rendered, null);
-              yield* ensureCompileIntent(vaultId);
-            }
-          } else {
-            yield* proposalStorage.deletePath(proposalStagingPath(proposal.id));
+          if (input.status === "rejected") {
+            const accepted = yield* acceptRejection(proposal);
+            return proposalResponse(yield* settleReview(accepted));
           }
-          const rows = yield* db.query((d) => d
-            .update(sourceProposals)
-            .set({ status: statusToDb(input.status) })
-            .where(and(eq(sourceProposals.vaultId, vaultId), eq(sourceProposals.id, proposalId)))
-            .returning());
-          const updated = rows[0];
-          if (updated === undefined) {
-            throw new Error(`reviewed proposal ${proposalId} not found`);
+          if (proposal.sourceIncarnationId === null) {
+            return yield* new Conflict({
+              detail: "This proposal predates source ownership tracking. Submit a new proposal.",
+            });
           }
-          return proposalResponse(updated);
+          const { accepted, retired } = yield* acceptApproval(
+            proposal,
+            proposal.sourceIncarnationId,
+          );
+          if (retired !== null) yield* sourceDocuments.cleanupDeletion(retired);
+          return proposalResponse(yield* settleReview(accepted));
+        }),
+      reconcileReviewsOnce: () =>
+        Effect.gen(function* () {
+          const rows = yield* db.query((d) =>
+            d
+              .select()
+              .from(sourceProposals)
+              .where(
+                and(isNotNull(sourceProposals.reviewedAt), isNull(sourceProposals.completedAt)),
+              )
+              .orderBy(asc(sourceProposals.reviewedAt))
+              .limit(100),
+          );
+          yield* Effect.forEach(rows, reconcileReview, { concurrency: 4 });
+          return rows.length;
         }),
     } satisfies ProposalsServiceShape;
   }),
+);
+
+export const ProposalReviewReconcilerLoopLive = Layer.effectDiscard(
+  Effect.flatMap(ProposalsService, (service) =>
+    backgroundLoop({
+      failureEvent: "proposal_review.reconciler_tick_failed",
+      interval: "1 minute",
+      tick: service.reconcileReviewsOnce(),
+    }),
+  ),
 );

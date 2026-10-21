@@ -34,7 +34,11 @@ import { Mailer, MailerLive } from "./mailer.ts";
 import { ParallelSearchLive, ParallelSearchService } from "./parallel.ts";
 import { PasskeysService, PasskeysServiceLive } from "./passkeys.ts";
 import { PipelineRunsServiceLive } from "./pipeline-runs.ts";
-import { ProposalsService, ProposalsServiceLive } from "./proposals.ts";
+import {
+  ProposalReviewReconcilerLoopLive,
+  ProposalsService,
+  ProposalsServiceLive,
+} from "./proposals.ts";
 import { QueryService, QueryServiceLive } from "./query.ts";
 import {
   RepliesService,
@@ -368,6 +372,10 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     ReplyReconcilerLoopLive.pipe(Layer.provideMerge(RepliesLive), Layer.provideMerge(BaseLive)),
     SourceDeletionReconcilerLoopLive.pipe(
       Layer.provideMerge(SourceDocumentsLive),
+      Layer.provideMerge(BaseLive),
+    ),
+    ProposalReviewReconcilerLoopLive.pipe(
+      Layer.provideMerge(ProposalsLive),
       Layer.provideMerge(BaseLive),
     ),
     StorageMaintenanceLoopLive.pipe(Layer.provide(StorageLive)),

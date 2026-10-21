@@ -24,7 +24,7 @@ import {
 import { ContentStorage, StorageFileMissing, vaultOwner } from "./storage.ts";
 
 type SourceDocumentRow = typeof sourceDocuments.$inferSelect;
-type SourceIncarnationRow = typeof sourceIncarnations.$inferSelect;
+export type SourceIncarnationRow = typeof sourceIncarnations.$inferSelect;
 type SourceMarkdown = ReturnType<typeof parseFrontmatter>;
 
 export type SourceAdmission = Pick<
@@ -79,6 +79,7 @@ type SourceDocumentsServiceShape = {
     sourceId: Uuid,
     incarnationId?: Uuid,
   ) => Effect.Effect<boolean>;
+  readonly cleanupDeletion: (deletion: SourceIncarnationRow) => Effect.Effect<boolean>;
   readonly reconcileDeletionsOnce: () => Effect.Effect<number>;
 };
 
@@ -226,6 +227,59 @@ const sourceChanged = () =>
     detail: "The source was deleted, moved or changed while this operation was running",
   });
 
+const currentWhere = (source: SourceAdmission) =>
+  and(
+    eq(sourceIncarnations.id, source.incarnationId),
+    eq(sourceIncarnations.sourceId, source.id),
+    eq(sourceIncarnations.vaultId, source.vaultId),
+    eq(sourceIncarnations.filePath, source.filePath),
+    isNull(sourceIncarnations.deletedAt),
+  );
+
+export const retireSource = (
+  tx: TransactionClient,
+  vaultId: Uuid,
+  sourceId: Uuid,
+  incarnationId?: Uuid,
+) =>
+  Effect.gen(function* () {
+    const sourceRows = yield* tx
+      .select()
+      .from(sourceDocuments)
+      .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.id, sourceId)))
+      .limit(1);
+    const source = sourceRows[0];
+    if (
+      source === undefined ||
+      (incarnationId !== undefined && source.incarnationId !== incarnationId)
+    )
+      return null;
+    const live = yield* tx
+      .select()
+      .from(sourceIncarnations)
+      .where(currentWhere(source))
+      .for("update");
+    const current = live[0];
+    if (current === undefined) return null;
+    const rows = yield* tx
+      .update(sourceIncarnations)
+      .set({ deletedAt: sql`now()`, updatedAt: sql`now()` })
+      .where(eq(sourceIncarnations.id, current.id))
+      .returning();
+    const retired = rows[0];
+    if (retired === undefined)
+      return yield* Effect.die(
+        new SourceRegistryConflict({ message: "Source deletion returned no incarnation" }),
+      );
+    yield* tx
+      .delete(searchIndex)
+      .where(and(eq(searchIndex.vaultId, vaultId), eq(searchIndex.path, current.filePath)));
+    yield* tx
+      .delete(sourceDocuments)
+      .where(and(eq(sourceDocuments.id, sourceId), eq(sourceDocuments.incarnationId, current.id)));
+    return retired;
+  });
+
 export const retainSource = (tx: TransactionClient, vaultId: Uuid, incarnationId: Uuid) =>
   Effect.gen(function* () {
     const rows = yield* tx
@@ -272,15 +326,6 @@ const makeSourceDocuments = Effect.gen(function* () {
   const db = yield* Database;
   const storage = yield* ContentStorage;
   const logger = yield* StructuredLogger;
-
-  const currentWhere = (source: SourceAdmission) =>
-    and(
-      eq(sourceIncarnations.id, source.incarnationId),
-      eq(sourceIncarnations.sourceId, source.id),
-      eq(sourceIncarnations.vaultId, source.vaultId),
-      eq(sourceIncarnations.filePath, source.filePath),
-      isNull(sourceIncarnations.deletedAt),
-    );
 
   const currentIncarnation = (source: SourceAdmission) =>
     db
@@ -891,53 +936,13 @@ const makeSourceDocuments = Effect.gen(function* () {
     deleteSource: (vaultId, sourceId, incarnationId) =>
       Effect.gen(function* () {
         const deletion = yield* db.transaction((tx) =>
-          Effect.gen(function* () {
-            const sourceRows = yield* tx
-              .select()
-              .from(sourceDocuments)
-              .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.id, sourceId)))
-              .limit(1);
-            const source = sourceRows[0];
-            if (
-              source === undefined ||
-              (incarnationId !== undefined && source.incarnationId !== incarnationId)
-            )
-              return null;
-            const live = yield* tx
-              .select()
-              .from(sourceIncarnations)
-              .where(currentWhere(source))
-              .for("update");
-            const current = live[0];
-            if (current === undefined) return null;
-            const rows = yield* tx
-              .update(sourceIncarnations)
-              .set({ deletedAt: sql`now()`, updatedAt: sql`now()` })
-              .where(eq(sourceIncarnations.id, current.id))
-              .returning();
-            const retired = rows[0];
-            if (retired === undefined)
-              return yield* Effect.die(
-                new SourceRegistryConflict({ message: "Source deletion returned no incarnation" }),
-              );
-            yield* tx
-              .delete(searchIndex)
-              .where(and(eq(searchIndex.vaultId, vaultId), eq(searchIndex.path, current.filePath)));
-            yield* tx
-              .delete(sourceDocuments)
-              .where(
-                and(
-                  eq(sourceDocuments.id, sourceId),
-                  eq(sourceDocuments.incarnationId, current.id),
-                ),
-              );
-            return retired;
-          }),
+          retireSource(tx, vaultId, sourceId, incarnationId),
         );
         if (deletion === null) return false;
         yield* cleanupDeletion(deletion);
         return true;
       }),
+    cleanupDeletion,
     reconcileDeletionsOnce: () =>
       Effect.gen(function* () {
         const rows = yield* db.query((tx) =>

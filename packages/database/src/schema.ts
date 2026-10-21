@@ -764,6 +764,8 @@ export const sourceProposals = pgTable(
     sourceId: uuidColumn("source_id").notNull(),
     sourceIncarnationId: uuidColumn("source_incarnation_id"),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
+    reviewedAt: timestamptz("reviewed_at"),
+    completedAt: timestamptz("completed_at"),
   },
   (table) => [
     foreignKey({
@@ -783,6 +785,13 @@ export const sourceProposals = pgTable(
     }),
     index("ix_source_proposals_source_id").on(table.sourceId),
     index("ix_source_proposals_vault_id").on(table.vaultId),
+    index("source_proposals_unfinished_review")
+      .on(table.reviewedAt)
+      .where(sql`${table.reviewedAt} IS NOT NULL AND ${table.completedAt} IS NULL`),
+    check(
+      "source_proposals_review_progress",
+      sql`(${table.status} <> 'PENDING' OR ${table.reviewedAt} IS NULL) AND (${table.reviewedAt} IS NOT NULL OR ${table.completedAt} IS NULL)`,
+    ),
   ],
 );
 

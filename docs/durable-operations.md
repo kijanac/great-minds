@@ -11,6 +11,7 @@ Great Minds commits durable product state before work that must survive the orig
 | URL ingest | `url_ingest_requests`, `pipeline_runs` | `UrlIngest` | pipeline run ID |
 | research reply | `replies` (accepted request, status, progress, exact pending settlement, dispatch/cursor/claim), session history receipt | `ReplyGeneration` plus admission/settlement reconciler | reply ID |
 | source deletion | retired `source_incarnations` | maintenance reconciler | incarnation ID |
+| proposal review | `source_proposals` (accepted decision, `reviewed_at`, `completed_at`) | maintenance reconciler | proposal ID |
 
 Every workflow acceptance path commits enough input to redispatch work before it asks the workflow engine to execute. Startup/periodic reconcilers enqueue accepted rows whose dispatch acknowledgement was lost. Repeated execution is safe because workflow idempotency keys are stable and activities use deterministic storage keys or guarded upserts.
 
@@ -81,4 +82,8 @@ Admission and frozen settlement obligations are reconciled independently of work
 
 Ordinary reads and single-database CRUD do not need workflow overhead. Local/R2 lifecycle cleanup—including retired source incarnations—remains an idempotent maintenance loop. Browser-only review, hashing, and exact-byte reselection remain client/transport concerns.
 
-Cross-system mutations should be promoted to workflows only when partial completion is not safely convergent through a small persisted outbox and idempotent side effect. Proposal approval and reference promotion use stable source IDs and captured incarnations for publication ownership. This does not serialize concurrent approve/reject decisions; proposal decision serialization is a separate concern. Reevaluate workflow ownership if these product contracts become asynchronous or cancellable.
+Cross-system mutations should be promoted to workflows only when partial completion is not safely convergent through a small persisted outbox and idempotent side effect. Proposal approval and reference promotion use stable source IDs and captured incarnations for publication ownership. Reevaluate workflow ownership if these product contracts become asynchronous or cancellable.
+
+### Proposal review
+
+A review decision is accepted by one conditional status update from `PENDING` that also records `reviewed_at`; a concurrent or repeated review conflicts. The same transaction retains the proposal's saved incarnation, and a deletion approval retires it there, so the decision and its registry effect commit together. Everything that needs object I/O runs afterwards and is idempotent: publishing the staged content through the captured admission, ensuring a compile intent, erasing the retired body, and removing the staged object for rejections and deletion approvals. `completed_at` records that these effects finished; the request finishes them inline and a periodic reconciler finishes any accepted decision whose request died first. An approval whose saved incarnation has already been retired completes without publishing, because the lifetime it was admitted to no longer exists. The public status is the accepted decision, never an intermediate state, and it never changes to the other decision.
