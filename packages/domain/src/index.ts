@@ -293,8 +293,8 @@ const pageOf = <A extends Schema.Top>(item: A) =>
 export const MemberRole = Schema.Literals(["owner", "editor", "viewer"] as const);
 export type MemberRole = typeof MemberRole.Type;
 
-export const InvitedMemberRole = Schema.Literals(["editor", "viewer"] as const);
-export type InvitedMemberRole = typeof InvitedMemberRole.Type;
+export const AssignableMemberRole = Schema.Literals(["editor", "viewer"] as const);
+export type AssignableMemberRole = typeof AssignableMemberRole.Type;
 
 export const VaultCreate = Schema.Struct({
   name: Schema.String,
@@ -350,12 +350,12 @@ export type MemberPage = typeof MemberPage.Type;
 
 export const MembershipInvite = Schema.Struct({
   email: Email,
-  role: Schema.optionalKey(InvitedMemberRole),
+  role: Schema.optionalKey(AssignableMemberRole),
 });
 export type MembershipInvite = typeof MembershipInvite.Type;
 
 export const MembershipUpdate = Schema.Struct({
-  role: MemberRole,
+  role: AssignableMemberRole,
 });
 export type MembershipUpdate = typeof MembershipUpdate.Type;
 
@@ -1309,6 +1309,12 @@ const ForbiddenNotFoundValidationErrors = [
   NotFoundResponse,
   ValidationResponse,
 ] as const;
+const MembershipChangeErrors = [
+  BadRequestResponse,
+  ForbiddenResponse,
+  NotFoundResponse,
+  ValidationResponse,
+] as const;
 const ForbiddenNotFoundConflictValidationErrors = [
   ForbiddenResponse,
   NotFoundResponse,
@@ -1544,7 +1550,7 @@ export const VaultsApiGroup = HttpApiGroup.make("vaults").add(
     },
     payload: MembershipUpdate,
     success: MemberWithEmail,
-    error: ForbiddenNotFoundValidationErrors,
+    error: MembershipChangeErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.delete("removeVaultMember", "/vaults/:vault_id/members/:member_user_id", {
     params: {
@@ -1552,7 +1558,7 @@ export const VaultsApiGroup = HttpApiGroup.make("vaults").add(
       member_user_id: Uuid,
     },
     success: HttpApiSchema.NoContent,
-    error: ForbiddenNotFoundValidationErrors,
+    error: MembershipChangeErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("transferVaultOwnership", "/vaults/:vault_id/transfer-ownership", {
     params: {

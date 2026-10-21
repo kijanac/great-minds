@@ -1,11 +1,20 @@
 import { randomUUID } from "node:crypto";
 
-import { Database, sessions, shares, users, vaultMemberships, vaults, wikiArticles } from "@great-minds/database";
 import {
+  Database,
+  sessions,
+  shares,
+  type TransactionClient,
+  users,
+  vaultMemberships,
+  vaults,
+  wikiArticles,
+} from "@great-minds/database";
+import {
+  type AssignableMemberRole,
   BadRequest,
   Email,
   Forbidden,
-  type InvitedMemberRole,
   type MemberPage,
   type MemberRole,
   type MemberWithEmail,
@@ -27,6 +36,7 @@ import { StructuredLogger } from "./logging.ts";
 import { Mailer } from "./mailer.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { ContentStorage, StagedStorage, vaultOwner } from "./storage.ts";
+import { liveArticleConditions } from "./wiki-articles.ts";
 
 type CountRow = {
   readonly count: number;
@@ -55,7 +65,11 @@ type VaultsServiceShape = {
   readonly deleteOwnedVaults: (userId: Uuid) => Effect.Effect<void>;
   readonly createVault: (
     userId: Uuid,
-    input: { readonly name: string; readonly thematic_hint?: string; readonly kinds?: readonly string[] },
+    input: {
+      readonly name: string;
+      readonly thematic_hint?: string;
+      readonly kinds?: readonly string[];
+    },
   ) => Effect.Effect<Vault>;
   readonly listVaults: (userId: Uuid, params: PageParams) => Effect.Effect<VaultPage>;
   readonly getVaultDetail: (userId: Uuid, vaultId: Uuid) => Effect.Effect<VaultDetail, Forbidden>;
@@ -73,19 +87,19 @@ type VaultsServiceShape = {
   readonly inviteMember: (
     userId: Uuid,
     vaultId: Uuid,
-    input: { readonly email: Email; readonly role?: InvitedMemberRole },
+    input: { readonly email: Email; readonly role?: AssignableMemberRole },
   ) => Effect.Effect<MemberWithEmail, Forbidden>;
   readonly updateMemberRole: (
     userId: Uuid,
     vaultId: Uuid,
     memberUserId: Uuid,
-    role: MemberRole,
-  ) => Effect.Effect<MemberWithEmail, Forbidden | NotFound>;
+    role: AssignableMemberRole,
+  ) => Effect.Effect<MemberWithEmail, BadRequest | Forbidden | NotFound>;
   readonly removeMember: (
     userId: Uuid,
     vaultId: Uuid,
     memberUserId: Uuid,
-  ) => Effect.Effect<void, Forbidden | NotFound>;
+  ) => Effect.Effect<void, BadRequest | Forbidden | NotFound>;
   readonly transferOwnership: (
     userId: Uuid,
     vaultId: Uuid,
@@ -192,10 +206,8 @@ const roleFromDb = (role: DbMemberRole): MemberRole => {
   }
 };
 
-const roleToDb = (role: MemberRole | InvitedMemberRole): DbMemberRole => {
+const roleToDb = (role: AssignableMemberRole): DbMemberRole => {
   switch (role) {
-    case "owner":
-      return "OWNER";
     case "editor":
       return "EDITOR";
     case "viewer":
@@ -232,6 +244,23 @@ const oneCount = (rows: readonly CountRow[]) => {
   }
   return row.count;
 };
+
+const lockOwnedVault = (tx: TransactionClient, userId: Uuid, vaultId: Uuid) =>
+  Effect.gen(function* () {
+    const [vault] = yield* tx
+      .select({ ownerId: vaults.ownerId })
+      .from(vaults)
+      .where(eq(vaults.id, vaultId))
+      .for("no key update");
+    const [membership] = yield* tx
+      .select({ role: vaultMemberships.role })
+      .from(vaultMemberships)
+      .where(and(eq(vaultMemberships.vaultId, vaultId), eq(vaultMemberships.userId, userId)));
+    if (vault?.ownerId !== userId || membership?.role !== "OWNER") {
+      return yield* new Forbidden({ detail: "Only vault owners can perform this action" });
+    }
+    return vault;
+  });
 
 export const VaultAccessServiceLive = Layer.effect(
   VaultAccessService,
@@ -522,10 +551,12 @@ export const VaultsServiceLive = Layer.effect(
             .select({ total: sql<number>`count(*)::int` })
             .from(vaultMemberships)
             .where(eq(vaultMemberships.vaultId, vaultId)));
-          const articleCounts = yield* db.query((d) => d
-            .select({ total: sql<number>`count(*)::int` })
-            .from(wikiArticles)
-            .where(eq(wikiArticles.vaultId, vaultId)));
+          const articleCounts = yield* db.query((d) =>
+            d
+              .select({ total: sql<number>`count(*)::int` })
+              .from(wikiArticles)
+              .where(and(...liveArticleConditions(vaultId))),
+          );
           return {
             ...vaultResponse(vault),
             role: scope.role,
@@ -619,91 +650,106 @@ export const VaultsServiceLive = Layer.effect(
           };
         }),
       updateMemberRole: (userId, vaultId, memberUserId, role) =>
-        Effect.gen(function* () {
-          yield* access.requireOwner(userId, vaultId);
-          const userRows = yield* db.query((d) => d
-            .select({ id: users.id, email: users.email })
-            .from(users)
-            .where(eq(users.id, memberUserId))
-            .limit(1));
-          const target = userRows[0];
-          if (target === undefined) {
-            return yield* new NotFound({ detail: "User not found" });
-          }
-          const updated = yield* db.query((d) => d
-            .update(vaultMemberships)
-            .set({ role: roleToDb(role) })
-            .where(
-              and(
-                eq(vaultMemberships.vaultId, vaultId),
-                eq(vaultMemberships.userId, memberUserId),
-              ),
-            )
-            .returning({ role: vaultMemberships.role }));
-          const row = updated[0];
-          if (row === undefined) {
-            return yield* new NotFound({ detail: "User is not a member of this vault" });
-          }
-          return {
-            user_id: target.id,
-            email: asEmail(target.email),
-            role: roleFromDb(row.role),
-          };
-        }),
+        db.transaction((tx) =>
+          Effect.gen(function* () {
+            const vault = yield* lockOwnedVault(tx, userId, vaultId);
+            if (memberUserId === vault.ownerId) {
+              return yield* new BadRequest({
+                detail: "The vault owner's role changes only through ownership transfer",
+              });
+            }
+            const userRows = yield* tx
+              .select({ id: users.id, email: users.email })
+              .from(users)
+              .where(eq(users.id, memberUserId))
+              .limit(1);
+            const target = userRows[0];
+            if (target === undefined) {
+              return yield* new NotFound({ detail: "User not found" });
+            }
+            const updated = yield* tx
+              .update(vaultMemberships)
+              .set({ role: roleToDb(role) })
+              .where(
+                and(
+                  eq(vaultMemberships.vaultId, vaultId),
+                  eq(vaultMemberships.userId, memberUserId),
+                ),
+              )
+              .returning({ role: vaultMemberships.role });
+            const row = updated[0];
+            if (row === undefined) {
+              return yield* new NotFound({ detail: "User is not a member of this vault" });
+            }
+            return {
+              user_id: target.id,
+              email: asEmail(target.email),
+              role: roleFromDb(row.role),
+            };
+          }),
+        ),
       removeMember: (userId, vaultId, memberUserId) =>
-        Effect.gen(function* () {
-          yield* access.requireOwner(userId, vaultId);
-          const deleted = yield* db.query((d) => d
-            .delete(vaultMemberships)
-            .where(
-              and(
-                eq(vaultMemberships.vaultId, vaultId),
-                eq(vaultMemberships.userId, memberUserId),
-              ),
-            )
-            .returning({ id: vaultMemberships.id }));
-          if (deleted[0] === undefined) {
-            return yield* new NotFound({ detail: "Membership not found" });
-          }
-        }),
+        db.transaction((tx) =>
+          Effect.gen(function* () {
+            const vault = yield* lockOwnedVault(tx, userId, vaultId);
+            if (memberUserId === vault.ownerId) {
+              return yield* new BadRequest({
+                detail: "The vault owner cannot be removed; transfer ownership first",
+              });
+            }
+            const deleted = yield* tx
+              .delete(vaultMemberships)
+              .where(
+                and(
+                  eq(vaultMemberships.vaultId, vaultId),
+                  eq(vaultMemberships.userId, memberUserId),
+                ),
+              )
+              .returning({ id: vaultMemberships.id });
+            if (deleted[0] === undefined) {
+              return yield* new NotFound({ detail: "Membership not found" });
+            }
+          }),
+        ),
       transferOwnership: (userId, vaultId, input) =>
-        Effect.gen(function* () {
-          yield* access.requireOwner(userId, vaultId);
-          if (input.new_owner_user_id === userId) {
-            return yield* new BadRequest({ detail: "Cannot transfer ownership to the current owner" });
-          }
-          const result = yield* db
-            .transaction((tx) =>
-              Effect.gen(function* () {
-                const newOwner = yield* tx
-                  .update(vaultMemberships)
-                  .set({ role: "OWNER" })
-                  .where(
-                    and(
-                      eq(vaultMemberships.vaultId, vaultId),
-                      eq(vaultMemberships.userId, input.new_owner_user_id),
-                    ),
-                  )
-                  .returning({ id: vaultMemberships.id });
-                if (newOwner[0] === undefined) {
-                  return false;
-                }
-                yield* tx
-                  .update(vaultMemberships)
-                  .set({ role: "EDITOR" })
-                  .where(
-                    and(eq(vaultMemberships.vaultId, vaultId), eq(vaultMemberships.userId, userId)),
-                  );
-                yield* tx.update(vaults).set({ ownerId: input.new_owner_user_id }).where(eq(vaults.id, vaultId));
-                return true;
-              }),
-            );
-          if (!result) {
-            return yield* new BadRequest({
-              detail: `User ${input.new_owner_user_id} is not a member of vault ${vaultId}`,
-            });
-          }
-        }),
+        db.transaction((tx) =>
+          Effect.gen(function* () {
+            const vault = yield* lockOwnedVault(tx, userId, vaultId);
+            if (input.new_owner_user_id === vault.ownerId) {
+              return yield* new BadRequest({
+                detail: "Cannot transfer ownership to the current owner",
+              });
+            }
+            const promoted = yield* tx
+              .update(vaultMemberships)
+              .set({ role: "OWNER" })
+              .where(
+                and(
+                  eq(vaultMemberships.vaultId, vaultId),
+                  eq(vaultMemberships.userId, input.new_owner_user_id),
+                ),
+              )
+              .returning({ id: vaultMemberships.id });
+            if (promoted[0] === undefined) {
+              return yield* new BadRequest({
+                detail: `User ${input.new_owner_user_id} is not a member of vault ${vaultId}`,
+              });
+            }
+            yield* tx
+              .update(vaultMemberships)
+              .set({ role: "EDITOR" })
+              .where(
+                and(
+                  eq(vaultMemberships.vaultId, vaultId),
+                  eq(vaultMemberships.userId, vault.ownerId),
+                ),
+              );
+            yield* tx
+              .update(vaults)
+              .set({ ownerId: input.new_owner_user_id })
+              .where(eq(vaults.id, vaultId));
+          }),
+        ),
       deleteVault: (userId, vaultId) =>
         Effect.gen(function* () {
           const vault = yield* getVaultRow(vaultId);

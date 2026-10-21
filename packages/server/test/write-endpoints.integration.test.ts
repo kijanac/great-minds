@@ -31,7 +31,7 @@ import {
 } from "@great-minds/database";
 import { CreateReplyRequest, SessionId, type SessionOrigin, Uuid } from "@great-minds/domain";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { Effect, Layer, Option, Redacted, Schema } from "effect";
+import { Deferred, Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { makeAppLayer } from "../src/app-layer.ts";
@@ -735,6 +735,17 @@ describe("M3.1 write endpoint integration", () => {
     expect(nonMember.status).toBe(404);
     expect(nonMember.body).toMatchObject({ detail: "User is not a member of this vault" });
 
+    const promotedToOwner = await api("PUT", `/vaults/${id.vault}/members/${id.bob}`, aliceToken, {
+      role: "owner",
+    });
+    expect(promotedToOwner.status).toBe(422);
+    const ownerDemoted = await api("PUT", `/vaults/${id.vault}/members/${id.alice}`, aliceToken, {
+      role: "editor",
+    });
+    expect(ownerDemoted.status).toBe(400);
+    const ownerRemoved = await api("DELETE", `/vaults/${id.vault}/members/${id.alice}`, aliceToken);
+    expect(ownerRemoved.status).toBe(400);
+
     const changed = await api("PUT", `/vaults/${id.vault}/members/${id.bob}`, aliceToken, {
       role: "viewer",
     });
@@ -773,6 +784,87 @@ describe("M3.1 write endpoint integration", () => {
       [id.alice]: "EDITOR",
       [id.bob]: "OWNER",
     });
+  });
+
+  it("serializes concurrent ownership transfers so one owner holds both representations", async () => {
+    const { aliceToken } = currentFixture();
+    const locked = Deferred.makeUnsafe<void>();
+    const release = Deferred.makeUnsafe<void>();
+    const holder = runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db.transaction((tx) =>
+          Effect.gen(function* () {
+            yield* tx
+              .select({ id: vaults.id })
+              .from(vaults)
+              .where(eq(vaults.id, id.vault))
+              .for("update");
+            yield* Deferred.succeed(locked, undefined);
+            yield* Deferred.await(release);
+          }),
+        );
+      }),
+    );
+    await Promise.race([Effect.runPromise(Deferred.await(locked)), holder]);
+    const transfers = [id.bob, id.carol].map((newOwner) =>
+      api("POST", `/vaults/${id.vault}/transfer-ownership`, aliceToken, {
+        new_owner_user_id: newOwner,
+      }),
+    );
+    try {
+      await expect
+        .poll(
+          () =>
+            runDb(
+              Effect.gen(function* () {
+                const db = yield* Database;
+                const rows = yield* db.query((d) =>
+                  d
+                    .select({ total: sql<number>`count(*)::int` })
+                    .from(sql`pg_stat_activity`)
+                    .where(sql`datname = current_database() and wait_event_type = 'Lock'`),
+                );
+                return rows[0]?.total;
+              }),
+            ),
+          { timeout: 5_000 },
+        )
+        .toBe(2);
+    } finally {
+      await Effect.runPromise(Deferred.succeed(release, undefined));
+      await holder;
+      await Promise.allSettled(transfers);
+    }
+
+    const responses = await Promise.all(transfers);
+    expect(responses.map((response) => response.status).sort()).toEqual([204, 403]);
+    const ownership = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        const vaultRows = yield* db
+          .query((d) =>
+            d.select({ ownerId: vaults.ownerId }).from(vaults).where(eq(vaults.id, id.vault)),
+          )
+          .pipe(Effect.orDie);
+        const ownerRows = yield* db
+          .query((d) =>
+            d
+              .select({ userId: vaultMemberships.userId })
+              .from(vaultMemberships)
+              .where(
+                and(eq(vaultMemberships.vaultId, id.vault), eq(vaultMemberships.role, "OWNER")),
+              ),
+          )
+          .pipe(Effect.orDie);
+        return {
+          ownerId: vaultRows[0]?.ownerId,
+          owners: ownerRows.map((row) => row.userId),
+        };
+      }),
+    );
+    expect(ownership.owners).toEqual([ownership.ownerId]);
+    expect([id.bob, id.carol]).toContain(ownership.ownerId);
   });
 
   it("returns 403 to non-members on new vault write endpoints", async () => {

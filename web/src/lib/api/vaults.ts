@@ -1,7 +1,6 @@
 import {
+  AssignableMemberRole,
   Email,
-  InvitedMemberRole,
-  MemberRole,
   type MemberWithEmail,
   type Vault,
   type VaultConfig,
@@ -62,7 +61,7 @@ export function inviteMember(
   return run(
     Effect.gen(function* () {
       const email = yield* decodeInput(Email, address);
-      const invitedRole = yield* decodeInput(InvitedMemberRole, role);
+      const invitedRole = yield* decodeInput(AssignableMemberRole, role);
       return yield* api.vaults.inviteVaultMember({
         params: { vault_id: vaultId },
         payload: { email, role: invitedRole },
@@ -74,7 +73,7 @@ export function inviteMember(
 export function updateMemberRole(vaultId: Uuid, userId: Uuid, role: string): Promise<Membership> {
   return run(
     Effect.gen(function* () {
-      const memberRole = yield* decodeInput(MemberRole, role);
+      const memberRole = yield* decodeInput(AssignableMemberRole, role);
       return yield* api.vaults.updateVaultMember({
         params: { vault_id: vaultId, member_user_id: userId },
         payload: { role: memberRole },

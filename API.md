@@ -696,7 +696,9 @@ Errors: `400 BadRequest`, `404 NotFound`, `422 Validation`.
 
 Vaults are the top-level containers for knowledge. Every endpoint in this
 group requires authentication. Members of a vault hold one of three roles:
-`owner`, `editor`, or `viewer`.
+`owner`, `editor`, or `viewer`. Each vault has exactly one owner, the member
+named by `owner_id`; ownership changes only through
+[transfer](#post-v1vaultsvault_idtransfer-ownership).
 
 #### GET /v1/vaults
 
@@ -795,7 +797,7 @@ Response: `200` with a `VaultDetail` (a `Vault` plus):
 | --- | --- | --- |
 | `role` | `"owner"` \| `"editor"` \| `"viewer"` | The caller's role in the vault. |
 | `member_count` | number | Number of members. |
-| `article_count` | number | Number of articles in the vault. |
+| `article_count` | number | Number of current articles, counted like the [wiki list](#get-v1vaultsvault_idwiki): archived articles and the generated index are excluded. |
 
 Errors: `403 Forbidden`, `422 Validation`.
 
@@ -880,7 +882,7 @@ Errors: `403 Forbidden`, `422 Validation`.
 
 Auth: required.
 
-Changes a member's role.
+Changes a member's role. The owner's role cannot be changed here.
 
 Path parameters: `vault_id` (`Uuid`), `member_user_id` (`Uuid`).
 
@@ -888,29 +890,33 @@ Request body (`MembershipUpdate`):
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `role` | `"owner"` \| `"editor"` \| `"viewer"` | yes | New role. |
+| `role` | `"editor"` \| `"viewer"` | yes | New role. `owner` is granted only by transfer. |
 
 Response: `200` with the updated `MemberWithEmail`.
 
-Errors: `403 Forbidden`, `404 NotFound`, `422 Validation`.
+Errors: `400 BadRequest` (the member is the owner), `403 Forbidden`,
+`404 NotFound`, `422 Validation`.
 
 #### DELETE /v1/vaults/:vault_id/members/:member_user_id
 
 Auth: required.
 
-Removes a member from the vault.
+Removes a member from the vault. The owner cannot be removed.
 
 Path parameters: `vault_id` (`Uuid`), `member_user_id` (`Uuid`).
 
 Response: `204 No Content`.
 
-Errors: `403 Forbidden`, `404 NotFound`, `422 Validation`.
+Errors: `400 BadRequest` (the member is the owner), `403 Forbidden`,
+`404 NotFound`, `422 Validation`.
 
 #### POST /v1/vaults/:vault_id/transfer-ownership
 
 Auth: required.
 
-Transfers vault ownership to another member.
+Transfers vault ownership to another member. The previous owner becomes an
+`editor`. Concurrent transfers are serialized: once one succeeds, the others
+fail with `403` because their caller is no longer the owner.
 
 Path parameters: `vault_id` (`Uuid`).
 
@@ -922,7 +928,8 @@ Request body (`OwnershipTransfer`):
 
 Response: `204 No Content`.
 
-Errors: `400 BadRequest`, `403 Forbidden`, `422 Validation`.
+Errors: `400 BadRequest` (the new owner is the caller or not a member),
+`403 Forbidden`, `422 Validation`.
 
 #### DELETE /v1/vaults/:vault_id
 

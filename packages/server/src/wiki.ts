@@ -7,12 +7,13 @@ import {
   type WikiArticlePage,
   type WikiListQuery
 } from "@great-minds/domain";
-import { and, asc, desc, eq, ilike, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { wikiOverview } from "./document-metadata.ts";
 import { VaultAccessService } from "./vaults.ts";
+import { liveArticleConditions } from "./wiki-articles.ts";
 
 type WikiServiceShape = {
   readonly listArticles: (
@@ -31,8 +32,6 @@ export class WikiService extends Context.Service<WikiService, WikiServiceShape>(
   "@great-minds/server/WikiService"
 ) {}
 
-const WIKI_INDEX_PATH = "wiki/_index.md";
-
 const articleOverview = (row: typeof wikiArticles.$inferSelect): WikiArticleOverview => {
   const filePath = row.filePath;
   if (!filePath.startsWith("wiki/") || !filePath.endsWith(".md")) {
@@ -41,16 +40,12 @@ const articleOverview = (row: typeof wikiArticles.$inferSelect): WikiArticleOver
   return wikiOverview(row);
 };
 
-const liveArticleConditions = (vaultId: Uuid, query?: WikiListQuery) => {
-  const conditions: SQL[] = [
-    eq(wikiArticles.vaultId, vaultId),
-    eq(wikiArticles.archived, false),
-    ne(wikiArticles.filePath, WIKI_INDEX_PATH)
-  ];
-  if (query?.run !== undefined) {
+const listedArticleConditions = (vaultId: Uuid, query: WikiListQuery) => {
+  const conditions = liveArticleConditions(vaultId);
+  if (query.run !== undefined) {
     conditions.push(eq(wikiArticles.renderRunId, query.run));
   }
-  if (query?.contains !== undefined && query.contains !== "") {
+  if (query.contains !== undefined && query.contains !== "") {
     const pattern = `%${query.contains}%`;
     const containsCondition = or(
       ilike(wikiArticles.title, pattern),
@@ -60,7 +55,7 @@ const liveArticleConditions = (vaultId: Uuid, query?: WikiListQuery) => {
       conditions.push(containsCondition);
     }
   }
-  if (query?.tag !== undefined && query.tag !== "") {
+  if (query.tag !== undefined && query.tag !== "") {
     conditions.push(
       sql`exists (select 1 from unnest(${wikiArticles.tags}) as tag_value where lower(tag_value) = lower(${query.tag}))`
     );
@@ -97,8 +92,8 @@ export const WikiServiceLive = Layer.effect(
           yield* access.requireMember(userId, vaultId);
           return yield* listPage(
             query,
-            liveArticleConditions(vaultId, query),
-            asc(sql`lower(${wikiArticles.title})`)
+            listedArticleConditions(vaultId, query),
+            asc(sql`lower(${wikiArticles.title})`),
           );
         }),
       listRecent: (userId, vaultId, params) =>
@@ -109,7 +104,7 @@ export const WikiServiceLive = Layer.effect(
             liveArticleConditions(vaultId),
             desc(wikiArticles.updatedAt)
           );
-        })
+        }),
     } satisfies WikiServiceShape;
-  })
+  }),
 );

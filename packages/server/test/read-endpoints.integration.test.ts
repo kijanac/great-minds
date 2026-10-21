@@ -1139,7 +1139,7 @@ describe("read-only HTTP integration", () => {
       name: "Alpha Vault",
       role: "owner",
       member_count: 2,
-      article_count: 5,
+      article_count: 3,
     });
 
     const viewerDetail = await api("GET", `/vaults/${id.vaultBeta}`, aliceToken);
