@@ -14,6 +14,7 @@
     loginWithTokenPair,
     requestCode,
   } from "$lib/api/auth";
+  import { domainErrorDetail } from "$lib/api/errors";
   import { Alert, AlertDescription } from "$lib/components/ui/alert";
   import { Label } from "$lib/components/ui/label";
 
@@ -85,8 +86,10 @@
       } else {
         step = "code";
       }
-    } catch {
-      error = "Failed to send code. Check your email and try again.";
+    } catch (reason) {
+      error =
+        domainErrorDetail(reason) ??
+        "Failed to send code. Check your email and try again.";
     } finally {
       loading = false;
     }
@@ -99,8 +102,23 @@
     try {
       await loginWithCode(email, code);
       await goto("/");
-    } catch {
-      error = "Invalid or expired code.";
+    } catch (reason) {
+      error = domainErrorDetail(reason) ?? "Invalid or expired code.";
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function handleResend(): Promise<void> {
+    error = "";
+    loading = true;
+    try {
+      await requestCode(email);
+      code = "";
+    } catch (reason) {
+      error =
+        domainErrorDetail(reason) ??
+        "Failed to send code. Check your email and try again.";
     } finally {
       loading = false;
     }
@@ -201,6 +219,14 @@
           class="w-full rounded-sm bg-gold px-4 py-3 font-mono text-small text-primary-foreground font-semibold hover:bg-gold-hover disabled:opacity-50 transition-colors"
         >
           {loading ? "Verifying..." : "Sign in"}
+        </button>
+        <button
+          type="button"
+          onclick={() => void handleResend()}
+          disabled={loading}
+          class="w-full text-center text-caption text-warm-faint hover:text-warm transition-colors disabled:opacity-50"
+        >
+          Send a new code
         </button>
         <button
           type="button"

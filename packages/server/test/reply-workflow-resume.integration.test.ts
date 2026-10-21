@@ -124,8 +124,12 @@ const withReply = async (
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient;
         yield* sql`INSERT INTO users (id, email) VALUES (${userId}::uuid, ${`${userId}@reply-history.test`})`;
-        yield* sql`INSERT INTO vaults (id, name, owner_id) VALUES (${vaultId}::uuid, 'Reply resume', ${userId}::uuid)`;
-        yield* sql`INSERT INTO vault_memberships (id, vault_id, user_id, role) VALUES (${randomUUID()}::uuid, ${vaultId}::uuid, ${userId}::uuid, 'OWNER')`;
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO vaults (id, name, owner_id) VALUES (${vaultId}::uuid, 'Reply resume', ${userId}::uuid)`;
+            yield* sql`INSERT INTO vault_memberships (id, vault_id, user_id, role) VALUES (${randomUUID()}::uuid, ${vaultId}::uuid, ${userId}::uuid, 'EDITOR')`;
+          }),
+        );
         const db = yield* Database;
         const access = yield* VaultAccessService.pipe(Effect.provide(VaultAccessServiceLive));
         const histories = makeHistoryStore(yield* openLocalConditionalObjectStore(storageRoot));

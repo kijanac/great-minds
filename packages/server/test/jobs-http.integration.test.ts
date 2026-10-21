@@ -110,6 +110,7 @@ const config = (dataDir: string): AppConfigShape => ({
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",
   suppressAuth: false,
+  clientIpHeader: Option.none(),
   allowPrivateUrlFetch: false,
   serverHost: "127.0.0.1",
   serverPort: 0,
@@ -145,32 +146,30 @@ const seed = () =>
           { id: ids.bob, email: "jobs-bob@example.test", createdAt: now },
         ]))
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(vaults)
-        .values([
-          { id: ids.vault, ownerId: ids.alice, name: "Jobs Vault", createdAt: now },
-          { id: ids.otherVault, ownerId: ids.bob, name: "Other Vault", createdAt: now },
-        ]))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(vaultMemberships)
-        .values([
-          {
-            id: uuid("00000000-0000-4000-8000-000000060501"),
-            vaultId: ids.vault,
-            userId: ids.alice,
-            role: "OWNER",
-            createdAt: now,
-          },
-          {
-            id: uuid("00000000-0000-4000-8000-000000060502"),
-            vaultId: ids.otherVault,
-            userId: ids.bob,
-            role: "OWNER",
-            createdAt: now,
-          },
-        ]))
-        .pipe(Effect.orDie);
+      yield* db.transaction((tx) =>
+        Effect.gen(function* () {
+          yield* tx.insert(vaults).values([
+            { id: ids.vault, ownerId: ids.alice, name: "Jobs Vault", createdAt: now },
+            { id: ids.otherVault, ownerId: ids.bob, name: "Other Vault", createdAt: now },
+          ]);
+          yield* tx.insert(vaultMemberships).values([
+            {
+              id: uuid("00000000-0000-4000-8000-000000060501"),
+              vaultId: ids.vault,
+              userId: ids.alice,
+              role: "EDITOR",
+              createdAt: now,
+            },
+            {
+              id: uuid("00000000-0000-4000-8000-000000060502"),
+              vaultId: ids.otherVault,
+              userId: ids.bob,
+              role: "EDITOR",
+              createdAt: now,
+            },
+          ]);
+        }),
+      );
       yield* db.query((d) => d
         .insert(topics)
         .values([

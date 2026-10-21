@@ -19,6 +19,7 @@ import {
   topicRelated,
   topics,
   users,
+  vaultMemberships,
   vaults,
   wikiArticles,
 } from "@great-minds/database";
@@ -82,6 +83,7 @@ const id = {
   topicC: uuid("20000000-0000-4000-8000-000000000010"),
   articleA: uuid("20000000-0000-4000-8000-000000000011"),
   articleB: uuid("20000000-0000-4000-8000-000000000012"),
+  membership: uuid("20000000-0000-4000-8000-000000000014"),
 } as const;
 
 const dataDir = await mkdtemp(join(tmpdir(), "gm-compile-phases-"));
@@ -127,6 +129,7 @@ const config: AppConfigShape = {
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",
   suppressAuth: false,
+  clientIpHeader: Option.none(),
   allowPrivateUrlFetch: false,
   serverHost: "127.0.0.1",
   serverPort: 0,
@@ -231,10 +234,16 @@ const seedBase = () =>
         .insert(users)
         .values({ id: id.user, email: "phases@example.com" }))
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(vaults)
-        .values({ id: id.vault, name: "Compile Phases", ownerId: id.user }))
-        .pipe(Effect.orDie);
+      yield* db.transaction((tx) =>
+        Effect.gen(function* () {
+          yield* tx
+            .insert(vaults)
+            .values({ id: id.vault, name: "Compile Phases", ownerId: id.user });
+          yield* tx
+            .insert(vaultMemberships)
+            .values({ id: id.membership, vaultId: id.vault, userId: id.user, role: "EDITOR" });
+        }),
+      );
       yield* db.query((d) => d
         .insert(pipelineRuns)
         .values({

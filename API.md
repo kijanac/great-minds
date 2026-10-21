@@ -177,6 +177,24 @@ Sends a one-time sign-in code to the given email address. The email is
 normalized (trimmed and lowercased) before use. If a code was previously
 issued for the same address and not yet used, it is invalidated.
 
+Codes are six digits and expire after `AUTH_CODE_EXPIRY_MINUTES` (default 10).
+Sending is limited so that neither an inbox nor the code space can be flooded:
+
+| Limit | Value |
+| --- | --- |
+| Interval between codes for one email | 60 seconds |
+| Codes for one email in any 24 hours | 10 |
+| Codes requested from one client network in any hour | 30 |
+
+Because each code accepts at most five wrong guesses, an account faces at most
+50 guesses a day, and requesting new codes cannot reset that allowance. The
+client network is the address the trusted edge proxy reports in the header
+named by `CLIENT_IP_HEADER` (on Render, `cf-connecting-ip`), or the socket
+address when that header is not configured or not present. IPv6 clients are
+grouped by their `/64` prefix. Request records, including client addresses,
+are kept for 24 hours, the longest limit window, and then removed by an hourly
+sweep.
+
 Request body (`RequestCodeInput`):
 
 | Field | Type | Required | Description |
@@ -185,7 +203,8 @@ Request body (`RequestCodeInput`):
 
 Response: `204 No Content`.
 
-Errors: `422 Validation`.
+Errors: `429 TooManyRequests` (see the limits above; the response carries a
+`Retry-After` header and `retry_after_seconds`), `422 Validation`.
 
 Example:
 
@@ -199,7 +218,8 @@ Auth: none.
 
 Exchanges a code for a token pair. The first time a given email verifies a
 code, a user account is created. The code is single-use and expires. Only
-one concurrent verification can consume it.
+one concurrent verification can consume it. Each code accepts five wrong
+guesses; the fifth invalidates it, and the caller must request a new code.
 
 Request body (`VerifyCodeInput`):
 
@@ -226,7 +246,10 @@ Example:
 }
 ```
 
-Errors: `401 Unauthorized` (invalid or expired code), `422 Validation`.
+Errors: `401 Unauthorized` (`"Invalid or expired code"`,
+`"Incorrect code. 4 attempts left."` and so on,
+`"Too many incorrect attempts. Request a new code."`, or
+`"This account is being deleted"`), `422 Validation`.
 
 #### POST /v1/auth/refresh
 
@@ -244,7 +267,13 @@ Request body (`RefreshInput`):
 
 Response: `200` with a `TokenPair` (same shape as above).
 
-Errors: `401 Unauthorized` (invalid or expired refresh token), `422 Validation`.
+Errors: `401 Unauthorized` (invalid or expired refresh token, or the account
+is being deleted), `422 Validation`.
+
+A browser shares one stored session across tabs. The web client renews it
+under a browser-wide lock (the Web Locks API), so tabs that find the access
+token expired at the same moment send a single refresh request and the others
+use its result.
 
 ### Passkey authentication
 
@@ -451,6 +480,16 @@ Auth: required.
 Permanently deletes the authenticated user's account, all vaults they own,
 and all stored content. This cannot be undone.
 
+The deletion is recorded first, in the same transaction that marks every vault
+the user owns at that moment as being deleted. From then on the account cannot
+sign in, refresh, or use existing tokens or API keys, and its vaults are
+inaccessible. Stored content and rows are then removed; if that cleanup is
+interrupted, a background reconciler finishes it. Ownership transfers are
+ordered against the deletion: a vault transferred to the user before the
+deletion is recorded is deleted with the account, a vault transferred away
+first is kept by its new owner, and a transfer to the user after the deletion
+is recorded is refused.
+
 Request body (`AccountDeleteRequest`):
 
 | Field | Type | Required | Description |
@@ -486,6 +525,7 @@ The `_tag` value maps to the HTTP status code as follows:
 | `BadRequest` | `400` | The request is malformed or semantically invalid. |
 | `Conflict` | `409` | The request conflicts with the current state of a resource (for example, an id already in use by a different request). |
 | `Validation` | `422` | Request body, query, path, or header failed schema validation. |
+| `TooManyRequests` | `429` | A rate limit applies. The body also carries `retry_after_seconds`, and the response has a matching `Retry-After` header. |
 | `ServiceUnavailable` | `503` | A required upstream service is not available. |
 
 Each endpoint section lists the tags that endpoint can return, using the
@@ -696,9 +736,16 @@ Errors: `400 BadRequest`, `404 NotFound`, `422 Validation`.
 
 Vaults are the top-level containers for knowledge. Every endpoint in this
 group requires authentication. Members of a vault hold one of three roles:
-`owner`, `editor`, or `viewer`. Each vault has exactly one owner, the member
-named by `owner_id`; ownership changes only through
+`owner`, `editor`, or `viewer`. `owner_id` is the only record of ownership:
+the owner is the member it names, and every other member is an `editor` or
+`viewer`. The database stores only `editor` and `viewer` memberships and
+requires the owner to be a member, so a vault cannot have two owners or an
+owner outside its membership. Ownership changes only through
 [transfer](#post-v1vaultsvault_idtransfer-ownership).
+
+A vault that is being deleted is no longer accessible: member requests fail
+with `403 Forbidden` (`"This vault is being deleted"`) and it no longer
+appears in vault lists.
 
 #### GET /v1/vaults
 
@@ -872,11 +919,12 @@ Request body (`MembershipInvite`):
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `email` | `Email` | yes | Email of the user to invite. |
-| `role` | `"editor"` \| `"viewer"` | no | Invited role. `owner` cannot be granted by invitation. Defaults to `"viewer"`. |
+| `role` | `"editor"` \| `"viewer"` | no | Invited role. `owner` cannot be granted by invitation. Defaults to `"editor"`. |
 
 Response: `201 Created` with a `MemberWithEmail`.
 
-Errors: `403 Forbidden`, `422 Validation`.
+Errors: `400 BadRequest` (the invited account is being deleted),
+`403 Forbidden`, `422 Validation`.
 
 #### PUT /v1/vaults/:vault_id/members/:member_user_id
 
@@ -916,7 +964,11 @@ Auth: required.
 
 Transfers vault ownership to another member. The previous owner becomes an
 `editor`. Concurrent transfers are serialized: once one succeeds, the others
-fail with `403` because their caller is no longer the owner.
+fail with `403` because their caller is no longer the owner. Transfers are
+also ordered against vault and account deletion (see
+[account deletion](#delete-v1authme)): a vault that is being deleted cannot be
+transferred (`403`), and ownership cannot pass to an account that is being
+deleted (`400`).
 
 Path parameters: `vault_id` (`Uuid`).
 
@@ -928,14 +980,19 @@ Request body (`OwnershipTransfer`):
 
 Response: `204 No Content`.
 
-Errors: `400 BadRequest` (the new owner is the caller or not a member),
-`403 Forbidden`, `422 Validation`.
+Errors: `400 BadRequest` (the new owner is the caller, not a member, or an
+account being deleted), `403 Forbidden` (not the owner, or the vault is being
+deleted), `422 Validation`.
 
 #### DELETE /v1/vaults/:vault_id
 
 Auth: required.
 
-Deletes the vault and all content in it.
+Deletes the vault and all content in it. The deletion is recorded before any
+content is removed, so the vault becomes inaccessible immediately; content
+and rows are then removed, and a background reconciler finishes the cleanup if
+it is interrupted. Repeating the request while cleanup is still underway
+succeeds.
 
 Path parameters: `vault_id` (`Uuid`).
 
@@ -1172,6 +1229,21 @@ through a review workflow before they are applied to a vault. A proposal is
 either `pending`, `approved`, or `rejected`. All proposals endpoints require
 authentication.
 
+Recording a review decision and applying it are separate steps: the decision
+is stored durably first, then applied to the vault; if applying is interrupted,
+a background reconciler finishes it. `application` reports where an approval
+stands:
+
+| `application` | Meaning |
+| --- | --- |
+| `null` | Pending, rejected, or approved before application tracking existed. |
+| `"applying"` | Approved; the approved content is still being written to the vault. |
+| `"applied"` | Approved and applied. |
+| `"not_applied"` | Approved, but the source it targets was deleted before the approval could be applied, so nothing was written. A deleted source is never brought back by an older proposal. |
+
+`source_deleted` is `true` when the source lifetime the proposal targets has
+ended. A pending proposal in that state can only be rejected.
+
 #### GET /v1/vaults/:vault_id/proposals
 
 Auth: required.
@@ -1196,6 +1268,8 @@ a `ProposalOverview`:
 | `id` | `Uuid` | Proposal id. |
 | `vault_id` | `Uuid` | Vault the proposal belongs to. |
 | `status` | `"pending"` \| `"approved"` \| `"rejected"` | Review status. |
+| `application` | `"applying"` \| `"applied"` \| `"not_applied"` or `null` | Progress of an approval (see above). |
+| `source_deleted` | boolean | Whether the targeted source was deleted after the proposal was submitted. |
 | `title` | string or `null` | Proposal title (nullable). |
 | `content_type` | string | Type of content the proposal carries. |
 | `created_at` | ISO 8601 | Creation time. |
@@ -1226,6 +1300,8 @@ Response: `201 Created` with a `Proposal`:
 | `id` | `Uuid` | Proposal id. |
 | `vault_id` | `Uuid` | Vault id. |
 | `status` | `"pending"` \| `"approved"` \| `"rejected"` | Starts as `"pending"`. |
+| `application` | `"applying"` \| `"applied"` \| `"not_applied"` or `null` | Progress of an approval. |
+| `source_deleted` | boolean | Whether the targeted source was deleted after submission. |
 | `title` | string or `null` | Title. |
 | `content_type` | string | Content type. |
 | `created_at` | ISO 8601 | Creation time. |
@@ -1254,9 +1330,12 @@ Auth: required.
 
 Reviews a proposal: approves or rejects it. Approved proposals are applied
 to the vault; rejected proposals are closed. Exactly one decision is accepted
-per proposal: a concurrent or repeated review returns `409 Conflict`, and the
-returned status is the accepted decision even if applying it to the vault is
-still being completed.
+per proposal. Repeating the accepted decision (for example, a retry after a
+lost response) returns `200` with the current proposal and resumes applying it
+if needed; the opposite decision returns `409 Conflict`. The returned status
+is the accepted decision even when `application` is still `"applying"`.
+Approving a pending proposal whose source was deleted after submission returns
+`409 Conflict`; reject it instead.
 
 Path parameters: `vault_id` (`Uuid`), `proposal_id` (`Uuid`).
 

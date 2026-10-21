@@ -182,6 +182,7 @@ const testConfig = (
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",
   suppressAuth: false,
+  clientIpHeader: Option.none(),
   allowPrivateUrlFetch: false,
   serverHost: "127.0.0.1",
   serverPort: 0,
@@ -308,26 +309,22 @@ const seedFixtures = async (webSearch: boolean) => {
             .values({ id: id.alice, email: "alice-query@example.com", createdAt: initialTime }),
         )
         .pipe(Effect.orDie);
-      yield* db
-        .query((d) =>
-          d.insert(vaults).values({
+      yield* db.transaction((tx) =>
+        Effect.gen(function* () {
+          yield* tx.insert(vaults).values({
             id: id.vault,
             name: "Query Vault",
             ownerId: id.alice,
             createdAt: initialTime,
-          }),
-        )
-        .pipe(Effect.orDie);
-      yield* db
-        .query((d) =>
-          d.insert(vaultMemberships).values({
+          });
+          yield* tx.insert(vaultMemberships).values({
             id: uuid("00000000-0000-4000-8000-000000020701"),
             vaultId: id.vault,
             userId: id.alice,
-            role: "OWNER",
-          }),
-        )
-        .pipe(Effect.orDie);
+            role: "EDITOR",
+          });
+        }),
+      );
       yield* db
         .query((d) =>
           d.insert(topics).values([
@@ -958,13 +955,22 @@ describe("query stream", () => {
   it("stops an authorized private stream before sending progress after membership is revoked", async () => {
     const language = makeScriptedLanguageModel({ streams: [] });
     await startHarness({ language });
+    await insertUser(id.bob, "revoked-bob@example.com");
     const events = await runDb(
       Effect.gen(function* () {
         const admission = yield* ReplyAdmission;
         const service = yield* RepliesService;
         const db = yield* Database;
+        yield* db.query((d) =>
+          d.insert(vaultMemberships).values({
+            id: uuid(crypto.randomUUID()),
+            vaultId: id.vault,
+            userId: id.bob,
+            role: "EDITOR",
+          }),
+        );
         const accepted = yield* admission.accept(
-          id.alice,
+          id.bob,
           id.vault,
           Schema.decodeUnknownSync(CreateReplyRequest)({
             reply_id: crypto.randomUUID(),
@@ -979,7 +985,7 @@ describe("query stream", () => {
             .set({ answer: "Progress must stay private" })
             .where(eq(replies.id, accepted.reply_id)),
         );
-        const stream = yield* service.stream(id.alice, id.vault, accepted.reply_id);
+        const stream = yield* service.stream(id.bob, id.vault, accepted.reply_id);
         return yield* Stream.runCollect(
           stream.pipe(
             Stream.tap((event) =>
@@ -989,7 +995,7 @@ describe("query stream", () => {
                       .delete(vaultMemberships)
                       .where(
                         and(
-                          eq(vaultMemberships.userId, id.alice),
+                          eq(vaultMemberships.userId, id.bob),
                           eq(vaultMemberships.vaultId, id.vault),
                         ),
                       ),

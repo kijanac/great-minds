@@ -1,6 +1,6 @@
-import { compileIntents, Database, pipelineRuns } from "@great-minds/database";
+import { compileIntents, Database, pipelineRuns, vaults } from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
-import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, notExists, or, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
 import * as Activity from "effect/unstable/workflow/Activity";
 import * as Workflow from "effect/unstable/workflow/Workflow";
@@ -232,7 +232,17 @@ export const CompileIntentReconcilerLive = Layer.effect(
               pipelineRunId: compileIntents.pipelineRunId,
             })
             .from(compileIntents)
-            .where(isNull(compileIntents.dispatchedAt))
+            .where(
+              and(
+                isNull(compileIntents.dispatchedAt),
+                notExists(
+                  tx
+                    .select({ id: vaults.id })
+                    .from(vaults)
+                    .where(and(eq(vaults.id, compileIntents.vaultId), isNotNull(vaults.deletedAt))),
+                ),
+              ),
+            )
             .orderBy(asc(compileIntents.createdAt))
             .limit(100)
             .for("update", { skipLocked: true });

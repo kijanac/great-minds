@@ -153,6 +153,7 @@ const config: AppConfigShape = {
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",
   suppressAuth: false,
+  clientIpHeader: Option.none(),
   allowPrivateUrlFetch: false,
   serverHost: "127.0.0.1",
   serverPort: 0,
@@ -532,23 +533,21 @@ const seed = () =>
         .insert(users)
         .values({ id: id.user, email: "worker@example.com" }))
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(vaults)
-        .values({
-          id: id.vault,
-          name: "Worker Vault",
-          ownerId: id.user,
-        }))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(vaultMemberships)
-        .values({
-          id: uuid("10000000-0000-4000-8000-000000000017"),
-          vaultId: id.vault,
-          userId: id.user,
-          role: "OWNER",
-        }))
-        .pipe(Effect.orDie);
+      yield* db.transaction((tx) =>
+        Effect.gen(function* () {
+          yield* tx.insert(vaults).values({
+            id: id.vault,
+            name: "Worker Vault",
+            ownerId: id.user,
+          });
+          yield* tx.insert(vaultMemberships).values({
+            id: uuid("10000000-0000-4000-8000-000000000017"),
+            vaultId: id.vault,
+            userId: id.user,
+            role: "EDITOR",
+          });
+        }),
+      );
       yield* db.query((d) => d
         .insert(pipelineRuns)
         .values({

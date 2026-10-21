@@ -2,7 +2,7 @@ import { DomainErrorSchema, type DomainError } from "@great-minds/domain";
 import { Schema } from "effect";
 
 type HttpErrorResponse = {
-  readonly status: 400 | 401 | 403 | 404 | 409 | 422 | 503;
+  readonly status: 400 | 401 | 403 | 404 | 409 | 422 | 429 | 503;
   readonly body: typeof DomainErrorSchema.Encoded;
 };
 
@@ -24,6 +24,8 @@ const statusOf = (error: DomainError): HttpErrorResponse["status"] => {
       return 409;
     case "ServiceUnavailable":
       return 503;
+    case "TooManyRequests":
+      return 429;
   }
 };
 

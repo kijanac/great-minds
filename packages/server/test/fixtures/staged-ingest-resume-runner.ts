@@ -83,6 +83,7 @@ const config: AppConfigShape = {
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",
   suppressAuth: false,
+  clientIpHeader: Option.none(),
   allowPrivateUrlFetch: false,
   serverHost: "127.0.0.1",
   serverPort: 0,

@@ -40,8 +40,9 @@ export const tsvector = customType<{ data: string; driverData: string }>({
   },
 });
 
-export const memberRole = pgEnum("member_role", ["OWNER", "EDITOR", "VIEWER"]);
+export const memberRole = pgEnum("member_role", ["EDITOR", "VIEWER"]);
 export const proposalStatus = pgEnum("proposal_status", ["PENDING", "APPROVED", "REJECTED"]);
+export const proposalOutcome = pgEnum("proposal_outcome", ["APPLIED", "SOURCE_ENDED"]);
 export const fileIngestBatchStatus = pgEnum("file_ingest_batch_status", [
   "uploading",
   "processing",
@@ -66,9 +67,17 @@ export const authCodes = pgTable(
     codeHash: varchar("code_hash", { length: 64 }).notNull(),
     expiresAt: timestamptz("expires_at").notNull(),
     used: boolean("used").notNull(),
+    failedAttempts: integer("failed_attempts").default(0).notNull(),
+    clientAddress: text("client_address"),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
-  (table) => [index("ix_auth_codes_email").on(table.email)],
+  (table) => [
+    index("ix_auth_codes_email_created_at").on(table.email, table.createdAt),
+    index("ix_auth_codes_client_address_created_at")
+      .on(table.clientAddress, table.createdAt)
+      .where(sql`${table.clientAddress} IS NOT NULL`),
+    check("ck_auth_codes_failed_attempts", sql`${table.failedAttempts} >= 0`),
+  ],
 );
 
 export const users = pgTable(
@@ -77,8 +86,14 @@ export const users = pgTable(
     id: uuidColumn("id").primaryKey(),
     email: varchar("email", { length: 320 }).notNull(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
+    deletedAt: timestamptz("deleted_at"),
   },
-  (table) => [uniqueIndex("ix_users_email").on(table.email)],
+  (table) => [
+    uniqueIndex("ix_users_email").on(table.email),
+    index("ix_users_deleted_at")
+      .on(table.deletedAt)
+      .where(sql`${table.deletedAt} IS NOT NULL`),
+  ],
 );
 
 export const apiKeys = pgTable(
@@ -172,6 +187,7 @@ export const vaults = pgTable(
     name: varchar("name", { length: 255 }).notNull(),
     ownerId: uuidColumn("owner_id").notNull(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
+    deletedAt: timestamptz("deleted_at"),
   },
   (table) => [
     foreignKey({
@@ -179,6 +195,10 @@ export const vaults = pgTable(
       foreignColumns: [users.id],
       name: "vaults_owner_id_fkey",
     }).onDelete("cascade"),
+    index("ix_vaults_owner_id").on(table.ownerId),
+    index("ix_vaults_deleted_at")
+      .on(table.deletedAt)
+      .where(sql`${table.deletedAt} IS NOT NULL`),
   ],
 );
 
@@ -766,6 +786,7 @@ export const sourceProposals = pgTable(
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     reviewedAt: timestamptz("reviewed_at"),
     completedAt: timestamptz("completed_at"),
+    outcome: proposalOutcome("outcome"),
   },
   (table) => [
     foreignKey({
@@ -791,6 +812,10 @@ export const sourceProposals = pgTable(
     check(
       "source_proposals_review_progress",
       sql`(${table.status} <> 'PENDING' OR ${table.reviewedAt} IS NULL) AND (${table.reviewedAt} IS NOT NULL OR ${table.completedAt} IS NULL)`,
+    ),
+    check(
+      "source_proposals_outcome",
+      sql`(${table.outcome} IS NOT NULL) = (${table.status} = 'APPROVED' AND ${table.completedAt} IS NOT NULL)`,
     ),
   ],
 );

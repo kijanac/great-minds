@@ -20,7 +20,7 @@ import {
   wikiArticles,
 } from "@great-minds/database";
 import { SessionExport, SessionResponse, SessionId, Uuid } from "@great-minds/domain";
-import { and, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { Deferred, Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -206,6 +206,7 @@ const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",
   suppressAuth: false,
+  clientIpHeader: Option.none(),
   allowPrivateUrlFetch: false,
   serverHost: "127.0.0.1",
   serverPort: 0,
@@ -371,9 +372,9 @@ const seedFixtures = async (): Promise<Fixture> => {
           ]),
         )
         .pipe(Effect.orDie);
-      yield* db
-        .query((d) =>
-          d.insert(vaults).values([
+      yield* db.transaction((tx) =>
+        Effect.gen(function* () {
+          yield* tx.insert(vaults).values([
             {
               id: id.vaultAlpha,
               name: "Alpha Vault",
@@ -386,17 +387,13 @@ const seedFixtures = async (): Promise<Fixture> => {
               ownerId: id.bob,
               createdAt: new Date("2026-07-03T00:00:00.000Z"),
             },
-          ]),
-        )
-        .pipe(Effect.orDie);
-      yield* db
-        .query((d) =>
-          d.insert(vaultMemberships).values([
+          ]);
+          yield* tx.insert(vaultMemberships).values([
             {
               id: uuid("00000000-0000-4000-8000-000000000701"),
               vaultId: id.vaultAlpha,
               userId: id.alice,
-              role: "OWNER",
+              role: "EDITOR",
             },
             {
               id: uuid("00000000-0000-4000-8000-000000000702"),
@@ -408,7 +405,7 @@ const seedFixtures = async (): Promise<Fixture> => {
               id: uuid("00000000-0000-4000-8000-000000000703"),
               vaultId: id.vaultBeta,
               userId: id.bob,
-              role: "OWNER",
+              role: "EDITOR",
             },
             {
               id: uuid("00000000-0000-4000-8000-000000000704"),
@@ -416,9 +413,9 @@ const seedFixtures = async (): Promise<Fixture> => {
               userId: id.alice,
               role: "VIEWER",
             },
-          ]),
-        )
-        .pipe(Effect.orDie);
+          ]);
+        }),
+      );
       yield* db
         .query((d) =>
           d.insert(apiKeys).values({
@@ -2154,7 +2151,7 @@ describe("read-only HTTP integration", () => {
   );
 
   it.each(["", "/markdown", "/by-origin"])(
-    "rechecks membership after history I/O for %s reads",
+    "rechecks vault access after history I/O for %s reads",
     async (suffix) => {
       const db = await runDb(Database);
       afterHistoryRead = () => {
@@ -2162,13 +2159,9 @@ describe("read-only HTTP integration", () => {
         return db
           .query((d) =>
             d
-              .delete(vaultMemberships)
-              .where(
-                and(
-                  eq(vaultMemberships.vaultId, id.vaultAlpha),
-                  eq(vaultMemberships.userId, id.alice),
-                ),
-              ),
+              .update(vaults)
+              .set({ deletedAt: sql`now()` })
+              .where(eq(vaults.id, id.vaultAlpha)),
           )
           .pipe(Effect.asVoid);
       };

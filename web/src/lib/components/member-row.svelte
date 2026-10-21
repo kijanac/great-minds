@@ -145,7 +145,7 @@
                 event.preventDefault();
                 void transfer();
               }}
-              class="border border-gold-dim font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold hover:bg-ink-raised disabled:opacity-40"
+              class="border border-gold-dim bg-transparent font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold hover:bg-ink-raised disabled:opacity-40"
             >
               {transferring ? "transferring…" : "transfer ownership"}
             </AlertDialog.Action>

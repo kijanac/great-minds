@@ -1,5 +1,5 @@
 import { AuthMiddleware, GreatMindsApi } from "@great-minds/domain";
-import { Context, Effect, Semaphore } from "effect";
+import { Context, Effect } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -32,10 +32,8 @@ export const makeAuthenticate = (baseUrl: string) =>
       httpClient,
       baseUrl,
     });
-    const oneAtATime = yield* Semaphore.make(1);
-
     const renew = (stale: StoredTokens) =>
-      oneAtATime.withPermits(1)(
+      tokens.exclusive(
         Effect.gen(function* () {
           const current = yield* tokens.read;
           if (current.session !== stale.session || current.refresh === null) return null;

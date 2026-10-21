@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { MemberRole, Uuid } from "@great-minds/domain";
+  import type { MemberRole, ProposalOverview, Uuid } from "@great-minds/domain";
   import Check from "@lucide/svelte/icons/check";
   import X from "@lucide/svelte/icons/x";
   import {
@@ -8,6 +8,7 @@
     useQueryClient,
   } from "@tanstack/svelte-query";
 
+  import { errorMessage } from "$lib/api/errors";
   import {
     createProposal,
     listProposals,
@@ -115,6 +116,25 @@
   function proposalTypeLabel(value: string): string {
     return value === "source_deletion" ? "delete source" : value;
   }
+
+  function proposalState(proposal: ProposalOverview): string {
+    if (proposal.status === "pending") {
+      return proposal.source_deleted
+        ? "pending · source deleted, can only be rejected"
+        : "pending";
+    }
+    if (proposal.status === "rejected") return "rejected";
+    switch (proposal.application) {
+      case "applying":
+        return "approved · applying…";
+      case "applied":
+        return "approved · applied";
+      case "not_applied":
+        return "approved · not applied — the original source was deleted";
+      case null:
+        return "approved";
+    }
+  }
 </script>
 
 <section class="mt-12">
@@ -165,7 +185,9 @@
             <span
               class="w-full truncate text-left font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost"
             >
-              {proposalTypeLabel(proposal.content_type)} · {proposal.status}
+              {proposalTypeLabel(proposal.content_type)} · {proposalState(
+                proposal,
+              )}
             </span>
           </div>
           <div class="ml-4 flex shrink-0 items-center gap-3">
@@ -176,20 +198,22 @@
             </span>
             {#if canReview && proposal.status === "pending"}
               <div class="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onclick={() =>
-                    review.mutate({
-                      proposalId: proposal.id,
-                      nextStatus: "approved",
-                    })}
-                  disabled={review.isPending}
-                  aria-label="approve"
-                  class="text-warm-ghost hover:bg-transparent hover:text-gold"
-                >
-                  <Check size={12} />
-                </Button>
+                {#if !proposal.source_deleted}
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    onclick={() =>
+                      review.mutate({
+                        proposalId: proposal.id,
+                        nextStatus: "approved",
+                      })}
+                    disabled={review.isPending}
+                    aria-label="approve"
+                    class="text-warm-ghost hover:bg-transparent hover:text-gold"
+                  >
+                    <Check size={12} />
+                  </Button>
+                {/if}
                 <Button
                   variant="ghost"
                   size="icon-xs"
@@ -210,6 +234,15 @@
         </div>
       {/each}
     </div>
+  {/if}
+
+  {#if review.error}
+    <p
+      role="alert"
+      class="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-red-400/90"
+    >
+      {errorMessage(review.error)}
+    </p>
   {/if}
 
   {#if proposals.hasNextPage && !proposals.isFetchingNextPage}

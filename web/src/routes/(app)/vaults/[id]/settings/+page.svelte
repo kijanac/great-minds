@@ -25,6 +25,7 @@
   import { Alert, AlertDescription } from "$lib/components/ui/alert";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
   import { Button } from "$lib/components/ui/button";
+  import { ErrorState } from "$lib/components/ui/feedback";
   import { Input } from "$lib/components/ui/input";
   import * as Select from "$lib/components/ui/select";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -162,7 +163,12 @@
 
   <div class="min-h-0 flex-1 overflow-y-auto">
     <main class="mx-auto max-w-[740px] px-4 pt-8 pb-20 md:px-10">
-      {#if vaultId && (loading || !vault.data)}
+      {#if vaultId && vault.isError}
+        <ErrorState
+          message={errorMessage(vault.error, "Couldn’t load this vault.")}
+          onRetry={() => void vault.refetch()}
+        />
+      {:else if vaultId && (loading || !vault.data)}
         <div class="space-y-6">
           <div class="space-y-2">
             <Skeleton class="h-9 w-48 bg-ink-raised" />

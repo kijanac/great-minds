@@ -19,6 +19,7 @@ import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { Deferred, Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { AuthService } from "../src/auth.ts";
 import { ClockService, makeTestClock } from "../src/clock.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
@@ -29,7 +30,7 @@ import { replyHistoryTestDatabaseUrl, runHistoryDatabase } from "./fixtures/repl
 
 const initialTime = new Date("2026-07-09T12:00:00.000Z");
 
-type TestDbServices = AppConfig | Database | ClockService | StructuredLogger;
+type TestDbServices = AppConfig | AuthService | Database | ClockService | StructuredLogger;
 
 type TestState = {
   readonly started: Awaited<ReturnType<typeof startServer>>;
@@ -95,6 +96,7 @@ const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",
   suppressAuth: false,
+  clientIpHeader: Option.none(),
   allowPrivateUrlFetch: false,
   serverHost: "127.0.0.1",
   serverPort: 0,
@@ -372,6 +374,7 @@ describe("auth HTTP integration", () => {
     expect(first.status).toBe(204);
     const firstCode = latestCode();
 
+    currentState().clock.set(new Date(initialTime.getTime() + 61 * 1000));
     const second = await api("POST", "/auth/request-code", { email: "person@example.com" });
     expect(second.status).toBe(204);
     const secondCode = latestCode();
@@ -431,7 +434,7 @@ describe("auth HTTP integration", () => {
       code: wrongCode,
     });
     expect(wrong.status).toBe(401);
-    expect(wrong.body).toMatchObject({ detail: "Invalid or expired code" });
+    expect(wrong.body).toMatchObject({ detail: "Incorrect code. 4 attempts left." });
 
     const verify = await api("POST", "/auth/verify-code", {
       email: "LOGIN@example.com",
@@ -463,6 +466,113 @@ describe("auth HTTP integration", () => {
     });
     expect(expired.status).toBe(401);
     expect(expired.body).toMatchObject({ detail: "Invalid or expired code" });
+  });
+
+  it("invalidates a sign-in code after five wrong guesses", async () => {
+    const email = "guesses@example.com";
+    await api("POST", "/auth/request-code", { email });
+    const code = latestCode();
+    const wrongCode = code === "000000" ? "999999" : "000000";
+    const details: unknown[] = [];
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const wrong = await api("POST", "/auth/verify-code", { email, code: wrongCode });
+      expect(wrong.status).toBe(401);
+      details.push(asRecord(wrong.body).detail);
+    }
+    expect(details).toEqual([
+      "Incorrect code. 4 attempts left.",
+      "Incorrect code. 3 attempts left.",
+      "Incorrect code. 2 attempts left.",
+      "Incorrect code. 1 attempt left.",
+      "Too many incorrect attempts. Request a new code.",
+    ]);
+
+    const correctAfterLimit = await api("POST", "/auth/verify-code", { email, code });
+    expect(correctAfterLimit.status).toBe(401);
+    expect(correctAfterLimit.body).toMatchObject({ detail: "Invalid or expired code" });
+  });
+
+  it("limits sign-in codes per email and per network, then purges expired requests", async () => {
+    const at = (seconds: number) =>
+      currentState().clock.set(new Date(initialTime.getTime() + seconds * 1000));
+    const request = async (email: string) => {
+      const response = await fetch(`${currentState().started.url}/v1/auth/request-code`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const text = await response.text();
+      return {
+        status: response.status,
+        retryAfter: response.headers.get("retry-after"),
+        body: text === "" ? undefined : (JSON.parse(text) as unknown),
+      };
+    };
+
+    expect((await request("limits@example.com")).status).toBe(204);
+    const resend = await request("limits@example.com");
+    expect(resend).toMatchObject({
+      status: 429,
+      retryAfter: "60",
+      body: {
+        _tag: "TooManyRequests",
+        detail: "A code was just sent. You can request another in 1 minute.",
+        retry_after_seconds: 60,
+      },
+    });
+
+    for (let send = 1; send < 10; send += 1) {
+      at(send * 61);
+      expect((await request("limits@example.com")).status).toBe(204);
+    }
+    at(10 * 61);
+    const perEmail = await request("limits@example.com");
+    expect(perEmail.status).toBe(429);
+    expect(perEmail.body).toMatchObject({
+      detail: "Too many sign-in codes were requested for this email. Try again in 24 hours.",
+    });
+
+    for (let other = 0; other < 20; other += 1) {
+      expect((await request(`network-${other}@example.com`)).status).toBe(204);
+    }
+    const perNetwork = await request("one-more@example.com");
+    expect(perNetwork.status).toBe(429);
+    expect(perNetwork.body).toMatchObject({
+      detail: "Too many sign-in codes were requested from this network. Try again in 50 minutes.",
+    });
+    expect(currentState().mailer.sent).toHaveLength(30);
+
+    at(25 * 60 * 60);
+    const purged = await runDb(Effect.flatMap(AuthService, (auth) => auth.purgeSignInCodesOnce()));
+    expect(purged).toBe(30);
+    expect((await request("limits@example.com")).status).toBe(204);
+  });
+
+  it("refuses sign-in and existing credentials while an account deletion is pending", async () => {
+    const pair = await signIn("leaving@example.com");
+    const user = await userByEmail("leaving@example.com");
+    await runDb(
+      Effect.flatMap(Database, (db) =>
+        db.query((d) =>
+          d.update(users).set({ deletedAt: initialTime }).where(eq(users.id, user.id)),
+        ),
+      ),
+    );
+
+    const bearer = await api("GET", "/auth/api-keys", undefined, pair.access_token);
+    expect(bearer.status).toBe(401);
+    const refreshed = await api("POST", "/auth/refresh", { refresh_token: pair.refresh_token });
+    expect(refreshed.status).toBe(401);
+    expect(refreshed.body).toMatchObject({ detail: "This account is being deleted" });
+
+    currentState().clock.set(new Date(initialTime.getTime() + 61 * 1000));
+    await api("POST", "/auth/request-code", { email: "leaving@example.com" });
+    const signInAgain = await api("POST", "/auth/verify-code", {
+      email: "leaving@example.com",
+      code: latestCode(),
+    });
+    expect(signInAgain.status).toBe(401);
+    expect(signInAgain.body).toMatchObject({ detail: "This account is being deleted" });
   });
 
   it("rotates refresh tokens and rejects reused or expired refresh tokens", async () => {

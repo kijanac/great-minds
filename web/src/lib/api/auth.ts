@@ -5,7 +5,7 @@ import { api, run } from "./app";
 import { TokenStore } from "./token-store";
 import { decodeInput } from "./runtime";
 const storeSession = (tokens: TokenPair) =>
-  Effect.flatMap(TokenStore, (store) => store.write(tokens));
+  Effect.flatMap(TokenStore, (store) => store.exclusive(store.write(tokens)));
 
 export function requestCode(address: string): Promise<void> {
   return run(
@@ -31,5 +31,5 @@ export function loginWithTokenPair(tokens: TokenPair): Promise<void> {
 }
 
 export function logout(): Promise<void> {
-  return run(Effect.flatMap(TokenStore, (store) => store.clear));
+  return run(Effect.flatMap(TokenStore, (store) => store.exclusive(store.clear)));
 }

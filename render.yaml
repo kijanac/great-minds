@@ -35,6 +35,8 @@ projects:
                 value: Great Minds
               - key: WEBAUTHN_ORIGINS
                 value: https://greatmind.dev,https://www.greatmind.dev
+              - key: CLIENT_IP_HEADER
+                value: cf-connecting-ip
               - key: OPENROUTER_API_KEY
                 sync: false
               - key: OPENROUTER_API_URL

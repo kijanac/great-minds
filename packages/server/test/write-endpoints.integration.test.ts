@@ -27,6 +27,7 @@ import {
   sourceProposals,
   topicMembership,
   topics,
+  type TransactionClient,
   urlIngestRequests,
   userDocuments,
   users,
@@ -59,6 +60,7 @@ import { admitSource, SourceDocumentsService } from "../src/source-documents.ts"
 import { encodeSourceControl, sourceIdForKey } from "../src/source-identity.ts";
 import { TokenService } from "../src/tokens.ts";
 import { UrlIngestService } from "../src/url-ingest.ts";
+import { VaultsService } from "../src/vaults.ts";
 import { ConversationTurnFixture, savedConversation } from "./fixtures/saved-conversation.ts";
 import {
   replyHistoryTestDatabaseUrl,
@@ -114,7 +116,8 @@ type TestServices =
   | SourceDocumentsService
   | StructuredLogger
   | TokenService
-  | UrlIngestService;
+  | UrlIngestService
+  | VaultsService;
 
 type TestState = {
   readonly started: Awaited<ReturnType<typeof startServer>>;
@@ -198,6 +201,7 @@ const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",
   suppressAuth: false,
+  clientIpHeader: Option.none(),
   allowPrivateUrlFetch: true,
   serverHost: "127.0.0.1",
   serverPort: 0,
@@ -377,6 +381,55 @@ const holdProposalRowLock = async (proposalId: Uuid) => {
   };
 };
 
+const holdUncommitted = async (
+  change: (tx: TransactionClient) => Effect.Effect<unknown, unknown>,
+) => {
+  const runtime = currentState().started.runtime;
+  const applied = await runtime.runPromise(Deferred.make<void>());
+  const release = await runtime.runPromise(Deferred.make<void>());
+  const holder = runtime.runFork(
+    Effect.flatMap(Database, (db) =>
+      db.transaction((tx) =>
+        Effect.gen(function* () {
+          yield* change(tx).pipe(Effect.orDie);
+          yield* Deferred.succeed(applied, undefined);
+          yield* Deferred.await(release);
+        }),
+      ),
+    ),
+  );
+  await runtime.runPromise(Deferred.await(applied));
+  return async () => {
+    await runtime.runPromise(Deferred.succeed(release, undefined));
+    await runtime.runPromise(Fiber.join(holder));
+  };
+};
+
+const lockWaiters = () =>
+  runDb(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      const rows = yield* db.query((d) =>
+        d
+          .select({ total: sql<number>`count(*)::int` })
+          .from(sql`pg_stat_activity`)
+          .where(sql`datname = current_database() and wait_event_type = 'Lock'`),
+      );
+      return rows[0]?.total ?? 0;
+    }),
+  );
+
+const vaultOwnerId = (vaultId: Uuid) =>
+  runDb(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      const rows = yield* db.query((d) =>
+        d.select({ ownerId: vaults.ownerId }).from(vaults).where(eq(vaults.id, vaultId)),
+      );
+      return rows[0]?.ownerId;
+    }),
+  );
+
 const issueToken = (userId: Uuid) =>
   runDb(
     Effect.gen(function* () {
@@ -417,24 +470,20 @@ const seedBase = async (): Promise<Fixture> => {
           ]),
         )
         .pipe(Effect.orDie);
-      yield* db
-        .query((d) =>
-          d.insert(vaults).values({
+      yield* db.transaction((tx) =>
+        Effect.gen(function* () {
+          yield* tx.insert(vaults).values({
             id: id.vault,
             name: "Alpha Vault",
             ownerId: id.alice,
             createdAt: initialTime,
-          }),
-        )
-        .pipe(Effect.orDie);
-      yield* db
-        .query((d) =>
-          d.insert(vaultMemberships).values([
+          });
+          yield* tx.insert(vaultMemberships).values([
             {
               id: decodeUuid("00000000-0000-4000-8000-000000012001"),
               vaultId: id.vault,
               userId: id.alice,
-              role: "OWNER",
+              role: "EDITOR",
             },
             {
               id: decodeUuid("00000000-0000-4000-8000-000000012002"),
@@ -448,9 +497,9 @@ const seedBase = async (): Promise<Fixture> => {
               userId: id.carol,
               role: "VIEWER",
             },
-          ]),
-        )
-        .pipe(Effect.orDie);
+          ]);
+        }),
+      );
     }),
   );
   return {
@@ -883,26 +932,17 @@ describe("M3.1 write endpoint integration", () => {
       new_owner_user_id: id.bob,
     });
     expect(transferred.status).toBe(204);
-    const roles = await runDb(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        return yield* db
-          .query((d) =>
-            d
-              .select({ userId: vaultMemberships.userId, role: vaultMemberships.role })
-              .from(vaultMemberships)
-              .where(eq(vaultMemberships.vaultId, id.vault)),
-          )
-          .pipe(Effect.orDie);
-      }),
-    );
-    expect(Object.fromEntries(roles.map((row) => [row.userId, row.role]))).toMatchObject({
-      [id.alice]: "EDITOR",
-      [id.bob]: "OWNER",
+    const members = await api("GET", `/vaults/${id.vault}/members`, bobToken);
+    expect(members.status).toBe(200);
+    expect(members.body).toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({ user_id: id.alice, role: "editor" }),
+        expect.objectContaining({ user_id: id.bob, role: "owner" }),
+      ]),
     });
   });
 
-  it("serializes concurrent ownership transfers so one owner holds both representations", async () => {
+  it("serializes concurrent ownership transfers so a former owner cannot transfer again", async () => {
     const { aliceToken } = currentFixture();
     const locked = Deferred.makeUnsafe<void>();
     const release = Deferred.makeUnsafe<void>();
@@ -963,24 +1003,95 @@ describe("M3.1 write endpoint integration", () => {
             d.select({ ownerId: vaults.ownerId }).from(vaults).where(eq(vaults.id, id.vault)),
           )
           .pipe(Effect.orDie);
-        const ownerRows = yield* db
+        const previousOwnerRows = yield* db
           .query((d) =>
             d
-              .select({ userId: vaultMemberships.userId })
+              .select({ role: vaultMemberships.role })
               .from(vaultMemberships)
               .where(
-                and(eq(vaultMemberships.vaultId, id.vault), eq(vaultMemberships.role, "OWNER")),
+                and(eq(vaultMemberships.vaultId, id.vault), eq(vaultMemberships.userId, id.alice)),
               ),
           )
           .pipe(Effect.orDie);
         return {
           ownerId: vaultRows[0]?.ownerId,
-          owners: ownerRows.map((row) => row.userId),
+          previousOwnerRole: previousOwnerRows[0]?.role,
         };
       }),
     );
-    expect(ownership.owners).toEqual([ownership.ownerId]);
     expect([id.bob, id.carol]).toContain(ownership.ownerId);
+    expect(ownership.previousOwnerRole).toBe("EDITOR");
+  });
+
+  it("refuses a transfer to an account whose deletion committed first", async () => {
+    const { aliceToken } = currentFixture();
+    const commitDeletion = await holdUncommitted((tx) =>
+      tx
+        .update(users)
+        .set({ deletedAt: sql`now()` })
+        .where(eq(users.id, id.bob)),
+    );
+    const transfer = api("POST", `/vaults/${id.vault}/transfer-ownership`, aliceToken, {
+      new_owner_user_id: id.bob,
+    });
+    try {
+      await waitFor(lockWaiters, (total) => total === 1);
+    } finally {
+      await commitDeletion();
+    }
+    const response = await transfer;
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ detail: "That account is being deleted" });
+    expect(await vaultOwnerId(id.vault)).toBe(id.alice);
+  });
+
+  it("refuses vault access and transfer once vault deletion committed, then finishes cleanup", async () => {
+    const { aliceToken, bobToken } = currentFixture();
+    await writeVaultFile(id.vault, "raw/docs/kept.md", "# Kept until cleanup\n");
+    const commitDeletion = await holdUncommitted((tx) =>
+      tx
+        .update(vaults)
+        .set({ deletedAt: sql`now()` })
+        .where(eq(vaults.id, id.vault)),
+    );
+    const transfer = api("POST", `/vaults/${id.vault}/transfer-ownership`, aliceToken, {
+      new_owner_user_id: id.bob,
+    });
+    try {
+      await waitFor(lockWaiters, (total) => total === 1);
+    } finally {
+      await commitDeletion();
+    }
+    const response = await transfer;
+    expect(response.status).toBe(403);
+    expect(response.body).toMatchObject({ detail: "This vault is being deleted" });
+    const members = await api("GET", `/vaults/${id.vault}/members`, aliceToken);
+    expect(members.body).toMatchObject({ detail: "This vault is being deleted" });
+    const bobVaults = await api("GET", "/vaults", bobToken);
+    expect(bobVaults.body).toMatchObject({ items: [], pagination: { total: 0 } });
+    expect(await vaultFileExists(id.vault, "raw/docs/kept.md")).toBe(true);
+
+    const reconciled = await runDb(
+      Effect.flatMap(VaultsService, (service) => service.reconcileDeletionsOnce()),
+    );
+    expect(reconciled).toBe(1);
+    expect(await vaultOwnerId(id.vault)).toBeUndefined();
+    expect(await vaultFileExists(id.vault, "raw/docs/kept.md")).toBe(false);
+  });
+
+  it("keeps a vault transferred away before its previous owner deletes their account", async () => {
+    const { aliceToken, bobToken } = currentFixture();
+    const transferred = await api("POST", `/vaults/${id.vault}/transfer-ownership`, aliceToken, {
+      new_owner_user_id: id.bob,
+    });
+    expect(transferred.status).toBe(204);
+    const deleted = await api("DELETE", "/auth/me", aliceToken, { confirm: "DELETE" });
+    expect(deleted.status).toBe(204);
+
+    expect(await vaultOwnerId(id.vault)).toBe(id.bob);
+    const detail = await api("GET", `/vaults/${id.vault}`, bobToken);
+    expect(detail.status).toBe(200);
+    expect(detail.body).toMatchObject({ role: "owner", member_count: 2 });
   });
 
   it("returns 403 to non-members on new vault write endpoints", async () => {
@@ -1033,6 +1144,8 @@ describe("M3.1 write endpoint integration", () => {
     expect(proposal).toMatchObject({
       vault_id: id.vault,
       status: "pending",
+      application: null,
+      source_deleted: false,
       title: "Proposed Source",
       author: "Editor",
       content_type: "texts",
@@ -1059,7 +1172,7 @@ describe("M3.1 write endpoint integration", () => {
       status: "approved",
     });
     expect(approved.status).toBe(200);
-    expect(asRecord(approved.body).status).toBe("approved");
+    expect(approved.body).toMatchObject({ status: "approved", application: "applied" });
     const destPath = String(asRecord(approved.body).dest_path);
     expect(await vaultFileExists(id.vault, destPath)).toBe(true);
     expect(await proposalFileExists(proposalId)).toBe(true);
@@ -1109,6 +1222,16 @@ describe("M3.1 write endpoint integration", () => {
       { status: "rejected" },
     );
     expect(reviewedAgain.status).toBe(409);
+    expect(reviewedAgain.body).toMatchObject({ detail: "Proposal already approved" });
+    const retriedApproval = await api(
+      "PATCH",
+      `/vaults/${id.vault}/proposals/${proposalId}`,
+      aliceToken,
+      { status: "approved" },
+    );
+    expect(retriedApproval.status).toBe(200);
+    expect(retriedApproval.body).toMatchObject({ status: "approved", application: "applied" });
+    expect(await countTable(sourceDocuments)).toBe(2);
 
     const rejectCreate = await api("POST", `/vaults/${id.vault}/proposals`, bobToken, {
       content: "Reject me.",
@@ -1175,15 +1298,11 @@ describe("M3.1 write endpoint integration", () => {
     await acceptDecisionWithoutFinishing(rejectedId, "REJECTED");
 
     const fetched = await api("GET", `/vaults/${id.vault}/proposals/${approvedId}`, aliceToken);
-    expect(asRecord(fetched.body).status).toBe("approved");
+    expect(fetched.body).toMatchObject({ status: "approved", application: "applying" });
     const flip = await api("PATCH", `/vaults/${id.vault}/proposals/${approvedId}`, aliceToken, {
       status: "rejected",
     });
     expect(flip.status).toBe(409);
-    const repeat = await api("PATCH", `/vaults/${id.vault}/proposals/${approvedId}`, aliceToken, {
-      status: "approved",
-    });
-    expect(repeat.status).toBe(409);
     expect(await countTable(sourceDocuments)).toBe(0);
     expect(await proposalFileExists(rejectedId)).toBe(true);
 
@@ -1202,10 +1321,18 @@ describe("M3.1 write endpoint integration", () => {
     expect(rejectedRow.completedAt).not.toBeNull();
     expect(await proposalFileExists(rejectedId)).toBe(false);
     expect(await reconcileReviews()).toBe(0);
+
+    const repeat = await api("PATCH", `/vaults/${id.vault}/proposals/${approvedId}`, aliceToken, {
+      status: "approved",
+    });
+    expect(repeat.status).toBe(200);
+    expect(repeat.body).toMatchObject({ status: "approved", application: "applied" });
+    expect(await countTable(sourceDocuments)).toBe(1);
+    expect(await countTable(compileIntents)).toBe(1);
   });
 
   it("completes an accepted approval without publishing once its source lifetime has ended", async () => {
-    const { bobToken } = currentFixture();
+    const { aliceToken, bobToken } = currentFixture();
     const created = await api("POST", `/vaults/${id.vault}/proposals`, bobToken, {
       content: "Retired lifetime body.",
       content_type: "texts",
@@ -1229,9 +1356,53 @@ describe("M3.1 write endpoint integration", () => {
     const row = await proposalRow(proposalId);
     expect(row.status).toBe("APPROVED");
     expect(row.completedAt).not.toBeNull();
+    expect(row.outcome).toBe("SOURCE_ENDED");
     expect(await vaultFileExists(id.vault, row.destPath)).toBe(false);
     expect(await countTable(sourceDocuments)).toBe(0);
     expect(await countTable(compileIntents)).toBe(0);
+    const fetched = await api("GET", `/vaults/${id.vault}/proposals/${proposalId}`, aliceToken);
+    expect(fetched.body).toMatchObject({
+      status: "approved",
+      application: "not_applied",
+      source_deleted: true,
+    });
+  });
+
+  it("offers only rejection for a pending proposal whose source was deleted after submission", async () => {
+    const { aliceToken, bobToken } = currentFixture();
+    await seedSourceGraph();
+    const request = await api(
+      "POST",
+      `/vaults/${id.vault}/raw/sources/${id.source}/deletion-request`,
+      bobToken,
+    );
+    expect(request.status).toBe(201);
+    const proposalId = String(asRecord(request.body).id);
+    const deleted = await api("DELETE", `/vaults/${id.vault}/raw/sources/${id.source}`, aliceToken);
+    expect(deleted.status).toBe(204);
+
+    const listed = await api("GET", `/vaults/${id.vault}/proposals?status=pending`, aliceToken);
+    expect(listed.body).toMatchObject({
+      items: [{ id: proposalId, status: "pending", source_deleted: true }],
+    });
+    const approval = await api("PATCH", `/vaults/${id.vault}/proposals/${proposalId}`, aliceToken, {
+      status: "approved",
+    });
+    expect(approval.status).toBe(409);
+    expect(approval.body).toMatchObject({
+      detail:
+        "The source this proposal targets was deleted after it was submitted, so it can only be rejected.",
+    });
+    const rejection = await api(
+      "PATCH",
+      `/vaults/${id.vault}/proposals/${proposalId}`,
+      aliceToken,
+      {
+        status: "rejected",
+      },
+    );
+    expect(rejection.status).toBe(200);
+    expect(rejection.body).toMatchObject({ status: "rejected", application: null });
   });
 
   it("deletes sources directly and through idempotent editor deletion requests", async () => {

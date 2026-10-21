@@ -62,7 +62,7 @@ const setup = Effect.gen(function* () {
           .insert(vaults)
           .values({ id: vaultId, ownerId: userId, name: "Reply admission test" });
         yield* tx.insert(vaultMemberships).values([
-          { id: Uuid.make(randomUUID()), vaultId, userId, role: "OWNER" },
+          { id: Uuid.make(randomUUID()), vaultId, userId, role: "EDITOR" },
           { id: Uuid.make(randomUUID()), vaultId, userId: memberId, role: "EDITOR" },
         ]);
       }),

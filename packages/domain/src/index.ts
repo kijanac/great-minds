@@ -367,10 +367,15 @@ export type OwnershipTransfer = typeof OwnershipTransfer.Type;
 export const ProposalStatus = Schema.Literals(["pending", "approved", "rejected"] as const);
 export type ProposalStatus = typeof ProposalStatus.Type;
 
+export const ProposalApplication = Schema.Literals(["applying", "applied", "not_applied"] as const);
+export type ProposalApplication = typeof ProposalApplication.Type;
+
 export const ProposalOverview = Schema.Struct({
   id: Uuid,
   vault_id: Uuid,
   status: ProposalStatus,
+  application: Schema.NullOr(ProposalApplication),
+  source_deleted: Schema.Boolean,
   title: Schema.NullOr(Schema.String),
   content_type: Schema.String,
   created_at: IsoDateTime,
@@ -1271,6 +1276,11 @@ export class ServiceUnavailable extends Schema.TaggedError<ServiceUnavailable>()
   },
 ) {}
 
+export class TooManyRequests extends Schema.TaggedError<TooManyRequests>()("TooManyRequests", {
+  detail: Schema.String,
+  retry_after_seconds: Schema.Int,
+}) {}
+
 export type DomainError =
   | Unauthorized
   | Forbidden
@@ -1278,7 +1288,8 @@ export type DomainError =
   | Validation
   | BadRequest
   | Conflict
-  | ServiceUnavailable;
+  | ServiceUnavailable
+  | TooManyRequests;
 
 export const DomainErrorSchema = Schema.Union([
   Unauthorized,
@@ -1288,6 +1299,7 @@ export const DomainErrorSchema = Schema.Union([
   BadRequest,
   Conflict,
   ServiceUnavailable,
+  TooManyRequests,
 ]);
 
 const BadRequestResponse = BadRequest.pipe(HttpApiSchema.status(400));
@@ -1297,6 +1309,21 @@ const ForbiddenResponse = Forbidden.pipe(HttpApiSchema.status(403));
 const NotFoundResponse = NotFound.pipe(HttpApiSchema.status(404));
 const ValidationResponse = Validation.pipe(HttpApiSchema.status(422));
 const ServiceUnavailableResponse = ServiceUnavailable.pipe(HttpApiSchema.status(503));
+const TooManyRequestsResponse = TooManyRequests.pipe(
+  HttpApiSchema.encodeToWithHeaders(
+    {
+      body: TooManyRequests.pipe(HttpApiSchema.status(429)),
+      headers: { "retry-after": Schema.optional(Schema.FiniteFromString) },
+    },
+    {
+      decode: ({ body }) => body,
+      encode: (error) => ({
+        body: error,
+        headers: { "retry-after": error.retry_after_seconds },
+      }),
+    },
+  ),
+);
 
 const ValidationErrors = [ValidationResponse] as const;
 const UnauthorizedValidationErrors = [UnauthorizedResponse, ValidationResponse] as const;
@@ -1382,7 +1409,7 @@ const AuthApiGroup = HttpApiGroup.make("auth").add(
   HttpApiEndpoint.post("requestCode", "/auth/request-code", {
     payload: RequestCodeInput,
     success: HttpApiSchema.NoContent,
-    error: ValidationErrors,
+    error: [TooManyRequestsResponse, ValidationResponse] as const,
   }),
   HttpApiEndpoint.post("verifyCode", "/auth/verify-code", {
     payload: VerifyCodeInput,
@@ -1539,7 +1566,7 @@ const VaultsApiGroup = HttpApiGroup.make("vaults").add(
     },
     payload: MembershipInvite,
     success: CreatedMember,
-    error: ForbiddenValidationErrors,
+    error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.put("updateVaultMember", "/vaults/:vault_id/members/:member_user_id", {
     params: {

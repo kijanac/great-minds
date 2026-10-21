@@ -1,4 +1,10 @@
-import { Database, sourceIncarnations, users, vaults } from "@great-minds/database";
+import {
+  Database,
+  sourceIncarnations,
+  users,
+  vaultMemberships,
+  vaults,
+} from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
 import { eq } from "drizzle-orm";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema, type Scope } from "effect";
@@ -20,6 +26,7 @@ const uuid = Schema.decodeUnknownSync(Uuid);
 const id = {
   user: uuid("00000000-0000-4000-8000-000000015001"),
   vault: uuid("00000000-0000-4000-8000-000000015101"),
+  membership: uuid("00000000-0000-4000-8000-000000015201"),
   source: uuid("00000000-0000-4000-8000-000000015501"),
 };
 const path = "raw/docs/source.md";
@@ -97,8 +104,15 @@ beforeEach(async () => {
       yield* db.query((tx) =>
         tx.insert(users).values({ id: id.user, email: "lifetimes@example.invalid" }),
       );
-      yield* db.query((tx) =>
-        tx.insert(vaults).values({ id: id.vault, name: "Source lifetimes", ownerId: id.user }),
+      yield* db.transaction((tx) =>
+        Effect.gen(function* () {
+          yield* tx
+            .insert(vaults)
+            .values({ id: id.vault, name: "Source lifetimes", ownerId: id.user });
+          yield* tx
+            .insert(vaultMemberships)
+            .values({ id: id.membership, vaultId: id.vault, userId: id.user, role: "EDITOR" });
+        }),
       );
     }),
   );

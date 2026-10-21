@@ -2,7 +2,7 @@ import { Database, DatabaseLive } from "@great-minds/database";
 import { Effect, Layer } from "effect";
 import type { WorkflowEngine } from "effect/unstable/workflow/WorkflowEngine";
 
-import { AuthService, AuthServiceLive } from "./auth.ts";
+import { AuthService, AuthServiceLive, SignInCodeRetentionLoopLive } from "./auth.ts";
 import {
   CompileIntentReconcilerLive,
   CompileIntentReconcilerLoopLive,
@@ -74,6 +74,7 @@ import { RandomBytesLive, RandomBytesService } from "./random.ts";
 import { TokenService, TokenServiceLive } from "./tokens.ts";
 import { UserDocumentsService, UserDocumentsServiceLive } from "./user-documents.ts";
 import {
+  DeletionReconcilerLoopLive,
   VaultAccessService,
   VaultAccessServiceLive,
   VaultsService,
@@ -230,6 +231,8 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     ReplyReconcilerLoopLive,
     SourceDeletionReconcilerLoopLive,
     ProposalReviewReconcilerLoopLive,
+    DeletionReconcilerLoopLive,
+    SignInCodeRetentionLoopLive,
     StorageMaintenanceLoopLive,
   ).pipe(
     Layer.provide(CompileIntentReconcilerLive),

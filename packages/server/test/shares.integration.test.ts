@@ -140,6 +140,7 @@ const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",
   suppressAuth: false,
+  clientIpHeader: Option.none(),
   allowPrivateUrlFetch: true,
   serverHost: "127.0.0.1",
   serverPort: 0,
@@ -193,24 +194,20 @@ const seedBase = async (): Promise<Fixture> => {
           ]),
         )
         .pipe(Effect.orDie);
-      yield* db
-        .query((d) =>
-          d.insert(vaults).values({
+      yield* db.transaction((tx) =>
+        Effect.gen(function* () {
+          yield* tx.insert(vaults).values({
             id: id.vault,
             name: "Alpha Vault",
             ownerId: id.alice,
             createdAt: initialTime,
-          }),
-        )
-        .pipe(Effect.orDie);
-      yield* db
-        .query((d) =>
-          d.insert(vaultMemberships).values([
+          });
+          yield* tx.insert(vaultMemberships).values([
             {
               id: decodeUuid("00000000-0000-4000-8000-000000012001"),
               vaultId: id.vault,
               userId: id.alice,
-              role: "OWNER",
+              role: "EDITOR",
             },
             {
               id: decodeUuid("00000000-0000-4000-8000-000000012002"),
@@ -218,9 +215,9 @@ const seedBase = async (): Promise<Fixture> => {
               userId: id.bob,
               role: "EDITOR",
             },
-          ]),
-        )
-        .pipe(Effect.orDie);
+          ]);
+        }),
+      );
     }),
   );
   return {

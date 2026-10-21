@@ -102,7 +102,12 @@ describe("M4.3a compile workflow durability", () => {
         yield* sql`drop table if exists cluster_messages, cluster_replies, cluster_migrations cascade`;
         yield* sql`delete from users`;
         yield* sql`insert into users(id,email) values (${ids.user}::uuid,'compile-resume@example.com')`;
-        yield* sql`insert into vaults(id,name,owner_id) values (${ids.vault}::uuid,'Compile Resume',${ids.user}::uuid)`;
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`insert into vaults(id,name,owner_id) values (${ids.vault}::uuid,'Compile Resume',${ids.user}::uuid)`;
+            yield* sql`insert into vault_memberships(id,vault_id,user_id,role) values (gen_random_uuid(),${ids.vault}::uuid,${ids.user}::uuid,'EDITOR')`;
+          }),
+        );
       }),
     );
   });

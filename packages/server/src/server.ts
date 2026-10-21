@@ -14,6 +14,7 @@ import {
   Validation,
   type DomainError,
 } from "@great-minds/domain";
+import ipaddr from "ipaddr.js";
 import { Cause, Context, Effect, Layer, ManagedRuntime, Option, Redacted, Stream } from "effect";
 import {
   HttpMiddleware,
@@ -201,6 +202,23 @@ const AuthMiddlewareLive = Layer.effect(
   })),
 );
 
+const throttleAddress = (raw: string) => {
+  const candidate = raw.trim();
+  if (!ipaddr.isValid(candidate)) return null;
+  const address = ipaddr.process(candidate);
+  if (address.kind() === "ipv4") return address.toString();
+  return `${address.toNormalizedString().split(":").slice(0, 4).join(":")}::/64`;
+};
+
+const signInClientAddress = (
+  request: HttpServerRequest.HttpServerRequest,
+  header: Option.Option<string>,
+) => {
+  const forwarded = Option.flatMap(header, (name) => Option.fromNullishOr(request.headers[name]));
+  const raw = Option.orElse(forwarded, () => request.remoteAddress);
+  return Option.match(raw, { onNone: () => null, onSome: throttleAddress });
+};
+
 const passkeyEnrollmentAuth = Effect.gen(function* () {
   const current = yield* CurrentAuth;
   if (current.credential_kind !== "jwt") {
@@ -218,7 +236,9 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
     .handle("requestCode", ({ payload }) =>
       Effect.gen(function* () {
         const auth = yield* AuthService;
-        yield* auth.requestCode(payload.email);
+        const config = yield* AppConfig;
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        yield* auth.requestCode(payload.email, signInClientAddress(request, config.clientIpHeader));
       }),
     )
     .handle("verifyCode", ({ payload }) =>
@@ -296,9 +316,9 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
     )
     .handle("deleteMe", () =>
       Effect.gen(function* () {
-        const auth = yield* AuthService;
+        const vaultsService = yield* VaultsService;
         const current = yield* CurrentAuth;
-        yield* auth.deleteSelf(current.user_id);
+        yield* vaultsService.deleteAccount(current.user_id);
       }),
     ),
 );

@@ -106,7 +106,7 @@ const seed = async (dataDir: string, env: NodeJS.ProcessEnv) => {
   const sql = `
     insert into users(id,email) values (${sqlString(fixtureIds.user)},'goldens@example.com');
     insert into vaults(id,name,owner_id) values (${sqlString(fixtureIds.vault)},'Golden Compile',${sqlString(fixtureIds.user)});
-    insert into vault_memberships(id,vault_id,user_id,role) values (${sqlString(fixtureIds.membership)},${sqlString(fixtureIds.vault)},${sqlString(fixtureIds.user)},'OWNER');
+    insert into vault_memberships(id,vault_id,user_id,role) values (${sqlString(fixtureIds.membership)},${sqlString(fixtureIds.vault)},${sqlString(fixtureIds.user)},'EDITOR');
     insert into source_documents(id,vault_id,file_path,file_hash,body_hash,source_type,origin,tags,derived_extras) values ${values};
   `;
   await output("psql", [databaseUrl, "-v", "ON_ERROR_STOP=1", "-c", sql], { cwd: repoRoot, env });
@@ -610,7 +610,7 @@ const lintAndCostScenarios = async (baseUrl: string, bearer: string, env: NodeJS
   const sql = `
     insert into users(id,email) values (${sqlString(fixtureIds.secondUser)},'goldens-second@example.com');
     insert into vaults(id,name,owner_id) values (${sqlString(fixtureIds.secondVault)},'Golden Costs Two',${sqlString(fixtureIds.secondUser)});
-    insert into vault_memberships(id,vault_id,user_id,role) values (${sqlString(fixtureIds.secondMembership)},${sqlString(fixtureIds.secondVault)},${sqlString(fixtureIds.secondUser)},'OWNER');
+    insert into vault_memberships(id,vault_id,user_id,role) values (${sqlString(fixtureIds.secondMembership)},${sqlString(fixtureIds.secondVault)},${sqlString(fixtureIds.secondUser)},'EDITOR');
     insert into llm_cost_events(user_id,vault_id,event_type,cost_usd,correlation_id,created_at) values
       (${sqlString(fixtureIds.user)},${sqlString(fixtureIds.vault)},'compile',1.000000,'golden-cost-1','2026-06-01T12:00:00Z'),
       (${sqlString(fixtureIds.user)},${sqlString(fixtureIds.secondVault)},'query',2.000000,'golden-cost-2','2026-06-02T12:00:00Z'),

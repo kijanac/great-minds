@@ -1,5 +1,5 @@
 import { Forbidden, SessionId, Unauthorized, Uuid } from "@great-minds/domain";
-import { Effect, Fiber, Layer, Stream } from "effect";
+import { Effect, Fiber, Layer, Semaphore, Stream } from "effect";
 import { HttpClientRequest } from "effect/unstable/http";
 import { describe, expect, it } from "vitest";
 
@@ -22,7 +22,9 @@ function memoryTokens(initial: Omit<StoredTokens, "session">) {
   const state = { ...initial };
   let generation = 0;
   let session: string | null = null;
+  const browserLock = Semaphore.makeUnsafe(1);
   const layer = Layer.succeed(TokenStore, {
+    exclusive: browserLock.withPermits(1),
     read: Effect.sync(() => ({ ...state, session })),
     write: (tokens) =>
       Effect.sync(() => {
@@ -241,6 +243,33 @@ describe("makeApi", () => {
     await Promise.all([getVault(), getVault(), run(http.get(`/vaults/${vaultId}`))]);
 
     expect(refreshes).toBe(1);
+  });
+
+  it("renews once when two tabs sharing a session hit an expired token together", async () => {
+    let refreshes = 0;
+    let liveRefreshToken = "refresh-1";
+    const { fetchImpl } = fetchResponding(async (request) => {
+      if (request.url.endsWith("/auth/refresh")) {
+        refreshes += 1;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (request.body !== JSON.stringify({ refresh_token: liveRefreshToken })) {
+          return json(401, { _tag: "Unauthorized", detail: "Invalid or expired refresh token" });
+        }
+        liveRefreshToken = "refresh-2";
+        return json(200, tokenPair("2"));
+      }
+      return request.authorization === "Bearer access-2" ? json(200, vaultDetail) : unauthorized();
+    });
+    const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
+    const tabs = [0, 1].map(() => makeApi({ baseUrl, fetch: fetchImpl, tokens: tokens.layer }));
+
+    const details = await Promise.all(
+      tabs.map(({ api, run }) => run(api.vaults.getVault({ params: { vault_id: vaultId } }))),
+    );
+
+    expect(details).toEqual([vaultDetail, vaultDetail]);
+    expect(refreshes).toBe(1);
+    expect(tokens.state).toEqual({ access: "access-2", refresh: "refresh-2" });
   });
 
   it.each(["logout", "new login", "same-credential login"] as const)(
