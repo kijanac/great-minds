@@ -15,7 +15,6 @@
     updateMemberRole,
     updateVaultConfig,
   } from "$lib/api/vaults";
-  import { auth } from "$lib/auth.svelte";
   import { useVaultDetail } from "$lib/hooks/use-vault.svelte";
   import MemberRow from "$lib/components/member-row.svelte";
   import PageHeader from "$lib/components/page-header.svelte";
@@ -53,21 +52,17 @@
   let deleteError = $state<string | null>(null);
 
   const vault = useVaultDetail(() => vaultId);
+  const isOwner = $derived(vault.data?.role === "owner");
   const members = createQuery(() => ({
     queryKey: ["vault", vaultId, "members"],
     queryFn: () => listMembers(vaultId!),
-    enabled: !!vaultId,
+    enabled: !!vaultId && isOwner,
   }));
   const config = createQuery(() => ({
     queryKey: ["vault", vaultId, "config"],
     queryFn: () => getVaultConfig(vaultId!),
     enabled: !!vaultId,
   }));
-  const isOwner = $derived(
-    members.data?.some(
-      (member) => member.user_id === auth.userId && member.role === "owner",
-    ) ?? false,
-  );
   const loading = $derived(
     vault.isLoading || members.isLoading || config.isLoading,
   );
@@ -173,28 +168,28 @@
           {vault.data.article_count} articles · {vault.data.member_count} member{vault
             .data.member_count !== 1
             ? "s"
-            : ""}
+            : ""} · {vault.data.role}
         </p>
 
-        <h2
-          class="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase"
-        >
-          members
-        </h2>
-
-        <div class="mb-6 space-y-1">
-          {#each members.data ?? [] as member (member.user_id)}
-            <MemberRow
-              {member}
-              {isOwner}
-              onChangeRole={(role) => changeRole(member.user_id, role)}
-              onRemove={() => remove(member.user_id)}
-              onTransfer={() => transfer(member.user_id)}
-            />
-          {/each}
-        </div>
-
         {#if isOwner}
+          <h2
+            class="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase"
+          >
+            members
+          </h2>
+
+          <div class="mb-6 space-y-1">
+            {#each members.data ?? [] as member (member.user_id)}
+              <MemberRow
+                {member}
+                {isOwner}
+                onChangeRole={(role) => changeRole(member.user_id, role)}
+                onRemove={() => remove(member.user_id)}
+                onTransfer={() => transfer(member.user_id)}
+              />
+            {/each}
+          </div>
+
           <form onsubmit={submitInvite} class="flex items-center gap-3">
             <Input
               type="email"
@@ -237,17 +232,38 @@
             >
               configuration
             </h2>
-            <VaultConfigForm
-              mode="edit"
-              initialThematicHint={config.data.thematic_hint}
-              submitting={savePending}
-              onSubmit={saveConfig}
-              submitLabel="save changes"
-            />
+            {#if isOwner}
+              <VaultConfigForm
+                mode="edit"
+                initialThematicHint={config.data.thematic_hint}
+                submitting={savePending}
+                onSubmit={saveConfig}
+                submitLabel="save changes"
+              />
+            {:else}
+              <h3
+                class="mb-2 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase"
+              >
+                editorial focus
+              </h3>
+              {#if config.data.thematic_hint}
+                <p
+                  class="font-serif text-[length:var(--text-body)] leading-relaxed whitespace-pre-wrap text-warm-dim"
+                >
+                  {config.data.thematic_hint}
+                </p>
+              {:else}
+                <p
+                  class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
+                >
+                  default framing
+                </p>
+              {/if}
+            {/if}
           </section>
         {/if}
 
-        <ProposalsSection vaultId={vaultId!} {isOwner} />
+        <ProposalsSection vaultId={vaultId!} role={vault.data.role} />
         {#if isOwner}
           <section class="mt-16 border-t border-ink-border pt-8">
             <h2

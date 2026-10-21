@@ -100,7 +100,7 @@
   let hashRunId = 0;
   let checkingVault = $state(false);
   let creatingBatch = $state(false);
-  let submitError = $state<string | null>(null);
+  let importError = $state<string | null>(null);
   let zone: HTMLDivElement;
   let componentActive = true;
   let navigationEpoch = 0;
@@ -170,33 +170,54 @@
     }));
   }
 
+  function readFailure(
+    kind: "file" | "folder",
+    path: string,
+    cause: unknown,
+  ): Error {
+    const reason =
+      cause instanceof Error ? cause.message || cause.name : String(cause);
+    return new Error(`Unable to read ${kind} ${path}: ${reason}`);
+  }
+
+  function readFileEntry(
+    entry: FileSystemFileEntry,
+    path: string,
+  ): Promise<File> {
+    return new Promise((resolve, reject) =>
+      entry.file(resolve, (cause) => reject(readFailure("file", path, cause))),
+    );
+  }
+
+  function readDirectoryBatch(
+    reader: FileSystemDirectoryReader,
+    path: string,
+  ): Promise<FileSystemEntry[]> {
+    return new Promise((resolve, reject) =>
+      reader.readEntries(resolve, (cause) =>
+        reject(readFailure("folder", path, cause)),
+      ),
+    );
+  }
+
   async function collectAll(
     entries: FileSystemEntry[],
     prefix: string,
   ): Promise<DroppedFile[]> {
     const results: DroppedFile[] = [];
     for (const entry of entries) {
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isFile) {
-        const fileEntry = entry as FileSystemFileEntry;
-        const file = await new Promise<File>((resolve, reject) =>
-          fileEntry.file(resolve, reject),
-        );
-        results.push({
-          file,
-          path: prefix ? `${prefix}/${entry.name}` : entry.name,
-        });
+        const file = await readFileEntry(entry as FileSystemFileEntry, path);
+        results.push({ file, path });
       } else if (entry.isDirectory) {
-        const directory = entry as FileSystemDirectoryEntry;
-        const reader = directory.createReader();
+        const reader = (entry as FileSystemDirectoryEntry).createReader();
         const children: FileSystemEntry[] = [];
         let batch: FileSystemEntry[];
         do {
-          batch = await new Promise((resolve) =>
-            reader.readEntries((items) => resolve(items)),
-          );
+          batch = await readDirectoryBatch(reader, path);
           children.push(...batch);
         } while (batch.length > 0);
-        const path = prefix ? `${prefix}/${entry.name}` : entry.name;
         results.push(...(await collectAll(children, path)));
       }
     }
@@ -217,7 +238,7 @@
     expanded = false;
     files = [];
     checkingVault = false;
-    submitError = null;
+    importError = null;
     hashRunId += 1;
     url = "";
   }
@@ -338,7 +359,7 @@
   function startWithFiles(dropped: DroppedFile[]) {
     if (dropped.length === 0) return;
     checkingVault = false;
-    submitError = null;
+    importError = null;
     const initial = initialIngestable(dropped);
     files = initial;
     void runHashingPipeline(initial);
@@ -348,7 +369,12 @@
     event.preventDefault();
     dragCounter = 0;
     isDragOver = false;
-    startWithFiles(await filesFromDrop(event.dataTransfer!));
+    try {
+      startWithFiles(await filesFromDrop(event.dataTransfer!));
+    } catch (error) {
+      importError =
+        error instanceof Error ? error.message : "Unable to read dropped items";
+    }
   }
 
   function handleBrowse() {
@@ -408,7 +434,7 @@
 
     const ownsNavigation = captureNavigationOwnership();
     creatingBatch = true;
-    submitError = null;
+    importError = null;
     try {
       const batch = await createFileIngestBatch(uploadFiles);
       if (!ownsNavigation()) return;
@@ -418,7 +444,7 @@
       });
     } catch (error) {
       if (!ownsNavigation()) return;
-      submitError =
+      importError =
         error instanceof Error ? error.message : "Unable to start file upload";
     } finally {
       if (componentActive) creatingBatch = false;
@@ -656,12 +682,12 @@
       </ul>
 
       <div class="border-t border-ink-subtle px-5 py-5">
-        {#if submitError}
+        {#if importError}
           <p
             role="alert"
             class="mb-3 [overflow-wrap:anywhere] text-center font-mono text-[length:var(--text-chrome)] text-red-400/90"
           >
-            {submitError}
+            {importError}
           </p>
         {/if}
         <div class="flex flex-wrap items-center justify-center gap-2">
@@ -700,6 +726,13 @@
         </div>
       </div>
     </div>
+  {:else if expanded && importError}
+    <p
+      role="alert"
+      class="mt-3 w-full max-w-[640px] [overflow-wrap:anywhere] text-center font-mono text-[length:var(--text-chrome)] text-red-400/90"
+    >
+      {importError}
+    </p>
   {/if}
 
   {#if hasActivePipeline && !expanded}

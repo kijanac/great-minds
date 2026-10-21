@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Uuid } from "@great-minds/domain";
+  import type { MemberRole, Uuid } from "@great-minds/domain";
   import Check from "@lucide/svelte/icons/check";
   import X from "@lucide/svelte/icons/x";
   import {
@@ -30,11 +30,14 @@
 
   let {
     vaultId,
-    isOwner,
+    role,
   }: {
     vaultId: Uuid;
-    isOwner: boolean;
+    role: MemberRole;
   } = $props();
+
+  const canReview = $derived(role === "owner");
+  const canPropose = $derived(role !== "viewer");
 
   type ProposalFilter = ProposalStatus | "all";
   const PAGE_SIZE = 20;
@@ -171,7 +174,7 @@
             >
               {formatShortDate(proposal.created_at)}
             </span>
-            {#if isOwner && proposal.status === "pending"}
+            {#if canReview && proposal.status === "pending"}
               <div class="flex items-center gap-1">
                 <Button
                   variant="ghost"
@@ -221,7 +224,7 @@
     </div>
   {/if}
 
-  {#if showSubmit}
+  {#if canPropose && showSubmit}
     <form onsubmit={submit} class="mt-4 space-y-3">
       <div class="flex flex-col gap-3 sm:flex-row">
         <Input
@@ -279,7 +282,7 @@
         </Button>
       </div>
     </form>
-  {:else}
+  {:else if canPropose}
     <Button
       variant="ghost"
       onclick={() => (showSubmit = true)}

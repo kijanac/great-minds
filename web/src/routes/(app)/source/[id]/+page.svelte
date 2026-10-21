@@ -18,5 +18,7 @@
 </svelte:head>
 
 {#if sourceId}
-  <ArticleReader {sourceId} scope="vault" />
+  {#key sourceId}
+    <ArticleReader {sourceId} scope="vault" />
+  {/key}
 {/if}
