@@ -952,9 +952,7 @@ export const ReferenceOverview = Schema.Struct({
 });
 export type ReferenceOverview = typeof ReferenceOverview.Type;
 
-export const ReferenceDetail = Schema.Struct({
-  ...ReferenceOverview.fields,
-});
+export const ReferenceDetail = ReferenceOverview;
 export type ReferenceDetail = typeof ReferenceDetail.Type;
 
 export const ReferencePage = pageOf(ReferenceOverview);
@@ -1380,7 +1378,7 @@ const JobStream = HttpApiSchema.StreamSse({ events: JobSseEvent });
 const AcceptedReplyResponse = CreateReplyResponse.pipe(HttpApiSchema.status(202));
 const ReplyStream = HttpApiSchema.StreamSse({ events: ReplySseEvent });
 
-export const AuthApiGroup = HttpApiGroup.make("auth").add(
+const AuthApiGroup = HttpApiGroup.make("auth").add(
   HttpApiEndpoint.post("requestCode", "/auth/request-code", {
     payload: RequestCodeInput,
     success: HttpApiSchema.NoContent,
@@ -1445,13 +1443,13 @@ export const AuthApiGroup = HttpApiGroup.make("auth").add(
   }).middleware(AuthMiddleware),
 );
 
-export const MetaApiGroup = HttpApiGroup.make("meta").add(
+const MetaApiGroup = HttpApiGroup.make("meta").add(
   HttpApiEndpoint.get("health", "/health", {
     success: Schema.Struct({ status: Schema.Literal("ok") }),
   }),
 );
 
-export const RefsApiGroup = HttpApiGroup.make("refs")
+const RefsApiGroup = HttpApiGroup.make("refs")
   .add(
     HttpApiEndpoint.post("createReference", "/me/refs", {
       payload: ReferenceCreate,
@@ -1489,7 +1487,7 @@ export const RefsApiGroup = HttpApiGroup.make("refs")
     }).middleware(AuthMiddleware),
   );
 
-export const VaultsApiGroup = HttpApiGroup.make("vaults").add(
+const VaultsApiGroup = HttpApiGroup.make("vaults").add(
   HttpApiEndpoint.get("listVaults", "/vaults", {
     query: PageParamsQuery,
     success: VaultPage,
@@ -1577,7 +1575,7 @@ export const VaultsApiGroup = HttpApiGroup.make("vaults").add(
   }).middleware(AuthMiddleware),
 );
 
-export const WikiApiGroup = HttpApiGroup.make("wiki").add(
+const WikiApiGroup = HttpApiGroup.make("wiki").add(
   HttpApiEndpoint.get("listWikiArticles", "/vaults/:vault_id/wiki", {
     params: {
       vault_id: Uuid,
@@ -1596,7 +1594,7 @@ export const WikiApiGroup = HttpApiGroup.make("wiki").add(
   }).middleware(AuthMiddleware),
 );
 
-export const SourcesApiGroup = HttpApiGroup.make("sources").add(
+const SourcesApiGroup = HttpApiGroup.make("sources").add(
   HttpApiEndpoint.get("listSources", "/vaults/:vault_id/raw/sources", {
     params: {
       vault_id: Uuid,
@@ -1632,7 +1630,7 @@ export const SourcesApiGroup = HttpApiGroup.make("sources").add(
   ).middleware(AuthMiddleware),
 );
 
-export const ProposalsApiGroup = HttpApiGroup.make("proposals").add(
+const ProposalsApiGroup = HttpApiGroup.make("proposals").add(
   HttpApiEndpoint.get("listProposals", "/vaults/:vault_id/proposals", {
     params: {
       vault_id: Uuid,
@@ -1668,7 +1666,7 @@ export const ProposalsApiGroup = HttpApiGroup.make("proposals").add(
   }).middleware(AuthMiddleware),
 );
 
-export const IngestApiGroup = HttpApiGroup.make("ingest").add(
+const IngestApiGroup = HttpApiGroup.make("ingest").add(
   HttpApiEndpoint.post("ingestRaw", "/vaults/:vault_id/ingest", {
     params: {
       vault_id: Uuid,
@@ -1750,7 +1748,7 @@ export const IngestApiGroup = HttpApiGroup.make("ingest").add(
   }).middleware(AuthMiddleware),
 );
 
-export const JobsApiGroup = HttpApiGroup.make("jobs").add(
+const JobsApiGroup = HttpApiGroup.make("jobs").add(
   HttpApiEndpoint.post("startUrlJob", "/vaults/:vault_id/jobs/url", {
     params: {
       vault_id: Uuid,
@@ -1783,7 +1781,7 @@ export const JobsApiGroup = HttpApiGroup.make("jobs").add(
   }).middleware(AuthMiddleware),
 );
 
-export const CompileApiGroup = HttpApiGroup.make("compile")
+const CompileApiGroup = HttpApiGroup.make("compile")
   .add(
     HttpApiEndpoint.post("requestCompile", "/vaults/:vault_id/compile", {
       params: { vault_id: Uuid },
@@ -1800,7 +1798,7 @@ export const CompileApiGroup = HttpApiGroup.make("compile")
     }).middleware(AuthMiddleware),
   );
 
-export const LintApiGroup = HttpApiGroup.make("lint").add(
+const LintApiGroup = HttpApiGroup.make("lint").add(
   HttpApiEndpoint.get("getLint", "/vaults/:vault_id/lint", {
     params: { vault_id: Uuid },
     success: LintReport,
@@ -1808,7 +1806,7 @@ export const LintApiGroup = HttpApiGroup.make("lint").add(
   }).middleware(AuthMiddleware),
 );
 
-export const CostsApiGroup = HttpApiGroup.make("costs")
+const CostsApiGroup = HttpApiGroup.make("costs")
   .add(
     HttpApiEndpoint.get("getUserCosts", "/costs", {
       query: CostQuery,
@@ -1825,7 +1823,7 @@ export const CostsApiGroup = HttpApiGroup.make("costs")
     }).middleware(AuthMiddleware),
   );
 
-export const DocumentsApiGroup = HttpApiGroup.make("documents").add(
+const DocumentsApiGroup = HttpApiGroup.make("documents").add(
   HttpApiEndpoint.get("resolveDocument", "/vaults/:vault_id/doc", {
     params: { vault_id: Uuid },
     query: DocumentPathQuery,
@@ -1850,7 +1848,7 @@ export const DocumentsApiGroup = HttpApiGroup.make("documents").add(
   }).middleware(AuthMiddleware),
 );
 
-export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
+const SessionsApiGroup = HttpApiGroup.make("sessions").add(
   HttpApiEndpoint.post("continueAsSession", "/vaults/:vault_id/sessions/:session_id/continue", {
     params: { vault_id: Uuid, session_id: SessionId },
     success: Schema.Void,
@@ -1916,7 +1914,7 @@ export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
   }).middleware(AuthMiddleware),
 );
 
-export const RepliesApiGroup = HttpApiGroup.make("replies")
+const RepliesApiGroup = HttpApiGroup.make("replies")
   .add(
     HttpApiEndpoint.post("createReply", "/vaults/:vault_id/replies", {
       params: {
@@ -1959,7 +1957,7 @@ export const RepliesApiGroup = HttpApiGroup.make("replies")
     }).middleware(AuthMiddleware),
   );
 
-export const SharesApiGroup = HttpApiGroup.make("shares").add(
+const SharesApiGroup = HttpApiGroup.make("shares").add(
   HttpApiEndpoint.post("createShare", "/shares", {
     payload: ShareCreate,
     success: CreatedShare,
@@ -1978,7 +1976,7 @@ export const SharesApiGroup = HttpApiGroup.make("shares").add(
   }).middleware(AuthMiddleware),
 );
 
-export const PublicApiGroup = HttpApiGroup.make("public").add(
+const PublicApiGroup = HttpApiGroup.make("public").add(
   HttpApiEndpoint.get("resolveShare", "/public/shares/:token", {
     params: {
       token: Schema.String,

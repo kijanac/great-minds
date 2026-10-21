@@ -1,5 +1,5 @@
 import type { Uuid } from "@great-minds/domain";
-import { Effect, Option, Schema } from "effect";
+import { Data, Effect, Option, Schema } from "effect";
 import { parse as parseYaml } from "yaml";
 
 import { type ContentStorage, vaultOwner } from "./storage.ts";
@@ -17,6 +17,12 @@ export type VaultConfigFile = {
   readonly enrichedFields: readonly EnrichedField[];
 };
 
+export class VaultConfigMalformed extends Data.TaggedError("VaultConfigMalformed")<{
+  readonly vaultId: Uuid;
+}> {}
+
+export const VAULT_CONFIG_PATH = "config.yaml";
+
 export const defaultVaultConfigFile: VaultConfigFile = {
   thematicHint: "",
   kinds: ["person", "event", "organization", "concept"],
@@ -29,15 +35,9 @@ const decodeStringField = Schema.decodeUnknownOption(Schema.String);
 const decodeStringsField = Schema.decodeUnknownOption(Schema.Array(Schema.String));
 const decodeBooleanField = Schema.decodeUnknownOption(Schema.Boolean);
 
-export const parseVaultConfigFile = (content: string): VaultConfigFile => {
-  let yaml: unknown;
-  try {
-    yaml = parseYaml(content);
-  } catch {
-    return defaultVaultConfigFile;
-  }
-  const document = Option.getOrUndefined(decodeRecordField(yaml));
-  if (document === undefined) return defaultVaultConfigFile;
+const vaultConfigFromDocument = (document: {
+  readonly [key: string]: unknown;
+}): VaultConfigFile => {
   const kinds = Option.getOrElse(
     decodeStringsField(document.kinds),
     () => defaultVaultConfigFile.kinds,
@@ -61,8 +61,20 @@ export const parseVaultConfigFile = (content: string): VaultConfigFile => {
   };
 };
 
+const parseVaultConfigFile = (vaultId: Uuid, content: string) =>
+  Effect.gen(function* () {
+    const yaml: unknown = yield* Effect.try({
+      try: () => parseYaml(content),
+      catch: () => new VaultConfigMalformed({ vaultId }),
+    });
+    if (yaml === null) return defaultVaultConfigFile;
+    const document = decodeRecordField(yaml);
+    if (Option.isNone(document)) return yield* new VaultConfigMalformed({ vaultId });
+    return vaultConfigFromDocument(document.value);
+  });
+
 export const readVaultConfig = (storage: ContentStorage["Service"], vaultId: Uuid) =>
-  storage.readText(vaultOwner(vaultId), "config.yaml").pipe(
-    Effect.map(parseVaultConfigFile),
+  storage.readText(vaultOwner(vaultId), VAULT_CONFIG_PATH).pipe(
+    Effect.flatMap((content) => parseVaultConfigFile(vaultId, content)),
     Effect.catchTag("StorageFileMissing", () => Effect.succeed(defaultVaultConfigFile)),
   );

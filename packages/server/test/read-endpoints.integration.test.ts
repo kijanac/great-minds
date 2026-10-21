@@ -1203,6 +1203,14 @@ describe("read-only HTTP integration", () => {
       kinds: ["movement"],
     });
 
+    await writeVaultFile(id.vaultAlpha, "config.yaml", "kinds: [movement\n");
+    const malformedConfig = await api("GET", `/vaults/${id.vaultAlpha}/config`, bobToken);
+    expect(malformedConfig.status).toBe(500);
+
+    await writeVaultFile(id.vaultAlpha, "config.yaml", "- movement\n");
+    const sequenceConfig = await api("GET", `/vaults/${id.vaultAlpha}/config`, bobToken);
+    expect(sequenceConfig.status).toBe(500);
+
     const nonMember = await api("GET", `/vaults/${id.vaultAlpha}/config`, malloryToken);
     expect(nonMember.status).toBe(403);
     expect(nonMember.body).toMatchObject({

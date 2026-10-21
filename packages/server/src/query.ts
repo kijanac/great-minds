@@ -23,7 +23,7 @@ import { and, asc, desc, eq, gte, ilike, lte, ne, or, sql, type SQL } from "driz
 import { Cause, Context, Data, Effect, Layer, Option, Schema, Stream } from "effect";
 
 import { AppConfig } from "./config.ts";
-import { readVaultConfig, type VaultConfigFile } from "./vault-config.ts";
+import { defaultVaultConfigFile, readVaultConfig, type VaultConfigFile } from "./vault-config.ts";
 import { promptContentHash } from "./crypto.ts";
 import { EmbeddingsService, vectorLiteral } from "./embeddings.ts";
 import { CostLookupService, recordPrompt } from "./llm-costs.ts";
@@ -1554,7 +1554,12 @@ export const QueryServiceLive = Layer.effect(
       Effect.gen(function* () {
         const vaultLabel = prechecked.vaultLabel;
         const [vaultConfig, tags] = yield* Effect.all(
-          [readVaultConfig(storage, vaultId), distinctTags(vaultId)],
+          [
+            readVaultConfig(storage, vaultId).pipe(
+              Effect.catchTag("VaultConfigMalformed", () => Effect.succeed(defaultVaultConfigFile)),
+            ),
+            distinctTags(vaultId),
+          ],
           { concurrency: "unbounded" },
         );
         const webSearchEnabled = vaultConfig.webSearch && parallel.hasApiKey;

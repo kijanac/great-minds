@@ -41,7 +41,12 @@ import { loadPrompt } from "./prompts.ts";
 import { formatUuid7, type RandomBytesService } from "./random.ts";
 import type { ContentStorage } from "./storage.ts";
 import type { SourceDocumentsService } from "./source-documents.ts";
-import { readVaultConfig, type EnrichedField, type VaultConfigFile } from "./vault-config.ts";
+import {
+  defaultVaultConfigFile,
+  readVaultConfig,
+  type EnrichedField,
+  type VaultConfigFile,
+} from "./vault-config.ts";
 import type { ClockService } from "./clock.ts";
 
 type DatabaseService = Database["Service"];
@@ -551,7 +556,9 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
 
   const extract = (vaultId: Uuid, runId: Uuid) =>
     Effect.gen(function* () {
-      const vaultConfig = yield* readVaultConfig(storage, vaultId);
+      const vaultConfig = yield* readVaultConfig(storage, vaultId).pipe(
+        Effect.catchTag("VaultConfigMalformed", () => Effect.succeed(defaultVaultConfigFile)),
+      );
       const promptTemplate = yield* loadPrompt(storage, vaultId, "extract");
       const renderedTemplate = promptTemplate
         .replace("{kinds}", vaultConfig.kinds.join(", "))
@@ -1098,7 +1105,9 @@ const runAbstract = (options: AbstractOptions) =>
         completed: new Set(["group_ideas", "synthesize_topics", "merge_candidates"]),
       }),
     );
-    const vaultConfig = yield* readVaultConfig(storage, vaultId);
+    const vaultConfig = yield* readVaultConfig(storage, vaultId).pipe(
+      Effect.catchTag("VaultConfigMalformed", () => Effect.succeed(defaultVaultConfigFile)),
+    );
     const canonicals = yield* canonicalizeTopics(options, merged, vaultConfig.thematicHint);
 
     yield* pipeline.updateProgress(

@@ -3,12 +3,6 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "import": "./src/index.ts"
-    }
-  },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:integration": "vitest run test --no-file-parallelism",

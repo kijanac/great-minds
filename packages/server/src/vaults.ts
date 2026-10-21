@@ -30,12 +30,13 @@ import {
 } from "@great-minds/domain";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
-import { parse as parseYaml, parseDocument } from "yaml";
+import { parseDocument } from "yaml";
 
 import { StructuredLogger } from "./logging.ts";
 import { Mailer } from "./mailer.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { ContentStorage, StagedStorage, vaultOwner } from "./storage.ts";
+import { readVaultConfig, VAULT_CONFIG_PATH } from "./vault-config.ts";
 import { liveArticleConditions } from "./wiki-articles.ts";
 
 type CountRow = {
@@ -117,13 +118,6 @@ export class VaultsService extends Context.Service<VaultsService, VaultsServiceS
   "@great-minds/server/VaultsService",
 ) {}
 
-const defaultVaultConfig = {
-  thematic_hint: "",
-  kinds: ["person", "event", "organization", "concept"],
-} satisfies VaultConfig;
-
-const CONFIG_PATH = "config.yaml";
-
 export const defaultVaultConfigText = `name: "Personal Vault"
 
 # Idea-level kind taxonomy. Constrains what the extract LLM can classify
@@ -167,29 +161,7 @@ metadata:
       arguing against, or in direct dialogue with. Empty list if none.
 `;
 
-const VaultConfigYaml = Schema.Struct({
-  thematic_hint: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  kinds: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
-});
-
-const decodeVaultConfigYaml = Schema.decodeUnknownEffect(VaultConfigYaml);
 const uuidOf = Schema.decodeSync(Uuid);
-
-const parseVaultConfig = (content: string) =>
-  Effect.gen(function* () {
-    const parsed = yield* Effect.try({
-      try: () => parseYaml(content) as unknown,
-      catch: (error) => error,
-    }).pipe(Effect.orDie);
-    const decoded = yield* decodeVaultConfigYaml(parsed ?? {}).pipe(Effect.orDie);
-    return {
-      thematic_hint: decoded.thematic_hint ?? defaultVaultConfig.thematic_hint,
-      kinds:
-        decoded.kinds !== undefined && decoded.kinds !== null && decoded.kinds.length > 0
-          ? decoded.kinds
-          : defaultVaultConfig.kinds,
-    } satisfies VaultConfig;
-  });
 
 const asEmail = (value: string): Email => value as Email;
 
@@ -370,16 +342,16 @@ export const VaultsServiceLive = Layer.effect(
     const ensureConfig = (vaultId: Uuid) =>
       Effect.gen(function* () {
         const owner = vaultOwner(vaultId);
-        const exists = yield* storage.exists(owner, CONFIG_PATH);
+        const exists = yield* storage.exists(owner, VAULT_CONFIG_PATH);
         if (!exists) {
-          yield* storage.writeText(owner, CONFIG_PATH, defaultVaultConfigText);
+          yield* storage.writeText(owner, VAULT_CONFIG_PATH, defaultVaultConfigText);
         }
       });
 
     const applyConfigUpdate = (vaultId: Uuid, input: VaultConfigUpdate) =>
       Effect.gen(function* () {
         const owner = vaultOwner(vaultId);
-        const existing = yield* Effect.result(storage.readText(owner, CONFIG_PATH));
+        const existing = yield* Effect.result(storage.readText(owner, VAULT_CONFIG_PATH));
         const doc = parseDocument(
           existing._tag === "Success" ? existing.success : defaultVaultConfigText,
         );
@@ -389,17 +361,17 @@ export const VaultsServiceLive = Layer.effect(
         if (input.kinds !== undefined) {
           doc.set("kinds", [...input.kinds]);
         }
-        yield* storage.writeText(owner, CONFIG_PATH, String(doc));
+        yield* storage.writeText(owner, VAULT_CONFIG_PATH, String(doc));
       });
 
     const readConfig = (vaultId: Uuid) =>
-      Effect.gen(function* () {
-        const content = yield* Effect.result(storage.readText(vaultOwner(vaultId), CONFIG_PATH));
-        if (content._tag === "Failure") {
-          return defaultVaultConfig;
-        }
-        return yield* parseVaultConfig(content.success);
-      });
+      readVaultConfig(storage, vaultId).pipe(
+        Effect.map((config): VaultConfig => ({
+          thematic_hint: config.thematicHint,
+          kinds: config.kinds,
+        })),
+        Effect.catchTag("VaultConfigMalformed", Effect.die),
+      );
 
     const ensureUser = (emailInput: Email) =>
       Effect.gen(function* () {
