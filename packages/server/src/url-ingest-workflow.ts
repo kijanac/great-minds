@@ -1,5 +1,5 @@
 import { Database, pipelineRuns, urlIngestRequests } from "@great-minds/database";
-import { BadRequest, Uuid } from "@great-minds/domain";
+import { BadRequest, Conflict, Uuid } from "@great-minds/domain";
 import { eq } from "drizzle-orm";
 import { Cause, Effect, Schema } from "effect";
 import * as Activity from "effect/unstable/workflow/Activity";
@@ -10,6 +10,7 @@ import { IngestService } from "./ingest.ts";
 import { StructuredLogger } from "./logging.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
 import { parseCanonicalSourceUrl } from "./source-identity.ts";
+import { SourceDocumentsService } from "./source-documents.ts";
 
 export const URL_INGEST_STEP_LABELS = {
   fetch_url: "Fetching source URL",
@@ -32,7 +33,9 @@ export const UrlIngestWorkflow = Workflow.make("UrlIngest", {
 const failureMessage = (cause: Cause.Cause<unknown>) => {
   const reason = cause.reasons.find(Cause.isFailReason);
   const error = reason?.error;
-  return error instanceof BadRequest ? error.detail : formatError(causeDetails(cause));
+  return error instanceof BadRequest || error instanceof Conflict
+    ? error.detail
+    : formatError(causeDetails(cause));
 };
 
 export const UrlIngestWorkflowLive = UrlIngestWorkflow.toLayer((payload) =>
@@ -43,23 +46,33 @@ export const UrlIngestWorkflowLive = UrlIngestWorkflow.toLayer((payload) =>
     execute: Effect.gen(function* () {
       const db = yield* Database;
       const ingest = yield* IngestService;
+      const sources = yield* SourceDocumentsService;
       const pipeline = yield* PipelineRunsService;
       const runId = payload.pipelineRunId;
-      const rows = yield* db.query((d) => d
-        .select({
-          vaultId: pipelineRuns.vaultId,
-          canonicalUrl: urlIngestRequests.canonicalUrl,
-          origin: urlIngestRequests.origin,
-        })
-        .from(urlIngestRequests)
-        .innerJoin(pipelineRuns, eq(pipelineRuns.id, urlIngestRequests.id))
-        .where(eq(urlIngestRequests.id, runId))
-        .limit(1));
+      const rows = yield* db.query((d) =>
+        d
+          .select({
+            vaultId: pipelineRuns.vaultId,
+            canonicalUrl: urlIngestRequests.canonicalUrl,
+            origin: urlIngestRequests.origin,
+            sourceIncarnationId: urlIngestRequests.sourceIncarnationId,
+          })
+          .from(urlIngestRequests)
+          .innerJoin(pipelineRuns, eq(pipelineRuns.id, urlIngestRequests.id))
+          .where(eq(urlIngestRequests.id, runId))
+          .limit(1),
+      );
       const request = rows[0];
       if (request === undefined) {
         throw new Error(`URL ingest request ${runId} not found`);
       }
       if (!(yield* pipeline.isActive(runId))) return yield* Effect.interrupt;
+      if (request.sourceIncarnationId === null) {
+        return yield* new UrlIngestWorkflowError({
+          message: "This URL import predates source ownership tracking. Retry it as a new import.",
+        });
+      }
+      const source = yield* sources.admission(request.vaultId, request.sourceIncarnationId);
 
       yield* pipeline.updateProgress(
         runId,
@@ -70,12 +83,7 @@ export const UrlIngestWorkflowLive = UrlIngestWorkflow.toLayer((payload) =>
         }),
       );
       const canonicalUrl = yield* parseCanonicalSourceUrl(request.canonicalUrl).pipe(Effect.orDie);
-      yield* ingest.ingestUrl(
-        request.vaultId,
-        canonicalUrl,
-        request.origin ?? undefined,
-        runId,
-      );
+      yield* ingest.ingestUrl(source, canonicalUrl, request.origin ?? undefined, runId);
       yield* pipeline.updateProgress(
         runId,
         "source_ingest",

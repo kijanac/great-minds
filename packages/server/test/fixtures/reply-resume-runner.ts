@@ -6,11 +6,10 @@ import { eq } from "drizzle-orm";
 import { Effect, Layer, Schema } from "effect";
 
 import { makeAppLayer } from "../../src/app-layer.ts";
-import { HistoryStore, makeHistoryStore } from "../../src/conversation-history/store.ts";
+import type { HistoryStoreShape } from "../../src/conversation-history/store.ts";
 import { LanguageModel, type StreamChatInput } from "../../src/llm.ts";
 import { ParallelSearchService } from "../../src/parallel.ts";
 import { RepliesService, ReplyWorkflow } from "../../src/replies.ts";
-import { openLocalConditionalObjectStore } from "../../src/storage/local-conditional-object-store.ts";
 import { storageBackendError } from "../../src/storage/object-store.ts";
 import { finishPart, tokenPart, toolCallPart } from "../query-stubs.ts";
 
@@ -27,7 +26,7 @@ const mode = Schema.decodeUnknownSync(
 )(process.argv[2]);
 const replyId = Schema.decodeUnknownSync(Uuid)(process.argv[3]);
 const markerPath = Schema.decodeUnknownSync(Schema.NonEmptyString)(process.argv[4]);
-const storageRoot = Schema.decodeUnknownSync(Schema.NonEmptyString)(process.env.DATA_DIR);
+Schema.decodeUnknownSync(Schema.NonEmptyString)(process.env.DATA_DIR);
 
 let modelCalls = 0;
 const LanguageLive = Layer.succeed(LanguageModel, {
@@ -70,44 +69,36 @@ const SearchLive = Layer.succeed(ParallelSearchService, {
     }),
 });
 
-const HistoriesLive = Layer.effect(
-  HistoryStore,
-  Effect.gen(function* () {
-    const histories = makeHistoryStore(
-      yield* openLocalConditionalObjectStore(storageRoot).pipe(Effect.orDie),
-    );
-    return {
-      ...histories,
-      commit: (address, writes, receipt) =>
-        Effect.gen(function* () {
-          if (mode === "save-result" && writes.some((write) => write.type === "settlement")) {
-            console.log("REPLY settlement waiting");
-            return yield* Effect.never;
-          }
-          if (mode === "fail-result" && writes.some((write) => write.type === "settlement")) {
-            return yield* Effect.fail(
-              storageBackendError(
-                "write",
-                address.session_id,
-                new Error("Injected publication outage"),
-              ),
-            );
-          }
-          const committed = yield* histories.commit(address, writes, receipt);
-          if (mode === "save-admission") {
-            console.log("REPLY admission saved");
-            return yield* Effect.never;
-          }
-          return committed;
-        }),
-    } satisfies HistoryStore["Service"];
-  }),
-);
+const decorateHistory = (histories: HistoryStoreShape): HistoryStoreShape => ({
+  ...histories,
+  commit: (address, writes, receipt) =>
+    Effect.gen(function* () {
+      if (mode === "save-result" && writes.some((write) => write.type === "settlement")) {
+        console.log("REPLY settlement waiting");
+        return yield* Effect.never;
+      }
+      if (mode === "fail-result" && writes.some((write) => write.type === "settlement")) {
+        return yield* Effect.fail(
+          storageBackendError(
+            "write",
+            address.session_id,
+            new Error("Injected publication outage"),
+          ),
+        );
+      }
+      const committed = yield* histories.commit(address, writes, receipt);
+      if (mode === "save-admission") {
+        console.log("REPLY admission saved");
+        return yield* Effect.never;
+      }
+      return committed;
+    }),
+});
 
 const MainLive = makeAppLayer({
   languageModel: LanguageLive,
   parallelSearch: SearchLive,
-  histories: HistoriesLive,
+  decorateHistory,
 });
 const pollReply = (predicate: (row: typeof replies.$inferSelect) => boolean) =>
   Effect.gen(function* () {

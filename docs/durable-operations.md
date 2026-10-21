@@ -10,7 +10,7 @@ Great Minds commits durable product state before work that must survive the orig
 | vault compile | `compile_intents`, `pipeline_runs` | `CompileTask` | compile intent ID |
 | URL ingest | `url_ingest_requests`, `pipeline_runs` | `UrlIngest` | pipeline run ID |
 | research reply | `replies` (accepted request, status, progress, exact pending settlement, dispatch/cursor/claim), session history receipt | `ReplyGeneration` plus admission/settlement reconciler | reply ID |
-| source deletion | `source_deletion_outbox` | maintenance reconciler | source ID |
+| source deletion | retired `source_incarnations` | maintenance reconciler | incarnation ID |
 
 Every workflow acceptance path commits enough input to redispatch work before it asks the workflow engine to execute. Startup/periodic reconcilers enqueue accepted rows whose dispatch acknowledgement was lost. Repeated execution is safe because workflow idempotency keys are stable and activities use deterministic storage keys or guarded upserts.
 
@@ -21,8 +21,40 @@ Every workflow acceptance path commits enough input to redispatch work before it
 - Reply generation uses the browser-minted reply ID as acceptance and workflow key. Create/retry reserves the exact request and mode, saves the native history attempt, and confirms the session receipt before dispatch. Settlement freezes the exact result before publishing JSONL and terminal DB projection. Replaying the same command retains identity; incompatible reuse conflicts. Session endpoints read/project content, change placement/default through Continue, and perform explicit promotion; they do not maintain a second transcript writer.
 - `ReplyGeneration` journals compact prepare/model/tool/finalize decisions. Prepared context and execution state remain at `operations/replies/{replyId}.json`; settled context/tool activity is retained in canonical history for follow-ups. Terminal checkpoints are not currently garbage-collected.
 - Compile cancellation commits terminal product state before workflow interruption. Reply Stop instead commits intent while admitting/running; freeze arbitrates that intent, and a later Stop cannot overwrite a frozen result. Activities guard before side effects because interruption is cooperative.
-- Source deletion atomically records the source ID, vault, and storage path while removing the database graph. The object delete is idempotent and runs best-effort immediately; a startup/periodic reconciler repeats any unfinished cleanup. Storage failure therefore leaves an operator-visible outbox row rather than failing or resurrecting the user-visible deletion. Deletion deliberately creates no compile intent.
+- Source deletion atomically retires the current incarnation while removing its search/source/idea/membership projections. Conditional storage cleanup runs best-effort immediately and through a startup/periodic reconciler. Storage failure leaves a pending obligation for that incarnation, not permission to rediscover it or erase a replacement. Deletion deliberately creates no compile intent; existing articles remain until a separately requested compile.
 - Large source bodies, uploads, provider transcripts, and tool outputs stay in object storage. Workflow payloads and journal results contain identifiers, cursors, and compact decisions rather than response bodies.
+
+## Source ownership
+
+A public source ID survives deletion and re-import. Its private **incarnation** identifies one lifetime; ordinary updates and intentional live path moves retain it. `source_incarnations` stores the active lifetime and each retired cleanup obligation. Source markdown carries `source_id` and `source_incarnation`; the registry binds both identities to the current path.
+
+URL/file acceptance and proposal creation save the admitted incarnation with the accepted operation. Engine replay resolves that same lifetime before fetching, reading, converting or publishing content. A registered live move can change the resolved path, but a deleted incarnation cannot acquire a replacement's authority. Immediate source creation and reference/session promotion likewise capture admission before content I/O. Closed or changed ownership returns `Conflict`, not a fresh admission. Historical operations with no saved admission require a new import or proposal rather than an inferred binding.
+
+### Object writes and projections
+
+Source bodies use version-conditional PUTs. An absent path is first reserved with an ID-only control, then reread; body publication always compares against an observed non-null object version. This prevents a delayed first body write from recreating content after deletion. An uncertain body-write acknowledgment is not retried blindly: replay can recognize the exact owned bytes and repair their registry projection without another PUT.
+
+SQL transactions lock metadata only; object I/O stays outside them. Source projections require the captured incarnation, path and content hashes to remain current. Extraction reads through the same ownership boundary so replacement bytes cannot be cached under an old source snapshot. Valid extraction/render caches remain authoritative across recovery; caching precedes guarded materialization rather than depending on a successful object-write acknowledgment. Topic membership has a cascading idea foreign key, and derive admits only ideas still belonging to live sources while holding their source locks.
+
+Discovery rejects retired content and preflights duplicate identities across both cached and freshly read files. Nonce-bearing live moves retain ownership; legacy unversioned content is reconciled conservatively. Raw search pruning is scoped to captured source ownership, not a global path deletion.
+
+### Deletion and cleanup
+
+Cleanup atomically replaces an owned body with an ID-only `deleted` control. This is **body erasure, not physical object removal**. The `great-minds-source-state-v1` control format contains only the public source ID, incarnation ID and `reserved`/`deleted` state. Ordinary raw reads and existence checks hide controls; lifecycle reads retain them for fencing. A listing alone does not establish a readable source.
+
+Conditional PUT is the documented R2 capability used here; conditional DELETE is not assumed. A competing update makes cleanup remain pending, while bytes proven to belong to another incarnation are left intact. Each retired incarnation retains its own attempt count, last attempt and completion; a re-import never resets an older obligation. Before legacy cleanup, any live replacement must pass the current-source ownership check; unversioned content is stamped with its active incarnation. Missing or stale live evidence—including a managed source that has lost its incarnation header—defers cleanup instead of guessing.
+
+Local content and conversation histories share one scoped conditional backend. The process owns a stable exclusive lock inode and completes started filesystem I/O before releasing it. Test history hooks decorate that existing store instead of opening a second writer on the same root.
+
+### Introducing incarnation tracking
+
+Before applying `20261020200007_source_lifetimes`, drain accepted source/compile work, finish uploads, resolve pending proposals, and establish that old unconditional writers—including outstanding remote I/O—are quiescent. The migration refuses pending/running pipelines, uploading/processing batches and pending proposals. These metadata gates do **not** establish workflow or remote-I/O quiescence; a terminal pipeline row, a SQL lock or an elapsed delay is insufficient. Old and incarnation-aware source writers must not run concurrently.
+
+The forward migration preserves every recorded cleanup path, attempt and timestamp. Old completion moves to `legacy_completed_at`; separate completion tracks conditional reconciliation, including paths historically marked complete. Current registry rows receive distinct active legacy incarnations, even when a retired record shares their public ID or path. Old URL/file/proposal bindings remain null; unrecorded historical cycles and paths are not reconstructed. Only dangling topic memberships are removed before adding the cascading idea constraint.
+
+### Personal references
+
+New Reading Room imports write to immutable reference-UUID paths. A SQL-only per-user/canonical-URL acceptance transaction selects one reference; a losing concurrent import removes only its own unpublished object. Existing reference IDs, paths and shares are preserved. URL deduplication is separate from vault-source ownership and does not substitute for object-version fencing.
 
 ## Retry semantics
 
@@ -38,6 +70,6 @@ Admission and frozen settlement obligations are reconciled independently of work
 
 ## Work that remains outside workflows
 
-Ordinary reads and single-database CRUD do not need workflow overhead. Local/R2 lifecycle cleanup—including the source-deletion outbox—remains an idempotent maintenance loop. Browser-only review, hashing, and exact-byte reselection remain client/transport concerns.
+Ordinary reads and single-database CRUD do not need workflow overhead. Local/R2 lifecycle cleanup—including retired source incarnations—remains an idempotent maintenance loop. Browser-only review, hashing, and exact-byte reselection remain client/transport concerns.
 
-Cross-system mutations should be promoted to workflows only when partial completion is not safely convergent through a small persisted outbox and idempotent side effect. Proposal approval and reference promotion are currently retry-safe through stable source IDs and upserts, but should be reevaluated if their product contract becomes asynchronous or cancellable.
+Cross-system mutations should be promoted to workflows only when partial completion is not safely convergent through a small persisted outbox and idempotent side effect. Proposal approval and reference promotion use stable source IDs and captured incarnations for publication ownership. This does not serialize concurrent approve/reject decisions; proposal decision serialization is a separate concern. Reevaluate workflow ownership if these product contracts become asynchronous or cancellable.

@@ -17,7 +17,7 @@ import {
   searchIndex,
   sessions,
   shares,
-  sourceDeletionOutbox,
+  sourceIncarnations,
   sourceDocuments,
   sourceProposals,
   topicMembership,
@@ -49,8 +49,8 @@ import { parseFrontmatter } from "../src/markdown.ts";
 import { makeTestRandomBytes } from "../src/random.ts";
 import { startServer } from "../src/server.ts";
 import { SessionsService } from "../src/sessions.ts";
-import { SourceDocumentsService } from "../src/source-documents.ts";
-import { sourceIdForKey } from "../src/source-identity.ts";
+import { admitSource, SourceDocumentsService } from "../src/source-documents.ts";
+import { encodeSourceControl, sourceIdForKey } from "../src/source-identity.ts";
 import { TokenService } from "../src/tokens.ts";
 import { UrlIngestService } from "../src/url-ingest.ts";
 import { ConversationTurnFixture, savedConversation } from "./fixtures/saved-conversation.ts";
@@ -58,6 +58,7 @@ import {
   replyHistoryTestDatabaseUrl,
   runHistoryDatabase,
 } from "./fixtures/reply-history-database.ts";
+import { seedLegacySources } from "./fixtures/source-documents.ts";
 
 const initialTime = new Date("2026-07-10T12:00:00.000Z");
 const decodeUuid = Schema.decodeUnknownSync(Uuid);
@@ -308,6 +309,24 @@ const issueToken = (userId: Uuid) =>
     }),
   );
 
+const deletedLifetimes = () =>
+  runDb(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      return yield* db.query((d) =>
+        d
+          .select()
+          .from(sourceIncarnations)
+          .where(
+            and(
+              eq(sourceIncarnations.sourceId, id.source),
+              sql`${sourceIncarnations.deletedAt} IS NOT NULL`,
+            ),
+          ),
+      );
+    }),
+  );
+
 const seedBase = async (): Promise<Fixture> => {
   await runDb(
     Effect.gen(function* () {
@@ -370,14 +389,14 @@ const seedSourceGraph = async () => {
   await writeVaultFile(
     id.vault,
     "raw/books/capital.md",
-    "---\nsource_type: book\ntitle: Capital\n---\nCapital body.\n",
+    `---\nsource_id: ${id.source}\nsource_type: book\ntitle: Capital\n---\nCapital body.\n`,
   );
   await runDb(
     Effect.gen(function* () {
       const db = yield* Database;
       yield* db
-        .query((d) =>
-          d.insert(sourceDocuments).values({
+        .transaction((tx) =>
+          seedLegacySources(tx, {
             id: id.source,
             vaultId: id.vault,
             filePath: "raw/books/capital.md",
@@ -921,6 +940,7 @@ describe("M3.1 write endpoint integration", () => {
           .query((d) =>
             d.insert(sourceProposals).values({
               id: id.conflictingProposal,
+              sourceIncarnationId: sql`(SELECT incarnation_id FROM source_documents WHERE id = ${id.source})`,
               vaultId: id.vault,
               userId: id.bob,
               status: "PENDING",
@@ -979,10 +999,10 @@ describe("M3.1 write endpoint integration", () => {
     expect(await countTable(ideas)).toBe(0);
     expect(await countTable(topicMembership)).toBe(0);
     expect(await countTable(searchIndex)).toBe(0);
-    expect(await vaultFileExists(id.vault, "raw/books/capital.md")).toBe(false);
+    expect(await readVaultFile(id.vault, "raw/books/capital.md")).not.toContain("Capital body.");
     expect(await proposalFileExists(deletionProposalId)).toBe(false);
     expect(await countTable(compileIntents)).toBe(0);
-    expect(await countTable(sourceDeletionOutbox)).toBe(1);
+    expect(await deletedLifetimes()).toHaveLength(1);
 
     await resetDatabase();
     await resetStorage();
@@ -999,24 +1019,18 @@ describe("M3.1 write endpoint integration", () => {
     expect(await countTable(ideas)).toBe(0);
     expect(await countTable(topicMembership)).toBe(0);
     expect(await countTable(searchIndex)).toBe(0);
-    expect(await vaultFileExists(id.vault, "raw/books/capital.md")).toBe(false);
     expect(await countTable(compileIntents)).toBe(0);
-    const deletionRows = await runDb(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        return yield* db
-          .query((d) =>
-            d
-              .select()
-              .from(sourceDeletionOutbox)
-              .where(eq(sourceDeletionOutbox.sourceId, id.source)),
-          )
-          .pipe(Effect.orDie);
-      }),
-    );
+    const deletionRows = await deletedLifetimes();
     expect(deletionRows).toHaveLength(1);
     expect(deletionRows[0]).toMatchObject({ attemptCount: 1 });
     expect(deletionRows[0]?.completedAt).toBeInstanceOf(Date);
+    expect(await readVaultFile(id.vault, "raw/books/capital.md")).toBe(
+      encodeSourceControl({
+        sourceId: id.source,
+        incarnationId: deletionRows[0]!.id,
+        state: "deleted",
+      }),
+    );
 
     const missing = await api(
       "DELETE",
@@ -1041,19 +1055,7 @@ describe("M3.1 write endpoint integration", () => {
     expect(await countTable(searchIndex)).toBe(0);
     expect(await countTable(compileIntents)).toBe(0);
 
-    const pending = await runDb(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        return yield* db
-          .query((d) =>
-            d
-              .select()
-              .from(sourceDeletionOutbox)
-              .where(eq(sourceDeletionOutbox.sourceId, id.source)),
-          )
-          .pipe(Effect.orDie);
-      }),
-    );
+    const pending = await deletedLifetimes();
     expect(pending).toHaveLength(1);
     expect(pending[0]).toMatchObject({ attemptCount: 1, completedAt: null });
 
@@ -1066,23 +1068,17 @@ describe("M3.1 write endpoint integration", () => {
     );
     expect(reconciled).toBe(1);
 
-    const completed = await runDb(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        return yield* db
-          .query((d) =>
-            d
-              .select()
-              .from(sourceDeletionOutbox)
-              .where(eq(sourceDeletionOutbox.sourceId, id.source)),
-          )
-          .pipe(Effect.orDie);
-      }),
-    );
+    const completed = await deletedLifetimes();
     expect(completed).toHaveLength(1);
     expect(completed[0]).toMatchObject({ attemptCount: 2 });
     expect(completed[0]?.completedAt).toBeInstanceOf(Date);
-    expect(await vaultFileExists(id.vault, "raw/books/capital.md")).toBe(false);
+    expect(await readVaultFile(id.vault, "raw/books/capital.md")).toBe(
+      encodeSourceControl({
+        sourceId: id.source,
+        incarnationId: completed[0]!.id,
+        state: "deleted",
+      }),
+    );
   });
 
   it("ingests raw markdown with owner guards, frontmatter, hashes, and compile intents", async () => {
@@ -1098,8 +1094,9 @@ describe("M3.1 write endpoint integration", () => {
     const rawPath = String(rawResult.file_path);
     expect(rawPath).toBe(`raw/docs/raw-direct-${rawId}.md`);
     const rawText = await readVaultFile(id.vault, rawPath);
+    const incarnationId = decodeUuid(parseFrontmatter(rawText).frontmatter.source_incarnation);
     expect(rawText).toBe(
-      `---\nsource_id: ${rawId}\nsource_type: document\norigin: fixture\n---\n# Raw Title\n\nRaw body paragraph. ^p0\n`,
+      `---\nsource_id: ${rawId}\nsource_type: document\norigin: fixture\nsource_incarnation: ${incarnationId}\n---\n# Raw Title\n\nRaw body paragraph. ^p0\n`,
     );
 
     const rawRows = await runDb(
@@ -1121,6 +1118,7 @@ describe("M3.1 write endpoint integration", () => {
       filePath: rawPath,
       sourceType: "document",
       origin: "fixture",
+      incarnationId,
       fileHash: fileContentHash(rawText),
       bodyHash: bodyContentHash("# Raw Title\n\nRaw body paragraph. ^p0\n"),
       clientHash: null,
@@ -1497,8 +1495,8 @@ describe("M3.1 write endpoint integration", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         yield* db
-          .query((d) =>
-            d.insert(sourceDocuments).values([
+          .transaction((tx) =>
+            seedLegacySources(tx, [
               {
                 id: id.m32SourceA,
                 vaultId: id.vault,
@@ -1743,8 +1741,9 @@ describe("M3.1 write endpoint integration", () => {
         });
         expect(created.status).toBe(201);
         const createdBody = asRecord(created.body);
+        const referencePath = `refs/article-${createdBody.id}.md`;
         expect(createdBody).toMatchObject({
-          file_path: "refs/article.md",
+          file_path: referencePath,
           title: "Personal Article",
           url: `${origin}/article`,
           origin: new URL(origin).host,
@@ -1752,7 +1751,7 @@ describe("M3.1 write endpoint integration", () => {
           published: "2024-03-01",
         });
 
-        const content = await readUserFile(id.alice, "refs/article.md");
+        const content = await readUserFile(id.alice, referencePath);
         expect(content).toContain("source_type: document");
         expect(content).toContain(`url: ${origin}/article`);
         expect(content).toContain("First personal paragraph");
@@ -1771,7 +1770,7 @@ describe("M3.1 write endpoint integration", () => {
         );
         expect(storedRows).toHaveLength(1);
         expect(storedRows[0]).toMatchObject({
-          filePath: "refs/article.md",
+          filePath: referencePath,
           fileHash: fileContentHash(content),
           bodyHash: bodyContentHash(parseFrontmatter(content).body),
           title: "Personal Article",
@@ -1796,14 +1795,22 @@ describe("M3.1 write endpoint integration", () => {
           pagination: { limit: 10, offset: 0, total: 1 },
         });
 
-        const read = await api("GET", "/me/refs/doc?path=refs/article.md", aliceToken);
+        const read = await api(
+          "GET",
+          `/me/refs/doc?path=${encodeURIComponent(referencePath)}`,
+          aliceToken,
+        );
         expect(read.status).toBe(200);
         expect(asRecord(read.body)).toMatchObject({
           reference: createdBody,
         });
         expect(String(asRecord(read.body).body)).toContain("First personal paragraph");
 
-        const otherUser = await api("GET", "/me/refs/doc?path=refs/article.md", bobToken);
+        const otherUser = await api(
+          "GET",
+          `/me/refs/doc?path=${encodeURIComponent(referencePath)}`,
+          bobToken,
+        );
         expect(otherUser.status).toBe(404);
         const traversal = await api("GET", "/me/refs/doc?path=refs%5Cescape.md", aliceToken);
         expect(traversal.status).toBe(400);
@@ -1820,22 +1827,32 @@ describe("M3.1 write endpoint integration", () => {
           url: `${origin}/missing`,
         });
         expect(missingCreated.status).toBe(201);
-        await rm(join(currentState().storageRoot, "users", id.alice, "refs", "missing.md"));
-        const missingFile = await api("GET", "/me/refs/doc?path=refs/missing.md", aliceToken);
+        const missingPath = String(asRecord(missingCreated.body).file_path);
+        await rm(join(currentState().storageRoot, "users", id.alice, missingPath));
+        const missingFile = await api(
+          "GET",
+          `/me/refs/doc?path=${encodeURIComponent(missingPath)}`,
+          aliceToken,
+        );
         expect(missingFile.status).toBe(404);
 
         const storyOne = await api("POST", "/me/refs", aliceToken, {
           url: `${origin}/one/story`,
         });
         expect(storyOne.status).toBe(201);
-        expect(asRecord(storyOne.body).file_path).toBe("refs/story.md");
+        const storyOnePath = `refs/story-${asRecord(storyOne.body).id}.md`;
+        expect(asRecord(storyOne.body).file_path).toBe(storyOnePath);
         const storyTwo = await api("POST", "/me/refs", aliceToken, {
           url: `${origin}/two/story`,
         });
         expect(storyTwo.status).toBe(201);
         const storyTwoPath = String(asRecord(storyTwo.body).file_path);
-        expect(storyTwoPath).toMatch(/^refs\/story-[0-9a-f]{8}\.md$/);
-        const storyOneRead = await api("GET", "/me/refs/doc?path=refs/story.md", aliceToken);
+        expect(storyTwoPath).toBe(`refs/story-${asRecord(storyTwo.body).id}.md`);
+        const storyOneRead = await api(
+          "GET",
+          `/me/refs/doc?path=${encodeURIComponent(storyOnePath)}`,
+          aliceToken,
+        );
         expect(storyOneRead.status).toBe(200);
         expect(asRecord(asRecord(storyOneRead.body).reference).url).toBe(`${origin}/one/story`);
         const storyTwoRead = await api("GET", `/me/refs/doc?path=${storyTwoPath}`, aliceToken);
@@ -1844,9 +1861,68 @@ describe("M3.1 write endpoint integration", () => {
 
         const deleted = await api("DELETE", `/me/refs/${createdBody.id}`, aliceToken);
         expect(deleted.status).toBe(204);
-        expect(await userFileExists(id.alice, "refs/article.md")).toBe(false);
+        expect(await userFileExists(id.alice, referencePath)).toBe(false);
         const deletedAgain = await api("DELETE", `/me/refs/${createdBody.id}`, aliceToken);
         expect(deletedAgain.status).toBe(404);
+      },
+    );
+  });
+
+  it("keeps concurrent same-basename imports separate and accepts one reference per URL", async () => {
+    const { aliceToken } = currentFixture();
+    const waiting: (() => void)[] = [];
+    const release = () => {
+      for (const respond of waiting.splice(0)) respond();
+    };
+    let flushEarly = false;
+    await withLocalHttpServer(
+      (request, response) => {
+        waiting.push(() => {
+          response.writeHead(200, { "content-type": "text/plain" });
+          response.end(`The source at ${request.url} retains its own distinct text.`);
+        });
+        if (waiting.length === 2 || flushEarly) release();
+      },
+      async (origin) => {
+        const retainedPaths = new Set<string>();
+        for (const urls of [
+          ["/one/story", "/two/story"],
+          ["/same/story", "/same/story"],
+        ]) {
+          flushEarly = false;
+          const settled = await Promise.allSettled(
+            urls.map(async (path) => {
+              try {
+                return await api("POST", "/me/refs", aliceToken, { url: `${origin}${path}` });
+              } finally {
+                flushEarly = true;
+                release();
+              }
+            }),
+          );
+          const results = settled.map((result) => {
+            if (result.status === "rejected") throw result.reason;
+            return result.value;
+          });
+          const duplicate = urls[0] === urls[1];
+          expect(results.map((result) => result.status).sort()).toEqual(
+            duplicate ? [200, 201] : [201, 201],
+          );
+          const references = results.map((result) => asRecord(result.body));
+          expect(new Set(references.map((reference) => reference.id)).size).toBe(duplicate ? 1 : 2);
+          for (const [position, reference] of references.entries()) {
+            const path = `refs/story-${reference.id}.md`;
+            expect(reference.file_path).toBe(path);
+            expect(await readUserFile(id.alice, path)).toContain(
+              `The source at ${urls[position]} retains its own distinct text.`,
+            );
+            retainedPaths.add(path.slice("refs/".length));
+          }
+        }
+        expect(await countTable(userDocuments)).toBe(3);
+        expect(
+          (await readdir(join(currentState().storageRoot, "users", id.alice, "refs"))).sort(),
+        ).toEqual([...retainedPaths].sort());
       },
     );
   });
@@ -1866,19 +1942,20 @@ describe("M3.1 write endpoint integration", () => {
         });
         expect(created.status).toBe(201);
         expect(asRecord(created.body).title).toBe("Renamable Article");
-        const contentBefore = await readUserFile(id.alice, "refs/article.md");
+        const referencePath = String(asRecord(created.body).file_path);
+        const contentBefore = await readUserFile(id.alice, referencePath);
 
         const renamed = await api("PATCH", `/me/refs/${asRecord(created.body).id}`, aliceToken, {
           title: "  Cleaned Up Title  ",
         });
         expect(renamed.status).toBe(200);
         expect(asRecord(renamed.body)).toMatchObject({
-          file_path: "refs/article.md",
+          file_path: referencePath,
           title: "Cleaned Up Title",
         });
 
         // The stored markdown is untouched; only the user_documents row moves.
-        expect(await readUserFile(id.alice, "refs/article.md")).toBe(contentBefore);
+        expect(await readUserFile(id.alice, referencePath)).toBe(contentBefore);
         const storedRows = await runDb(
           Effect.gen(function* () {
             const db = yield* Database;
@@ -1891,7 +1968,7 @@ describe("M3.1 write endpoint integration", () => {
         );
         expect(storedRows).toHaveLength(1);
         expect(storedRows[0]).toMatchObject({
-          filePath: "refs/article.md",
+          filePath: referencePath,
           title: "Cleaned Up Title",
         });
 
@@ -1946,6 +2023,7 @@ describe("M3.1 write endpoint integration", () => {
         });
         expect(created.status).toBe(201);
         expect(asRecord(created.body).title).toBe("Origin Title Article");
+        const referencePath = String(asRecord(created.body).file_path);
 
         await runDb(
           Effect.gen(function* () {
@@ -1959,7 +2037,7 @@ describe("M3.1 write endpoint integration", () => {
                   query: "Anchored session on the reference",
                   origin: {
                     kind: "document",
-                    doc_path: "refs/article.md",
+                    doc_path: referencePath,
                     origin_scope: "personal",
                     anchor:
                       "Origin title first paragraph with enough detail for article extraction.",
@@ -1988,7 +2066,7 @@ describe("M3.1 write endpoint integration", () => {
 
         const before = await api(
           "GET",
-          `/vaults/${id.vault}/sessions/by-origin?doc_path=${encodeURIComponent("refs/article.md")}`,
+          `/vaults/${id.vault}/sessions/by-origin?doc_path=${encodeURIComponent(referencePath)}`,
           aliceToken,
         );
         expect(before.status).toBe(200);
@@ -2004,7 +2082,7 @@ describe("M3.1 write endpoint integration", () => {
 
         const after = await api(
           "GET",
-          `/vaults/${id.vault}/sessions/by-origin?doc_path=${encodeURIComponent("refs/article.md")}`,
+          `/vaults/${id.vault}/sessions/by-origin?doc_path=${encodeURIComponent(referencePath)}`,
           aliceToken,
         );
         expect(after.status).toBe(200);
@@ -2035,7 +2113,7 @@ describe("M3.1 write endpoint integration", () => {
         const referencePath = String(createdReference.file_path);
         const personalBefore = await readUserFile(id.alice, referencePath);
         const sourceId = sourceIdForKey(id.vault, `reference:${referenceId}`);
-        const sourcePath = `raw/docs/promoted-${sourceId}.md`;
+        const sourcePath = `raw/docs/promoted-${referenceId}-${sourceId}.md`;
 
         const promoted = await api("POST", `/vaults/${id.vault}/ingest/reference`, aliceToken, {
           path: referencePath,
@@ -2217,8 +2295,9 @@ describe("M3.1 write endpoint integration", () => {
         const sourceId = sourceIdForKey(id.vault, `url:${canonicalUrl}`);
         const sourcePath = `raw/docs/ok-${sourceId}.md`;
         const markdown = await readVaultFile(id.vault, sourcePath);
+        const incarnationId = decodeUuid(parseFrontmatter(markdown).frontmatter.source_incarnation);
         expect(markdown).toBe(
-          `---\nsource_id: ${sourceId}\ncanonical_url: ${canonicalUrl}\nsource_type: document\nurl: ${canonicalUrl}\norigin: ${new URL(origin).host}\n---\n# Local Article\n\nConverted paragraph. ^p0\n`,
+          `---\nsource_id: ${sourceId}\ncanonical_url: ${canonicalUrl}\nsource_type: document\nurl: ${canonicalUrl}\norigin: ${new URL(origin).host}\nsource_incarnation: ${incarnationId}\n---\n# Local Article\n\nConverted paragraph. ^p0\n`,
         );
 
         const successRows = await runDb(
@@ -2251,6 +2330,7 @@ describe("M3.1 write endpoint integration", () => {
         expect(successRows.sourceRows).toHaveLength(1);
         expect(successRows.sourceRows[0]).toMatchObject({
           id: sourceId,
+          incarnationId,
           filePath: sourcePath,
           sourceType: "document",
           url: canonicalUrl,
@@ -2260,6 +2340,7 @@ describe("M3.1 write endpoint integration", () => {
         expect(successRows.runRows[0]?.compileIntentId).toBe(successRows.intentRows[0]?.id);
         expect(successRows.requestRows[0]).toMatchObject({
           id: id.m32UrlRun,
+          sourceIncarnationId: incarnationId,
           createdBy: id.alice,
           canonicalUrl,
           dispatchedTaskId: id.m32UrlRun,
@@ -2434,15 +2515,23 @@ describe("M3.1 write endpoint integration", () => {
                 }),
               )
               .pipe(Effect.orDie);
-            yield* db
-              .query((d) =>
-                d.insert(urlIngestRequests).values({
+            yield* db.transaction((tx) =>
+              Effect.gen(function* () {
+                const sourceId = sourceIdForKey(id.vault, `url:${reconciledUrl}`);
+                const source = yield* admitSource(
+                  tx,
+                  id.vault,
+                  sourceId,
+                  `raw/docs/reconcile-${sourceId}.md`,
+                );
+                yield* tx.insert(urlIngestRequests).values({
                   id: id.m32UrlReconcileRun,
                   createdBy: id.alice,
                   canonicalUrl: reconciledUrl,
-                }),
-              )
-              .pipe(Effect.orDie);
+                  sourceIncarnationId: source.incarnationId,
+                });
+              }),
+            );
             const urlIngest = yield* UrlIngestService;
             expect(yield* urlIngest.reconcileOnce()).toBe(1);
           }),
@@ -2506,8 +2595,11 @@ describe("M3.1 write endpoint integration", () => {
       proposal_id: null,
     });
     const promotedMarkdown = await readVaultFile(id.vault, ownerSourcePath);
+    const incarnationId = decodeUuid(
+      parseFrontmatter(promotedMarkdown).frontmatter.source_incarnation,
+    );
     expect(promotedMarkdown).toBe(
-      `---\nsource_id: ${ownerSourceId}\nsource_type: session\norigin: session-exchange\nsession_id: 019f4be6-1e00-7607-8809-0a0b0c0d0e0f\nexchange_id: ${EX_PROMOTE}\nsession_query: What should be promoted?\nsource_doc_path: raw/books/capital.md\nsource_anchor: anchor quote\nsource_paragraph_index: 4\n---\nPromoted answer body. ^p0\n`,
+      `---\nsource_id: ${ownerSourceId}\nsource_type: session\norigin: session-exchange\nsession_id: 019f4be6-1e00-7607-8809-0a0b0c0d0e0f\nexchange_id: ${EX_PROMOTE}\nsession_query: What should be promoted?\nsource_doc_path: raw/books/capital.md\nsource_anchor: anchor quote\nsource_paragraph_index: 4\nsource_incarnation: ${incarnationId}\n---\nPromoted answer body. ^p0\n`,
     );
     const promotedRows = await runDb(
       Effect.gen(function* () {
@@ -2526,6 +2618,7 @@ describe("M3.1 write endpoint integration", () => {
     );
     expect(promotedRows).toHaveLength(1);
     expect(promotedRows[0]).toMatchObject({
+      incarnationId,
       sourceType: "session",
       origin: "session-exchange",
       provenanceSessionId: sessionId,

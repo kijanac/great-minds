@@ -27,15 +27,13 @@ import { rawFileHash } from "./crypto.ts";
 import { jobResponse } from "./job-response.ts";
 import { StructuredLogger } from "./logging.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
-import { SourceDocumentsService } from "./source-documents.ts";
+import { admitSource, SourceDocumentsService } from "./source-documents.ts";
+import { sourceIdForKey } from "./source-identity.ts";
 import {
   STAGED_FILE_INGEST_STEP_LABELS,
   StagedFileIngestWorkflow,
 } from "./staged-file-ingest-workflow.ts";
-import {
-  StagedStorage,
-  StagedUploadGateway,
-} from "./storage.ts";
+import { StagedStorage, StagedUploadGateway } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
 
 const STAGED_TASK_TYPE = "staged_file_ingest";
@@ -207,21 +205,26 @@ export const FileIngestBatchesLive = Layer.effect(
         );
 
     const loadFiles = (batchId: Uuid) =>
-      db.query((d) => d
-        .select({
-          name: fileIngestFiles.name,
-          size: fileIngestFiles.size,
-          hash: fileIngestFiles.hash,
-          mimetype: fileIngestFiles.mimetype,
-          needsCompile: fileIngestFiles.needsCompile,
-          status: fileIngestFiles.status,
-          error: fileIngestFiles.error,
-        })
-        .from(fileIngestFiles)
-        .where(eq(fileIngestFiles.batchId, batchId))
-        .orderBy(asc(fileIngestFiles.position)))
+      db
+        .query((d) =>
+          d
+            .select({
+              name: fileIngestFiles.name,
+              size: fileIngestFiles.size,
+              hash: fileIngestFiles.hash,
+              mimetype: fileIngestFiles.mimetype,
+              needsCompile: fileIngestFiles.needsCompile,
+              status: fileIngestFiles.status,
+              error: fileIngestFiles.error,
+            })
+            .from(fileIngestFiles)
+            .where(eq(fileIngestFiles.batchId, batchId))
+            .orderBy(asc(fileIngestFiles.position)),
+        )
         .pipe(
-          Effect.map((rows) => rows.map((row) => ({ ...row, hash: row.hash as FileFingerprint } satisfies FileRecord))),
+          Effect.map((rows) =>
+            rows.map((row) => ({ ...row, hash: row.hash as FileFingerprint }) satisfies FileRecord),
+          ),
         );
 
     const requireMemberBatch = (userId: Uuid, batchId: Uuid) =>
@@ -639,18 +642,33 @@ export const FileIngestBatchesLive = Layer.effect(
                 status: "uploading",
                 expiresAt,
               });
-              yield* tx.insert(fileIngestFiles).values(
-                manifest.map((file, position) => ({
-                  batchId,
+              const sources = manifest
+                .map((file, position) => ({
+                  file,
                   position,
-                  hash: file.hash,
-                  name: file.name,
-                  size: file.size,
-                  mimetype: file.mimetype ?? "",
-                  needsCompile: !existingHashes.has(file.hash),
-                  status: "pending" as const,
-                })),
+                  sourceId: sourceIdForKey(vaultId, `upload:${file.hash}`),
+                }))
+                .sort((left, right) => left.sourceId.localeCompare(right.sourceId));
+              const files = yield* Effect.forEach(
+                sources,
+                ({ file, position, sourceId }) => {
+                  return admitSource(tx, vaultId, sourceId, `raw/docs/${sourceId}.md`).pipe(
+                    Effect.map((source) => ({
+                      batchId,
+                      position,
+                      sourceIncarnationId: source.incarnationId,
+                      hash: file.hash,
+                      name: file.name,
+                      size: file.size,
+                      mimetype: file.mimetype ?? "",
+                      needsCompile: !existingHashes.has(file.hash),
+                      status: "pending" as const,
+                    })),
+                  );
+                },
+                { concurrency: 1 },
               );
+              yield* tx.insert(fileIngestFiles).values(files);
               return true;
             }),
           );

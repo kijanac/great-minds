@@ -1,4 +1,6 @@
+import { Database, fileIngestFiles } from "@great-minds/database";
 import { FileFingerprint, Uuid } from "@great-minds/domain";
+import { and, eq } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import * as Activity from "effect/unstable/workflow/Activity";
 
@@ -6,7 +8,8 @@ import { AppConfig, type AppConfigShape } from "../../src/config.ts";
 import { DrizzleLive } from "../../src/db.ts";
 import { StructuredLogger } from "../../src/logging.ts";
 import { PipelineRunsServiceLive } from "../../src/pipeline-runs.ts";
-import { identifySourceMarkdown, sourceIdForKey } from "../../src/source-identity.ts";
+import { identifySourceMarkdown } from "../../src/source-identity.ts";
+import { versionedSourceStorage } from "./source-documents.ts";
 import { SourceDocumentsService, SourceDocumentsServiceLive } from "../../src/source-documents.ts";
 import {
   StagedFileIngestPersistResult,
@@ -92,10 +95,9 @@ const LoggerLive = Layer.succeed(StructuredLogger, {
   error: () => Effect.void,
 });
 const StorageLive = Layer.succeed(ContentStorage, {
+  ...versionedSourceStorage(new Map()),
   listMarkdown: () => Effect.succeed([]),
-  readText: () => Effect.die("unused"),
   writeText: () => Effect.void,
-  exists: () => Effect.succeed(false),
   deletePath: () => Effect.void,
   clear: () => Effect.void,
 });
@@ -120,17 +122,27 @@ const PauseAfterPersistLive = StagedFileIngestWorkflow.toLayer(() => {
     success: StagedFileIngestPersistResult,
     execute: Effect.gen(function* () {
       const documents = yield* SourceDocumentsService;
-      const sourceId = sourceIdForKey(vaultId, `upload:${hash}`);
-      yield* documents.batchIndex(vaultId, [
-        {
-          filePath: `raw/docs/${sourceId}.md`,
-          content: identifySourceMarkdown(
+      const db = yield* Database;
+      const rows = yield* db.query((d) =>
+        d
+          .select({ id: fileIngestFiles.sourceIncarnationId })
+          .from(fileIngestFiles)
+          .where(and(eq(fileIngestFiles.batchId, pipelineRunId), eq(fileIngestFiles.hash, hash))),
+      );
+      const incarnationId = rows[0]?.id;
+      if (incarnationId === undefined || incarnationId === null)
+        throw new Error("Resume fixture has no accepted source admission");
+      const source = yield* documents.admission(vaultId, incarnationId).pipe(Effect.orDie);
+      yield* documents
+        .write(
+          source,
+          identifySourceMarkdown(
             "---\nsource_type: document\n---\n# Persisted before crash",
-            sourceId,
+            source.id,
           ),
-          clientHash: hash,
-        },
-      ]);
+          hash,
+        )
+        .pipe(Effect.orDie);
       return { ingested: 1, skipped: 0, failures: [], cleanupHashes: [hash] };
     }),
   });

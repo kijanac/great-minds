@@ -344,6 +344,7 @@ export const fileIngestFiles = pgTable(
     size: bigint("size", { mode: "number" }).notNull(),
     mimetype: text("mimetype").notNull(),
     needsCompile: boolean("needs_compile").notNull(),
+    sourceIncarnationId: uuidColumn("source_incarnation_id"),
     status: fileIngestFileStatus("status").notNull(),
     error: text("error"),
     uploadedAt: timestamptz("uploaded_at"),
@@ -357,6 +358,11 @@ export const fileIngestFiles = pgTable(
       foreignColumns: [fileIngestBatches.id],
       name: "file_ingest_files_batch_id_fkey",
     }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.sourceIncarnationId],
+      foreignColumns: [sourceIncarnations.id],
+      name: "file_ingest_files_source_incarnation_id_fkey",
+    }),
     primaryKey({ columns: [table.batchId, table.hash] }),
     unique("uq_file_ingest_files_batch_position").on(table.batchId, table.position),
     check("ck_file_ingest_files_position_nonnegative", sql`${table.position} >= 0`),
@@ -372,6 +378,7 @@ export const urlIngestRequests = pgTable(
     id: uuidColumn("id").primaryKey(),
     createdBy: uuidColumn("created_by").notNull(),
     canonicalUrl: text("canonical_url").notNull(),
+    sourceIncarnationId: uuidColumn("source_incarnation_id"),
     origin: text("origin"),
     dispatchedAt: timestamptz("dispatched_at"),
     dispatchedTaskId: uuidColumn("dispatched_task_id"),
@@ -389,6 +396,11 @@ export const urlIngestRequests = pgTable(
       foreignColumns: [users.id],
       name: "url_ingest_requests_created_by_fkey",
     }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.sourceIncarnationId],
+      foreignColumns: [sourceIncarnations.id],
+      name: "url_ingest_requests_source_incarnation_id_fkey",
+    }),
     index("ix_url_ingest_requests_pending")
       .on(table.createdAt)
       .where(sql`${table.dispatchedAt} IS NULL`),
@@ -584,11 +596,51 @@ export const replies = pgTable(
   ],
 );
 
+export const sourceIncarnations = pgTable(
+  "source_incarnations",
+  {
+    id: uuidColumn("id").defaultRandom().primaryKey(),
+    sourceId: uuidColumn("source_id").notNull(),
+    vaultId: uuidColumn("vault_id").notNull(),
+    filePath: text("file_path").notNull(),
+    unversioned: boolean("unversioned").default(false).notNull(),
+    deletedAt: timestamptz("deleted_at"),
+    legacyCompletedAt: timestamptz("legacy_completed_at"),
+    attemptCount: integer("attempt_count").default(0).notNull(),
+    lastAttemptAt: timestamptz("last_attempt_at"),
+    completedAt: timestamptz("completed_at"),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+    updatedAt: timestamptz("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.vaultId],
+      foreignColumns: [vaults.id],
+      name: "source_incarnations_vault_id_fkey",
+    }).onDelete("cascade"),
+    unique("source_incarnations_identity").on(table.id, table.sourceId, table.vaultId),
+    uniqueIndex("source_incarnations_active_source")
+      .on(table.sourceId)
+      .where(sql`${table.deletedAt} IS NULL`),
+    uniqueIndex("source_incarnations_active_path")
+      .on(table.vaultId, table.filePath)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("source_incarnations_pending_cleanup")
+      .on(table.deletedAt)
+      .where(sql`${table.deletedAt} IS NOT NULL AND ${table.completedAt} IS NULL`),
+    check(
+      "source_incarnations_cleanup_requires_deletion",
+      sql`${table.deletedAt} IS NOT NULL OR (${table.attemptCount} = 0 AND ${table.lastAttemptAt} IS NULL AND ${table.completedAt} IS NULL AND ${table.legacyCompletedAt} IS NULL)`,
+    ),
+  ],
+);
+
 export const sourceDocuments = pgTable(
   "source_documents",
   {
     id: uuidColumn("id").primaryKey(),
     vaultId: uuidColumn("vault_id").notNull(),
+    incarnationId: uuidColumn("incarnation_id").notNull(),
     filePath: text("file_path").notNull(),
     fileHash: text("file_hash").notNull(),
     bodyHash: text("body_hash").notNull(),
@@ -628,6 +680,15 @@ export const sourceDocuments = pgTable(
       foreignColumns: [vaults.id],
       name: "source_documents_vault_id_fkey",
     }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.incarnationId, table.id, table.vaultId],
+      foreignColumns: [
+        sourceIncarnations.id,
+        sourceIncarnations.sourceId,
+        sourceIncarnations.vaultId,
+      ],
+      name: "source_documents_incarnation_fkey",
+    }),
     unique("source_documents_vault_id_file_path_key").on(table.vaultId, table.filePath),
     uniqueIndex("uq_source_documents_vault_canonical_url")
       .on(table.vaultId, table.canonicalUrl)
@@ -636,30 +697,6 @@ export const sourceDocuments = pgTable(
       .on(table.vaultId, table.clientHash)
       .where(sql`${table.clientHash} IS NOT NULL`),
     index("ix_source_documents_vault_id").on(table.vaultId),
-  ],
-);
-
-export const sourceDeletionOutbox = pgTable(
-  "source_deletion_outbox",
-  {
-    sourceId: uuidColumn("source_id").primaryKey(),
-    vaultId: uuidColumn("vault_id").notNull(),
-    filePath: text("file_path").notNull(),
-    attemptCount: integer("attempt_count").default(0).notNull(),
-    lastAttemptAt: timestamptz("last_attempt_at"),
-    completedAt: timestamptz("completed_at"),
-    createdAt: timestamptz("created_at").defaultNow().notNull(),
-    updatedAt: timestamptz("updated_at").defaultNow().notNull(),
-  },
-  (table) => [
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "source_deletion_outbox_vault_id_fkey",
-    }).onDelete("cascade"),
-    index("ix_source_deletion_outbox_pending")
-      .on(table.createdAt)
-      .where(sql`${table.completedAt} IS NULL`),
   ],
 );
 
@@ -725,6 +762,7 @@ export const sourceProposals = pgTable(
     author: text("author"),
     destPath: text("dest_path").notNull(),
     sourceId: uuidColumn("source_id").notNull(),
+    sourceIncarnationId: uuidColumn("source_incarnation_id"),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
   (table) => [
@@ -738,6 +776,11 @@ export const sourceProposals = pgTable(
       foreignColumns: [users.id],
       name: "source_proposals_user_id_fkey",
     }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.sourceIncarnationId],
+      foreignColumns: [sourceIncarnations.id],
+      name: "source_proposals_source_incarnation_id_fkey",
+    }),
     index("ix_source_proposals_source_id").on(table.sourceId),
     index("ix_source_proposals_vault_id").on(table.vaultId),
   ],
@@ -833,6 +876,11 @@ export const topicMembership = pgTable(
       columns: [table.topicId],
       foreignColumns: [topics.topicId],
       name: "topic_membership_topic_id_fkey",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.ideaId],
+      foreignColumns: [ideas.ideaId],
+      name: "topic_membership_idea_id_fkey",
     }).onDelete("cascade"),
     primaryKey({ columns: [table.topicId, table.ideaId] }),
   ],

@@ -10,7 +10,6 @@ import {
   prompts,
   replies,
   searchIndex,
-  sourceDocuments,
   topics,
   users,
   vaultMemberships,
@@ -50,17 +49,13 @@ import { ReplyAdmission } from "../src/conversation-history/admission.ts";
 import { ReplySettlement } from "../src/conversation-history/settlement.ts";
 import { completion } from "./fixtures/conversation-history.ts";
 import { parseHistory } from "../src/conversation-history/history.ts";
-import {
-  HistoryStore,
-  makeHistoryStore,
-  type HistoryStoreShape,
-} from "../src/conversation-history/store.ts";
-import { openLocalConditionalObjectStore } from "../src/storage/local-conditional-object-store.ts";
+import type { HistoryStoreShape } from "../src/conversation-history/store.ts";
 import { storageBackendError } from "../src/storage/object-store.ts";
 import {
   replyHistoryTestDatabaseUrl,
   runHistoryDatabase,
 } from "./fixtures/reply-history-database.ts";
+import { seedLegacySources } from "./fixtures/source-documents.ts";
 import { TokenService } from "../src/tokens.ts";
 import {
   finishPart,
@@ -262,19 +257,7 @@ const startHarness = async (options: HarnessOptions) => {
     costLookup: costs.layer,
     parallelSearch:
       options.parallel?.layer ?? options.parallelLayer ?? makeDisabledParallelSearch(),
-    ...(decorateHistory === undefined
-      ? {}
-      : {
-          histories: Layer.effect(
-            HistoryStore,
-            Effect.gen(function* () {
-              const store = makeHistoryStore(
-                yield* openLocalConditionalObjectStore(storageRoot).pipe(Effect.orDie),
-              );
-              return decorateHistory(store);
-            }),
-          ),
-        }),
+    ...(decorateHistory === undefined ? {} : { decorateHistory }),
   });
   const started = await startServer({ layer: appLayer, host: "127.0.0.1", port: 0 });
   state = { started, storageRoot, token: "" };
@@ -404,8 +387,8 @@ const seedFixtures = async (webSearch: boolean) => {
         )
         .pipe(Effect.orDie);
       yield* db
-        .query((d) =>
-          d.insert(sourceDocuments).values({
+        .transaction((tx) =>
+          seedLegacySources(tx, {
             id: id.source,
             vaultId: id.vault,
             filePath: "raw/texts/source.md",

@@ -544,7 +544,9 @@ describe("share links", () => {
                   query: "What does the quote mean?",
                   origin: {
                     kind: "document",
-                    doc_path: "refs/article.md",
+                    doc_path: Schema.decodeUnknownSync(Schema.String)(
+                      asRecord(reference.body).file_path,
+                    ),
                     origin_scope: "personal",
                     anchor: "Annotated first paragraph with enough words to extract.",
                     paragraph: "Annotated first paragraph with enough words to extract.",

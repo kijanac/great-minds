@@ -30,12 +30,11 @@ import { HistorySettlementWrite } from "../src/conversation-history/schema.ts";
 import { ReplySettlement } from "../src/conversation-history/settlement.ts";
 import {
   HistoryStore,
-  makeHistoryStore,
+  type HistoryStoreShape,
   type HistoryAddress,
 } from "../src/conversation-history/store.ts";
 import { RandomBytesService } from "../src/random.ts";
 import { PdfRenderer } from "../src/publication/pdf.ts";
-import { openLocalConditionalObjectStore } from "../src/storage/local-conditional-object-store.ts";
 import { VaultAccessService } from "../src/vaults.ts";
 import { command } from "./fixtures/reply-admission.ts";
 import { completion } from "./fixtures/conversation-history.ts";
@@ -51,6 +50,7 @@ import {
   replyHistoryTestDatabaseUrl,
   runHistoryDatabase,
 } from "./fixtures/reply-history-database.ts";
+import { seedLegacySources } from "./fixtures/source-documents.ts";
 
 const initialTime = new Date("2026-07-09T12:00:00.000Z");
 const uuid = Schema.decodeUnknownSync(Uuid);
@@ -107,24 +107,15 @@ let afterHistoryRead: ((address: HistoryAddress) => Effect.Effect<void>) | undef
 let pdfRenders = 0;
 let pdfWait: { started: Deferred.Deferred<void>; interrupted: Deferred.Deferred<void> } | null =
   null;
-const readHistoriesLive = (directory: string) =>
-  Layer.effect(
-    HistoryStore,
+const decorateReadHistories = (histories: HistoryStoreShape): HistoryStoreShape => ({
+  ...histories,
+  read: (address, receipt) =>
     Effect.gen(function* () {
-      const histories = makeHistoryStore(
-        yield* openLocalConditionalObjectStore(directory).pipe(Effect.orDie),
-      );
-      return {
-        ...histories,
-        read: (address, receipt) =>
-          Effect.gen(function* () {
-            const file = yield* histories.read(address, receipt);
-            if (afterHistoryRead !== undefined) yield* afterHistoryRead(address);
-            return file;
-          }),
-      } satisfies HistoryStore["Service"];
+      const file = yield* histories.read(address, receipt);
+      if (afterHistoryRead !== undefined) yield* afterHistoryRead(address);
+      return file;
     }),
-  );
+});
 
 type TestState = {
   readonly started: Awaited<ReturnType<typeof startServer>>;
@@ -226,7 +217,7 @@ const buildTestState = async () => {
   const configLayer = Layer.succeed(AppConfig, testConfig(databaseUrl(), storageRoot));
   const appLayer = makeAppLayer({
     config: configLayer,
-    histories: readHistoriesLive(storageRoot),
+    decorateHistory: decorateReadHistories,
     pdfRenderer: Layer.succeed(PdfRenderer, {
       render: () =>
         Effect.gen(function* () {
@@ -587,8 +578,8 @@ const seedFixtures = async (): Promise<Fixture> => {
         )
         .pipe(Effect.orDie);
       yield* db
-        .query((d) =>
-          d.insert(sourceDocuments).values([
+        .transaction((tx) =>
+          seedLegacySources(tx, [
             {
               id: id.sourceBook,
               vaultId: id.vaultAlpha,
@@ -2349,11 +2340,15 @@ describe("read-only HTTP integration", () => {
       sourceType: "document",
       updatedAt: new Date(index < 80 ? "2026-07-09T12:00:00Z" : "2026-07-08T12:00:00Z"),
     }));
-    await runDb(Effect.gen(function* () {
-      const db = yield* Database;
-      yield* db.query((d) => d.delete(sourceDocuments).where(eq(sourceDocuments.vaultId, id.vaultAlpha)));
-      yield* db.query((d) => d.insert(sourceDocuments).values([...sources].reverse()));
-    }));
+    await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db.query((d) =>
+          d.delete(sourceDocuments).where(eq(sourceDocuments.vaultId, id.vaultAlpha)),
+        );
+        yield* db.transaction((tx) => seedLegacySources(tx, [...sources].reverse()));
+      }),
+    );
     for (const limit of [50, 37]) {
       const ids: unknown[] = [];
       for (let offset = 0; offset < sources.length; offset += limit) {

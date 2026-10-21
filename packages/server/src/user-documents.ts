@@ -17,9 +17,9 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
 import { AppConfig } from "./config.ts";
-import { bodyContentHash, fileContentHash, sha256Hex } from "./crypto.ts";
-import { fetchUrlMarkdown, slugify } from "./ingest.ts";
-import type { CanonicalSourceUrl } from "./source-identity.ts";
+import { bodyContentHash, fileContentHash } from "./crypto.ts";
+import { fetchUrlMarkdown } from "./ingest.ts";
+import { type CanonicalSourceUrl, slugify } from "./source-identity.ts";
 import { buildDocument, parseFrontmatter } from "./markdown.ts";
 import { oneTotal, pageEnvelope } from "./pagination.ts";
 import { ContentStorage, userOwner } from "./storage.ts";
@@ -37,6 +37,11 @@ type UserDocumentsServiceShape = {
     url: CanonicalSourceUrl,
   ) => Effect.Effect<CreateReferenceResult, BadRequest>;
   readonly list: (userId: Uuid, params: PageParams) => Effect.Effect<ReferencePage>;
+  readonly locate: (
+    userId: Uuid,
+    path: string,
+  ) => Effect.Effect<UserDocumentRow, BadRequest | NotFound>;
+  readonly loadText: (document: UserDocumentRow) => Effect.Effect<string, NotFound>;
   readonly readUserText: (
     userId: Uuid,
     path: string,
@@ -120,18 +125,29 @@ export const UserDocumentsServiceLive = Layer.effect(
         : Effect.succeed(safePath);
     };
 
-    const readUserText = (userId: Uuid, path: string) =>
+    const locate = (userId: Uuid, path: string) =>
       Effect.gen(function* () {
         const safePath = yield* validatePath(path);
         const row = yield* getByPath(userId, safePath);
-        if (row === undefined) {
+        if (row === undefined)
           return yield* new NotFound({ detail: `Reference not found: ${safePath}` });
-        }
-        const content = yield* Effect.result(storage.readText(userOwner(userId), safePath));
-        if (content._tag === "Failure") {
-          return yield* new NotFound({ detail: `Reference not found: ${safePath}` });
-        }
-        return { row, content: content.success };
+        return row;
+      });
+
+    const loadText = (document: UserDocumentRow) =>
+      storage
+        .readText(userOwner(document.userId), document.filePath)
+        .pipe(
+          Effect.mapError(
+            () => new NotFound({ detail: `Reference not found: ${document.filePath}` }),
+          ),
+        );
+
+    const readUserText = (userId: Uuid, path: string) =>
+      Effect.gen(function* () {
+        const row = yield* locate(userId, path);
+        const content = yield* loadText(row);
+        return { row, content };
       });
 
     return {
@@ -142,15 +158,12 @@ export const UserDocumentsServiceLive = Layer.effect(
             return { reference: referenceOverview(existing), created: false };
           }
 
+          const referenceId = Uuid.make(randomUUID(), { disableChecks: true });
           const fetched = yield* fetchUrlMarkdown(canonicalUrl, config.allowPrivateUrlFetch);
           const parsedUrl = new URL(fetched.url);
           const stem = posix.parse(parsedUrl.pathname).name || "doc";
           const slug = slugify(stem) || "doc";
-          let filePath = `refs/${slug}.md`;
-          const collision = yield* getByPath(userId, filePath);
-          if (collision !== undefined && collision.url !== fetched.url) {
-            filePath = `refs/${slug}-${sha256Hex(fetched.url).slice(0, 8)}.md`;
-          }
+          const filePath = `refs/${slug}-${referenceId}.md`;
           const origin = parsedUrl.host;
           const content = buildDocument(fetched.markdown, {
             sourceType: "document",
@@ -159,39 +172,41 @@ export const UserDocumentsServiceLive = Layer.effect(
           });
           const parsed = parseFrontmatter(content);
           yield* storage.writeText(userOwner(userId), filePath, content);
-          const rows = yield* db.query((d) => d
-            .insert(userDocuments)
-            .values({
-              id: Uuid.make(randomUUID(), { disableChecks: true }),
-              userId,
-              filePath,
-              fileHash: fileContentHash(content),
-              bodyHash: bodyContentHash(parsed.body),
-              title: fetched.title,
-              url: fetched.url,
-              origin,
-              author: fetched.author,
-              published: fetched.published,
-            })
-            .onConflictDoUpdate({
-              target: [userDocuments.userId, userDocuments.filePath],
-              set: {
-                fileHash: sql`excluded.file_hash`,
-                bodyHash: sql`excluded.body_hash`,
-                title: sql`excluded.title`,
-                url: sql`excluded.url`,
-                origin: sql`excluded.origin`,
-                author: sql`excluded.author`,
-                published: sql`excluded.published`,
-                updatedAt: sql`now()`,
-              },
-            })
-            .returning());
-          const row = rows[0];
-          if (row === undefined) {
-            throw new Error("user document upsert returned no row");
-          }
-          return { reference: referenceOverview(row), created: true };
+          const accepted = yield* db.transaction((tx) =>
+            Effect.gen(function* () {
+              yield* tx.execute(
+                sql`select pg_advisory_xact_lock(hashtextextended(${`reference-url:${userId}:${canonicalUrl}`}, 0))`,
+              );
+              const existing = yield* tx
+                .select()
+                .from(userDocuments)
+                .where(and(eq(userDocuments.userId, userId), eq(userDocuments.url, canonicalUrl)))
+                .limit(1);
+              const prior = existing[0];
+              if (prior !== undefined) return { row: prior, created: false };
+              const rows = yield* tx
+                .insert(userDocuments)
+                .values({
+                  id: referenceId,
+                  userId,
+                  filePath,
+                  fileHash: fileContentHash(content),
+                  bodyHash: bodyContentHash(parsed.body),
+                  title: fetched.title,
+                  url: fetched.url,
+                  origin,
+                  author: fetched.author,
+                  published: fetched.published,
+                })
+                .returning();
+              const row = rows[0];
+              if (row === undefined) throw new Error("user document insert returned no row");
+              return { row, created: true };
+            }),
+          );
+          if (accepted.row.id !== referenceId)
+            yield* storage.deletePath(userOwner(userId), filePath);
+          return { reference: referenceOverview(accepted.row), created: accepted.created };
         }),
       list: (userId, params) =>
         Effect.gen(function* () {
@@ -208,6 +223,8 @@ export const UserDocumentsServiceLive = Layer.effect(
             .offset(params.offset));
           return pageEnvelope(rows.map(referenceOverview), params, oneTotal(countRows));
         }),
+      locate,
+      loadText,
       readUserText,
       read: (userId, path) =>
         Effect.gen(function* () {

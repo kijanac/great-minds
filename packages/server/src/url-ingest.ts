@@ -1,3 +1,5 @@
+import { posix } from "node:path";
+
 import {
   Database,
   pipelineRuns,
@@ -19,7 +21,13 @@ import { AppConfig } from "./config.ts";
 import { jobResponse } from "./job-response.ts";
 import { StructuredLogger } from "./logging.ts";
 import { progressSteps } from "./pipeline-runs.ts";
-import { type CanonicalSourceUrl, parseCanonicalSourceUrl } from "./source-identity.ts";
+import {
+  type CanonicalSourceUrl,
+  parseCanonicalSourceUrl,
+  slugify,
+  sourceIdForKey,
+} from "./source-identity.ts";
+import { admitSource } from "./source-documents.ts";
 import { UrlIngestWorkflow, URL_INGEST_STEP_LABELS } from "./url-ingest-workflow.ts";
 import { VaultAccessService } from "./vaults.ts";
 
@@ -119,7 +127,17 @@ export const UrlIngestServiceLive = Layer.effect(
             .returning({ id: pipelineRuns.id });
 
           if (inserted.length === 1) {
+            const sourceId = sourceIdForKey(vaultId, `url:${canonicalUrl}`);
+            const stem =
+              slugify(posix.parse(new URL(canonicalUrl).pathname).name || "doc") || "doc";
+            const source = yield* admitSource(
+              tx,
+              vaultId,
+              sourceId,
+              `raw/docs/${stem}-${sourceId}.md`,
+            );
             yield* tx.insert(urlIngestRequests).values({
+              sourceIncarnationId: source.incarnationId,
               id: jobId,
               createdBy: userId,
               canonicalUrl,

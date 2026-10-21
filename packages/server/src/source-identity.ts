@@ -12,6 +12,23 @@ export type CanonicalSourceUrl = string & {
 };
 
 const decodeUuid = Schema.decodeUnknownSync(Uuid);
+const sourceControlPrefix = "great-minds-source-state-v1\n";
+const SourceControlJson = Schema.fromJsonString(
+  Schema.Struct({
+    sourceId: Uuid,
+    incarnationId: Uuid,
+    state: Schema.Literals(["reserved", "deleted"]),
+  }),
+);
+export type SourceControl = typeof SourceControlJson.Type;
+
+export const encodeSourceControl = (control: SourceControl) =>
+  `${sourceControlPrefix}${Schema.encodeSync(SourceControlJson)(control)}\n`;
+
+export const readSourceControl = (content: string): SourceControl | undefined =>
+  content.startsWith(sourceControlPrefix)
+    ? Schema.decodeUnknownSync(SourceControlJson)(content.slice(sourceControlPrefix.length))
+    : undefined;
 
 export const parseCanonicalSourceUrl = (
   rawUrl: string,
@@ -38,6 +55,13 @@ export const parseCanonicalSourceUrl = (
     return parsed.href as CanonicalSourceUrl;
   });
 
+export const slugify = (text: string, maxLen = 80) =>
+  text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, maxLen);
+
 export const sourceIdForKey = (vaultId: Uuid, key: string): Uuid => {
   const bytes = createHash("sha256").update(vaultId).update("\0").update(key).digest().subarray(0, 16);
   bytes[6] = (bytes[6]! & 0x0f) | 0x50;
@@ -49,10 +73,12 @@ export const sourceIdForKey = (vaultId: Uuid, key: string): Uuid => {
   );
 };
 
-export const sourceIdentityFromFrontmatter = (
-  frontmatter: Readonly<Record<string, unknown>>,
-) => ({
+export const sourceIdentityFromFrontmatter = (frontmatter: Readonly<Record<string, unknown>>) => ({
   sourceId: decodeUuid(frontmatter.source_id),
+  incarnationId:
+    frontmatter.source_incarnation === undefined
+      ? null
+      : decodeUuid(frontmatter.source_incarnation),
   canonicalUrl:
     frontmatter.canonical_url === undefined
       ? null
@@ -63,13 +89,19 @@ export const identifySourceMarkdown = (
   content: string,
   sourceId: Uuid,
   canonicalUrl: CanonicalSourceUrl | null = null,
+  incarnationId: Uuid | null = null,
 ) => {
   const parsed = parseFrontmatter(content);
-  const { source_id: _sourceId, canonical_url: _canonicalUrl, ...frontmatter } =
-    parsed.frontmatter;
+  const {
+    source_id: _sourceId,
+    source_incarnation: _incarnationId,
+    canonical_url: _canonicalUrl,
+    ...frontmatter
+  } = parsed.frontmatter;
   return serializeFrontmatter(
     {
       source_id: sourceId,
+      ...(incarnationId === null ? {} : { source_incarnation: incarnationId }),
       ...(canonicalUrl === null ? {} : { canonical_url: canonicalUrl }),
       ...frontmatter,
     },

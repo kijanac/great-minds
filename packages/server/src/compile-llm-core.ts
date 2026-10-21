@@ -10,6 +10,7 @@ import {
 } from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
+import type { PgInsertValue } from "drizzle-orm/pg-core";
 import { Data, Effect, Fiber, Schema, SchemaGetter, Semaphore } from "effect";
 
 import type { AppConfigShape } from "./config.ts";
@@ -27,18 +28,19 @@ import {
   type ArchiveTransition,
   type ValidatedTopic,
 } from "./compile-contract.ts";
-import { contentHash, fileContentHash, promptContentHash } from "./crypto.ts";
+import { contentHash, promptContentHash } from "./crypto.ts";
 import { type EmbeddingsService, isTimeoutError, vectorLiteral } from "./embeddings.ts";
 import { errorDetails as describeError } from "./error-details.ts";
 import { type LanguageModel, type LlmMessage, stripJsonFence } from "./llm.ts";
 import { recordPrompt } from "./llm-costs.ts";
 import type { StructuredLogger } from "./logging.ts";
-import { markdownParagraphs, parseFrontmatter, serializeFrontmatter } from "./markdown.ts";
+import { markdownParagraphs } from "./markdown.ts";
 import type { PipelineRunsService } from "./pipeline-runs.ts";
 import { progressSteps } from "./pipeline-runs.ts";
 import { loadPrompt } from "./prompts.ts";
 import { formatUuid7, type RandomBytesService } from "./random.ts";
-import { type ContentStorage, vaultOwner } from "./storage.ts";
+import type { ContentStorage } from "./storage.ts";
+import type { SourceDocumentsService } from "./source-documents.ts";
 import { readVaultConfig, type EnrichedField, type VaultConfigFile } from "./vault-config.ts";
 import type { ClockService } from "./clock.ts";
 
@@ -394,6 +396,7 @@ type CompileLlmCoreOptions = {
   readonly languageModel: ModelService;
   readonly pipeline: PipelineService;
   readonly storage: StorageService;
+  readonly sourceRegistry: SourceDocumentsService["Service"];
   readonly randomBytes: RandomService;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -411,8 +414,18 @@ type CompileLlmCoreOptions = {
 };
 
 export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
-  const { config, db, embeddings, languageModel, pipeline, storage, randomBytes, clock, logger } =
-    options;
+  const {
+    config,
+    db,
+    embeddings,
+    languageModel,
+    pipeline,
+    storage,
+    sourceRegistry,
+    randomBytes,
+    clock,
+    logger,
+  } = options;
   let lastMintTimestamp = -1;
 
   const mintUuid7 = Effect.gen(function* () {
@@ -577,8 +590,9 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
                 );
                 let cached = yield* getCache(vaultId, "extract", cacheKey);
                 if (cached === undefined) {
-                  const content = yield* storage.readText(vaultOwner(vaultId), document.filePath);
-                  const body = parseFrontmatter(content).body;
+                  const source = yield* sourceRegistry.readCurrent(document);
+                  if (source === undefined) return;
+                  const body = source.body;
                   const data = yield* jsonCall({
                     vaultId,
                     runId,
@@ -615,7 +629,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
               }),
             );
             if (result._tag === "Success") {
-              ready.push({ document, card: result.success });
+              if (result.success !== undefined) ready.push({ document, card: result.success });
             } else {
               const details = errorDetails(result.failure);
               yield* logger.warn("doc_failed", {
@@ -654,8 +668,8 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
             ),
         )).map((row) => row.id),
       );
-      const embeddingInputs = ready.flatMap(({ card }) =>
-        card.ideas.filter((idea) => !existing.has(idea.ideaId)),
+      const embeddingInputs = ready.flatMap(({ document, card }) =>
+        card.ideas.filter((idea) => !existing.has(idea.ideaId)).map((idea) => ({ document, idea })),
       );
 
       yield* pipeline.updateProgress(
@@ -675,7 +689,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       for (let offset = 0; offset < embeddingInputs.length; offset += 50) {
         const batch = embeddingInputs.slice(offset, offset + 50);
         const embedded = yield* Effect.result(
-          embeddings.embed(batch.map((idea) => `${idea.label}. ${idea.description}`.trim())),
+          embeddings.embed(batch.map(({ idea }) => `${idea.label}. ${idea.description}`.trim())),
         );
         if (embedded._tag === "Failure") {
           if (!isTimeoutError(embedded.failure)) return yield* Effect.fail(embedded.failure);
@@ -694,38 +708,49 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           const embedding = embedded.success[index];
           return embedding === undefined || embedding.length === 0 ? [] : [{ input, embedding }];
         });
-        const ideaRows = paired.map(({ input: idea, embedding }) => ({
-          ideaId: idea.ideaId,
-          vaultId,
-          documentId: idea.documentId,
-          kind: idea.kind,
-          label: idea.label,
-          description: idea.description,
-          embedding: sql`${vectorLiteral(embedding)}::vector`,
-          embeddingModel: config.embeddingModel,
-        }));
-        if (ideaRows.length === 0) continue;
-        yield* db.query((d) =>
-          d
-            .insert(ideas)
-            .values(ideaRows)
-            .onConflictDoUpdate({
-              target: ideas.ideaId,
-              set: {
-                label: sql`excluded.label`,
-                description: sql`excluded.description`,
-                embedding: sql`excluded.embedding`,
-                embeddingModel: sql`excluded.embedding_model`,
-              },
-            })
-            .pipe(
-              Effect.tapError((error) =>
-                Effect.logError("idea insert failed", {
-                  cause: "cause" in error ? error.cause : error,
-                }),
+        const byDocument = new Map<SourceRow, PgInsertValue<typeof ideas>[]>();
+        for (const {
+          input: { document, idea },
+          embedding,
+        } of paired) {
+          const rows = byDocument.get(document) ?? [];
+          rows.push({
+            ideaId: idea.ideaId,
+            vaultId,
+            documentId: idea.documentId,
+            kind: idea.kind,
+            label: idea.label,
+            description: idea.description,
+            embedding: sql`${vectorLiteral(embedding)}::vector`,
+            embeddingModel: config.embeddingModel,
+          });
+          byDocument.set(document, rows);
+        }
+        if (byDocument.size === 0) continue;
+        for (const [document, rows] of byDocument) {
+          yield* sourceRegistry.withCurrent(document, (tx) =>
+            tx
+              .insert(ideas)
+              .values(rows)
+              .onConflictDoUpdate({
+                target: ideas.ideaId,
+                set: {
+                  label: sql`excluded.label`,
+                  description: sql`excluded.description`,
+                  embedding: sql`excluded.embedding`,
+                  embeddingModel: sql`excluded.embedding_model`,
+                },
+              })
+              .pipe(
+                Effect.tapError((error) =>
+                  Effect.logError("idea insert failed", {
+                    cause: "cause" in error ? error.cause : error,
+                  }),
+                ),
+                Effect.asVoid,
               ),
-            ),
-        );
+          );
+        }
         embeddedCount += paired.length;
         yield* pipeline.updateProgress(
           runId,
@@ -742,105 +767,88 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
       }
 
       for (const { document, card } of ready) {
-        const existingContent = yield* storage.readText(vaultOwner(vaultId), document.filePath);
-        const body = parseFrontmatter(existingContent).body;
-        const frontmatter: Record<string, unknown> = {
-          source_id: document.id,
-          canonical_url: document.canonicalUrl,
-          source_type: document.sourceType,
-          url: document.url,
-          origin: document.origin,
-          session_id: document.provenanceSessionId,
-          exchange_id: document.provenanceExchangeId,
-          session_query: document.provenanceSessionQuery,
-          source_doc_path: document.provenanceSourceDocPath,
-          source_anchor: document.provenanceSourceAnchor,
-          source_paragraph_index: document.provenanceSourceParagraphIndex,
-          anchored_to: document.provenanceAnchoredTo,
-          anchored_section: document.provenanceAnchoredSection,
-          intent: document.provenanceIntent,
-          title: card.title,
-          precis: card.precis,
-          author: card.author,
-          date: card.publishedDate,
-          genre: card.genre,
-          tags: card.tags.length > 0 ? [...card.tags] : null,
-          ...card.derivedExtras,
-        };
-        const nextContent = serializeFrontmatter(
-          Object.fromEntries(
-            Object.entries(frontmatter).filter(
-              (_entry): _entry is [string, Exclude<unknown, null | undefined>] =>
-                _entry[1] !== null && _entry[1] !== undefined,
-            ),
-          ),
-          body,
-        );
-        if (nextContent !== existingContent) {
-          yield* storage.writeText(vaultOwner(vaultId), document.filePath, nextContent);
-        }
-        yield* db.transaction((tx) =>
-          Effect.gen(function* () {
-            const current = yield* tx
-              .select({ id: sourceDocuments.id })
-              .from(sourceDocuments)
-              .where(
-                and(
-                  eq(sourceDocuments.id, document.id),
-                  eq(sourceDocuments.filePath, document.filePath),
-                  eq(sourceDocuments.bodyHash, document.bodyHash),
+        yield* sourceRegistry.rewrite(
+          document,
+          ({ body }) => {
+            const frontmatter: Record<string, unknown> = {
+              canonical_url: document.canonicalUrl,
+              source_type: document.sourceType,
+              url: document.url,
+              origin: document.origin,
+              session_id: document.provenanceSessionId,
+              exchange_id: document.provenanceExchangeId,
+              session_query: document.provenanceSessionQuery,
+              source_doc_path: document.provenanceSourceDocPath,
+              source_anchor: document.provenanceSourceAnchor,
+              source_paragraph_index: document.provenanceSourceParagraphIndex,
+              anchored_to: document.provenanceAnchoredTo,
+              anchored_section: document.provenanceAnchoredSection,
+              intent: document.provenanceIntent,
+              title: card.title,
+              precis: card.precis,
+              author: card.author,
+              date: card.publishedDate,
+              genre: card.genre,
+              tags: card.tags.length > 0 ? [...card.tags] : null,
+              ...card.derivedExtras,
+            };
+            return {
+              frontmatter: Object.fromEntries(
+                Object.entries(frontmatter).filter(
+                  ([, value]) => value !== null && value !== undefined,
                 ),
-              )
-              .for("update");
-            if (current.length === 0) return;
-            const ideaIds = card.ideas.map((idea) => idea.ideaId);
-            const stale = yield* tx
-              .select({ id: ideas.ideaId })
-              .from(ideas)
-              .where(
-                and(
-                  eq(ideas.documentId, document.id),
-                  ideaIds.length === 0 ? undefined : notInArray(ideas.ideaId, ideaIds),
-                ),
-              );
-            if (stale.length > 0) {
-              const staleIds = stale.map((idea) => idea.id);
-              yield* tx.delete(topicMembership).where(inArray(topicMembership.ideaId, staleIds));
-              yield* tx.delete(ideas).where(inArray(ideas.ideaId, staleIds));
-            }
-            const persisted = yield* tx
-              .select({ id: ideas.ideaId })
-              .from(ideas)
-              .where(eq(ideas.documentId, document.id));
-            const present = new Set(persisted.map((idea) => idea.id));
-            if (persisted.length > 0) {
-              yield* tx.delete(anchors).where(inArray(anchors.ideaId, [...present]));
-              const rows = card.ideas
-                .filter((idea) => present.has(idea.ideaId))
-                .flatMap((idea) =>
-                  idea.anchors.map((anchor, position) => ({
-                    ideaId: idea.ideaId,
-                    position,
-                    ...anchor,
-                  })),
+              ),
+              body,
+            };
+          },
+          (tx) =>
+            Effect.gen(function* () {
+              const ideaIds = card.ideas.map((idea) => idea.ideaId);
+              const stale = yield* tx
+                .select({ id: ideas.ideaId })
+                .from(ideas)
+                .where(
+                  and(
+                    eq(ideas.documentId, document.id),
+                    ideaIds.length === 0 ? undefined : notInArray(ideas.ideaId, ideaIds),
+                  ),
                 );
-              if (rows.length > 0) yield* tx.insert(anchors).values(rows);
-            }
-            yield* tx
-              .update(sourceDocuments)
-              .set({
-                fileHash: fileContentHash(nextContent),
-                title: card.title,
-                precis: card.precis,
-                author: card.author,
-                publishedDate: card.publishedDate,
-                genre: card.genre,
-                tags: [...card.tags],
-                derivedExtras: card.derivedExtras,
-                updatedAt: sql`now()`,
-              })
-              .where(eq(sourceDocuments.id, document.id));
-          }),
+              if (stale.length > 0) {
+                const staleIds = stale.map((idea) => idea.id);
+                yield* tx.delete(ideas).where(inArray(ideas.ideaId, staleIds));
+              }
+              const persisted = yield* tx
+                .select({ id: ideas.ideaId })
+                .from(ideas)
+                .where(eq(ideas.documentId, document.id));
+              const present = new Set(persisted.map((idea) => idea.id));
+              if (persisted.length > 0) {
+                yield* tx.delete(anchors).where(inArray(anchors.ideaId, [...present]));
+                const rows = card.ideas
+                  .filter((idea) => present.has(idea.ideaId))
+                  .flatMap((idea) =>
+                    idea.anchors.map((anchor, position) => ({
+                      ideaId: idea.ideaId,
+                      position,
+                      ...anchor,
+                    })),
+                  );
+                if (rows.length > 0) yield* tx.insert(anchors).values(rows);
+              }
+              yield* tx
+                .update(sourceDocuments)
+                .set({
+                  title: card.title,
+                  precis: card.precis,
+                  author: card.author,
+                  publishedDate: card.publishedDate,
+                  genre: card.genre,
+                  tags: [...card.tags],
+                  derivedExtras: card.derivedExtras,
+                  updatedAt: sql`now()`,
+                })
+                .where(eq(sourceDocuments.id, document.id));
+            }),
         );
       }
 

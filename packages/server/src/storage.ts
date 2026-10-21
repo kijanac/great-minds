@@ -8,11 +8,14 @@ import { backgroundLoop } from "./background-loop.ts";
 import { ClockService } from "./clock.ts";
 import { AppConfig } from "./config.ts";
 import { StructuredLogger } from "./logging.ts";
+import { readSourceControl } from "./source-identity.ts";
 import { HistoryStore, makeHistoryStore } from "./conversation-history/store.ts";
 import { openLocalConditionalObjectStore } from "./storage/local-conditional-object-store.ts";
 import { makeLocalObjectStore, pruneLocalStaging } from "./storage/local-object-store.ts";
 import {
+  type ConditionalObjectStore,
   type ObjectStore,
+  type ObjectVersionConflict,
   StorageBackendError,
   storageBackendError,
 } from "./storage/object-store.ts";
@@ -53,6 +56,16 @@ type ContentStorageShape = {
     path: string,
   ) => Effect.Effect<string, StorageFileMissing>;
   readonly writeText: (owner: StorageOwner, path: string, content: string) => Effect.Effect<void>;
+  readonly readVersionedText: (
+    owner: StorageOwner,
+    path: string,
+  ) => Effect.Effect<{ readonly content: string; readonly version: string }, StorageFileMissing>;
+  readonly writeTextIfVersion: (
+    owner: StorageOwner,
+    path: string,
+    expectedVersion: string | null,
+    content: string,
+  ) => Effect.Effect<void, ObjectVersionConflict>;
   readonly exists: (owner: StorageOwner, path: string) => Effect.Effect<boolean>;
   readonly deletePath: (owner: StorageOwner, path: string) => Effect.Effect<void>;
   readonly clear: (owner: StorageOwner) => Effect.Effect<void>;
@@ -130,7 +143,7 @@ export class ProposalStorage extends Context.Service<ProposalStorage, ProposalSt
 type LocalStorageBackend = {
   readonly kind: "local";
   readonly directory: string;
-  readonly objects: ObjectStore;
+  readonly objects: ObjectStore & ConditionalObjectStore;
 };
 
 type R2StorageBackend = R2ObjectStoreBackend & { readonly kind: "r2" };
@@ -180,30 +193,29 @@ const writeText = (objects: ObjectStore, prefix: string, path: string, content: 
     })
     .pipe(Effect.orDie);
 
-const StorageBackendLive = Layer.effect(
-  StorageBackend,
-  Effect.map(AppConfig, (config): StorageBackendShape => {
-    if (config.storageBackend === "local") {
-      const directory = resolve(config.dataDir);
-      return { kind: "local", directory, objects: makeLocalObjectStore(directory) };
-    }
-    return { kind: "r2", ...makeR2ObjectStoreBackend(config) };
-  }),
-);
+const makeStorageBackend = Effect.gen(function* () {
+  const config = yield* AppConfig;
+  if (config.storageBackend === "r2") {
+    return { kind: "r2", ...makeR2ObjectStoreBackend(config) } satisfies R2StorageBackend;
+  }
+  const directory = resolve(config.dataDir);
+  yield* Effect.tryPromise({
+    try: () => mkdir(directory, { recursive: true }),
+    catch: (error) => storageBackendError("prepare", directory, error),
+  }).pipe(Effect.orDie);
+  const conditional = yield* openLocalConditionalObjectStore(directory).pipe(Effect.orDie);
+  return {
+    kind: "local",
+    directory,
+    objects: { ...makeLocalObjectStore(directory), ...conditional },
+  } satisfies LocalStorageBackend;
+});
+
+const StorageBackendLive = Layer.effect(StorageBackend, makeStorageBackend);
 
 export const HistoryStoreLive = Layer.effect(
   HistoryStore,
-  Effect.gen(function* () {
-    const backend = yield* StorageBackend;
-    if (backend.kind === "r2") return makeHistoryStore(backend.objects);
-    yield* Effect.tryPromise({
-      try: () => mkdir(backend.directory, { recursive: true }),
-      catch: (error) => storageBackendError("prepare", backend.directory, error),
-    }).pipe(Effect.orDie);
-    return makeHistoryStore(
-      yield* openLocalConditionalObjectStore(backend.directory).pipe(Effect.orDie),
-    );
-  }),
+  Effect.map(StorageBackend, (backend) => makeHistoryStore(backend.objects)),
 );
 
 export const ContentStorageLive = Layer.effect(
@@ -212,6 +224,16 @@ export const ContentStorageLive = Layer.effect(
     const backend = yield* StorageBackend;
     const logger = yield* StructuredLogger;
     const objects = backend.objects;
+    const isSourcePath = (owner: StorageOwner, path: string) =>
+      owner.kind === "vault" && posix.normalize(path).startsWith("raw/");
+    const readContent = (owner: StorageOwner, path: string) =>
+      Effect.gen(function* () {
+        const content = yield* readText(objects, ownerPrefix(owner), path);
+        if (isSourcePath(owner, path) && readSourceControl(content) !== undefined) {
+          return yield* fileMissing(path);
+        }
+        return content;
+      });
     return {
       listMarkdown: (owner, scope) => {
         const prefix = ownerPrefix(owner);
@@ -230,10 +252,32 @@ export const ContentStorageLive = Layer.effect(
           ),
         );
       },
-      readText: (owner, path) => readText(objects, ownerPrefix(owner), path),
+      readText: readContent,
       writeText: (owner, path, content) => writeText(objects, ownerPrefix(owner), path, content),
+      readVersionedText: (owner, path) =>
+        objects.getVersioned(scopedKey(ownerPrefix(owner), path)).pipe(
+          Effect.catchTag("StorageBackendError", Effect.die),
+          Effect.mapError(() => fileMissing(path)),
+          Effect.map((object) => ({
+            content: textDecoder.decode(object.bytes),
+            version: object.version,
+          })),
+        ),
+      writeTextIfVersion: (owner, path, expectedVersion, content) =>
+        objects
+          .putIfVersion(
+            scopedKey(ownerPrefix(owner), path),
+            expectedVersion,
+            textEncoder.encode(content),
+            { contentType: contentTypeFor(path) },
+          )
+          .pipe(Effect.catchTag("StorageBackendError", Effect.die)),
       exists: (owner, path) =>
-        objects.exists(scopedKey(ownerPrefix(owner), path)).pipe(Effect.orDie),
+        isSourcePath(owner, path)
+          ? readContent(owner, path).pipe(
+              Effect.match({ onSuccess: () => true, onFailure: () => false }),
+            )
+          : objects.exists(scopedKey(ownerPrefix(owner), path)).pipe(Effect.orDie),
       deletePath: (owner, path) =>
         objects.remove(scopedKey(ownerPrefix(owner), path)).pipe(Effect.orDie),
       clear: (owner) =>

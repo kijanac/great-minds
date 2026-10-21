@@ -139,11 +139,7 @@ export const SourcesServiceLive = Layer.effect(
           if (source === undefined) {
             return yield* new NotFound({ detail: "Source not found" });
           }
-          return yield* proposals.createSourceDeletionRequest(vaultId, userId, {
-            id: source.id,
-            filePath: source.filePath,
-            title: source.title
-          });
+          return yield* proposals.createSourceDeletionRequest(vaultId, userId, source);
         }),
     } satisfies SourcesServiceShape;
   }),

@@ -2,6 +2,7 @@ import { Database, replies, sessions, userDocuments } from "@great-minds/databas
 import {
   BadRequest,
   composeAnchoredQuestion,
+  Conflict,
   Forbidden,
   NotFound,
   ServiceUnavailable,
@@ -75,7 +76,7 @@ type SessionsServiceShape = {
     vaultId: Uuid,
     sessionId: SessionId,
     exchangeId: string,
-  ) => Effect.Effect<PromoteExchangeResponse, BadRequest | SessionReadError>;
+  ) => Effect.Effect<PromoteExchangeResponse, BadRequest | Conflict | SessionReadError>;
   readonly listSessions: (
     userId: Uuid,
     vaultId: Uuid,
@@ -545,6 +546,7 @@ const makeSessions = Effect.gen(function* () {
               proposal_id: existing.id,
             };
         }
+        const source = yield* sourceDocuments.admit(vaultId, sourceId, dest);
         const history = yield* loadHistory(row);
         const exchange = projectSession(history).find(
           (event): event is SessionExchangeEvent =>
@@ -561,7 +563,7 @@ const makeSessions = Effect.gen(function* () {
           return yield* new BadRequest({ detail: "Exchange has no answer yet" });
         if (scope.role === "owner") {
           const result = yield* ingest.ingestSessionExchange(
-            vaultId,
+            source,
             sessionId,
             exchange,
             history.header.origin,
@@ -574,12 +576,10 @@ const makeSessions = Effect.gen(function* () {
             proposal_id: null,
           };
         }
-        const proposal = yield* proposals.createRendered(vaultId, userId, {
-          sourceId,
+        const proposal = yield* proposals.createRendered(source, userId, {
           contentType: "session",
           title: null,
           author: null,
-          destPath: dest,
           rendered: identifySourceMarkdown(
             buildSessionExchangeDocument(sessionId, exchange, history.header.origin),
             sourceId,
@@ -587,7 +587,7 @@ const makeSessions = Effect.gen(function* () {
         });
         return {
           mode: "proposed" as const,
-          path: dest,
+          path: source.filePath,
           title: null,
           document_id: null,
           proposal_id: proposal.id,

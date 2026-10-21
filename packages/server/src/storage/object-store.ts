@@ -55,6 +55,7 @@ export type ConditionalObjectStore = {
     key: string,
     expectedVersion: string | null,
     bytes: Uint8Array,
+    options?: PutObjectOptions,
   ) => Effect.Effect<void, ObjectVersionConflict | StorageBackendError>;
 };
 

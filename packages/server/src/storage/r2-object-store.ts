@@ -212,11 +212,11 @@ export const makeObjectStore = (
         }
         return { bytes: object.bytes, version: object.etag };
       }),
-    putIfVersion: (key, expectedVersion, bytes) =>
+    putIfVersion: (key, expectedVersion, bytes, options) =>
       sendPut(
         key,
         bytes,
-        { contentType: "application/x-ndjson" },
+        options ?? { contentType: "application/x-ndjson" },
         expectedVersion === null ? { IfNoneMatch: "*" } : { IfMatch: expectedVersion },
       ).pipe(
         Effect.mapError((error) =>

@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 
-import { compileIntents, Database, sourceProposals } from "@great-minds/database";
+import {
+  compileIntents,
+  Database,
+  sourceIncarnations,
+  sourceProposals,
+  type TransactionClient,
+} from "@great-minds/database";
 import {
   BadRequest,
   Conflict,
@@ -15,39 +21,39 @@ import {
   type ProposalUpdate,
   Uuid,
 } from "@great-minds/domain";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { stringify as stringifyYaml } from "yaml";
 
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { identifySourceMarkdown } from "./source-identity.ts";
-import { ContentStorage, ProposalStorage, vaultOwner } from "./storage.ts";
-import { SourceDocumentsService } from "./source-documents.ts";
+import { ProposalStorage } from "./storage.ts";
+import {
+  admitSource,
+  retainSource,
+  type SourceAdmission,
+  SourceDocumentsService,
+} from "./source-documents.ts";
 import { VaultAccessService } from "./vaults.ts";
 
 const SOURCE_DELETION_CONTENT_TYPE = "source_deletion";
 
 type DbProposal = typeof sourceProposals.$inferSelect;
 
-type SourceForDeletion = {
-  readonly id: Uuid;
-  readonly filePath: string;
+type SourceForDeletion = SourceAdmission & { readonly title: string | null };
+type ProposalContent = {
+  readonly contentType: string;
   readonly title: string | null;
+  readonly author: string | null;
+  readonly rendered: string;
 };
 
 type ProposalsServiceShape = {
   readonly createRendered: (
-    vaultId: Uuid,
+    source: SourceAdmission,
     userId: Uuid,
-    data: {
-      readonly sourceId: Uuid;
-      readonly contentType: string;
-      readonly title: string | null;
-      readonly author: string | null;
-      readonly destPath: string;
-      readonly rendered: string;
-    },
-  ) => Effect.Effect<Proposal>;
+    data: ProposalContent,
+  ) => Effect.Effect<Proposal, Conflict>;
   readonly create: (
     userId: Uuid,
     vaultId: Uuid,
@@ -153,44 +159,50 @@ export const ProposalsServiceLive = Layer.effect(
     const db = yield* Database;
     const access = yield* VaultAccessService;
     const proposalStorage = yield* ProposalStorage;
-    const vaultStorage = yield* ContentStorage;
     const sourceDocuments = yield* SourceDocumentsService;
 
     const insertProposal = (
-      vaultId: Uuid,
+      tx: TransactionClient,
+      source: SourceAdmission,
       userId: Uuid,
-      data: {
-        readonly id?: Uuid;
-        readonly sourceId: Uuid;
-        readonly contentType: string;
-        readonly title: string | null;
-        readonly author: string | null;
-        readonly destPath: string;
-        readonly rendered: string;
-      },
+      data: ProposalContent,
     ) =>
       Effect.gen(function* () {
-        const proposalId = data.id ?? Uuid.make(randomUUID(), { disableChecks: true });
-        const rows = yield* db.query((d) => d
+        const rows = yield* tx
           .insert(sourceProposals)
           .values({
-            id: proposalId,
-            vaultId,
+            id: Uuid.make(randomUUID(), { disableChecks: true }),
+            vaultId: source.vaultId,
             userId,
             status: "PENDING",
             contentType: data.contentType,
             title: data.title,
             author: data.author,
-            destPath: data.destPath,
-            sourceId: data.sourceId,
+            destPath: source.filePath,
+            sourceId: source.id,
+            sourceIncarnationId: source.incarnationId,
           })
-          .returning());
+          .returning();
         const proposal = rows[0];
-        if (proposal === undefined) {
-          throw new Error("proposal insert returned no row");
-        }
-        yield* proposalStorage.writeText(proposalStagingPath(proposalId), data.rendered);
+        if (proposal === undefined) throw new Error("proposal insert returned no row");
+        return proposal;
+      });
+
+    const stageProposal = (proposal: DbProposal, rendered: string) =>
+      Effect.gen(function* () {
+        yield* proposalStorage.writeText(proposalStagingPath(proposal.id), rendered);
         return proposalResponse(proposal);
+      });
+
+    const createRendered = (source: SourceAdmission, userId: Uuid, data: ProposalContent) =>
+      Effect.gen(function* () {
+        const proposal = yield* db.transaction((tx) =>
+          Effect.gen(function* () {
+            const current = yield* retainSource(tx, source.vaultId, source.incarnationId);
+            return yield* insertProposal(tx, current, userId, data);
+          }),
+        );
+        return yield* stageProposal(proposal, data.rendered);
       });
 
     const getForVault = (vaultId: Uuid, proposalId: Uuid) =>
@@ -215,15 +227,7 @@ export const ProposalsServiceLive = Layer.effect(
         .returning({ id: compileIntents.id }));
 
     return {
-      createRendered: (vaultId, userId, data) =>
-        insertProposal(vaultId, userId, {
-          sourceId: data.sourceId,
-          contentType: data.contentType,
-          title: data.title,
-          author: data.author,
-          destPath: data.destPath,
-          rendered: data.rendered,
-        }),
+      createRendered,
       create: (userId, vaultId, input) =>
         Effect.gen(function* () {
           yield* access.requireEditor(userId, vaultId);
@@ -232,47 +236,70 @@ export const ProposalsServiceLive = Layer.effect(
             return yield* new BadRequest({ detail: "content required" });
           }
           const contentType = input.content_type?.trim() || "user_suggestion";
-          const proposalId = Uuid.make(randomUUID(), { disableChecks: true });
+          if (contentType === SOURCE_DELETION_CONTENT_TYPE) {
+            return yield* new BadRequest({
+              detail: "Use the source deletion action to request a deletion",
+            });
+          }
           const sourceId = Uuid.make(randomUUID(), { disableChecks: true });
-          return yield* insertProposal(vaultId, userId, {
-            id: proposalId,
-            sourceId,
+          const data = {
             contentType,
             title: input.title?.trim() || null,
             author: input.author?.trim() || null,
-            destPath: `raw/${safeSegment(contentType)}/${sourceId}.md`,
             rendered: identifySourceMarkdown(buildDocument(content, contentType), sourceId),
-          });
+          };
+          const proposal = yield* db.transaction((tx) =>
+            Effect.gen(function* () {
+              const source = yield* admitSource(
+                tx,
+                vaultId,
+                sourceId,
+                `raw/${safeSegment(contentType)}/${sourceId}.md`,
+              );
+              return yield* insertProposal(tx, source, userId, data);
+            }),
+          );
+          return yield* stageProposal(proposal, data.rendered);
         }),
       findPendingForDest: (vaultId, destPath) =>
         Effect.gen(function* () {
-          const rows = yield* db.query((d) => d
-            .select()
-            .from(sourceProposals)
-            .where(
-              and(
-                eq(sourceProposals.vaultId, vaultId),
-                eq(sourceProposals.destPath, destPath),
-                eq(sourceProposals.status, "PENDING"),
-              ),
-            )
-            .limit(1));
+          const rows = yield* db.query((d) =>
+            d
+              .select({ proposal: sourceProposals })
+              .from(sourceProposals)
+              .innerJoin(
+                sourceIncarnations,
+                eq(sourceIncarnations.id, sourceProposals.sourceIncarnationId),
+              )
+              .where(
+                and(
+                  eq(sourceProposals.vaultId, vaultId),
+                  eq(sourceProposals.destPath, destPath),
+                  eq(sourceProposals.status, "PENDING"),
+                  isNull(sourceIncarnations.deletedAt),
+                ),
+              )
+              .limit(1),
+          );
           const row = rows[0];
-          return row === undefined ? undefined : proposalResponse(row);
+          return row === undefined ? undefined : proposalResponse(row.proposal);
         }),
       createSourceDeletionRequest: (vaultId, userId, source) =>
         Effect.gen(function* () {
-          const existingRows = yield* db.query((d) => d
-            .select()
-            .from(sourceProposals)
-            .where(
-              and(
-                eq(sourceProposals.vaultId, vaultId),
-                eq(sourceProposals.sourceId, source.id),
-                eq(sourceProposals.status, "PENDING"),
-              ),
-            )
-            .limit(1));
+          const existingRows = yield* db.query((d) =>
+            d
+              .select()
+              .from(sourceProposals)
+              .where(
+                and(
+                  eq(sourceProposals.vaultId, vaultId),
+                  eq(sourceProposals.sourceId, source.id),
+                  eq(sourceProposals.sourceIncarnationId, source.incarnationId),
+                  eq(sourceProposals.status, "PENDING"),
+                ),
+              )
+              .limit(1),
+          );
           const existing = existingRows[0];
           if (existing !== undefined) {
             if (existing.contentType === SOURCE_DELETION_CONTENT_TYPE) {
@@ -283,12 +310,10 @@ export const ProposalsServiceLive = Layer.effect(
             });
           }
           const sourceLabel = source.title ?? source.filePath;
-          return yield* insertProposal(vaultId, userId, {
-            sourceId: source.id,
+          return yield* createRendered(source, userId, {
             contentType: SOURCE_DELETION_CONTENT_TYPE,
             title: `Delete source: ${sourceLabel}`,
             author: null,
-            destPath: source.filePath,
             rendered: sourceDeletionDocument(source),
           });
         }),
@@ -332,15 +357,28 @@ export const ProposalsServiceLive = Layer.effect(
             return yield* new Conflict({ detail: "Proposal already reviewed" });
           }
           if (input.status === "approved") {
+            if (proposal.sourceIncarnationId === null) {
+              return yield* new Conflict({
+                detail: "This proposal predates source ownership tracking. Submit a new proposal.",
+              });
+            }
+            const source = yield* sourceDocuments.admission(vaultId, proposal.sourceIncarnationId);
             if (proposal.contentType === SOURCE_DELETION_CONTENT_TYPE) {
-              yield* sourceDocuments.deleteSource(vaultId, proposal.sourceId);
+              const deleted = yield* sourceDocuments.deleteSource(
+                vaultId,
+                source.id,
+                source.incarnationId,
+              );
+              if (!deleted)
+                return yield* new Conflict({
+                  detail: "The source changed before this deletion was approved",
+                });
               yield* proposalStorage.deletePath(proposalStagingPath(proposal.id));
             } else {
               const rendered = yield* proposalStorage
                 .readText(proposalStagingPath(proposal.id))
                 .pipe(Effect.orDie);
-              yield* vaultStorage.writeText(vaultOwner(vaultId), proposal.destPath, rendered);
-              yield* sourceDocuments.index(vaultId, proposal.destPath, rendered, null);
+              yield* sourceDocuments.write(source, rendered, null);
               yield* ensureCompileIntent(vaultId);
             }
           } else {

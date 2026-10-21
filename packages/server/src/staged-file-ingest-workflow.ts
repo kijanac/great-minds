@@ -6,7 +6,7 @@ import {
   pipelineRuns,
   sourceDocuments,
 } from "@great-minds/database";
-import { FileFingerprint, Uuid } from "@great-minds/domain";
+import { Conflict, FileFingerprint, Uuid } from "@great-minds/domain";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { Cause, Effect, Exit, Schema } from "effect";
 import * as Activity from "effect/unstable/workflow/Activity";
@@ -18,17 +18,15 @@ import { causeDetails, formatError } from "./error-details.ts";
 import { buildDocument } from "./markdown.ts";
 import { StructuredLogger } from "./logging.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
-import { identifySourceMarkdown, sourceIdForKey } from "./source-identity.ts";
+import { identifySourceMarkdown } from "./source-identity.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
-import { ContentStorage, StagedStorage, vaultOwner } from "./storage.ts";
+import { StagedStorage } from "./storage.ts";
 
 export const STAGED_FILE_INGEST_STEP_LABELS = {
   prepare_sources: "Preparing uploaded sources",
   read_files: "Reading uploaded files",
   index_documents: "Indexing documents",
 } as const;
-
-const BATCH_SIZE = 50;
 
 const StagedFile = Schema.Struct({
   name: Schema.String,
@@ -72,7 +70,6 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
     success: StagedFileIngestPersistResult,
     execute: Effect.gen(function* () {
       const db = yield* Database;
-      const storage = yield* ContentStorage;
       const stagedStorage = yield* StagedStorage;
       const sourceDocumentsService = yield* SourceDocumentsService;
       const pipeline = yield* PipelineRunsService;
@@ -87,6 +84,16 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         .from(sourceDocuments)
         .where(eq(sourceDocuments.vaultId, vaultId)));
       const existingHashes = new Map(existingRows.map((row) => [row.path, row.hash]));
+      const admittedFiles = yield* db.query((d) =>
+        d
+          .select({
+            hash: fileIngestFiles.hash,
+            incarnationId: fileIngestFiles.sourceIncarnationId,
+          })
+          .from(fileIngestFiles)
+          .where(eq(fileIngestFiles.batchId, batchId)),
+      );
+      const admissions = new Map(admittedFiles.map((file) => [file.hash, file.incarnationId]));
 
       yield* pipeline.updateProgress(
         runId,
@@ -111,6 +118,13 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         (file) =>
           Effect.exit(
             Effect.gen(function* () {
+              const incarnationId = admissions.get(file.hash);
+              if (incarnationId === undefined || incarnationId === null) {
+                return yield* new Conflict({
+                  detail: "This file import has no source admission. Start a new upload batch.",
+                });
+              }
+              const source = yield* sourceDocumentsService.admission(vaultId, incarnationId);
               const bytes = yield* stagedStorage.readStagedBytes(vaultId, batchId, file.hash);
               if (bytes.byteLength !== file.size || rawFileHash(bytes) !== file.hash) {
                 throw new Error(`Staged file integrity check failed: ${file.name}`);
@@ -119,7 +133,13 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
                 try: () => stagedFileToMarkdown(bytes, file.name, file.mimetype),
                 catch: (error) => error,
               });
-              return { file, content: buildDocument(markdown, { sourceType: "document" }) };
+              const content = identifySourceMarkdown(
+                buildDocument(markdown, { sourceType: "document" }),
+                source.id,
+                null,
+                source.incarnationId,
+              );
+              return { file, source, content };
             }),
           ),
         { concurrency: 4 },
@@ -130,23 +150,50 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
       const failures: { name: string; hash: FileFingerprint; error: string }[] = [];
       const seen = new Set<string>();
       const cleanup = payload.files.map((file) => file.hash);
-      let batch: {
-        filePath: string;
-        content: string;
-        clientHash: typeof FileFingerprint.Type;
-      }[] = [];
 
-      const requireActive = Effect.fn(function* () {
-        if (!(yield* pipeline.isActive(runId))) return yield* Effect.interrupt;
-      });
-
-      const flush = Effect.fn(function* () {
-        if (batch.length === 0) {
-          return;
+      for (const [index, result] of converted.entries()) {
+        if (Exit.isFailure(result)) {
+          if (Cause.hasInterruptsOnly(result.cause)) return yield* Effect.interrupt;
+          const file = payload.files[index];
+          if (file === undefined) {
+            throw new Error(`Converted staged file ${index} has no input entry`);
+          }
+          const error = causeDetails(result.cause);
+          const failure = result.cause.reasons.find(Cause.isFailReason)?.error;
+          failures.push({
+            name: file.name,
+            hash: file.hash,
+            error:
+              failure instanceof Conflict
+                ? failure.detail
+                : "The file could not be read or converted",
+          });
+          yield* logger.warn("staged_file_ingest.fetch_failed", {
+            vault_id: vaultId,
+            pipeline_run_id: runId,
+            file_name: file.name,
+            error: error.errorType,
+            error_message: error.message,
+          });
+          continue;
         }
-        yield* requireActive();
-        yield* sourceDocumentsService.batchIndex(vaultId, batch);
-        batch = [];
+        const { content, file, source } = result.value;
+        if (!(yield* pipeline.isActive(runId))) return yield* Effect.interrupt;
+        const written = yield* Effect.result(
+          sourceDocumentsService.write(source, content, file.hash),
+        );
+        if (written._tag === "Failure") {
+          failures.push({ name: file.name, hash: file.hash, error: written.failure.detail });
+          continue;
+        }
+        if (
+          (existingHashes.get(source.filePath) === fileContentHash(content) ||
+            seen.has(source.id)) &&
+          !file.needsCompile
+        )
+          skipped += 1;
+        else ingested += 1;
+        seen.add(source.id);
         yield* pipeline.updateProgress(
           runId,
           "source_ingest",
@@ -158,49 +205,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
             },
           }),
         );
-      });
-
-      for (const [index, result] of converted.entries()) {
-        if (Exit.isFailure(result)) {
-          const file = payload.files[index];
-          if (file === undefined) {
-            throw new Error(`Converted staged file ${index} has no input entry`);
-          }
-          const error = causeDetails(result.cause);
-          failures.push({
-            name: file.name,
-            hash: file.hash,
-            error: "The file could not be read or converted",
-          });
-          yield* logger.warn("staged_file_ingest.fetch_failed", {
-            vault_id: vaultId,
-            pipeline_run_id: runId,
-            file_name: file.name,
-            error: error.errorType,
-            error_message: error.message,
-          });
-          continue;
-        }
-        const { content, file } = result.value;
-        const sourceId = sourceIdForKey(vaultId, `upload:${file.hash}`);
-        const dest = `raw/docs/${sourceId}.md`;
-        const identified = identifySourceMarkdown(content, sourceId);
-        const contentHash = fileContentHash(identified);
-        if (existingHashes.get(dest) === contentHash || seen.has(dest)) {
-          if (file.needsCompile) ingested += 1;
-          else skipped += 1;
-          continue;
-        }
-        yield* requireActive();
-        yield* storage.writeText(vaultOwner(vaultId), dest, identified);
-        seen.add(dest);
-        batch.push({ filePath: dest, content: identified, clientHash: file.hash });
-        ingested += 1;
-        if (batch.length >= BATCH_SIZE) {
-          yield* flush();
-        }
       }
-      yield* flush();
 
       yield* pipeline.updateProgress(
         runId,

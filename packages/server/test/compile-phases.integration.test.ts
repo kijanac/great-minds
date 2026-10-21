@@ -49,11 +49,12 @@ import { DrizzleLive } from "../src/db.ts";
 import { EmbeddingBatchFailed, EmbeddingsService } from "../src/embeddings.ts";
 import { LanguageModel, type CompleteInput, type ModelCompletion } from "../src/llm.ts";
 import { StructuredLogger } from "../src/logging.ts";
-import { parseFrontmatter } from "../src/markdown.ts";
+import { parseFrontmatter, serializeFrontmatter } from "../src/markdown.ts";
 import { PipelineRunsServiceLive } from "../src/pipeline-runs.ts";
 import { RandomBytesLive } from "../src/random.ts";
-import { SourceDocumentsServiceLive } from "../src/source-documents.ts";
-import { ContentStorage, StorageFileMissing } from "../src/storage.ts";
+import { SourceDocumentsService, SourceDocumentsServiceLive } from "../src/source-documents.ts";
+import { ContentStorage } from "../src/storage.ts";
+import { seedLegacySources, versionedSourceStorage } from "./fixtures/source-documents.ts";
 import {
   replyHistoryTestDatabaseUrl,
   runHistoryDatabase,
@@ -140,7 +141,13 @@ let complete = async (_input: CompleteInput): Promise<ModelCompletion> => {
   throw new Error("unexpected compile LLM call");
 };
 
+const writeFile = (path: string, content: string) => {
+  files.set(path, content);
+  if (path === failWritePath) throw new Error("compile replay write fault");
+};
+
 const StorageLive = Layer.succeed(ContentStorage, {
+  ...versionedSourceStorage(files, writeFile),
   listMarkdown: (_vaultId, scope) =>
     Effect.succeed(
       [...files.keys()]
@@ -149,18 +156,7 @@ const StorageLive = Layer.succeed(ContentStorage, {
         .sort()
         .map((path) => ({ path, etag: etags.get(path) ?? null })),
     ),
-  readText: (_vaultId, path) => {
-    const content = files.get(path);
-    return content === undefined
-      ? Effect.fail(new StorageFileMissing({ path }))
-      : Effect.succeed(content);
-  },
-  writeText: (_vaultId, path, content) =>
-    Effect.sync(() => {
-      files.set(path, content);
-      if (path === failWritePath) throw new Error("compile replay write fault");
-    }),
-  exists: (_vaultId, path) => Effect.succeed(files.has(path)),
+  writeText: (_vaultId, path, content) => Effect.sync(() => writeFile(path, content)),
   deletePath: (_vaultId, path) => Effect.sync(() => files.delete(path)).pipe(Effect.asVoid),
   clear: () => Effect.void,
 });
@@ -212,8 +208,9 @@ const TestLive = PhasesLive.pipe(
   Layer.provideMerge(BaseLive),
 );
 
-const run = <A>(effect: Effect.Effect<A, unknown, Database | CompilePhases>) =>
-  Effect.runPromise(effect.pipe(Effect.provide(TestLive)));
+const run = <A>(
+  effect: Effect.Effect<A, unknown, Database | CompilePhases | SourceDocumentsService>,
+) => Effect.runPromise(effect.pipe(Effect.provide(TestLive)));
 
 const seedBase = () =>
   run(
@@ -243,24 +240,48 @@ const seedBase = () =>
     }),
   );
 
-const seedSourceAndIdeas = () =>
-  run(
+const insertSource = async (
+  documentId: Uuid,
+  filePath: string,
+  canonicalUrl: string | null = null,
+) => {
+  const original = files.get(filePath);
+  if (original === undefined) throw new Error(`Source fixture has no file at ${filePath}`);
+  const parsed = parseFrontmatter(original);
+  const content = serializeFrontmatter(
+    { ...parsed.frontmatter, source_id: documentId },
+    parsed.body,
+  );
+  files.set(filePath, content);
+  const bodyHash = bodyContentHash(parsed.body);
+  await run(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.query((d) => d
-        .insert(sourceDocuments)
-        .values({
-          id: id.source,
+      yield* db.transaction((tx) =>
+        seedLegacySources(tx, {
+          id: documentId,
           vaultId: id.vault,
-          filePath: "raw/docs/source.md",
-          fileHash: "file",
-          bodyHash: "body",
+          filePath,
+          fileHash: fileContentHash(content),
+          bodyHash,
           sourceType: "document",
-        }))
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(ideas)
-        .values(
+          canonicalUrl,
+        }),
+      );
+    }),
+  );
+  return bodyHash;
+};
+
+const seedSourceAndIdeas = async () => {
+  const path = "raw/docs/source.md";
+  if (!files.has(path)) files.set(path, "# Source\n\nBody\n");
+  await insertSource(id.source, path);
+  await run(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db.query((d) =>
+        d.insert(ideas).values(
           [id.ideaA, id.ideaB, id.ideaC].map((ideaId, index) => ({
             ideaId,
             vaultId: id.vault,
@@ -269,34 +290,11 @@ const seedSourceAndIdeas = () =>
             label: `Idea ${index}`,
             description: `Description ${index}`,
           })),
-        ))
-        .pipe(Effect.orDie);
+        ),
+      );
     }),
   );
-
-const insertSource = (
-  documentId: Uuid,
-  filePath: string,
-  bodyHash: string,
-  canonicalUrl: string | null = null,
-) =>
-  run(
-    Effect.gen(function* () {
-      const db = yield* Database;
-      yield* db.query((d) => d
-        .insert(sourceDocuments)
-        .values({
-          id: documentId,
-          vaultId: id.vault,
-          filePath,
-          fileHash: `file-${bodyHash}`,
-          bodyHash,
-          sourceType: "document",
-          canonicalUrl,
-        }))
-        .pipe(Effect.orDie);
-    }),
-  );
+};
 
 const defaultPrompt = async (name: string) =>
   (await readFile(new URL(`../src/default_prompts/${name}.md`, import.meta.url), "utf8")).trim();
@@ -312,22 +310,24 @@ const seedCanonicalPath = async (options: {
   readonly registryValue?: unknown;
   readonly assignmentValue?: unknown;
 }) => {
-  files.set("raw/docs/source.md", "# Source\n\nBody\n");
+  const content = serializeFrontmatter({ source_id: id.source }, "# Source\n\nBody\n");
+  files.set("raw/docs/source.md", content);
   await run(
     Effect.gen(function* () {
       const db = yield* Database;
-      yield* db.query((d) => d
-        .insert(sourceDocuments)
-        .values({
-          id: id.source,
-          vaultId: id.vault,
-          filePath: "raw/docs/source.md",
-          fileHash: "file",
-          bodyHash: "body",
-          sourceType: "document",
-          title: "Source",
-          precis: "Precis",
-        }))
+      yield* db
+        .transaction((tx) =>
+          seedLegacySources(tx, {
+            id: id.source,
+            vaultId: id.vault,
+            filePath: "raw/docs/source.md",
+            fileHash: fileContentHash(content),
+            bodyHash: bodyContentHash(parseFrontmatter(content).body),
+            sourceType: "document",
+            title: "Source",
+            precis: "Precis",
+          }),
+        )
         .pipe(Effect.orDie);
       yield* db.query((d) => d
         .insert(ideas)
@@ -514,7 +514,7 @@ describe("M4.3a deterministic compile phases", () => {
       "raw/docs/source.md",
       `---\nsource_id: ${id.source}\ncanonical_url: ${canonicalUrl}\n---\n# Source\n\nBody\n`,
     );
-    await insertSource(id.source, "raw/docs/source.md", "provenance-body", canonicalUrl);
+    await insertSource(id.source, "raw/docs/source.md", canonicalUrl);
     complete = async () => ({
       text: JSON.stringify(
         fullCard([{ kind: "concept", label: "Idea", description: "Description", anchors: [] }]),
@@ -650,11 +650,85 @@ describe("M4.3a deterministic compile phases", () => {
     expect(modelCalls).toBe(1);
   });
 
+  it("does not project an old extraction onto a deleted and re-imported source", async () => {
+    const path = "raw/docs/source.md";
+    files.set(path, "# Original\n\nOriginal body.\n");
+    await insertSource(id.source, path);
+    let announce = () => {};
+    let release = () => {};
+    const started = new Promise<void>((resolve) => {
+      announce = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    complete = async () => {
+      announce();
+      await released;
+      return {
+        text: JSON.stringify({
+          ...fullCard([
+            {
+              kind: "concept",
+              label: "Old idea",
+              description: "Old description",
+              anchors: [{ claim: "Old claim", quote: "Original body." }],
+            },
+          ]),
+          title: "Old generated title",
+          precis: "Old generated precis",
+        }),
+        finishReason: "stop",
+      };
+    };
+    const extracting = run(
+      Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run)),
+    );
+    try {
+      await Promise.race([
+        started,
+        extracting.then(() => {
+          throw new Error("Extraction did not call the model");
+        }),
+      ]);
+      await run(
+        Effect.gen(function* () {
+          const sources = yield* SourceDocumentsService;
+          expect(yield* sources.deleteSource(id.vault, id.source)).toBe(true);
+          const replacement = yield* sources.admit(id.vault, id.source, path);
+          yield* sources.write(replacement, "# Replacement\n\nFresh body.\n", null);
+        }),
+      );
+    } finally {
+      release();
+      await extracting;
+    }
+    const state = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return {
+          ideas: yield* db.query((tx) => tx.select().from(ideas)),
+          anchors: yield* db.query((tx) => tx.select().from(anchors)),
+          sources: yield* db.query((tx) => tx.select().from(sourceDocuments)),
+          cache: yield* db.query((tx) => tx.select().from(compileCacheEntries)),
+        };
+      }),
+    );
+    expect(state.cache).toHaveLength(1);
+    expect(state.ideas).toEqual([]);
+    expect(state.anchors).toEqual([]);
+    expect(state.sources).toEqual([
+      expect.objectContaining({ id: id.source, title: "Replacement", precis: null }),
+    ]);
+    expect(parseFrontmatter(files.get(path)!).body).toBe("# Replacement\n\nFresh body.\n");
+    expect(parseFrontmatter(files.get(path)!).frontmatter.precis).toBeUndefined();
+  });
+
   it("isolates malformed extract output per document under the strict contract", async () => {
     files.set("raw/docs/bad.md", "# Bad\n\nMALFORMED\n");
     files.set("raw/docs/good.md", "# Good\n\nGOOD\u0085BODY\n");
-    await insertSource(id.source, "raw/docs/bad.md", "bad-body");
-    await insertSource(id.sourceB, "raw/docs/good.md", "good-body");
+    await insertSource(id.source, "raw/docs/bad.md");
+    await insertSource(id.sourceB, "raw/docs/good.md");
     complete = async (input) => {
       const content = input.messages[0]?.content;
       const prompt = typeof content === "string" ? content : "";
@@ -729,9 +803,9 @@ describe("M4.3a deterministic compile phases", () => {
     },
   ])("rejects malformed or foreign extract cache without refetching the LLM: %j", async (card) => {
     const path = "raw/docs/source.md";
-    const content = "# Source\n\nBody\n";
+    const content = serializeFrontmatter({ source_id: id.source }, "# Source\n\nBody\n");
     files.set(path, content);
-    await insertSource(id.source, path, "cached-body");
+    const bodyHash = await insertSource(id.source, path);
     const template = (await defaultPrompt("extract"))
       .replace("{kinds}", "person, event, organization, concept")
       .replace("{vault_enriched_fields}", "");
@@ -743,7 +817,7 @@ describe("M4.3a deterministic compile phases", () => {
             phase: "extract",
             cacheKey: contentHash(
               `doc=${id.source}`,
-              "cached-body",
+              bodyHash,
               `prompt=${promptContentHash(template)}`,
               `model=${config.extractModel}`,
             ),
@@ -771,7 +845,7 @@ describe("M4.3a deterministic compile phases", () => {
 
   it("fails extract loudly on a non-timeout embedding error", async () => {
     files.set("raw/docs/source.md", "# Source\n\nBody\n");
-    await insertSource(id.source, "raw/docs/source.md", "embedding-body");
+    await insertSource(id.source, "raw/docs/source.md");
     complete = async () => ({
       text: JSON.stringify(
         fullCard([{ kind: "concept", label: "Idea", description: "Description", anchors: [] }]),
@@ -789,7 +863,7 @@ describe("M4.3a deterministic compile phases", () => {
 
   it("skips only a timed-out embedding batch and logs its real error type", async () => {
     files.set("raw/docs/source.md", "# Source\n\nBody\n");
-    await insertSource(id.source, "raw/docs/source.md", "timeout-body");
+    await insertSource(id.source, "raw/docs/source.md");
     complete = async () => ({
       text: JSON.stringify(
         fullCard([{ kind: "concept", label: "Idea", description: "Description", anchors: [] }]),
@@ -817,7 +891,7 @@ describe("M4.3a deterministic compile phases", () => {
 
   it("drops an omitted embedding tail instead of inserting an empty vector", async () => {
     files.set("raw/docs/source.md", "# Source\n\nBody\n");
-    await insertSource(id.source, "raw/docs/source.md", "short-embedding-body");
+    await insertSource(id.source, "raw/docs/source.md");
     complete = async () => ({
       text: JSON.stringify(
         fullCard([{ kind: "concept", label: "Idea", description: "Description", anchors: [] }]),
@@ -838,7 +912,7 @@ describe("M4.3a deterministic compile phases", () => {
     "handles %s model JSON at the compile boundary",
     async (kind) => {
       files.set("raw/docs/source.md", "# Source\n\nBody\n");
-      await insertSource(id.source, "raw/docs/source.md", "json-body");
+      await insertSource(id.source, "raw/docs/source.md");
       let calls = 0;
       complete = async () => {
         calls += 1;
@@ -862,7 +936,7 @@ describe("M4.3a deterministic compile phases", () => {
 
   it("warns on a JSON parse retry without logging the malformed response", async () => {
     files.set("raw/docs/source.md", "# Source\n\nBody\n");
-    await insertSource(id.source, "raw/docs/source.md", "retry-body");
+    await insertSource(id.source, "raw/docs/source.md");
     let attempt = 0;
     complete = async () => {
       attempt += 1;
@@ -985,16 +1059,17 @@ describe("M4.3a deterministic compile phases", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(sourceDocuments)
-          .values({
-            id: id.source,
-            vaultId: id.vault,
-            filePath: "raw/docs/source.md",
-            fileHash: "file",
-            bodyHash: "body",
-            sourceType: "document",
-          }))
+        yield* db
+          .transaction((tx) =>
+            seedLegacySources(tx, {
+              id: id.source,
+              vaultId: id.vault,
+              filePath: "raw/docs/source.md",
+              fileHash: "file",
+              bodyHash: "body",
+              sourceType: "document",
+            }),
+          )
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.ingest(id.vault, id.run);
@@ -1050,17 +1125,20 @@ describe("M4.3a deterministic compile phases", () => {
     files.set("raw/docs/source.md", content);
     etags.set("raw/docs/source.md", "etag-one");
     await run(
-      Effect.flatMap(Database, (db) => db.query((d) => d
-        .insert(sourceDocuments)
-        .values({
-          id: id.source,
-          vaultId: id.vault,
-          filePath: "raw/docs/source.md",
-          fileHash: "file",
-          bodyHash: "body",
-          sourceType: "document",
-        }))
-        .pipe(Effect.orDie)),
+      Effect.flatMap(Database, (db) =>
+        db
+          .transaction((tx) =>
+            seedLegacySources(tx, {
+              id: id.source,
+              vaultId: id.vault,
+              filePath: "raw/docs/source.md",
+              fileHash: "file",
+              bodyHash: "body",
+              sourceType: "document",
+            }),
+          )
+          .pipe(Effect.orDie),
+      ),
     );
     embed = async () => {
       throw new DOMException("embedding timed out", "TimeoutError");
@@ -1102,17 +1180,20 @@ describe("M4.3a deterministic compile phases", () => {
   it("ingest fails loudly on a non-timeout embedding error", async () => {
     files.set("raw/docs/source.md", `---\nsource_id: ${id.source}\n---\n# Heading\n\nBody\n`);
     await run(
-      Effect.flatMap(Database, (db) => db.query((d) => d
-        .insert(sourceDocuments)
-        .values({
-          id: id.source,
-          vaultId: id.vault,
-          filePath: "raw/docs/source.md",
-          fileHash: "file",
-          bodyHash: "body",
-          sourceType: "document",
-        }))
-        .pipe(Effect.orDie)),
+      Effect.flatMap(Database, (db) =>
+        db
+          .transaction((tx) =>
+            seedLegacySources(tx, {
+              id: id.source,
+              vaultId: id.vault,
+              filePath: "raw/docs/source.md",
+              fileHash: "file",
+              bodyHash: "body",
+              sourceType: "document",
+            }),
+          )
+          .pipe(Effect.orDie),
+      ),
     );
     embed = async () => {
       throw new Error("revoked credential");
@@ -1134,22 +1215,23 @@ describe("M4.3a deterministic compile phases", () => {
     const state = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(sourceDocuments)
-          .values({
-            id: id.source,
-            vaultId: id.vault,
-            filePath: oldPath,
-            fileHash: "old-file-hash",
-            bodyHash: "old-body-hash",
-            clientHash: "a".repeat(64),
-            etag: "etag-original",
-            sourceType: "book",
-            title: "Original title",
-            precis: "Keep this derived precis",
-            tags: ["keep-this-tag"],
-            derivedExtras: { retained: true },
-          }))
+        yield* db
+          .transaction((tx) =>
+            seedLegacySources(tx, {
+              id: id.source,
+              vaultId: id.vault,
+              filePath: oldPath,
+              fileHash: "old-file-hash",
+              bodyHash: "old-body-hash",
+              clientHash: "a".repeat(64),
+              etag: "etag-original",
+              sourceType: "book",
+              title: "Original title",
+              precis: "Keep this derived precis",
+              tags: ["keep-this-tag"],
+              derivedExtras: { retained: true },
+            }),
+          )
           .pipe(Effect.orDie);
         yield* db.query((d) => d
           .insert(ideas)
@@ -1213,16 +1295,17 @@ describe("M4.3a deterministic compile phases", () => {
     files.set(duplicatePath, content);
     await run(
       Effect.flatMap(Database, (db) =>
-        db.query((d) => d
-          .insert(sourceDocuments)
-          .values({
-            id: id.source,
-            vaultId: id.vault,
-            filePath: originalPath,
-            fileHash: fileContentHash(content),
-            bodyHash: bodyContentHash("# Duplicate identity\n"),
-            sourceType: "document",
-          }))
+        db
+          .transaction((tx) =>
+            seedLegacySources(tx, {
+              id: id.source,
+              vaultId: id.vault,
+              filePath: originalPath,
+              fileHash: fileContentHash(content),
+              bodyHash: bodyContentHash("# Duplicate identity\n"),
+              sourceType: "document",
+            }),
+          )
           .pipe(Effect.orDie),
       ),
     );
@@ -1239,7 +1322,7 @@ describe("M4.3a deterministic compile phases", () => {
     expect(sources[0]?.filePath).toBe(originalPath);
   });
 
-  it("derive replaces membership, intended links, and deterministic bidirectional Jaccard rows", async () => {
+  it("derive replaces the topic graph without restoring removed source memberships", async () => {
     await seedSourceAndIdeas();
     await run(
       Effect.gen(function* () {
@@ -1279,6 +1362,17 @@ describe("M4.3a deterministic compile phases", () => {
       { topicId: id.topicA, relatedTopicId: id.topicB, sharedIdeas: 1, jaccard: 1 / 3 },
       { topicId: id.topicB, relatedTopicId: id.topicA, sharedIdeas: 1, jaccard: 1 / 3 },
     ]);
+    const afterDeletion = await run(
+      Effect.gen(function* () {
+        const sources = yield* SourceDocumentsService;
+        const phases = yield* CompilePhases;
+        const db = yield* Database;
+        yield* sources.deleteSource(id.vault, id.source);
+        yield* phases.derive(id.vault, id.run, validated);
+        return yield* db.query((tx) => tx.select().from(topicMembership));
+      }),
+    );
+    expect(afterDeletion).toEqual([]);
   });
 
   it("render repairs a missing file from cache, reuses it, and isolates an invalid-cache fallthrough", async () => {
@@ -1652,16 +1746,18 @@ describe("M4.3a deterministic compile phases", () => {
       Effect.gen(function* () {
         const db = yield* Database;
         yield* db
-          .query((d) => d.insert(sourceDocuments).values({
-            id: id.source,
-            vaultId: id.vault,
-            filePath: "raw/docs/source.md",
-            fileHash: "file",
-            bodyHash: "body",
-            sourceType: "document",
-            title: "Source",
-            precis: "Precis",
-          }))
+          .transaction((tx) =>
+            seedLegacySources(tx, {
+              id: id.source,
+              vaultId: id.vault,
+              filePath: "raw/docs/source.md",
+              fileHash: "file",
+              bodyHash: "body",
+              sourceType: "document",
+              title: "Source",
+              precis: "Precis",
+            }),
+          )
           .pipe(Effect.orDie);
         yield* db
           .query((d) => d.insert(ideas).values(

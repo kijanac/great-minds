@@ -4,6 +4,9 @@ import { resolve } from "node:path";
 import {
   backlinks,
   Database,
+  ideas,
+  type DatabaseInfraError,
+  type TransactionClient,
   searchIndex,
   sourceDocuments,
   topicLinks,
@@ -14,6 +17,7 @@ import {
 } from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, like, notInArray, sql } from "drizzle-orm";
+import type { PgInsertValue } from "drizzle-orm/pg-core";
 import { Context, Effect, Layer } from "effect";
 
 import { ClockService } from "./clock.ts";
@@ -40,11 +44,7 @@ import {
   serializeFrontmatter,
 } from "./markdown.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
-import {
-  parseSourceDocument,
-  type ParsedSourceDocument,
-  SourceDocumentsService,
-} from "./source-documents.ts";
+import { SourceDocumentsService } from "./source-documents.ts";
 import { ContentStorage, vaultOwner } from "./storage.ts";
 import { RandomBytesService } from "./random.ts";
 
@@ -60,21 +60,28 @@ const metadataText = (frontmatter: Record<string, unknown>) => {
   return parts.length === 0 ? undefined : parts.join("\n\n");
 };
 
+type SearchDocument =
+  | {
+      readonly kind: "source";
+      readonly path: string;
+      readonly etag: string | null;
+      readonly source: typeof sourceDocuments.$inferSelect;
+      readonly content?: string;
+    }
+  | { readonly kind: "wiki"; readonly path: string; readonly etag: string | null };
+
 type SearchChunk = {
-  readonly path: string;
   readonly chunkIndex: number;
   readonly heading: string;
   readonly body: string;
   readonly contentHash: string;
 };
 
-const chunkDocument = (path: string, content: string): readonly SearchChunk[] => {
-  const parsed = parseFrontmatter(content);
+const chunkDocument = (parsed: ReturnType<typeof parseFrontmatter>): readonly SearchChunk[] => {
   const result: SearchChunk[] = [];
   const metadata = metadataText(parsed.frontmatter);
   if (metadata !== undefined) {
     result.push({
-      path,
       chunkIndex: -1,
       heading: "",
       body: metadata,
@@ -85,7 +92,6 @@ const chunkDocument = (path: string, content: string): readonly SearchChunk[] =>
     const body =
       paragraph.heading.length === 0 ? paragraph.body : `${paragraph.heading}\n\n${paragraph.body}`;
     result.push({
-      path,
       chunkIndex: paragraph.index,
       heading: paragraph.heading,
       body,
@@ -140,7 +146,7 @@ export const CompilePhasesLive = Layer.effect(
     const randomBytes = yield* RandomBytesService;
     const clock = yield* ClockService;
     const storage = yield* ContentStorage;
-    const sourceDocumentsWrite = yield* SourceDocumentsService;
+    const sourceRegistry = yield* SourceDocumentsService;
 
     const rebuildSearchScope = (vaultId: Uuid, runId: Uuid, scope: "raw" | "wiki") =>
       Effect.gen(function* () {
@@ -156,72 +162,25 @@ export const CompilePhasesLive = Layer.effect(
         const existingHashes = new Map(
           existing.map((row) => [`${row.path}\u0000${row.chunkIndex}`, row.contentHash]),
         );
-        let documents = yield* db.query((d) => d
-          .select({
-            id: sourceDocuments.id,
-            path: sourceDocuments.filePath,
-            etag: sourceDocuments.etag,
-          })
-          .from(sourceDocuments)
-          .where(eq(sourceDocuments.vaultId, vaultId)));
-        let documentsByPath = new Map(documents.map((row) => [row.path, row]));
-        const files = yield* storage.listMarkdown(vaultOwner(vaultId), scope);
-        const contentByPath = new Map<string, string>();
-
-        if (scope === "raw") {
-          const seenSourcePaths = new Map<Uuid, string>();
-          const refresh: ParsedSourceDocument[] = [];
-          for (const file of files) {
-            const filename = file.path.slice(file.path.lastIndexOf("/") + 1);
-            if (filename.startsWith("_")) continue;
-            const document = documentsByPath.get(file.path);
-            const hasMetadata = existingHashes.has(`${file.path}\u0000-1`);
-            let sourceId: Uuid;
-            if (
-              document !== undefined &&
-              document.etag !== null &&
-              document.etag === file.etag &&
-              file.etag !== null &&
-              hasMetadata
-            ) {
-              sourceId = document.id;
-            } else {
-              const content = yield* storage.readText(vaultOwner(vaultId), file.path);
-              contentByPath.set(file.path, content);
-              const candidate = parseSourceDocument(vaultId, file.path, content);
-              sourceId = candidate.id;
-              if (document !== undefined && document.id !== sourceId) {
-                throw new Error(
-                  `Source identity mismatch at ${file.path}: registered ${document.id}, stored ${sourceId}`,
-                );
-              }
-              refresh.push(candidate);
-            }
-            const previousPath = seenSourcePaths.get(sourceId);
-            if (previousPath !== undefined && previousPath !== file.path) {
-              throw new Error(
-                `Source ${sourceId} appears at both ${previousPath} and ${file.path}`,
-              );
-            }
-            seenSourcePaths.set(sourceId, file.path);
-          }
-          for (const document of refresh) {
-            yield* sourceDocumentsWrite.refresh(document);
-          }
-          documents = yield* db.query((d) => d
-            .select({
-              id: sourceDocuments.id,
-              path: sourceDocuments.filePath,
-              etag: sourceDocuments.etag,
-            })
-            .from(sourceDocuments)
-            .where(eq(sourceDocuments.vaultId, vaultId)));
-          documentsByPath = new Map(documents.map((row) => [row.path, row]));
-        }
-
-        const current = new Map<string, Set<number>>();
-        const changed: SearchChunk[] = [];
-        const etags: { id: Uuid; path: string; etag: string }[] = [];
+        const files: SearchDocument[] =
+          scope === "raw"
+            ? (yield* sourceRegistry.discover(vaultId)).map((document) => ({
+                kind: "source",
+                path: document.source.filePath,
+                ...document,
+              }))
+            : (yield* storage.listMarkdown(vaultOwner(vaultId), "wiki"))
+                .filter((file) => !file.path.slice(file.path.lastIndexOf("/") + 1).startsWith("_"))
+                .map((file) => ({ kind: "wiki", ...file }));
+        const project = (
+          document: SearchDocument,
+          mutate: (tx: TransactionClient) => Effect.Effect<void, DatabaseInfraError>,
+        ) =>
+          document.kind === "source"
+            ? sourceRegistry.withCurrent(document.source, mutate)
+            : db.transaction((tx) => mutate(tx).pipe(Effect.as(true)));
+        const current = new Map<SearchDocument, Set<number>>();
+        const changed: { readonly document: SearchDocument; readonly chunk: SearchChunk }[] = [];
 
         if (scope === "raw") {
           yield* pipeline.updateProgress(
@@ -235,41 +194,33 @@ export const CompilePhasesLive = Layer.effect(
         }
 
         for (const [fileIndex, file] of files.entries()) {
-          const filename = file.path.slice(file.path.lastIndexOf("/") + 1);
-          if (filename.startsWith("_")) continue;
-          const document = documentsByPath.get(file.path);
-          if (scope === "raw" && document !== undefined && file.etag !== null) {
-            etags.push({ id: document.id, path: file.path, etag: file.etag });
-          }
           const hasMetadata = existingHashes.has(`${file.path}\u0000-1`);
           if (
-            scope === "raw" &&
-            document?.etag !== null &&
-            document?.etag === file.etag &&
+            file.kind === "source" &&
             file.etag !== null &&
+            file.source.etag === file.etag &&
             hasMetadata
           ) {
             current.set(
-              file.path,
+              file,
               new Set(
                 existing.filter((row) => row.path === file.path).map((row) => row.chunkIndex),
               ),
             );
             continue;
           }
-          let content = contentByPath.get(file.path);
-          if (content === undefined) {
-            content = yield* storage.readText(vaultOwner(vaultId), file.path);
-          }
-          if (content.length === 0) continue;
-          for (const chunk of chunkDocument(file.path, content)) {
-            const indexes = current.get(file.path) ?? new Set<number>();
-            indexes.add(chunk.chunkIndex);
-            current.set(file.path, indexes);
-            if (
-              existingHashes.get(`${chunk.path}\u0000${chunk.chunkIndex}`) !== chunk.contentHash
-            ) {
-              changed.push(chunk);
+          const parsed =
+            file.kind === "source"
+              ? file.content === undefined
+                ? yield* sourceRegistry.readCurrent(file.source)
+                : parseFrontmatter(file.content)
+              : parseFrontmatter(yield* storage.readText(vaultOwner(vaultId), file.path));
+          if (parsed === undefined) continue;
+          const chunks = chunkDocument(parsed);
+          current.set(file, new Set(chunks.map((chunk) => chunk.chunkIndex)));
+          for (const chunk of chunks) {
+            if (existingHashes.get(`${file.path}\u0000${chunk.chunkIndex}`) !== chunk.contentHash) {
+              changed.push({ document: file, chunk });
             }
           }
           if (scope === "raw" && (fileIndex + 1) % 100 === 0) {
@@ -299,7 +250,7 @@ export const CompilePhasesLive = Layer.effect(
         for (let offset = 0; offset < changed.length; offset += 50) {
           const batch = changed.slice(offset, offset + 50);
           const embedded = yield* Effect.result(
-            embeddings.embed(batch.map((chunk) => chunk.body)),
+            embeddings.embed(batch.map(({ chunk }) => chunk.body)),
           );
           if (embedded._tag === "Failure") {
             if (!isTimeoutError(embedded.failure)) return yield* Effect.fail(embedded.failure);
@@ -313,15 +264,17 @@ export const CompilePhasesLive = Layer.effect(
               error_type: details.errorType,
               error: details.message.slice(0, 300),
             });
-            for (const chunk of batch) unindexedPaths.add(chunk.path);
+            for (const { document } of batch) unindexedPaths.add(document.path);
             continue;
           }
-          const rows = batch.map((chunk, index) => {
+          const byDocument = new Map<SearchDocument, PgInsertValue<typeof searchIndex>[]>();
+          for (const [index, { document, chunk }] of batch.entries()) {
             const embedding = embedded.success[index];
             if (embedding === undefined) throw new Error(`Embedding ${index} missing from batch`);
-            return {
+            const rows = byDocument.get(document) ?? [];
+            rows.push({
               vaultId,
-              path: chunk.path,
+              path: document.path,
               chunkIndex: chunk.chunkIndex,
               heading: chunk.heading,
               body: chunk.body,
@@ -329,57 +282,74 @@ export const CompilePhasesLive = Layer.effect(
               tsv: sql`to_tsvector('english', ${chunk.body})`,
               embedding: sql`${vectorLiteral(embedding)}::vector`,
               updatedAt: sql`now()`,
-            };
-          });
-          yield* db.query((d) => d
-            .insert(searchIndex)
-            .values(rows)
-            .onConflictDoUpdate({
-              target: [searchIndex.vaultId, searchIndex.path, searchIndex.chunkIndex],
-              set: {
-                heading: sql`excluded.heading`,
-                body: sql`excluded.body`,
-                contentHash: sql`excluded.content_hash`,
-                tsv: sql`excluded.tsv`,
-                embedding: sql`excluded.embedding`,
-                updatedAt: sql`excluded.updated_at`,
-              },
-            }));
+            });
+            byDocument.set(document, rows);
+          }
+          for (const [document, rows] of byDocument) {
+            yield* project(document, (tx) =>
+              tx
+                .insert(searchIndex)
+                .values(rows)
+                .onConflictDoUpdate({
+                  target: [searchIndex.vaultId, searchIndex.path, searchIndex.chunkIndex],
+                  set: {
+                    heading: sql`excluded.heading`,
+                    body: sql`excluded.body`,
+                    contentHash: sql`excluded.content_hash`,
+                    tsv: sql`excluded.tsv`,
+                    embedding: sql`excluded.embedding`,
+                    updatedAt: sql`excluded.updated_at`,
+                  },
+                })
+                .pipe(Effect.asVoid),
+            );
+          }
         }
 
-        const currentPaths = [...current.keys()];
-        if (currentPaths.length === 0) {
-          yield* db.query((d) => d
-            .delete(searchIndex)
-            .where(and(eq(searchIndex.vaultId, vaultId), like(searchIndex.path, `${prefix}%`))));
-        } else {
-          yield* db.query((d) => d
-            .delete(searchIndex)
-            .where(
-              and(
-                eq(searchIndex.vaultId, vaultId),
-                like(searchIndex.path, `${prefix}%`),
-                notInArray(searchIndex.path, currentPaths),
-              ),
-            ));
-          for (const [path, indexes] of current) {
-            yield* db.query((d) => d
+        if (scope === "wiki") {
+          const currentPaths = [...current]
+            .filter(([, indexes]) => indexes.size > 0)
+            .map(([file]) => file.path);
+          yield* db.query((tx) =>
+            tx
               .delete(searchIndex)
               .where(
                 and(
                   eq(searchIndex.vaultId, vaultId),
-                  eq(searchIndex.path, path),
-                  notInArray(searchIndex.chunkIndex, [...indexes]),
+                  like(searchIndex.path, `${prefix}%`),
+                  currentPaths.length === 0
+                    ? undefined
+                    : notInArray(searchIndex.path, currentPaths),
                 ),
-              ));
-          }
+              ),
+          );
         }
-        for (const etag of etags) {
-          if (unindexedPaths.has(etag.path)) continue;
-          yield* db.query((d) => d
-            .update(sourceDocuments)
-            .set({ etag: etag.etag, updatedAt: sql`now()` })
-            .where(eq(sourceDocuments.id, etag.id)));
+        for (const [document, indexes] of current) {
+          yield* project(document, (tx) =>
+            Effect.gen(function* () {
+              yield* tx
+                .delete(searchIndex)
+                .where(
+                  and(
+                    eq(searchIndex.vaultId, vaultId),
+                    eq(searchIndex.path, document.path),
+                    indexes.size === 0
+                      ? undefined
+                      : notInArray(searchIndex.chunkIndex, [...indexes]),
+                  ),
+                );
+              if (
+                document.kind === "source" &&
+                document.etag !== null &&
+                !unindexedPaths.has(document.path)
+              ) {
+                yield* tx
+                  .update(sourceDocuments)
+                  .set({ etag: document.etag, updatedAt: sql`now()` })
+                  .where(eq(sourceDocuments.id, document.source.id));
+              }
+            }),
+          );
         }
         return [...current.values()].reduce((total, indexes) => total + indexes.size, 0);
       });
@@ -508,6 +478,7 @@ export const CompilePhasesLive = Layer.effect(
       logger,
       pipeline,
       storage,
+      sourceRegistry,
       randomBytes,
       clock,
       archiveTransitions: applyArchiveTransitions,
@@ -558,23 +529,59 @@ export const CompilePhasesLive = Layer.effect(
               counts: { find_related: [0, validated.length] },
             }),
           );
-          yield* db.query((d) => d
-            .delete(topicMembership)
-            .where(
-              inArray(
-                topicMembership.topicId,
-                validated.map((topic) => topic.topicId),
-              ),
-            ));
-          const memberships = validated.flatMap((topic) =>
-            topic.subsumedIdeaIds.map((ideaId) => ({
-              topicId: topic.topicId,
-              ideaId,
-            })),
+          yield* db.transaction((tx) =>
+            Effect.gen(function* () {
+              const requested = [...new Set(validated.flatMap((topic) => topic.subsumedIdeaIds))];
+              const sources =
+                requested.length === 0
+                  ? []
+                  : yield* tx
+                      .select({ id: sourceDocuments.id })
+                      .from(sourceDocuments)
+                      .where(
+                        and(
+                          eq(sourceDocuments.vaultId, vaultId),
+                          inArray(
+                            sourceDocuments.id,
+                            tx
+                              .select({ id: ideas.documentId })
+                              .from(ideas)
+                              .where(inArray(ideas.ideaId, requested)),
+                          ),
+                        ),
+                      )
+                      .orderBy(asc(sourceDocuments.id))
+                      .for("key share");
+              const live =
+                sources.length === 0
+                  ? []
+                  : yield* tx
+                      .select({ id: ideas.ideaId })
+                      .from(ideas)
+                      .where(
+                        and(
+                          inArray(ideas.ideaId, requested),
+                          inArray(
+                            ideas.documentId,
+                            sources.map((source) => source.id),
+                          ),
+                        ),
+                      );
+              const liveIds = new Set(live.map((idea) => idea.id));
+              yield* tx.delete(topicMembership).where(
+                inArray(
+                  topicMembership.topicId,
+                  validated.map((topic) => topic.topicId),
+                ),
+              );
+              const memberships = validated.flatMap((topic) =>
+                topic.subsumedIdeaIds
+                  .filter((ideaId) => liveIds.has(ideaId))
+                  .map((ideaId) => ({ topicId: topic.topicId, ideaId })),
+              );
+              if (memberships.length > 0) yield* tx.insert(topicMembership).values(memberships);
+            }),
           );
-          if (memberships.length > 0) {
-            yield* db.query((d) => d.insert(topicMembership).values(memberships));
-          }
           const vaultTopicIds = yield* db.query((d) => d
             .select({ id: topics.topicId })
             .from(topics)

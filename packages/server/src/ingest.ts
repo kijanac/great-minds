@@ -4,6 +4,7 @@ import { posix } from "node:path";
 import { compileIntents, Database, pipelineRuns } from "@great-minds/database";
 import {
   BadRequest,
+  Conflict,
   Forbidden,
   type IngestedDocument,
   NotFound,
@@ -21,17 +22,17 @@ import { Context, Effect, Layer } from "effect";
 import { AppConfig } from "./config.ts";
 import { htmlToMarkdown, markdownWithTitle } from "./conversion.ts";
 import { errorDetails } from "./error-details.ts";
-import { buildDocument, sessionExchangeDocumentInput, sessionExchangePath } from "./markdown.ts";
+import { buildDocument, sessionExchangeDocumentInput } from "./markdown.ts";
 import { PipelineRunsService } from "./pipeline-runs.ts";
 import { ProposalsService } from "./proposals.ts";
 import { fetchAnyUrl, fetchPublicUrl, responseTextCapped } from "./public-fetch.ts";
 import {
   type CanonicalSourceUrl,
   identifySourceMarkdown,
+  slugify,
   sourceIdForKey,
 } from "./source-identity.ts";
-import { SourceDocumentsService } from "./source-documents.ts";
-import { ContentStorage, vaultOwner } from "./storage.ts";
+import { type SourceAdmission, SourceDocumentsService } from "./source-documents.ts";
 import { UserDocumentsService } from "./user-documents.ts";
 import { VaultAccessService } from "./vaults.ts";
 import { ClockService } from "./clock.ts";
@@ -41,32 +42,32 @@ type IngestServiceShape = {
     userId: Uuid,
     vaultId: Uuid,
     input: RawSource,
-  ) => Effect.Effect<IngestedDocument, Forbidden>;
+  ) => Effect.Effect<IngestedDocument, Forbidden | Conflict>;
   readonly promoteReference: (
     userId: Uuid,
     vaultId: Uuid,
     input: ReferencePromote,
   ) => Effect.Effect<
     { readonly document: IngestedDocument; readonly created: boolean },
-    BadRequest | Forbidden | NotFound
+    BadRequest | Forbidden | NotFound | Conflict
   >;
   readonly ingestUserSuggestion: (
     userId: Uuid,
     vaultId: Uuid,
     input: UserSuggestion,
-  ) => Effect.Effect<UserSuggestionResult, BadRequest | Forbidden>;
+  ) => Effect.Effect<UserSuggestionResult, BadRequest | Forbidden | Conflict>;
   readonly ingestUrl: (
-    vaultId: Uuid,
+    source: SourceAdmission,
     canonicalUrl: CanonicalSourceUrl,
     origin: string | undefined,
     pipelineRunId: Uuid,
-  ) => Effect.Effect<IngestedDocument, BadRequest>;
+  ) => Effect.Effect<IngestedDocument, BadRequest | Conflict>;
   readonly ingestSessionExchange: (
-    vaultId: Uuid,
+    source: SourceAdmission,
     sessionId: string,
     exchange: SessionExchangeEvent,
     sessionOrigin: SessionOrigin | null,
-  ) => Effect.Effect<IngestedDocument>;
+  ) => Effect.Effect<IngestedDocument, Conflict>;
 };
 
 export class IngestService extends Context.Service<IngestService, IngestServiceShape>()(
@@ -76,13 +77,6 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-
-export const slugify = (text: string, maxLen = 80) =>
-  text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, maxLen);
 
 const urlResponseContentType = (contentTypeHeader: string | null) =>
   contentTypeHeader?.split(";", 1)[0]?.trim().toLowerCase() ?? "text/html";
@@ -156,7 +150,6 @@ export const IngestServiceLive = Layer.effect(
     const db = yield* Database;
     const config = yield* AppConfig;
     const access = yield* VaultAccessService;
-    const storage = yield* ContentStorage;
     const sourceDocumentsWrite = yield* SourceDocumentsService;
     const userDocumentsRead = yield* UserDocumentsService;
     const proposals = yield* ProposalsService;
@@ -193,30 +186,23 @@ export const IngestServiceLive = Layer.effect(
         return intent.id;
       });
 
-    const writeAndIndex = (
-      vaultId: Uuid,
-      sourceId: Uuid,
+    const publishSource = (
+      source: SourceAdmission,
       rendered: string,
-      dest: string,
       options: {
         readonly canonicalUrl?: CanonicalSourceUrl | null;
         readonly pipelineRunId?: Uuid | null;
       } = {},
     ) =>
       Effect.gen(function* () {
-        const content = identifySourceMarkdown(
-          rendered,
-          sourceId,
-          options.canonicalUrl ?? null,
-        );
-        yield* storage.writeText(vaultOwner(vaultId), dest, content);
-        yield* sourceDocumentsWrite.index(vaultId, dest, content, null);
-        yield* ensureCompileIntent(vaultId, options.pipelineRunId);
-        return { id: sourceId, file_path: dest } satisfies IngestedDocument;
+        const content = identifySourceMarkdown(rendered, source.id, options.canonicalUrl ?? null);
+        const id = yield* sourceDocumentsWrite.write(source, content, null);
+        yield* ensureCompileIntent(source.vaultId, options.pipelineRunId);
+        return { id, file_path: source.filePath } satisfies IngestedDocument;
       });
 
     const ingestUrl = (
-      vaultId: Uuid,
+      source: SourceAdmission,
       canonicalUrl: CanonicalSourceUrl,
       origin: string | undefined,
       pipelineRunId: Uuid,
@@ -225,18 +211,13 @@ export const IngestServiceLive = Layer.effect(
         const fetched = yield* fetchUrlMarkdown(canonicalUrl, config.allowPrivateUrlFetch);
         if (!(yield* pipeline.isActive(pipelineRunId))) return yield* Effect.interrupt;
         const parsed = new URL(canonicalUrl);
-        const sourceId = sourceIdForKey(vaultId, `url:${canonicalUrl}`);
-        const stem = slugify(posix.parse(parsed.pathname).name || "doc") || "doc";
-        const dest = `raw/docs/${stem}-${sourceId}.md`;
-        return yield* writeAndIndex(
-          vaultId,
-          sourceId,
+        return yield* publishSource(
+          source,
           buildDocument(markdownWithTitle(fetched.title, fetched.markdown), {
             sourceType: "document",
             url: canonicalUrl,
             origin: origin ?? parsed.host,
           }),
-          dest,
           { canonicalUrl, pipelineRunId },
         );
       });
@@ -246,21 +227,24 @@ export const IngestServiceLive = Layer.effect(
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
           const sourceId = Uuid.make(randomUUID(), { disableChecks: true });
-          return yield* writeAndIndex(
+          const source = yield* sourceDocumentsWrite.admit(
             vaultId,
             sourceId,
+            sourcePathWithId(input.dest, sourceId),
+          );
+          return yield* publishSource(
+            source,
             buildDocument(input.content, {
               sourceType: "document",
               origin: input.origin,
             }),
-            sourcePathWithId(input.dest, sourceId),
           );
         }),
       promoteReference: (userId, vaultId, input) =>
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
-          const reference = yield* userDocumentsRead.readUserText(userId, input.path);
-          const sourceId = sourceIdForKey(vaultId, `reference:${reference.row.id}`);
+          const reference = yield* userDocumentsRead.locate(userId, input.path);
+          const sourceId = sourceIdForKey(vaultId, `reference:${reference.id}`);
           const existing = yield* sourceDocumentsWrite.getById(vaultId, sourceId);
           if (existing !== undefined) {
             return {
@@ -268,14 +252,11 @@ export const IngestServiceLive = Layer.effect(
               created: false,
             };
           }
-          const parsed = posix.parse(posix.basename(reference.row.filePath));
+          const parsed = posix.parse(posix.basename(reference.filePath));
           const dest = `raw/docs/${parsed.name}-${sourceId}${parsed.ext}`;
-          const document = yield* writeAndIndex(
-            vaultId,
-            sourceId,
-            reference.content,
-            dest,
-          );
+          const source = yield* sourceDocumentsWrite.admit(vaultId, sourceId, dest);
+          const content = yield* userDocumentsRead.loadText(reference);
+          const document = yield* publishSource(source, content);
           return { document, created: true };
         }),
       ingestUserSuggestion: (userId, vaultId, input) =>
@@ -295,24 +276,19 @@ export const IngestServiceLive = Layer.effect(
             intent: input.intent,
           };
           if (scope.role === "owner") {
-            const document = yield* writeAndIndex(
-              vaultId,
-              sourceId,
-              buildDocument(input.body, frontmatter),
-              dest,
-            );
+            const source = yield* sourceDocumentsWrite.admit(vaultId, sourceId, dest);
+            const document = yield* publishSource(source, buildDocument(input.body, frontmatter));
             return { ...document, mode: "ingested" } satisfies UserSuggestionResult;
           }
+          const source = yield* sourceDocumentsWrite.admit(vaultId, sourceId, dest);
           const rendered = identifySourceMarkdown(
             buildDocument(input.body, frontmatter),
             sourceId,
           );
-          yield* proposals.createRendered(vaultId, userId, {
-            sourceId,
+          yield* proposals.createRendered(source, userId, {
             contentType: "user_suggestion",
             title: null,
             author: null,
-            destPath: dest,
             rendered,
           });
           return {
@@ -322,21 +298,14 @@ export const IngestServiceLive = Layer.effect(
           } satisfies UserSuggestionResult;
         }),
       ingestUrl,
-      ingestSessionExchange: (vaultId, sessionId, exchange, sessionOrigin) => {
-        const sourceId = sourceIdForKey(
-          vaultId,
-          `session:${sessionId}:${exchange.exId}`,
-        );
-        return writeAndIndex(
-          vaultId,
-          sourceId,
+      ingestSessionExchange: (source, sessionId, exchange, sessionOrigin) =>
+        publishSource(
+          source,
           buildDocument(
             exchange.answer,
             sessionExchangeDocumentInput(sessionId, exchange, sessionOrigin),
           ),
-          sessionExchangePath(exchange.exId, sourceId),
-        );
-      },
+        ),
     } satisfies IngestServiceShape;
   }),
 );

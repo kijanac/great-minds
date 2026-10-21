@@ -1669,7 +1669,7 @@ export const IngestApiGroup = HttpApiGroup.make("ingest").add(
     },
     payload: RawSource,
     success: CreatedIngestedDocument,
-    error: [ForbiddenResponse, ValidationResponse] as const,
+    error: [ForbiddenResponse, ConflictResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("promoteReference", "/vaults/:vault_id/ingest/reference", {
     params: {
@@ -1677,7 +1677,13 @@ export const IngestApiGroup = HttpApiGroup.make("ingest").add(
     },
     payload: ReferencePromote,
     success: CreatedIngestedDocument,
-    error: [BadRequestResponse, ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,
+    error: [
+      BadRequestResponse,
+      ForbiddenResponse,
+      NotFoundResponse,
+      ConflictResponse,
+      ValidationResponse,
+    ] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("ingestUserSuggestion", "/vaults/:vault_id/ingest/user-suggestion", {
     params: {
@@ -1685,7 +1691,7 @@ export const IngestApiGroup = HttpApiGroup.make("ingest").add(
     },
     payload: UserSuggestion,
     success: CreatedUserSuggestionResult,
-    error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
+    error: [BadRequestResponse, ForbiddenResponse, ConflictResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("checkFileIngestDupes", "/vaults/:vault_id/file-ingests/check-dupes", {
     params: {
@@ -1858,6 +1864,7 @@ export const SessionsApiGroup = HttpApiGroup.make("sessions").add(
         BadRequestResponse,
         ForbiddenResponse,
         NotFoundResponse,
+        ConflictResponse,
         ServiceUnavailableResponse,
         ValidationResponse,
       ] as const,
