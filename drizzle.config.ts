@@ -9,7 +9,7 @@ export default defineConfig({
   dbCredentials: {
     url:
       process.env.DATABASE_URL ??
-      "postgresql://great_minds:great_minds@localhost:55433/gm_spike"
+      "postgresql://great_minds:great_minds@localhost:5432/great_minds"
   },
   verbose: true
 });

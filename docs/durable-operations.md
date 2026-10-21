@@ -56,6 +56,15 @@ The forward migration preserves every recorded cleanup path, attempt and timesta
 
 New Reading Room imports write to immutable reference-UUID paths. A SQL-only per-user/canonical-URL acceptance transaction selects one reference; a losing concurrent import removes only its own unpublished object. Existing reference IDs, paths and shares are preserved. URL deduplication is separate from vault-source ownership and does not substitute for object-version fencing.
 
+## Workflow engine
+
+- `ClusterWorkflowEngine` runs in-process through `SingleRunner` against the application database. Effect migrates and owns its `cluster_*` journal tables separately from the Drizzle-managed product schema. Runner registration is kept in memory, so a replacement process replays the durable journal immediately instead of waiting for a stale runner lease. This is a single-process deployment shape; multiple runners would require revisiting runner storage.
+- Activities do not use the engine's `WithTransaction` integration, which hung against the shared `@effect/sql-pg` client when it was evaluated. Each external effect is replay-safe instead (content-addressed staging, source-owned conditional writes, coalescing intents, stable workflow IDs), and a branch decision is journaled once so replay never recomputes it from rows written by an earlier attempt.
+- Progress and failure updates only change `pending`/`running` runs, so late progress or cooperative teardown cannot overwrite `completed`, `failed` or `cancelled`. Zombie recovery fails a stale active run only when `cluster_messages` holds no matching workflow request; a run queued behind an unsatisfied compile intent is waiting, not a zombie.
+- Cancellation commits the guarded `cancelled` state first, then calls `interruptUnsafe` on the in-process engine. The routed `Workflow.interrupt` client path can wait in sharding when no separate healthy runner exists.
+- Only the production entrypoint (`main.ts`) composes the reconciler loops; HTTP-only roots used by tests never dispatch background work. Stable workflow idempotency keys deduplicated in `cluster_messages`, not row locks, prevent double dispatch across reconciler passes and processes.
+- Job progress streams poll the run row and send only changed snapshots, with comment heartbeats every 30 seconds.
+
 ## Retry semantics
 
 Engine replay resumes the same operation and idempotency key. A completed reply activity is replayed from the Effect journal, while an object-store checkpoint closes the crash window between an external response and the database cursor update. Before each model/tool call, the reply row atomically records its active cursor, kind, and invocation key. If the process disappears before that external response is checkpointed, the turn is deliberately treated as ambiguous and fails with **Reply interrupted before an external response could be saved. It was not retried automatically.** Great Minds never spends again or repeats a tool side effect merely because the process restarted.

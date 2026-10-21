@@ -1,4 +1,3 @@
-# M5.2 applies this over render.yaml; see ts-migration-m5.md
 projects:
   - name: great-minds
     environments:

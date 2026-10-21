@@ -89,7 +89,6 @@ shapes:
 | --- | --- | --- |
 | `Uuid` | Hex UUID, version 1-8, case-insensitive: `^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` | `0f8fad5b-d9cb-469f-a165-70867728950e` |
 | `SessionId` | `^[A-Za-z0-9][A-Za-z0-9._-]*$` | `session_42` |
-| `ExchangeId` | `^[A-Za-z0-9][A-Za-z0-9._-]*$` | `turn_7` |
 | `FileFingerprint` | 64 lowercase hex characters (SHA-256 hex digest) | `a3f5...` (64 chars) |
 | `Email` | `^[^\s@]+@[^\s@]+\.[^\s@]+$`, at most 320 characters | `user@example.com` |
 | `Base64Url` | `^[A-Za-z0-9_-]+$` | `dGhlIHF1aWNr` |
@@ -1627,7 +1626,7 @@ Events:
 | --- | --- | --- |
 | `connected` | `{"id": "<job_id>"}` | Sent once when the stream opens. |
 | `message` | JSON `JobProgressSnapshot` | Sent whenever the job's progress changes. |
-| `done` | `{"id": "<job_id>"}` | Sent once when the job reaches `completed` or `failed`; the stream then closes. |
+| `done` | `{"id": "<job_id>"}` | Sent once when the job reaches `completed`, `failed` or `cancelled`; the stream then closes. |
 
 The `message` payload is a `JobProgressSnapshot`:
 
@@ -1674,7 +1673,9 @@ sources. Both endpoints require authentication and vault ownership (the
 Auth: required (vault owner).
 
 Requests a compile of the vault's wiki. The client supplies a job id for the
-compile run.
+compile run. If a compile is already waiting to run for the vault, the request
+joins it: the response describes that existing run, whose `id` can differ from
+the submitted `job_id`.
 
 Path parameters: `vault_id` (`Uuid`).
 
@@ -1906,7 +1907,7 @@ Path parameters:
 | --- | --- | --- |
 | `vault_id` | `Uuid` | Vault id. |
 | `session_id` | `SessionId` | Session id. |
-| `exchange_id` | `ExchangeId` | The exchange to promote. |
+| `exchange_id` | `Uuid` | The exchange to promote. |
 
 No request body.
 
@@ -2019,7 +2020,7 @@ The reader checks the current receipt and application revision around each histo
 | Field | Type | Description |
 | --- | --- | --- |
 | `type` | `"exchange"` | Discriminator. |
-| `exId` | string | Exchange id. |
+| `exId` | `Uuid` | Exchange id. |
 | `reply_id` | `Uuid` | Required selected attempt identity. |
 | `status` | `"running"` \| `"completed"` \| `"stopped"` \| `"failed"` | Explicit state; an empty answer does not imply running. |
 | `error` | string or `null` | Recorded failure detail, otherwise null. |

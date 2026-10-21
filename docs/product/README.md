@@ -12,7 +12,7 @@ The documents are for people who need to understand or change the product: desig
 
 ### What this is not
 
-- Not API documentation. The source repository's [`API.md`](../great_minds/API.md) and the Effect HTTP API declarations in `packages/domain/src/index.ts` own the protocol surface.
+- Not API documentation. The source repository's [`API.md`](../../API.md) and the Effect HTTP API declarations in `packages/domain/src/index.ts` own the protocol surface.
 - Not organized by package. The web, server, domain, database, and workflow packages are not described separately. A behavior is described once, wherever the user encounters it.
 - Not a technical design document. Where a technical detail is critical to understanding the experience, it appears in a block quote labeled `Technical note:` and nowhere else.
 - Not a description of every Great Minds surface. Account setup, vault administration, member and proposal workflows, credential management, and the public recipient view are named exclusions below.

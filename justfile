@@ -96,7 +96,7 @@ fix-check: fix types-web types-packages
 
 # Run API server locally
 run *args='':
-    node --experimental-strip-types packages/server/src/main.ts {{ args }}
+    PORT="${PORT:-8000}" node --experimental-strip-types packages/server/src/main.ts {{ args }}
 
 # Run frontend dev server
 dev:

@@ -16,8 +16,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "generate": "drizzle-kit generate --config ../../drizzle.config.ts",
-    "migrate": "node --experimental-strip-types src/migrate-cli.ts",
-    "ann": "node --experimental-strip-types src/ann-check.ts"
+    "migrate": "node --experimental-strip-types src/migrate-cli.ts"
   },
   "dependencies": {
     "@effect/sql-pg": "4.0.0-rc.112",
