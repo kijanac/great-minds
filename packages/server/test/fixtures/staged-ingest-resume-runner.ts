@@ -1,11 +1,11 @@
-import { Database, fileIngestFiles } from "@great-minds/database";
+import { Database, DatabaseLive, fileIngestFiles } from "@great-minds/database";
 import { FileFingerprint, Uuid } from "@great-minds/domain";
 import { and, eq } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import * as Activity from "effect/unstable/workflow/Activity";
 
 import { AppConfig, type AppConfigShape } from "../../src/config.ts";
-import { DrizzleLive } from "../../src/db.ts";
+import { PgClientLive } from "../../src/db.ts";
 import { StructuredLogger } from "../../src/logging.ts";
 import { PipelineRunsServiceLive } from "../../src/pipeline-runs.ts";
 import { identifySourceMarkdown } from "../../src/source-identity.ts";
@@ -108,7 +108,10 @@ const StagedStorageLive = Layer.succeed(StagedStorage, {
   clearStagedBatch: () => Effect.void,
   clearStagedVault: () => Effect.void,
 });
-const BaseLive = Layer.mergeAll(DrizzleLive.pipe(Layer.provideMerge(ConfigLive)), LoggerLive);
+const BaseLive = Layer.mergeAll(
+  DatabaseLive.pipe(Layer.provideMerge(PgClientLive), Layer.provideMerge(ConfigLive)),
+  LoggerLive,
+);
 const PipelineLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));
 const SourceDocumentsLive = SourceDocumentsServiceLive.pipe(
   Layer.provideMerge(StorageLive),

@@ -1,6 +1,7 @@
 import {
   compileIntents,
   Database,
+  DatabaseLive,
   fileIngestBatches,
   fileIngestFiles,
   pipelineRuns,
@@ -31,7 +32,7 @@ import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { ClockLive } from "../src/clock.ts";
 import { stagedFileToMarkdown } from "../src/conversion.ts";
 import { rawFileHash } from "../src/crypto.ts";
-import { DrizzleLive } from "../src/db.ts";
+import { PgClientLive } from "../src/db.ts";
 import {
   FileIngestBatches,
   FileIngestBatchesLive,
@@ -270,7 +271,7 @@ const StagedUploadGatewayLive = Layer.succeed(StagedUploadGateway, {
 
 const ConfigLive = Layer.succeed(AppConfig, config);
 const BaseLive = Layer.mergeAll(
-  DrizzleLive.pipe(Layer.provideMerge(ConfigLive)),
+  DatabaseLive.pipe(Layer.provideMerge(PgClientLive), Layer.provideMerge(ConfigLive)),
   TestLoggerLive,
   ClockLive,
   RandomBytesLive,

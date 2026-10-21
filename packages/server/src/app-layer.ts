@@ -1,4 +1,4 @@
-import { Database } from "@great-minds/database";
+import { Database, DatabaseLive } from "@great-minds/database";
 import { Effect, Layer } from "effect";
 import type { WorkflowEngine } from "effect/unstable/workflow/WorkflowEngine";
 
@@ -16,7 +16,7 @@ import { CostsService, CostsServiceLive } from "./costs.ts";
 import { ReplyAdmission, ReplyAdmissionLive } from "./conversation-history/admission.ts";
 import { ReplySettlement, ReplySettlementLive } from "./conversation-history/settlement.ts";
 import { HistoryStore, type HistoryStoreShape } from "./conversation-history/store.ts";
-import { DrizzleLive } from "./db.ts";
+import { PgClientLive } from "./db.ts";
 import { DocumentsService, DocumentsServiceLive } from "./documents.ts";
 import { EmbeddingsLive, EmbeddingsService } from "./embeddings.ts";
 import {
@@ -59,12 +59,16 @@ import { StagedFileIngestWorkflowLive } from "./staged-file-ingest-workflow.ts";
 import { SourcesService, SourcesServiceLive } from "./sources.ts";
 import {
   ContentStorage,
+  ContentStorageLive,
   HistoryStoreLive,
   ProposalStorage,
+  ProposalStorageLive,
   StagedStorage,
+  StagedStorageLive,
   StagedUploadGateway,
+  StagedUploadGatewayLive,
+  StorageBackendLive,
   StorageMaintenanceLoopLive,
-  StorageServicesLive,
 } from "./storage.ts";
 import { RandomBytesLive, RandomBytesService } from "./random.ts";
 import { TokenService, TokenServiceLive } from "./tokens.ts";
@@ -142,243 +146,95 @@ export type AppLayerOverrides = {
 };
 
 export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
-  const ConfigLive = overrides.config ?? AppConfigLive;
-  const DatabaseLive = DrizzleLive.pipe(Layer.provideMerge(ConfigLive));
-  const BaseLive = Layer.mergeAll(
-    DatabaseLive,
+  const PostgresLive = Layer.mergeAll(DatabaseLive, WorkflowEngineLive).pipe(
+    Layer.provide(PgClientLive),
+  );
+  const InfrastructureLive = Layer.mergeAll(
+    PostgresLive,
     overrides.clock ?? ClockLive,
     overrides.randomBytes ?? RandomBytesLive,
     overrides.logger ?? StructuredLoggerLive,
-  );
+  ).pipe(Layer.provideMerge(overrides.config ?? AppConfigLive));
 
-  const VaultAccessLive = VaultAccessServiceLive.pipe(Layer.provideMerge(BaseLive));
-  const StorageLive = StorageServicesLive.pipe(Layer.provideMerge(BaseLive));
   const HistoriesLive = Layer.effect(
     HistoryStore,
     Effect.map(HistoryStore, (histories) =>
       overrides.decorateHistory === undefined ? histories : overrides.decorateHistory(histories),
     ),
-  ).pipe(Layer.provide(HistoryStoreLive), Layer.provideMerge(StorageLive));
-  const ReplyLifecycleLive = Layer.mergeAll(ReplyAdmissionLive, ReplySettlementLive).pipe(
-    Layer.provideMerge(HistoriesLive),
-    Layer.provideMerge(VaultAccessLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const LanguageModelLiveLayer = (overrides.languageModel ?? LanguageModelLive).pipe(
-    Layer.provideMerge(BaseLive),
-  );
-  const EmbeddingsLiveLayer = (overrides.embeddings ?? EmbeddingsLive).pipe(
-    Layer.provideMerge(BaseLive),
-  );
-  const CostLookupLiveLayer = (overrides.costLookup ?? CostLookupLive).pipe(
-    Layer.provideMerge(BaseLive),
-  );
-  const ParallelSearchLiveLayer = (overrides.parallelSearch ?? ParallelSearchLive).pipe(
-    Layer.provideMerge(BaseLive),
-  );
-  const MailerLiveLayer = (overrides.mailer ?? MailerLive).pipe(Layer.provideMerge(BaseLive));
-  const SourceDocumentsLive = SourceDocumentsServiceLive.pipe(
-    Layer.provideMerge(StorageLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const UserDocumentsLive = UserDocumentsServiceLive.pipe(
-    Layer.provideMerge(StorageLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const PipelineRunsLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));
-  const ProposalsLive = ProposalsServiceLive.pipe(
-    Layer.provideMerge(SourceDocumentsLive),
-    Layer.provideMerge(StorageLive),
-    Layer.provideMerge(VaultAccessLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const SourcesLive = SourcesServiceLive.pipe(
-    Layer.provideMerge(ProposalsLive),
-    Layer.provideMerge(SourceDocumentsLive),
-    Layer.provideMerge(VaultAccessLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const IngestLive = IngestServiceLive.pipe(
-    Layer.provideMerge(ProposalsLive),
-    Layer.provideMerge(SourceDocumentsLive),
-    Layer.provideMerge(UserDocumentsLive),
-    Layer.provideMerge(PipelineRunsLive),
-    Layer.provideMerge(StorageLive),
-    Layer.provideMerge(VaultAccessLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const SessionsLive = SessionsServiceLive.pipe(
-    Layer.provideMerge(HistoriesLive),
-    Layer.provideMerge(VaultAccessLive),
-    Layer.provideMerge(StorageLive),
-    Layer.provideMerge(IngestLive),
-    Layer.provideMerge(ProposalsLive),
-    Layer.provideMerge(SourceDocumentsLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const ExportsLive = SessionExportsServiceLive.pipe(
+  ).pipe(Layer.provide(HistoryStoreLive));
+  const StorageLive = Layer.mergeAll(
+    ContentStorageLive,
+    StagedStorageLive,
+    StagedUploadGatewayLive,
+    ProposalStorageLive,
+    HistoriesLive,
+  ).pipe(Layer.provide(StorageBackendLive));
+  const AdaptersLive = Layer.mergeAll(
+    StorageLive,
+    overrides.mailer ?? MailerLive,
+    overrides.pdfRenderer ?? PdfRendererLive,
+    overrides.languageModel ?? LanguageModelLive,
+    overrides.embeddings ?? EmbeddingsLive,
+    overrides.costLookup ?? CostLookupLive,
+    overrides.parallelSearch ?? ParallelSearchLive,
+  ).pipe(Layer.provideMerge(InfrastructureLive));
+
+  const ServicesLive = Layer.mergeAll(
+    RepliesServiceLive,
+    SharesServiceLive,
+    SessionExportsServiceLive,
+  ).pipe(
+    Layer.provideMerge(Layer.mergeAll(SessionsServiceLive, PasskeysServiceLive)),
     Layer.provideMerge(
-      (overrides.pdfRenderer ?? PdfRendererLive).pipe(Layer.provideMerge(BaseLive)),
+      Layer.mergeAll(SourcesServiceLive, IngestServiceLive, JobsServiceLive, AuthServiceLive),
     ),
-    Layer.provideMerge(SessionsLive),
-    Layer.provideMerge(BaseLive),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        ProposalsServiceLive,
+        VaultsServiceLive,
+        WikiServiceLive,
+        LintServiceLive,
+        CostsServiceLive,
+        DocumentsServiceLive,
+        FileIngestBatchesLive,
+        UrlIngestServiceLive,
+        CompilePhasesLive,
+        ReplyAdmissionLive,
+      ),
+    ),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        VaultAccessServiceLive,
+        PipelineRunsServiceLive,
+        SourceDocumentsServiceLive,
+        UserDocumentsServiceLive,
+        TokenServiceLive,
+        QueryServiceLive,
+        ReplySettlementLive,
+      ),
+    ),
+    Layer.provideMerge(AdaptersLive),
   );
-  const QueryLive = QueryServiceLive.pipe(
-    Layer.provideMerge(LanguageModelLiveLayer),
-    Layer.provideMerge(EmbeddingsLiveLayer),
-    Layer.provideMerge(CostLookupLiveLayer),
-    Layer.provideMerge(ParallelSearchLiveLayer),
-    Layer.provideMerge(VaultAccessLive),
-    Layer.provideMerge(StorageLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const WorkflowEngineBaseLive = WorkflowEngineLive.pipe(Layer.provideMerge(BaseLive));
-  const RepliesLive = RepliesServiceLive.pipe(
-    Layer.provideMerge(ReplyLifecycleLive),
-    Layer.provideMerge(SessionsLive),
-    Layer.provideMerge(QueryLive),
-    Layer.provideMerge(VaultAccessLive),
-    Layer.provideMerge(WorkflowEngineBaseLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const CompilePhasesLiveLayer = CompilePhasesLive.pipe(
-    Layer.provideMerge(LanguageModelLiveLayer),
-    Layer.provideMerge(EmbeddingsLiveLayer),
-    Layer.provideMerge(SourceDocumentsLive),
-    Layer.provideMerge(PipelineRunsLive),
-    Layer.provideMerge(StorageLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const WorkflowHandlersLive = Layer.mergeAll(
+
+  const AppLive = Layer.mergeAll(
     StagedFileIngestWorkflowLive,
     UrlIngestWorkflowLive,
     CompileWorkflowLive,
     ReplyWorkflowLive,
-  ).pipe(
-    Layer.provideMerge(IngestLive),
-    Layer.provideMerge(RepliesLive),
-    Layer.provideMerge(SourceDocumentsLive),
-    Layer.provideMerge(CompilePhasesLiveLayer),
-    Layer.provideMerge(PipelineRunsLive),
-    Layer.provideMerge(StorageLive),
-    Layer.provideMerge(WorkflowEngineBaseLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const WorkflowsLive = WorkflowHandlersLive.pipe(Layer.provideMerge(WorkflowEngineBaseLive));
-  const FileIngestBatchesLiveLayer = FileIngestBatchesLive.pipe(
-    Layer.provideMerge(SourceDocumentsLive),
-    Layer.provideMerge(PipelineRunsLive),
-    Layer.provideMerge(StorageLive),
-    Layer.provideMerge(VaultAccessLive),
-    Layer.provideMerge(WorkflowsLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const UrlIngestLive = UrlIngestServiceLive.pipe(
-    Layer.provideMerge(VaultAccessLive),
-    Layer.provideMerge(WorkflowsLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const JobsLive = JobsServiceLive.pipe(
-    Layer.provideMerge(FileIngestBatchesLiveLayer),
-    Layer.provideMerge(PipelineRunsLive),
-    Layer.provideMerge(WorkflowsLive),
-    Layer.provideMerge(VaultAccessLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const LintLive = LintServiceLive.pipe(
-    Layer.provideMerge(VaultAccessLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const CostsLive = CostsServiceLive.pipe(
-    Layer.provideMerge(VaultAccessLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const VaultsLive = VaultsServiceLive.pipe(
-    Layer.provideMerge(MailerLiveLayer),
-    Layer.provideMerge(VaultAccessLive),
-    Layer.provideMerge(StorageLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const SharesLive = SharesServiceLive.pipe(
-    Layer.provideMerge(SessionsLive),
-    Layer.provideMerge(UserDocumentsLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const ReadServicesLive = Layer.mergeAll(
-    VaultsLive,
-    WikiServiceLive.pipe(Layer.provideMerge(VaultAccessLive), Layer.provideMerge(BaseLive)),
-    SourcesLive,
-    IngestLive,
-    UrlIngestLive,
-    FileIngestBatchesLiveLayer,
-    JobsLive,
-    LintLive,
-    CostsLive,
-    DocumentsServiceLive.pipe(
-      Layer.provideMerge(VaultAccessLive),
-      Layer.provideMerge(StorageLive),
-      Layer.provideMerge(BaseLive),
-    ),
-    SessionsLive,
-    ExportsLive,
-    SharesLive,
-    QueryLive,
-    RepliesLive,
-    SourceDocumentsLive,
-    UserDocumentsLive,
-    ProposalsLive,
-  );
+  ).pipe(Layer.provideMerge(ServicesLive));
 
-  const ServiceDepsLive = Layer.mergeAll(
-    MailerLiveLayer,
-    TokenServiceLive,
-    StorageLive,
-    LanguageModelLiveLayer,
-    EmbeddingsLiveLayer,
-    CostLookupLiveLayer,
-    ParallelSearchLiveLayer,
-    ReadServicesLive,
-  ).pipe(Layer.provideMerge(BaseLive));
-
-  const AuthLive = AuthServiceLive.pipe(Layer.provideMerge(ServiceDepsLive));
-  const ApiLive = PasskeysServiceLive.pipe(
-    Layer.provideMerge(AuthLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const AppLive = ApiLive.pipe(
-    Layer.provideMerge(WorkflowsLive),
-    Layer.provideMerge(PipelineRunsLive),
-    Layer.provideMerge(BaseLive),
-  );
-  const ReconcilerLive = CompileIntentReconcilerLive.pipe(
-    Layer.provideMerge(PipelineRunsLive),
-    Layer.provideMerge(WorkflowsLive),
-    Layer.provideMerge(BaseLive),
-  );
   const ReconcilerLoopLive = Layer.mergeAll(
-    CompileIntentReconcilerLoopLive.pipe(
-      Layer.provideMerge(ReconcilerLive),
-      Layer.provideMerge(WorkflowsLive),
-      Layer.provideMerge(BaseLive),
-    ),
-    FileIngestBatchReconcilerLoopLive.pipe(
-      Layer.provideMerge(FileIngestBatchesLiveLayer),
-      Layer.provideMerge(BaseLive),
-    ),
-    UrlIngestReconcilerLoopLive.pipe(
-      Layer.provideMerge(UrlIngestLive),
-      Layer.provideMerge(BaseLive),
-    ),
-    ReplyReconcilerLoopLive.pipe(Layer.provideMerge(RepliesLive), Layer.provideMerge(BaseLive)),
-    SourceDeletionReconcilerLoopLive.pipe(
-      Layer.provideMerge(SourceDocumentsLive),
-      Layer.provideMerge(BaseLive),
-    ),
-    ProposalReviewReconcilerLoopLive.pipe(
-      Layer.provideMerge(ProposalsLive),
-      Layer.provideMerge(BaseLive),
-    ),
-    StorageMaintenanceLoopLive.pipe(Layer.provide(StorageLive)),
+    CompileIntentReconcilerLoopLive,
+    FileIngestBatchReconcilerLoopLive,
+    UrlIngestReconcilerLoopLive,
+    ReplyReconcilerLoopLive,
+    SourceDeletionReconcilerLoopLive,
+    ProposalReviewReconcilerLoopLive,
+    StorageMaintenanceLoopLive,
+  ).pipe(
+    Layer.provide(CompileIntentReconcilerLive),
+    Layer.provide(StorageBackendLive),
+    Layer.provide(AppLive),
   );
   return { app: AppLive, reconcilerLoop: ReconcilerLoopLive } as const;
 };

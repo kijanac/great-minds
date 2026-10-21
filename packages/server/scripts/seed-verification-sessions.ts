@@ -1,4 +1,5 @@
 import { writeFile } from "node:fs/promises";
+import { DatabaseLive } from "@great-minds/database";
 import {
   CreateReplyRequest,
   type CreateReplyResponse,
@@ -11,11 +12,11 @@ import { Effect, Layer, ManagedRuntime, Schema } from "effect";
 
 import { ClockLive } from "../src/clock.ts";
 import { AppConfigLive } from "../src/config.ts";
-import { DrizzleLive } from "../src/db.ts";
+import { PgClientLive } from "../src/db.ts";
 import { StructuredLoggerLive } from "../src/logging.ts";
 import { RandomBytesLive } from "../src/random.ts";
 import { sourceIdForKey } from "../src/source-identity.ts";
-import { HistoryStoreLive, StorageServicesLive } from "../src/storage.ts";
+import { HistoryStoreLive, StorageBackendLive } from "../src/storage.ts";
 import { VaultAccessServiceLive } from "../src/vaults.ts";
 import { seedConversationReply } from "./lib/seed-conversation.ts";
 
@@ -62,14 +63,13 @@ if (outputPath === undefined)
   throw new Error("usage: seed-verification-sessions.ts <output-json-path> < spec.json");
 const spec = Schema.decodeUnknownSync(SeedSpec)(JSON.parse(await readStdin()));
 const BaseLive = Layer.mergeAll(
-  DrizzleLive.pipe(Layer.provideMerge(AppConfigLive)),
+  DatabaseLive.pipe(Layer.provide(PgClientLive), Layer.provideMerge(AppConfigLive)),
   ClockLive,
   RandomBytesLive,
   StructuredLoggerLive,
 );
-const StorageLive = StorageServicesLive.pipe(Layer.provideMerge(BaseLive));
 const SeedLive = Layer.mergeAll(
-  HistoryStoreLive.pipe(Layer.provideMerge(StorageLive)),
+  HistoryStoreLive.pipe(Layer.provide(StorageBackendLive), Layer.provideMerge(BaseLive)),
   VaultAccessServiceLive.pipe(Layer.provideMerge(BaseLive)),
 );
 const runtime = ManagedRuntime.make(SeedLive);

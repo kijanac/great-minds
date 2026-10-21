@@ -211,7 +211,7 @@ const makeStorageBackend = Effect.gen(function* () {
   } satisfies LocalStorageBackend;
 });
 
-const StorageBackendLive = Layer.effect(StorageBackend, makeStorageBackend);
+export const StorageBackendLive = Layer.effect(StorageBackend, makeStorageBackend);
 
 export const HistoryStoreLive = Layer.effect(
   HistoryStore,
@@ -347,7 +347,7 @@ export const StagedUploadGatewayLive = Layer.effect(
   }),
 );
 
-const StorageMaintenanceFromBackendLive = Layer.effectDiscard(
+export const StorageMaintenanceLoopLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const backend = yield* StorageBackend;
     if (backend.kind === "r2") return;
@@ -376,15 +376,6 @@ export const ProposalStorageLive = Layer.effect(
     } satisfies ProposalStorageShape;
   }),
 );
-
-export const StorageServicesLive = Layer.mergeAll(
-  ContentStorageLive,
-  StagedStorageLive,
-  StagedUploadGatewayLive,
-  ProposalStorageLive,
-).pipe(Layer.provideMerge(StorageBackendLive));
-
-export const StorageMaintenanceLoopLive = StorageMaintenanceFromBackendLive;
 
 export const ensureStorageReady = (config: AppConfig["Service"]) =>
   config.storageBackend === "r2"

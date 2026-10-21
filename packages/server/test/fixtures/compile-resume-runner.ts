@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { DatabaseLive } from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
 import { Effect, Layer, Schema } from "effect";
 
@@ -13,7 +14,7 @@ import {
 } from "../../src/compile-intents.ts";
 import { CompilePhaseNotPorted, EXTRACT_STEP_LABELS } from "../../src/compile-contract.ts";
 import { CompilePhases } from "../../src/compile-phases.ts";
-import { DrizzleLive } from "../../src/db.ts";
+import { PgClientLive } from "../../src/db.ts";
 import { StructuredLoggerLive } from "../../src/logging.ts";
 import {
   PipelineRunsService,
@@ -88,7 +89,7 @@ const PhasesLive = Layer.effect(
 );
 
 const BaseLive = Layer.mergeAll(
-  DrizzleLive.pipe(Layer.provideMerge(AppConfigLive)),
+  DatabaseLive.pipe(Layer.provideMerge(PgClientLive), Layer.provideMerge(AppConfigLive)),
   ClockLive,
   StructuredLoggerLive,
 );

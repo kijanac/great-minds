@@ -7,6 +7,7 @@ import {
   anchors,
   compileCacheEntries,
   Database,
+  DatabaseLive,
   ideas,
   llmCostEvents,
   pipelineRuns,
@@ -45,7 +46,7 @@ import {
   fileContentHash,
   promptContentHash,
 } from "../src/crypto.ts";
-import { DrizzleLive } from "../src/db.ts";
+import { PgClientLive } from "../src/db.ts";
 import { EmbeddingBatchFailed, EmbeddingsService } from "../src/embeddings.ts";
 import { LanguageModel, type CompleteInput, type ModelCompletion } from "../src/llm.ts";
 import { StructuredLogger } from "../src/logging.ts";
@@ -163,7 +164,7 @@ const StorageLive = Layer.succeed(ContentStorage, {
 
 const ConfigLive = Layer.succeed(AppConfig, config);
 const BaseLive = Layer.mergeAll(
-  DrizzleLive.pipe(Layer.provideMerge(ConfigLive)),
+  DatabaseLive.pipe(Layer.provide(PgClientLive), Layer.provideMerge(ConfigLive)),
   ClockLive,
   RandomBytesLive,
 );

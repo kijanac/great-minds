@@ -6,6 +6,7 @@ import * as Activity from "effect/unstable/workflow/Activity";
 import * as Workflow from "effect/unstable/workflow/Workflow";
 
 import { AppConfigLive } from "../../src/config.ts";
+import { PgClientLive } from "../../src/db.ts";
 import { WorkflowEngineLive } from "../../src/workflow-engine.ts";
 
 const runId = process.argv[2];
@@ -59,6 +60,7 @@ const WorkflowLayer = KernelAcceptanceWorkflow.toLayer((payload, executionId) =>
 
 const MainLive = WorkflowLayer.pipe(
   Layer.provideMerge(WorkflowEngineLive),
+  Layer.provide(PgClientLive),
   Layer.provide(AppConfigLive),
 );
 
