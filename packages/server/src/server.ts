@@ -14,7 +14,7 @@ import {
   Validation,
   type DomainError,
 } from "@great-minds/domain";
-import { Cause, Effect, Layer, ManagedRuntime, Option, Redacted, Stream } from "effect";
+import { Cause, Context, Effect, Layer, ManagedRuntime, Option, Redacted, Stream } from "effect";
 import {
   HttpMiddleware,
   HttpRouter,
@@ -1071,16 +1071,27 @@ const formatUrl = (address: HttpServer.Address) => {
   return `http://${host}:${address.port}`;
 };
 
+export const openServer = (options: StartServerOptions = {}) =>
+  Effect.gen(function* () {
+    const services = yield* Layer.build(ServerLive(createServer(), options));
+    return formatUrl(Context.get(services, HttpServer.HttpServer).address);
+  });
+
 export const startServer = async (options: StartServerOptions = {}): Promise<StartedServer> => {
   const nodeServer = createServer();
   const runtime = ManagedRuntime.make(ServerLive(nodeServer, options));
-  const httpServer = await runtime.runPromise(HttpServer.HttpServer);
-  return {
-    server: nodeServer,
-    runtime,
-    url: formatUrl(httpServer.address),
-    close: async () => {
-      await runtime.dispose();
-    },
-  };
+  try {
+    const httpServer = await runtime.runPromise(HttpServer.HttpServer);
+    return {
+      server: nodeServer,
+      runtime,
+      url: formatUrl(httpServer.address),
+      close: async () => {
+        await runtime.dispose();
+      },
+    };
+  } catch (error) {
+    await runtime.dispose();
+    throw error;
+  }
 };
