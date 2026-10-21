@@ -241,11 +241,21 @@ export const JobsServiceLive = Layer.effect(
           const initial = yield* readRun(vaultId, jobId);
           if (initial === undefined) return yield* new NotFound({ detail: "Job not found" });
 
-          return pollingSse(jobId, readRun(vaultId, jobId), (row) => {
-            const snapshot = progressSnapshot(row);
-            const data = encodeProgressSnapshot(snapshot);
-            return { version: data, data, terminal: terminalStatuses.has(snapshot.job_status) };
-          }, pollIntervalMs);
+          const visibleRun = Effect.gen(function* () {
+            yield* access.requireMember(userId, vaultId);
+            return yield* readRun(vaultId, jobId);
+          }).pipe(Effect.catchTag("Forbidden", () => Effect.succeed(undefined)));
+
+          return pollingSse(
+            jobId,
+            visibleRun,
+            (row) => {
+              const snapshot = progressSnapshot(row);
+              const data = encodeProgressSnapshot(snapshot);
+              return { version: data, data, terminal: terminalStatuses.has(snapshot.job_status) };
+            },
+            pollIntervalMs,
+          );
         }),
     } satisfies JobsServiceShape;
   }),

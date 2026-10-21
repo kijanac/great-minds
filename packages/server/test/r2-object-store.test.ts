@@ -1,7 +1,7 @@
 import { Readable } from "node:stream";
 
 import { S3Client } from "@aws-sdk/client-s3";
-import { Effect } from "effect";
+import { Effect, Fiber } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { makeObjectStore } from "../src/storage/r2-object-store.ts";
@@ -79,6 +79,31 @@ describe("R2 whole-object storage", () => {
       deny = false;
       await Effect.runPromise(store.removePrefix("vault/"));
       expect(remaining.size).toBe(0);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it("destroys an object body whose read is interrupted", async () => {
+    let reading!: () => void;
+    const started = new Promise<void>((resolve) => {
+      reading = resolve;
+    });
+    const body = new Readable({ read: () => reading() });
+    const client = new S3Client({
+      region: "auto",
+      endpoint: "http://fake-r2.invalid",
+      credentials: { accessKeyId: "test", secretAccessKey: "test" },
+      forcePathStyle: true,
+      requestHandler: {
+        handle: async () => ({ response: { statusCode: 200, headers: {}, body } }),
+      },
+    });
+    try {
+      const read = Effect.runFork(makeObjectStore(client, "bucket").get("stalled"));
+      await started;
+      await Effect.runPromise(Fiber.interrupt(read));
+      expect(body.destroyed).toBe(true);
     } finally {
       client.destroy();
     }

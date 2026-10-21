@@ -2,6 +2,7 @@ import { type Database, prompts } from "@great-minds/database";
 import { Context, Data, Effect, Layer, Schedule, Schema } from "effect";
 
 import { AppConfig, optionalRedactedValue } from "./config.ts";
+import { scopedAbortSignal } from "./scoped-abort-signal.ts";
 
 export const recordPrompt = (db: Database["Service"], hash: string, content: string) =>
   db.query((d) => d.insert(prompts).values({ hash, content }).onConflictDoNothing());
@@ -40,12 +41,14 @@ export const CostLookupLive = Layer.effect(
           generationId,
         )}`;
         return Effect.gen(function* () {
+          const signal = yield* scopedAbortSignal;
           const response = yield* Effect.tryPromise({
-            try: (signal) => fetch(url, {
-              method: "GET",
-              headers: { authorization: `Bearer ${apiKey}` },
-              signal,
-            }),
+            try: () =>
+              fetch(url, {
+                method: "GET",
+                headers: { authorization: `Bearer ${apiKey}` },
+                signal,
+              }),
             catch: (error) => error,
           });
           if (response.ok) {
@@ -61,6 +64,7 @@ export const CostLookupLive = Layer.effect(
           }
           return null;
         }).pipe(
+          Effect.scoped,
           Effect.retry({
             schedule: Schedule.exponential("100 millis"),
             times: 4,

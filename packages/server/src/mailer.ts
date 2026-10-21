@@ -2,6 +2,7 @@ import { Context, Effect, Layer, Option, Redacted } from "effect";
 
 import { AppConfig } from "./config.ts";
 import { StructuredLogger } from "./logging.ts";
+import { scopedAbortSignal } from "./scoped-abort-signal.ts";
 
 type EmailMessage = {
   readonly to: string;
@@ -38,31 +39,34 @@ export const MailerLive = Layer.effect(
                   subject: message.subject,
                 }),
               onSome: (fromEmail) =>
-                Effect.tryPromise({
-                  try: async () => {
-                    const response = await fetch("https://api.resend.com/emails", {
-                      method: "POST",
-                      headers: {
-                        authorization: `Bearer ${Redacted.value(apiKey)}`,
-                        "content-type": "application/json"
-                      },
-                      body: JSON.stringify({
-                        from: fromEmail,
-                        to: [message.to],
-                        subject: message.subject,
-                        text: message.body
-                      })
-                    });
-                    if (!response.ok) {
-                      throw new Error(`Resend returned ${response.status}`);
-                    }
-                  },
-                  catch: (error) => error
-                }).pipe(Effect.timeout("10 seconds"), Effect.orDie)
-            })
-        })
+                Effect.gen(function* () {
+                  const signal = yield* scopedAbortSignal;
+                  const response = yield* Effect.tryPromise({
+                    try: () =>
+                      fetch("https://api.resend.com/emails", {
+                        method: "POST",
+                        headers: {
+                          authorization: `Bearer ${Redacted.value(apiKey)}`,
+                          "content-type": "application/json",
+                        },
+                        body: JSON.stringify({
+                          from: fromEmail,
+                          to: [message.to],
+                          subject: message.subject,
+                          text: message.body,
+                        }),
+                        signal,
+                      }),
+                    catch: (error) => error,
+                  });
+                  if (!response.ok) {
+                    return yield* Effect.die(new Error(`Resend returned ${response.status}`));
+                  }
+                }).pipe(Effect.scoped, Effect.timeout("10 seconds"), Effect.orDie),
+            }),
+        }),
     } satisfies MailerShape;
-  })
+  }),
 );
 
 export const makeTestMailer = () => {

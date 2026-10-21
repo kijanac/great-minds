@@ -141,6 +141,33 @@ describe("provider adapters", () => {
     });
   }, 10_000);
 
+  it("aborts a generation-cost body read when its Effect is interrupted", async () => {
+    let ready!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    let lookupSignal: AbortSignal | null = null;
+    vi.stubGlobal("fetch", (_url: string, init: RequestInit) => {
+      const signal = init.signal!;
+      lookupSignal = signal;
+      return Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+        },
+        pull() { ready(); },
+      }, { highWaterMark: 0 })));
+    });
+    const controller = new AbortController();
+    const result = runtime.runPromiseExit(
+      Effect.flatMap(CostLookupService, (costs) => costs.lookupGenerationCost("generation")),
+      { signal: controller.signal },
+    );
+    await reading;
+    controller.abort();
+    expect(Exit.isFailure(await result)).toBe(true);
+    expect(lookupSignal).toHaveProperty("aborted", true);
+  });
+
   it("returns null after four generation-status retries", async () => {
     const fetch = vi.fn(() => Promise.resolve(new Response("", { status: 404 })));
     vi.stubGlobal("fetch", fetch);

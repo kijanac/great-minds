@@ -26,6 +26,7 @@ import { buildDocument, sessionExchangeDocumentInput } from "./markdown.ts";
 import { PipelineRunsService } from "./pipeline-runs.ts";
 import { ProposalsService } from "./proposals.ts";
 import { fetchAnyUrl, fetchPublicUrl, responseTextCapped } from "./public-fetch.ts";
+import { scopedAbortSignal } from "./scoped-abort-signal.ts";
 import {
   type CanonicalSourceUrl,
   identifySourceMarkdown,
@@ -89,8 +90,9 @@ const MAX_URL_RESPONSE_BYTES = 25 * 1024 * 1024;
 export const fetchUrlMarkdown = (url: CanonicalSourceUrl, allowPrivateUrlFetch: boolean) =>
   Effect.gen(function* () {
     const fetchUrl = allowPrivateUrlFetch ? fetchAnyUrl : fetchPublicUrl;
+    const signal = yield* scopedAbortSignal;
     const response = yield* Effect.tryPromise({
-      try: (signal) =>
+      try: () =>
         fetchUrl(url, {
           redirect: "follow",
           signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
@@ -120,7 +122,7 @@ export const fetchUrlMarkdown = (url: CanonicalSourceUrl, allowPrivateUrlFetch: 
     }
     const converted = yield* Effect.promise(() => htmlToMarkdown(body, url));
     return { url, ...converted };
-  });
+  }).pipe(Effect.scoped);
 
 const utcTimestamp = (date: Date) =>
   date

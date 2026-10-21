@@ -910,11 +910,14 @@ export const RepliesServiceLive = Layer.effect(
           const initial = yield* readReply(vaultId, replyId);
           if (initial === undefined || initial.userId !== userId)
             return yield* new NotFound({ detail: "Reply not found" });
+          const visibleReply = Effect.gen(function* () {
+            yield* access.requireMember(userId, vaultId);
+            const row = yield* readReply(vaultId, replyId);
+            return row?.userId === userId ? row : undefined;
+          }).pipe(Effect.catchTag("Forbidden", () => Effect.succeed(undefined)));
           return pollingSse(
             replyId,
-            readReply(vaultId, replyId).pipe(
-              Effect.map((row) => (row?.userId === userId ? row : undefined)),
-            ),
+            visibleReply,
             (row) => {
               const current = replySnapshot(row);
               return {
@@ -924,13 +927,6 @@ export const RepliesServiceLive = Layer.effect(
               };
             },
             pollIntervalMs,
-          ).pipe(
-            Stream.takeWhileEffect(() =>
-              access.requireMember(userId, vaultId).pipe(
-                Effect.as(true),
-                Effect.catchTag("Forbidden", () => Effect.succeed(false)),
-              ),
-            ),
           );
         }),
       prepareStep,

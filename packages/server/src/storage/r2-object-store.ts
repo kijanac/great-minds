@@ -1,3 +1,5 @@
+import { Readable } from "node:stream";
+
 import {
   CreateBucketCommand,
   DeleteObjectCommand,
@@ -163,6 +165,11 @@ export const makeObjectStore = (
         try: () => body.transformToByteArray(),
         catch: (error) => storageBackendError("read", key, error),
       }).pipe(
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            if (body instanceof Readable) body.destroy();
+          }),
+        ),
         Effect.timeout(READ_TIMEOUT),
         Effect.mapError((error) => storeFailure("read", key, error)),
       );

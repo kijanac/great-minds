@@ -634,6 +634,70 @@ describe("job progress SSE", () => {
     });
   });
 
+  it("ends a member's stream without later progress once membership is revoked", async () => {
+    const bobMembership = uuid("00000000-0000-4000-8000-000000060503");
+    await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .query((d) =>
+            d.insert(vaultMemberships).values({
+              id: bobMembership,
+              vaultId: ids.vault,
+              userId: ids.bob,
+              role: "VIEWER",
+              createdAt: now,
+            }),
+          )
+          .pipe(Effect.orDie);
+        yield* db
+          .query((d) =>
+            d.insert(pipelineRuns).values({
+              id: ids.run,
+              vaultId: ids.vault,
+              trigger: "manual",
+              status: "pending",
+              currentPhase: "",
+              phaseStatus: "",
+              progressSteps: [],
+            }),
+          )
+          .pipe(Effect.orDie);
+      }),
+    );
+    const response = await request(
+      `/v1/vaults/${ids.vault}/jobs/${ids.run}/stream`,
+      current().bobToken,
+    );
+    expect(response.status).toBe(200);
+    const body = response.text();
+    await wait(180);
+    await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .query((d) => d.delete(vaultMemberships).where(eq(vaultMemberships.id, bobMembership)))
+          .pipe(Effect.orDie);
+        yield* db
+          .query((d) =>
+            d
+              .update(pipelineRuns)
+              .set({
+                status: "failed",
+                phaseStatus: "failed",
+                error: "private failure detail",
+                updatedAt: new Date("2026-07-12T12:00:01Z"),
+              })
+              .where(eq(pipelineRuns.id, ids.run)),
+          )
+          .pipe(Effect.orDie);
+      }),
+    );
+    const text = await body;
+    expect(parseSse(text).map((event) => event.event)).toEqual(["connected", "message"]);
+    expect(text).not.toContain("private failure detail");
+  });
+
   it("returns 403 and 404 as JSON before opening the stream", async () => {
     const forbidden = await request(
       `/v1/vaults/${ids.vault}/jobs/${ids.missingRun}/stream`,
