@@ -9,7 +9,6 @@
   import { auth } from "$lib/auth.svelte";
   import AppShell from "$lib/components/app-shell.svelte";
   import CornerMenu from "$lib/components/corner-menu.svelte";
-  import { TooltipProvider } from "$lib/components/ui/tooltip";
   import { activeVault } from "$lib/hooks/use-vault.svelte";
   import { queryClient } from "$lib/query-client";
   import { theme } from "$lib/theme.svelte";
@@ -38,11 +37,9 @@
 {/snippet}
 
 <QueryClientProvider client={queryClient}>
-  <TooltipProvider>
-    <AppShell utility={isShareRoute ? undefined : cornerMenu}>
-      {@render children()}
-    </AppShell>
-  </TooltipProvider>
+  <AppShell utility={isShareRoute ? undefined : cornerMenu}>
+    {@render children()}
+  </AppShell>
   {#if dev}
     <SvelteQueryDevtools initialIsOpen={false} />
   {/if}

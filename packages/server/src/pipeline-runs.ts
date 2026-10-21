@@ -1,16 +1,7 @@
 import { compileIntents, Database, pipelineRuns } from "@great-minds/database";
-import type { Uuid } from "@great-minds/domain";
+import type { PipelineProgressStep, Uuid } from "@great-minds/domain";
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
-
-export type PipelineProgressStep = {
-  readonly key: string;
-  readonly label: string;
-  readonly status: "pending" | "running" | "completed" | "failed";
-  readonly done: number | null;
-  readonly total: number | null;
-  readonly detail: string;
-};
 
 type PipelineRunsServiceShape = {
   readonly cancel: (runId: Uuid) => Effect.Effect<void>;
