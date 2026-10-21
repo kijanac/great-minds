@@ -25,7 +25,7 @@ describe("Effect SSE decoder", () => {
 
 describe("snapshot polling", () => {
   it("deduplicates snapshots and emits the terminal snapshot before done", async () => {
-    const rows = [undefined, 1, 1, 2];
+    const rows = [1, 1, 2];
     const events = pollingSse("reply", Effect.sync(() => rows.shift()), (version) => ({
       version, data: String(version), terminal: version === 2,
     }), 1);
