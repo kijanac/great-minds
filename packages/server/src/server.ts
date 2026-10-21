@@ -944,25 +944,19 @@ const currentAuthFromRequest = (request: HttpServerRequest.HttpServerRequest) =>
     return current.success;
   });
 
-const parseMultipartFile = (request: HttpServerRequest.HttpServerRequest) =>
-  Effect.gen(function* () {
-    const parts = Array.from(
-      yield* Stream.runCollect(request.multipartStream).pipe(
-        Effect.mapError(() => new BadRequest({ detail: "Invalid multipart upload" })),
-      ),
-    );
-    const file = parts.find((part) => Multipart.isFile(part) && part.key === "file");
-    if (file === undefined || !Multipart.isFile(file)) {
-      return yield* new BadRequest({ detail: "Uploaded file must have a filename" });
-    }
-    if (file.name.length === 0) {
-      return yield* new BadRequest({ detail: "Uploaded file must have a filename" });
-    }
-    const rawBytes = yield* file.contentEffect.pipe(
-      Effect.mapError(() => new BadRequest({ detail: "Invalid multipart upload" })),
-    );
-    return { rawBytes, contentType: file.contentType };
-  });
+const invalidMultipart = () => new BadRequest({ detail: "Invalid multipart upload" });
+
+const uploadedPartContent = (part: Multipart.Part) =>
+  Multipart.isFile(part) && part.key === "file" && part.name.length > 0
+    ? part.content.pipe(Stream.mapError(invalidMultipart))
+    : Stream.fail(new BadRequest({ detail: "Uploaded file must have a filename" }));
+
+const uploadedFileContent = (request: HttpServerRequest.HttpServerRequest) =>
+  request.multipartStream.pipe(
+    Stream.mapError(invalidMultipart),
+    Stream.take(1),
+    Stream.flatMap(uploadedPartContent),
+  );
 
 const FileIngestUploadRouteLive = HttpRouter.add(
   "POST",
@@ -979,27 +973,21 @@ const FileIngestUploadRouteLive = HttpRouter.add(
       if (HttpServerResponse.isHttpServerResponse(current)) {
         return current;
       }
-      const upload = yield* parseMultipartFile(request).pipe(
-        Effect.catchTags({
-          BadRequest: domainErrorJsonResponse,
-        }),
-      );
-      if (HttpServerResponse.isHttpServerResponse(upload)) {
-        return upload;
-      }
       const batches = yield* FileIngestBatches;
-      return yield* batches.upload(current.user_id, batchId, { hash, ...upload }).pipe(
-        Effect.catchTags({
-          BadRequest: domainErrorJsonResponse,
-          Forbidden: domainErrorJsonResponse,
-          NotFound: domainErrorJsonResponse,
-        }),
-        Effect.map((value) =>
-          HttpServerResponse.isHttpServerResponse(value)
-            ? value
-            : HttpServerResponse.empty({ status: 204 }),
-        ),
-      );
+      return yield* batches
+        .upload(current.user_id, batchId, hash, uploadedFileContent(request))
+        .pipe(
+          Effect.catchTags({
+            BadRequest: domainErrorJsonResponse,
+            Forbidden: domainErrorJsonResponse,
+            NotFound: domainErrorJsonResponse,
+          }),
+          Effect.map((value) =>
+            HttpServerResponse.isHttpServerResponse(value)
+              ? value
+              : HttpServerResponse.empty({ status: 204 }),
+          ),
+        );
     }),
 );
 

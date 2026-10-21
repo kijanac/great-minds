@@ -18,7 +18,7 @@ import {
   type Uuid,
 } from "@great-minds/domain";
 import { and, asc, count, eq, inArray, lt, sql } from "drizzle-orm";
-import { Cause, Context, Effect, Layer } from "effect";
+import { Cause, Context, Effect, Layer, Stream } from "effect";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
 import { backgroundLoop } from "./background-loop.ts";
@@ -59,12 +59,6 @@ export const parseFileIngestManifest = (files: readonly FileIngestFileInput[]) =
   return Effect.succeed(files as FileIngestManifest);
 };
 
-type UploadInput = {
-  readonly hash: FileFingerprint;
-  readonly rawBytes: Uint8Array;
-  readonly contentType: string;
-};
-
 type BatchRecord = {
   readonly id: Uuid;
   readonly vaultId: Uuid;
@@ -83,6 +77,20 @@ type FileRecord = {
   readonly status: "pending" | "uploaded" | "processing" | "completed" | "failed" | "cancelled";
   readonly error: string | null;
 };
+
+const stagedContentType = (file: FileRecord) => file.mimetype || "application/octet-stream";
+
+const manifestMismatch = () =>
+  new BadRequest({ detail: "Uploaded file does not match its manifest" });
+
+const collectDeclaredBytes = (
+  content: Stream.Stream<Uint8Array, BadRequest>,
+  declaredSize: number,
+) =>
+  content.pipe(
+    Stream.limitBytes(declaredSize, () => Stream.fail(manifestMismatch())),
+    Stream.mkUint8Array,
+  );
 
 type FileIngestBatchesShape = {
   readonly checkDupes: (
@@ -107,7 +115,8 @@ type FileIngestBatchesShape = {
   readonly upload: (
     userId: Uuid,
     batchId: Uuid,
-    input: UploadInput,
+    hash: FileFingerprint,
+    content: Stream.Stream<Uint8Array, BadRequest>,
   ) => Effect.Effect<void, BadRequest | Forbidden | NotFound>;
   readonly acknowledge: (
     userId: Uuid,
@@ -332,7 +341,7 @@ export const FileIngestBatchesLive = Layer.effect(
           batch.id,
           pending.map((file) => ({
             hash: file.hash,
-            contentType: file.mimetype || "application/octet-stream",
+            contentType: stagedContentType(file),
             contentLength: file.size,
           })),
         )
@@ -695,11 +704,11 @@ export const FileIngestBatchesLive = Layer.effect(
           const batch = yield* requireCreatorBatch(userId, batchId);
           return yield* resumableResponse(batch);
         }),
-      upload: (userId, batchId, input) =>
+      upload: (userId, batchId, hash, content) =>
         Effect.gen(function* () {
           const batch = yield* requireCreatorBatch(userId, batchId);
           const files = yield* loadFiles(batch.id);
-          const file = files.find((candidate) => candidate.hash === input.hash);
+          const file = files.find((candidate) => candidate.hash === hash);
           if (file === undefined) {
             return yield* new NotFound({ detail: "File is not in this ingest manifest" });
           }
@@ -707,30 +716,23 @@ export const FileIngestBatchesLive = Layer.effect(
           if (batch.status !== "uploading") {
             return yield* new BadRequest({ detail: `File ingest is ${batch.status}` });
           }
-          if (input.rawBytes.byteLength !== file.size || rawFileHash(input.rawBytes) !== input.hash) {
-            return yield* new BadRequest({
-              detail: "Uploaded file does not match its manifest",
-            });
-          }
           if (uploads.kind !== "api") {
             return yield* new BadRequest({
               detail: "Server-mediated upload is unavailable for this storage backend",
             });
           }
+          const rawBytes = yield* collectDeclaredBytes(content, file.size);
+          if (rawBytes.byteLength !== file.size || rawFileHash(rawBytes) !== hash) {
+            return yield* manifestMismatch();
+          }
           yield* uploads
-            .receive(
-              batch.vaultId,
-              batch.id,
-              input.hash,
-              input.rawBytes,
-              input.contentType,
-            )
+            .receive(batch.vaultId, batch.id, hash, rawBytes, stagedContentType(file))
             .pipe(
               Effect.catchTag("StorageBackendError", (error) =>
                 Effect.fail(new BadRequest({ detail: error.message })),
               ),
             );
-          yield* markUploaded(batch, input.hash);
+          yield* markUploaded(batch, hash);
         }),
       acknowledge: (userId, batchId, hash) =>
         Effect.gen(function* () {

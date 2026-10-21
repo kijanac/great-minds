@@ -1494,10 +1494,12 @@ Body: `multipart/form-data` with exactly one file part:
 | --- | --- |
 | `file` | The file content. The part must have a filename. |
 
-The filename and content type are read from the part. The uploaded bytes are
-verified against the manifest: the content hash must match the `hash` path
-parameter and the manifest entry for that hash, otherwise the upload is
-rejected.
+Batch ownership, manifest membership and the storage transport are checked
+before any of the body is read, and the body is read only up to the manifest
+entry's declared `size`. The uploaded bytes are verified against the manifest:
+the length must equal the declared `size` and the content hash must match the
+`hash` path parameter, otherwise the upload is rejected. The staged object is
+stored with the manifest entry's `mimetype`.
 
 Response: `204 No Content` on success.
 

@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { createServer, type RequestListener, type Server as NodeServer } from "node:http";
+import {
+  createServer,
+  request as httpRequest,
+  type RequestListener,
+  type Server as NodeServer,
+} from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -524,6 +529,46 @@ const uploadApi = async (
     text,
   };
 };
+
+const uploadEndlessBody = (path: string, bearer: string, timeoutMs = 10_000) =>
+  new Promise<number>((resolve, reject) => {
+    const boundary = "gm-endless-upload";
+    const request = httpRequest(`${currentState().started.url}/v1${path}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearer}`,
+        "content-type": `multipart/form-data; boundary=${boundary}`,
+      },
+    });
+    const guard = setTimeout(() => {
+      request.destroy();
+      reject(new Error(`no response within ${timeoutMs}ms while the body was still streaming`));
+    }, timeoutMs);
+    const chunk = Buffer.alloc(64 * 1024, 0x61);
+    const pump = () => {
+      let accepting = true;
+      while (accepting && !request.destroyed) {
+        accepting = request.write(chunk);
+      }
+    };
+    request.on("response", (response) => {
+      response.resume();
+      response.on("end", () => {
+        clearTimeout(guard);
+        request.destroy();
+        resolve(response.statusCode ?? 0);
+      });
+    });
+    request.on("error", (error) => {
+      clearTimeout(guard);
+      reject(error);
+    });
+    request.on("drain", pump);
+    request.write(
+      `--${boundary}\r\ncontent-disposition: form-data; name="file"; filename="endless.bin"\r\ncontent-type: application/octet-stream\r\n\r\n`,
+    );
+    pump();
+  });
 
 const withLocalHttpServer = async <A>(
   handler: RequestListener,
@@ -1494,6 +1539,54 @@ describe("M3.1 write endpoint integration", () => {
       (batch) => batch?.status === "completed" || batch?.status === "failed",
     );
     expect(completed?.status).toBe("completed");
+  });
+
+  it("rejects raw uploads before reading the body unless the caller owns the declared target", async () => {
+    const { aliceToken, bobToken } = currentFixture();
+    const bytes = new TextEncoder().encode("# Bounded\n\nThe manifest bounds this upload.");
+    const hash = rawFileHash(bytes);
+    const created = await api("POST", `/vaults/${id.vault}/file-ingests`, aliceToken, {
+      batch_id: id.m32StagedRun,
+      files: [{ name: "bounded.md", size: bytes.byteLength, hash, mimetype: "text/markdown" }],
+    });
+    expect(created.status).toBe(201);
+
+    expect(
+      await uploadEndlessBody(`/file-ingests/${id.m32StagedRunOther}/files/${hash}`, aliceToken),
+    ).toBe(404);
+    expect(
+      await uploadEndlessBody(`/file-ingests/${id.m32StagedRun}/files/${hash}`, bobToken),
+    ).toBe(403);
+    expect(
+      await uploadEndlessBody(
+        `/file-ingests/${id.m32StagedRun}/files/${"d".repeat(64)}`,
+        aliceToken,
+      ),
+    ).toBe(404);
+    expect(
+      await uploadEndlessBody(`/file-ingests/${id.m32StagedRun}/files/${hash}`, aliceToken),
+    ).toBe(400);
+
+    const stagedPath = join(currentState().storageRoot, "staging", id.vault, id.m32StagedRun, hash);
+    expect(await fileExists(stagedPath)).toBe(false);
+    const resumed = await api("POST", `/file-ingests/${id.m32StagedRun}/resume`, aliceToken);
+    expect(resumed.status).toBe(200);
+    expect(asArray(asRecord(resumed.body).files)[0]).toMatchObject({ status: "pending" });
+
+    const form = new FormData();
+    form.append("file", new Blob([bytes], { type: "text/markdown" }), "bounded.md");
+    const uploaded = await uploadApi(
+      `/file-ingests/${id.m32StagedRun}/files/${hash}`,
+      aliceToken,
+      form,
+    );
+    expect(uploaded.status).toBe(204);
+    expect(await fileExists(stagedPath)).toBe(true);
+    const replayed = await uploadEndlessBody(
+      `/file-ingests/${id.m32StagedRun}/files/${hash}`,
+      aliceToken,
+    );
+    expect(replayed).toBe(204);
   });
 
   it("branches all user suggestion intents between owner direct ingest and editor proposals", async () => {
