@@ -45,3 +45,5 @@ export function useReferences() {
     references,
   };
 }
+
+export type ReadingRoomView = ReturnType<typeof useReferences>;

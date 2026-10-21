@@ -7,17 +7,11 @@ import type {
   Uuid,
 } from "@great-minds/domain";
 
-import {
-  createReply,
-  retryReply,
-  stopReply,
-  streamReply,
-  type CreateReplyPayload,
-} from "$lib/api/replies";
+import { createReply, retryReply, stopReply, type CreateReplyPayload } from "$lib/api/replies";
 import { Btw } from "$lib/btw.svelte";
 import type { Exchange, Phase, SelectionInfo } from "$lib/types";
 import { newUuid } from "$lib/ids";
-import { applyReplySnapshot, replyActivity } from "$lib/reply-turn";
+import { LIVE_UPDATES_UNAVAILABLE, tailReply } from "$lib/reply-tail";
 import { replayExchanges } from "$lib/session-events";
 import { isAbortError } from "$lib/utils";
 
@@ -126,26 +120,21 @@ export class Session {
     replyId: Uuid,
     controller: AbortController,
   ): Promise<void> => {
-    try {
-      for await (const snapshot of streamReply(replyId, controller.signal)) {
-        if (controller.signal.aborted || snapshot.session_id !== this.sessionId) return;
-        const current = this.thread.find((exchange) => exchange.id === exchangeId);
-        if (current?.replyId !== replyId) return;
-        const updated = applyReplySnapshot(current, snapshot, true);
-        if (updated === null) continue;
+    const outcome = await tailReply(replyId, controller.signal, {
+      conversationId: () => this.sessionId,
+      turn: () => this.thread.find((exchange) => exchange.id === exchangeId),
+      alwaysShowThinking: true,
+      apply: (updated, activity) => {
         this.#updateExchange(exchangeId, updated);
-        this.activity = replyActivity(snapshot, updated);
-        if (this.activity === null || this.activity.status === "settling") {
+        this.activity = activity;
+        if (activity === null || activity.status === "settling") {
           this.stopping = false;
           this.stopFailed = false;
         }
-      }
-    } catch (error) {
-      if (isAbortError(error) || controller.signal.aborted) return;
-      console.error("Failed to resume reply:", error);
-    }
-    if (!controller.signal.aborted && this.activity?.reply_id === replyId) {
-      this.connectionError = "Live updates are unavailable. Reconnect to check this response.";
+      },
+    });
+    if (outcome === "ended" && this.activity?.reply_id === replyId) {
+      this.connectionError = LIVE_UPDATES_UNAVAILABLE;
       this.stopping = false;
     }
   };

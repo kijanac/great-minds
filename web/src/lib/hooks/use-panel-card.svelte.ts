@@ -1,8 +1,9 @@
 import { goto } from "$app/navigation";
+import type { DocumentScope } from "$lib/api/doc";
 import { createLinkInterceptor } from "$lib/hooks/use-link-interceptor";
 import type { SourceDocumentSummary, SourceRef, WikiArticleOverview } from "$lib/types";
 
-export function usePanelCard() {
+export function usePanelCard(scope: DocumentScope = "vault") {
   let selectedCard = $state<SourceRef | null>(null);
 
   function openArticle(article: WikiArticleOverview) {
@@ -51,8 +52,15 @@ export function usePanelCard() {
       path: null,
       thinking: null,
       ranges: chunk === null ? undefined : [{ start: chunk, end: chunk }],
-      full: chunk === null,
+      full: scope === "personal" || chunk === null,
     };
+  }
+
+  function toggle(source: SourceRef) {
+    selectedCard =
+      selectedCard?.label === source.label
+        ? null
+        : { ...source, ranges: source.ranges?.map((range) => ({ ...range })) };
   }
 
   function maximize() {
@@ -60,10 +68,11 @@ export function usePanelCard() {
     if (!card) return;
     const range = card.ranges?.length === 1 ? card.ranges[0] : null;
     const hash = range && range.start === range.end ? `#^p${range.start}` : "";
+    selectedCard = null;
     void goto(
-      card.type === "raw" && card.document_id
+      scope === "vault" && card.type === "raw" && card.document_id
         ? `/source/${card.document_id}${hash}`
-        : `/doc/${card.label}${hash}`,
+        : `${scope === "personal" ? "/refs/" : "/doc/"}${card.label}${hash}`,
     );
   }
 
@@ -80,5 +89,6 @@ export function usePanelCard() {
     openPath,
     openSource,
     openSourceArticle,
+    toggle,
   };
 }

@@ -14,13 +14,15 @@
   import ArticleChrome from "$lib/components/article-chrome.svelte";
   import ArticlePanel from "$lib/components/article-panel.svelte";
   import ArticleView from "$lib/components/article-view.svelte";
+  import OnboardingHint, {
+    dismissOnboardingHint,
+    onboardingHintSeen,
+  } from "$lib/components/onboarding-hint.svelte";
   import PanelHost from "$lib/components/panel-host.svelte";
   import SelectionPopover from "$lib/components/selection-popover.svelte";
   import SuggestionForm, {
     type SuggestionPayload,
   } from "$lib/components/suggestion-form.svelte";
-  import { Badge } from "$lib/components/ui/badge";
-  import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { useReferencePromotion } from "$lib/hooks/use-reference-promotion.svelte";
   import {
@@ -34,12 +36,9 @@
     usePersonalDocument,
     useSourceDocument,
   } from "$lib/hooks/use-document.svelte";
-  import {
-    createLinkInterceptor,
-    type RawCitation,
-  } from "$lib/hooks/use-link-interceptor";
+  import { usePanelCard } from "$lib/hooks/use-panel-card.svelte";
   import { usePanelContent } from "$lib/hooks/use-panel-content.svelte";
-  import type { SelectionInfo, SourceRef } from "$lib/types";
+  import type { SelectionInfo } from "$lib/types";
   import { displayTitle } from "$lib/utils";
 
   let {
@@ -52,15 +51,12 @@
     scope: DocumentScope;
   } = $props();
 
-  let selectedCard = $state<SourceRef | null>(null);
   let popover = $state<SelectionInfo | null>(null);
   let suggestionTarget = $state<SelectionInfo | null>(null);
-  let hintDismissed = $state(
-    localStorage.getItem("onboarding-hint-seen") === "true",
-  );
   const initialPath = untrack(() => path);
   const initialSourceId = untrack(() => sourceId);
   const readerScope = untrack(() => scope);
+  const card = usePanelCard(readerScope);
   let btwPath: string | null = initialPath;
   let docThreads = $state<DocThreads | null>(
     initialPath === null
@@ -106,7 +102,7 @@
       ? resolvedPath
       : null,
   );
-  const showHint = $derived(!hintDismissed && body !== null);
+  const showHint = $derived(!onboardingHintSeen() && body !== null);
   const selectedVault = $derived(
     vaults.data?.find((vault) => vault.id === activeVault.id) ?? null,
   );
@@ -121,26 +117,7 @@
       : null,
   );
 
-  const panelQuery = usePanelContent(() => selectedCard, readerScope);
-
-  function openRawCitation(citation: RawCitation) {
-    selectedCard = {
-      type: "raw",
-      label: citation.path,
-      document_id: null,
-      title: null,
-      scope: null,
-      path: null,
-      thinking: null,
-      ranges:
-        citation.chunk == null
-          ? undefined
-          : [{ start: citation.chunk, end: citation.chunk }],
-      full: readerScope === "personal" || citation.chunk == null,
-    };
-  }
-
-  const handleLinkClick = createLinkInterceptor(openRawCitation);
+  const panelQuery = usePanelContent(() => card.selectedCard, readerScope);
 
   let focusedThread: string | null = null;
   $effect(() => {
@@ -188,26 +165,10 @@
     suggestionTarget = null;
   });
 
-  $effect(() => {
-    const dismiss = (event: MouseEvent) => {
-      const target = event.target as Node | null;
-      const element = window.document.querySelector("[data-popover]");
-      if (target && element?.contains(target)) return;
-      popover = null;
-    };
-    const scroll = () => (popover = null);
-    window.document.addEventListener("mousedown", dismiss);
-    window.addEventListener("scroll", scroll, true);
-    return () => {
-      window.document.removeEventListener("mousedown", dismiss);
-      window.removeEventListener("scroll", scroll, true);
-    };
-  });
-
   function startBtw() {
     if (!popover || !docThreads) return;
     docThreads.startThread(popover);
-    dismissHint();
+    dismissOnboardingHint();
     popover = null;
     window.getSelection()?.removeAllRanges();
   }
@@ -215,7 +176,7 @@
   function startSuggestion() {
     if (!popover || !suggestionMode) return;
     suggestionTarget = popover;
-    dismissHint();
+    dismissOnboardingHint();
     popover = null;
     window.getSelection()?.removeAllRanges();
   }
@@ -238,11 +199,6 @@
     return result.mode;
   }
 
-  function dismissHint() {
-    hintDismissed = true;
-    localStorage.setItem("onboarding-hint-seen", "true");
-  }
-
   async function promotePersonalReference() {
     if (!activeVault.id) return;
     try {
@@ -251,42 +207,6 @@
     } catch {
       return;
     }
-  }
-
-  function openPanelPath(linkedPath: string) {
-    if (readerScope === "personal") {
-      selectedCard = null;
-      void goto(`/refs/${linkedPath}`);
-      return;
-    }
-    if (linkedPath.startsWith("wiki/")) {
-      selectedCard = null;
-      void goto(`/doc/${linkedPath}`);
-      return;
-    }
-    selectedCard = {
-      type: "raw",
-      label: linkedPath,
-      document_id: null,
-      title: null,
-      scope: null,
-      path: null,
-      thinking: null,
-      full: true,
-    };
-  }
-
-  async function maximizePanel() {
-    const card = selectedCard;
-    if (!card) return;
-    const range = card.ranges?.length === 1 ? card.ranges[0] : null;
-    const hash = range && range.start === range.end ? `#^p${range.start}` : "";
-    selectedCard = null;
-    await goto(
-      readerScope === "vault" && card.type === "raw" && card.document_id
-        ? `/source/${card.document_id}${hash}`
-        : `${readerScope === "personal" ? "/refs/" : "/doc/"}${card.label}${hash}`,
-    );
   }
 
   $effect(() => {
@@ -304,18 +224,18 @@
   });
 </script>
 
-<PanelHost open={!!selectedCard} onClose={() => (selectedCard = null)}>
+<PanelHost open={!!card.selectedCard} onClose={card.close}>
   {#snippet panel()}
-    {#if selectedCard}
+    {#if card.selectedCard}
       <ArticlePanel
-        card={selectedCard}
+        card={card.selectedCard}
         content={panelQuery.data ?? null}
         loading={panelQuery.isLoading}
         context="citation"
-        onClose={() => (selectedCard = null)}
-        onFullScreen={() => void maximizePanel()}
-        onOpenPath={openPanelPath}
-        onLinkClick={handleLinkClick}
+        onClose={card.close}
+        onFullScreen={card.maximize}
+        onOpenPath={card.openPath}
+        onLinkClick={card.onLinkClick}
       />
     {/if}
   {/snippet}
@@ -338,35 +258,11 @@
           onClose={() => (suggestionTarget = null)}
         />
       {:else if showHint}
-        <div
-          class="shrink-0 animate-[slide-up_0.28s_ease] border-t border-ink-subtle px-4 py-3 md:px-10"
-        >
-          <div
-            class="mx-auto flex max-w-[740px] items-center justify-between gap-4"
-          >
-            <p
-              class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint"
-            >
-              <Badge
-                variant="outline"
-                class="mr-2 border-gold-dim font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold-muted"
-              >
-                tip
-              </Badge>
-              highlight text to ask beside the passage with
-              <span class="text-btw">btw</span
-              >{#if suggestionMode}{", or suggest a change"}{/if}
-            </p>
-            <Button
-              variant="ghost"
-              size="sm"
-              onclick={dismissHint}
-              class="h-auto shrink-0 px-2 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
-            >
-              dismiss
-            </Button>
-          </div>
-        </div>
+        <OnboardingHint>
+          highlight text to ask beside the passage with
+          <span class="text-btw">btw</span
+          >{#if suggestionMode}{", or suggest a change"}{/if}
+        </OnboardingHint>
       {/if}
     {/snippet}
 
@@ -389,8 +285,8 @@
         onSupersessorClick={(slug) => void goto(`/doc/wiki/${slug}.md`)}
         related={articleLinks.data?.related ?? []}
         onRelatedClick={(filePath) => void goto(`/doc/${filePath}`)}
-        onLinkClick={handleLinkClick}
-        panelDocked={!!selectedCard}
+        onLinkClick={card.onLinkClick}
+        panelDocked={!!card.selectedCard}
         threads={docThreads.threads}
         jumpableThreads={docThreads.jumpable}
         expandedThreads={docThreads.expanded}

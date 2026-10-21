@@ -48,9 +48,15 @@
       root?.querySelector("button")?.focus({ preventScroll: true });
     }
   }
+
+  function handleOutsideMouseDown(event: MouseEvent) {
+    if (event.target instanceof Node && root?.contains(event.target)) return;
+    onDismiss();
+  }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} onscrollcapture={onDismiss} />
+<svelte:document onmousedown={handleOutsideMouseDown} />
 
 <div
   bind:this={root}

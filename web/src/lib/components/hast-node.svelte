@@ -174,13 +174,13 @@
   );
 </script>
 
-{#if node.type === "root"}
+{#snippet childNodes()}
   {#each node.children ?? [] as child, index (`${index}-${child.position?.start?.offset ?? ""}`)}
     <HastNodeView
       node={child}
       {variant}
       {onLinkClick}
-      topLevel
+      topLevel={node.type === "root"}
       {footnoteMode}
       {activeFootnote}
       {pinnedFootnotes}
@@ -189,6 +189,10 @@
       {onFootnoteToggle}
     />
   {/each}
+{/snippet}
+
+{#if node.type === "root"}
+  {@render childNodes()}
 {:else if node.type === "text"}
   {node.value ?? ""}
 {:else if node.type === "element" && tag === "a"}
@@ -214,19 +218,7 @@
               className,
             )}
           >
-            {#each node.children ?? [] as child, index (`${index}-${child.position?.start?.offset ?? ""}`)}
-              <HastNodeView
-                node={child}
-                {variant}
-                {onLinkClick}
-                {footnoteMode}
-                {activeFootnote}
-                {pinnedFootnotes}
-                {footnoteDefinitions}
-                {onFootnoteHover}
-                {onFootnoteToggle}
-              />
-            {/each}
+            {@render childNodes()}
           </a>
         {/snippet}
       </Popover.Trigger>
@@ -269,19 +261,7 @@
       )}
       aria-expanded={footnoteId ? pinnedFootnote : undefined}
     >
-      {#each node.children ?? [] as child, index (`${index}-${child.position?.start?.offset ?? ""}`)}
-        <HastNodeView
-          node={child}
-          {variant}
-          {onLinkClick}
-          {footnoteMode}
-          {activeFootnote}
-          {pinnedFootnotes}
-          {footnoteDefinitions}
-          {onFootnoteHover}
-          {onFootnoteToggle}
-        />
-      {/each}
+      {@render childNodes()}
     </a>
   {/if}
 {:else if node.type === "element"}
@@ -295,18 +275,6 @@
       if (blockOffset != null) onBlockMouseUp?.(event, blockOffset);
     }}
   >
-    {#each node.children ?? [] as child, index (`${index}-${child.position?.start?.offset ?? ""}`)}
-      <HastNodeView
-        node={child}
-        {variant}
-        {onLinkClick}
-        {footnoteMode}
-        {activeFootnote}
-        {pinnedFootnotes}
-        {footnoteDefinitions}
-        {onFootnoteHover}
-        {onFootnoteToggle}
-      />
-    {/each}
+    {@render childNodes()}
   </svelte:element>
 {/if}

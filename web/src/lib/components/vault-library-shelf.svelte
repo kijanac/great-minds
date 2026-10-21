@@ -5,7 +5,11 @@
   import SourceRow from "$lib/components/source-row.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import { LIBRARY_ALL, LIBRARY_ARTICLES } from "$lib/hooks/use-library.svelte";
+  import {
+    LIBRARY_ALL,
+    LIBRARY_ARTICLES,
+    type LibraryView,
+  } from "$lib/hooks/use-library.svelte";
   import type { SourceDocumentSummary, WikiArticleOverview } from "$lib/types";
 
   let {
@@ -15,29 +19,7 @@
     onDeleteSource,
     onRequestDeletion,
   }: {
-    library: {
-      activeType: string;
-      activeTag: string;
-      search: string;
-      articleItems: WikiArticleOverview[];
-      pinArticle: WikiArticleOverview | null;
-      sourceItems: SourceDocumentSummary[];
-      loading: boolean;
-      actionNotice: string | null;
-      actionError: string | null;
-      actionId: Uuid | null;
-      role: string | null;
-      articles: {
-        hasNextPage: boolean;
-        isFetchingNextPage: boolean;
-        fetchNextPage: () => Promise<unknown>;
-      };
-      sources: {
-        hasNextPage: boolean;
-        isFetchingNextPage: boolean;
-        fetchNextPage: () => Promise<unknown>;
-      };
-    };
+    library: LibraryView;
     onOpenArticle: (article: WikiArticleOverview) => void;
     onOpenSource: (source: SourceDocumentSummary) => void;
     onDeleteSource: (sourceId: Uuid) => Promise<void>;

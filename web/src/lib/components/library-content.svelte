@@ -5,54 +5,12 @@
   import ReadingRoomShelf from "$lib/components/reading-room-shelf.svelte";
   import VaultLibraryShelf from "$lib/components/vault-library-shelf.svelte";
   import type { ReferenceOverview } from "$lib/api/references";
-  import { LIBRARY_READING_ROOM } from "$lib/hooks/use-library.svelte";
-  import type {
-    SourceDocumentSummary,
-    SourceTypeFacet,
-    WikiArticleOverview,
-  } from "$lib/types";
-
-  type LibraryView = {
-    activeType: string;
-    activeTag: string;
-    search: string;
-    showCounts: boolean;
-    sourceFacets: SourceTypeFacet[];
-    totalCount: number;
-    articleTotal: number;
-    articleItems: WikiArticleOverview[];
-    pinArticle: WikiArticleOverview | null;
-    sourceItems: SourceDocumentSummary[];
-    loading: boolean;
-    actionNotice: string | null;
-    actionError: string | null;
-    actionId: Uuid | null;
-    role: string | null;
-    articles: {
-      hasNextPage: boolean;
-      isFetchingNextPage: boolean;
-      fetchNextPage: () => Promise<unknown>;
-    };
-    sources: {
-      hasNextPage: boolean;
-      isFetchingNextPage: boolean;
-      fetchNextPage: () => Promise<unknown>;
-    };
-  };
-
-  type ReadingRoomView = {
-    items: ReferenceOverview[];
-    total: number;
-    loading: boolean;
-    error: string | null;
-    creating: boolean;
-    createError: string | null;
-    references: {
-      hasNextPage: boolean;
-      isFetchingNextPage: boolean;
-      fetchNextPage: () => Promise<unknown>;
-    };
-  };
+  import {
+    LIBRARY_READING_ROOM,
+    type LibraryView,
+  } from "$lib/hooks/use-library.svelte";
+  import type { ReadingRoomView } from "$lib/hooks/use-references.svelte";
+  import type { SourceDocumentSummary, WikiArticleOverview } from "$lib/types";
 
   type LibraryActions = {
     chooseType: (value: string) => void;

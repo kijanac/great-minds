@@ -21,7 +21,7 @@
   import { Button } from "$lib/components/ui/button";
   import { useActiveJob } from "$lib/hooks/use-active-job.svelte";
   import { useHealthReport } from "$lib/hooks/use-health-report.svelte";
-  import { createLinkInterceptor } from "$lib/hooks/use-link-interceptor";
+  import { usePanelCard } from "$lib/hooks/use-panel-card.svelte";
   import { usePanelContent } from "$lib/hooks/use-panel-content.svelte";
   import { useSessions } from "$lib/hooks/use-sessions.svelte";
   import { useVaultCounts } from "$lib/hooks/use-vault-counts.svelte";
@@ -32,7 +32,6 @@
   } from "$lib/hooks/use-vault.svelte";
   import { useSessionExport } from "$lib/hooks/use-session-export.svelte";
   import { Session } from "$lib/session.svelte";
-  import type { SourceRef } from "$lib/types";
 
   let {
     saved,
@@ -54,7 +53,7 @@
     initialQuery,
     origin,
   }));
-  let selectedCard = $state<SourceRef | null>(null);
+  const card = usePanelCard();
 
   const session = new Session({
     saved: initial.saved,
@@ -87,23 +86,7 @@
     () => activeVault.id,
     () => isActive,
   );
-  const panelQuery = usePanelContent(() => selectedCard);
-  const handleLinkClick = createLinkInterceptor((citation) => {
-    selectedCard = {
-      label: citation.path,
-      type: "raw",
-      document_id: null,
-      title: null,
-      scope: null,
-      path: null,
-      thinking: null,
-      ranges:
-        citation.chunk == null
-          ? undefined
-          : [{ start: citation.chunk, end: citation.chunk }],
-      full: citation.chunk == null,
-    };
-  });
+  const panelQuery = usePanelContent(() => card.selectedCard);
 
   function handleSessionCreated(id: SessionId) {
     replaceState(`/sessions/${id}`, {});
@@ -114,30 +97,20 @@
     if (!query.trim()) return;
     session.submitQuery(query);
   }
-
-  function toggleCard(source: SourceRef) {
-    selectedCard =
-      selectedCard?.label === source.label
-        ? null
-        : {
-            ...source,
-            ranges: source.ranges?.map((range) => ({ ...range })),
-          };
-  }
 </script>
 
-<PanelHost open={!!selectedCard} onClose={() => (selectedCard = null)}>
+<PanelHost open={!!card.selectedCard} onClose={card.close}>
   {#snippet panel()}
-    {#if selectedCard}
+    {#if card.selectedCard}
       <ArticlePanel
-        card={selectedCard}
+        card={card.selectedCard}
         content={panelQuery.data ?? null}
         loading={panelQuery.isLoading}
         context="agent"
-        onClose={() => (selectedCard = null)}
-        onFullScreen={() => void goto(`/doc/${selectedCard?.label}`)}
+        onClose={card.close}
+        onFullScreen={card.maximize}
         onOpenPath={(path) => void goto(`/doc/${path}`)}
-        onLinkClick={handleLinkClick}
+        onLinkClick={card.onLinkClick}
       />
     {/if}
   {/snippet}
@@ -194,7 +167,7 @@
               aria-label="Export conversation"
               bind:ref={exportButton}
               onclick={() => {
-                selectedCard = null;
+                card.close();
                 publication.prepare();
               }}
               class="min-h-11 shrink-0 rounded-sm font-mono text-xs text-muted-foreground hover:bg-transparent hover:text-gold"
@@ -296,11 +269,11 @@
             >
               <SessionThread
                 {session}
-                activeCard={selectedCard?.label ?? null}
+                activeCard={card.selectedCard?.label ?? null}
                 vaultRole={vaultDetail.data?.role ?? null}
-                panelDocked={!!selectedCard}
-                onCardClick={toggleCard}
-                onLinkClick={handleLinkClick}
+                panelDocked={!!card.selectedCard}
+                onCardClick={card.toggle}
+                onLinkClick={card.onLinkClick}
               />
             </div>
           {/if}

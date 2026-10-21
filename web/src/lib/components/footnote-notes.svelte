@@ -85,33 +85,16 @@
     };
   });
 
-  $effect(() => {
-    const currentRoot = root;
-    const currentDots = marginDots;
-    if (!currentRoot || currentDots.length === 0) {
-      dotPositions = {};
-      return;
-    }
-
+  function measureAfterLayout(
+    currentRoot: HTMLElement,
+    place: (rootRect: DOMRect) => void,
+  ): () => void {
     let frame = 0;
     const measure = async () => {
       await tick();
-      frame = requestAnimationFrame(() => {
-        const rootRect = currentRoot.getBoundingClientRect();
-        const next: Record<string, number> = {};
-        for (const dot of currentDots) {
-          const block = currentRoot.querySelector<HTMLElement>(
-            `[data-block-offset="${CSS.escape(String(dot.blockOffset))}"]`,
-          );
-          const dotElement = currentRoot.querySelector<HTMLElement>(
-            `[data-margin-dot="${CSS.escape(dot.id)}"]`,
-          );
-          if (!block || !dotElement) continue;
-          const rect = block.getBoundingClientRect();
-          next[dot.id] = rect.top - rootRect.top + rect.height / 2;
-        }
-        dotPositions = next;
-      });
+      frame = requestAnimationFrame(() =>
+        place(currentRoot.getBoundingClientRect()),
+      );
     };
 
     void measure();
@@ -123,6 +106,31 @@
       observer.disconnect();
       window.removeEventListener("resize", measure);
     };
+  }
+
+  $effect(() => {
+    const currentRoot = root;
+    const currentDots = marginDots;
+    if (!currentRoot || currentDots.length === 0) {
+      dotPositions = {};
+      return;
+    }
+
+    return measureAfterLayout(currentRoot, (rootRect) => {
+      const next: Record<string, number> = {};
+      for (const dot of currentDots) {
+        const block = currentRoot.querySelector<HTMLElement>(
+          `[data-block-offset="${CSS.escape(String(dot.blockOffset))}"]`,
+        );
+        const dotElement = currentRoot.querySelector<HTMLElement>(
+          `[data-margin-dot="${CSS.escape(dot.id)}"]`,
+        );
+        if (!block || !dotElement) continue;
+        const rect = block.getBoundingClientRect();
+        next[dot.id] = rect.top - rootRect.top + rect.height / 2;
+      }
+      dotPositions = next;
+    });
   });
 
   $effect(() => {
@@ -134,44 +142,28 @@
       return;
     }
 
-    let frame = 0;
-    const measure = async () => {
-      await tick();
-      frame = requestAnimationFrame(() => {
-        const rootRect = currentRoot.getBoundingClientRect();
-        const next: Record<string, number> = {};
-        let cursor = 0;
+    return measureAfterLayout(currentRoot, (rootRect) => {
+      const next: Record<string, number> = {};
+      let cursor = 0;
 
-        for (const note of currentNotes) {
-          const reference = currentRoot.querySelector<HTMLElement>(
-            `[data-margin-note-id="${CSS.escape(note.id)}"]`,
-          );
-          const block =
-            reference?.closest<HTMLElement>("[data-footnote-block]") ??
-            reference;
-          const noteElement = currentRoot.querySelector<HTMLElement>(
-            `[data-margin-note="${CSS.escape(note.id)}"]`,
-          );
-          if (!block || !noteElement) continue;
+      for (const note of currentNotes) {
+        const reference = currentRoot.querySelector<HTMLElement>(
+          `[data-margin-note-id="${CSS.escape(note.id)}"]`,
+        );
+        const block =
+          reference?.closest<HTMLElement>("[data-footnote-block]") ?? reference;
+        const noteElement = currentRoot.querySelector<HTMLElement>(
+          `[data-margin-note="${CSS.escape(note.id)}"]`,
+        );
+        if (!block || !noteElement) continue;
 
-          const desired = block.getBoundingClientRect().top - rootRect.top;
-          const top = Math.max(desired, cursor);
-          next[note.id] = top;
-          cursor = top + noteElement.getBoundingClientRect().height + 8;
-        }
-        notePositions = next;
-      });
-    };
-
-    void measure();
-    const observer = new ResizeObserver(() => void measure());
-    observer.observe(currentRoot);
-    window.addEventListener("resize", measure);
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-      window.removeEventListener("resize", measure);
-    };
+        const desired = block.getBoundingClientRect().top - rootRect.top;
+        const top = Math.max(desired, cursor);
+        next[note.id] = top;
+        cursor = top + noteElement.getBoundingClientRect().height + 8;
+      }
+      notePositions = next;
+    });
   });
 
   $effect(() => {

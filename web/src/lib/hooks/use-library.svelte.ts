@@ -263,3 +263,5 @@ export function useLibrary(
     },
   };
 }
+
+export type LibraryView = ReturnType<typeof useLibrary>;

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { browser } from "$app/environment";
   import { page } from "$app/state";
   import type { MemberRole } from "@great-minds/domain";
   import { tick } from "svelte";
@@ -7,6 +6,10 @@
 
   import AnswerBlock from "$lib/components/answer-block.svelte";
   import FollowUpBar from "$lib/components/follow-up-bar.svelte";
+  import OnboardingHint, {
+    dismissOnboardingHint,
+    onboardingHintSeen,
+  } from "$lib/components/onboarding-hint.svelte";
   import PromoteButton from "$lib/components/promote-button.svelte";
   import ReplyInterrupted from "$lib/components/reply-interrupted.svelte";
   import SelectionPopover from "$lib/components/selection-popover.svelte";
@@ -14,7 +17,6 @@
   import SessionPassage from "$lib/components/session-passage.svelte";
   import ThreadSurface from "$lib/components/thread-surface.svelte";
   import ThreadTurn from "$lib/components/thread-turn.svelte";
-  import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import { Separator } from "$lib/components/ui/separator";
   import type { Session } from "$lib/session.svelte";
@@ -99,10 +101,6 @@
       : null,
   );
 
-  let hintDismissed = $state(
-    browser && localStorage.getItem("onboarding-hint-seen") === "true",
-  );
-
   let focusedThread: string | null = null;
   $effect(() => {
     const target = page.url.searchParams.get("thread");
@@ -119,7 +117,7 @@
     });
   });
   const showHint = $derived(
-    !hintDismissed &&
+    !onboardingHintSeen() &&
       !origin?.anchor &&
       session.phase === "done" &&
       session.submission.status !== "failed" &&
@@ -127,19 +125,6 @@
       (session.thread[0]?.error === null ||
         session.thread[0]?.error === undefined),
   );
-
-  function dismissHint() {
-    hintDismissed = true;
-    localStorage.setItem("onboarding-hint-seen", "true");
-  }
-
-  function handleOutsideMouseDown(event: MouseEvent) {
-    if (!session.popover) return;
-    const target = event.target as Node | null;
-    const popover = document.querySelector("[data-popover]");
-    if (target && popover?.contains(target)) return;
-    session.clearPopover();
-  }
 
   function handleSelectionChange() {
     if (!session.popover) return;
@@ -149,20 +134,9 @@
     if (popover?.contains(document.activeElement)) return;
     session.clearPopover();
   }
-
-  $effect(() => {
-    if (!browser) return;
-    const clearOnScroll = () => session.clearPopover();
-    document.addEventListener("mousedown", handleOutsideMouseDown);
-    document.addEventListener("selectionchange", handleSelectionChange);
-    window.addEventListener("scroll", clearOnScroll, true);
-    return () => {
-      document.removeEventListener("mousedown", handleOutsideMouseDown);
-      document.removeEventListener("selectionchange", handleSelectionChange);
-      window.removeEventListener("scroll", clearOnScroll, true);
-    };
-  });
 </script>
+
+<svelte:document onselectionchange={handleSelectionChange} />
 
 <div
   bind:this={viewport}
@@ -276,32 +250,10 @@
 </div>
 
 {#if showHint}
-  <div
-    class="shrink-0 animate-[slide-up_0.28s_ease] border-t border-ink-subtle px-4 py-3 md:px-10"
-  >
-    <div class="mx-auto flex max-w-[740px] items-center justify-between gap-4">
-      <p
-        class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint"
-      >
-        <Badge
-          variant="outline"
-          class="mr-2 border-gold-dim font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold-muted"
-        >
-          tip
-        </Badge>
-        highlight text to <span class="text-warm-dim">add to reply</span>, or
-        ask beside the passage with <span class="text-btw">btw</span>
-      </p>
-      <Button
-        variant="ghost"
-        size="sm"
-        onclick={dismissHint}
-        class="h-auto shrink-0 px-2 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
-      >
-        dismiss
-      </Button>
-    </div>
-  </div>
+  <OnboardingHint>
+    highlight text to <span class="text-warm-dim">add to reply</span>, or ask
+    beside the passage with <span class="text-btw">btw</span>
+  </OnboardingHint>
 {/if}
 
 {#if session.connectionError || session.phase === "finalizing" || session.activity?.status === "admitting"}
@@ -349,13 +301,13 @@
     onFollowUp={() => {
       if (session.popover) {
         session.addChip(session.popover.quote);
-        dismissHint();
+        dismissOnboardingHint();
       }
     }}
     onBtw={() => {
       if (session.popover) {
         session.startBtw(session.popover);
-        dismissHint();
+        dismissOnboardingHint();
       }
     }}
   />

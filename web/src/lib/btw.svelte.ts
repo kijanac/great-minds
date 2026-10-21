@@ -7,12 +7,12 @@ import type {
   Uuid,
 } from "@great-minds/domain";
 
-import { createReply, retryReply, streamReply, type CreateReplyPayload } from "$lib/api/replies";
+import { createReply, retryReply, type CreateReplyPayload } from "$lib/api/replies";
 import { selectedVault } from "$lib/api/selected-vault";
 import { continueAsSession } from "$lib/api/sessions";
 import { newUuid } from "$lib/ids";
 import { queryClient } from "$lib/query-client";
-import { applyReplySnapshot, replyActivity } from "$lib/reply-turn";
+import { LIVE_UPDATES_UNAVAILABLE, tailReply } from "$lib/reply-tail";
 import { replayExchanges } from "$lib/session-events";
 import type { Exchange, ThreadLike } from "$lib/types";
 import { genId, isAbortError } from "$lib/utils";
@@ -105,21 +105,16 @@ export class Btw implements ThreadLike {
     const controller = new AbortController();
     this.#streamController = controller;
     this.connectionError = null;
-    try {
-      for await (const snapshot of streamReply(replyId, controller.signal)) {
-        if (controller.signal.aborted || snapshot.session_id !== this.conversation?.id) return;
-        const current = this.exchanges.find((turn) => turn.id === turnId);
-        if (current?.replyId !== replyId) return;
-        const updated = applyReplySnapshot(current, snapshot);
-        if (updated === null) continue;
+    const outcome = await tailReply(replyId, controller.signal, {
+      conversationId: () => this.conversation?.id ?? null,
+      turn: () => this.exchanges.find((turn) => turn.id === turnId),
+      apply: (updated, activity) => {
         this.#patchTurn(turnId, updated);
-        this.activity = replyActivity(snapshot, updated);
-      }
-    } catch (error) {
-      if (isAbortError(error) || controller.signal.aborted) return;
-    }
-    if (!controller.signal.aborted && this.activity?.reply_id === replyId)
-      this.connectionError = "Live updates are unavailable. Reconnect to check this response.";
+        this.activity = activity;
+      },
+    });
+    if (outcome === "ended" && this.activity?.reply_id === replyId)
+      this.connectionError = LIVE_UPDATES_UNAVAILABLE;
   };
 
   #runReply = async (previous: Exchange): Promise<void> => {

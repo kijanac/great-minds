@@ -356,6 +356,12 @@
     return { type: "root", children: [] };
   }
 
+  function blockKey(node: HastNode, index: number): string {
+    return node.position?.start?.offset == null
+      ? `fallback:${index}`
+      : `offset:${node.position.start.offset}`;
+  }
+
   function parseAnswer(source: string): HastNode {
     const tree = parseMarkdown(source);
     if (stripBlockRefs && resolveBlockRefs) {
@@ -427,59 +433,34 @@
     onFootnoteHover,
     onFootnoteToggle,
   })}
+    {#snippet blockNode(node: HastNode)}
+      <HastNodeView
+        {node}
+        {variant}
+        blockOffset={node.position?.start?.offset}
+        topLevel
+        onBlockMouseUp={handleSelect}
+        {onLinkClick}
+        {footnoteMode}
+        {footnoteDefinitions}
+        {activeFootnote}
+        {pinnedFootnotes}
+        {onFootnoteHover}
+        {onFootnoteToggle}
+      />
+    {/snippet}
     {#if !leadingTitle}{@render header?.(true)}{/if}
     {#if streaming}
-      {#each stableTree.children ?? [] as node, index (node.position?.start?.offset == null ? `fallback:${index}` : `offset:${node.position.start.offset}`)}
-        {@const offset = node.position?.start?.offset}
-        <HastNodeView
-          {node}
-          {variant}
-          blockOffset={offset}
-          topLevel
-          onBlockMouseUp={handleSelect}
-          {onLinkClick}
-          {footnoteMode}
-          {footnoteDefinitions}
-          {activeFootnote}
-          {pinnedFootnotes}
-          {onFootnoteHover}
-          {onFootnoteToggle}
-        />
+      {#each stableTree.children ?? [] as node, index (blockKey(node, index))}
+        {@render blockNode(node)}
       {/each}
-      {#each tailTree.children ?? [] as node, index (node.position?.start?.offset == null ? `fallback:${index}` : `offset:${node.position.start.offset}`)}
-        {@const offset = node.position?.start?.offset}
-        <HastNodeView
-          {node}
-          {variant}
-          blockOffset={offset}
-          topLevel
-          onBlockMouseUp={handleSelect}
-          {onLinkClick}
-          {footnoteMode}
-          {footnoteDefinitions}
-          {activeFootnote}
-          {pinnedFootnotes}
-          {onFootnoteHover}
-          {onFootnoteToggle}
-        />
+      {#each tailTree.children ?? [] as node, index (blockKey(node, index))}
+        {@render blockNode(node)}
       {/each}
     {:else}
-      {#each fullTree.children ?? [] as node, index (node.position?.start?.offset == null ? `fallback:${index}` : `offset:${node.position.start.offset}`)}
+      {#each fullTree.children ?? [] as node, index (blockKey(node, index))}
         {@const offset = node.position?.start?.offset}
-        <HastNodeView
-          {node}
-          {variant}
-          blockOffset={offset}
-          topLevel
-          onBlockMouseUp={handleSelect}
-          {onLinkClick}
-          {footnoteMode}
-          {footnoteDefinitions}
-          {activeFootnote}
-          {pinnedFootnotes}
-          {onFootnoteHover}
-          {onFootnoteToggle}
-        />
+        {@render blockNode(node)}
         {#if index === 0 && leadingTitle}{@render header?.(false)}{/if}
         {#if offset != null}
           {#each bodyThreads.filter((btw) => btw.anchor.blockOffset === offset) as btw (btw.id)}
