@@ -24,7 +24,7 @@ import {
 } from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
 import { eq, sql } from "drizzle-orm";
-import { Effect, Exit, Layer, Option, Redacted, Schema } from "effect";
+import { Effect, Exit, Layer, Option, Redacted, Schema, Stream } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -48,7 +48,12 @@ import {
 } from "../src/crypto.ts";
 import { PgClientLive } from "../src/db.ts";
 import { EmbeddingBatchFailed, EmbeddingsService } from "../src/embeddings.ts";
-import { LanguageModel, type CompleteInput, type ModelCompletion } from "../src/llm.ts";
+import {
+  LanguageModel,
+  type CompleteInput,
+  type ModelCompletion,
+  ModelProviderError,
+} from "../src/llm.ts";
 import { StructuredLogger } from "../src/logging.ts";
 import { parseFrontmatter, serializeFrontmatter } from "../src/markdown.ts";
 import { PipelineRunsServiceLive } from "../src/pipeline-runs.ts";
@@ -186,8 +191,12 @@ const EmbeddingsLive = Layer.succeed(EmbeddingsService, {
 });
 const LanguageModelLive = Layer.succeed(LanguageModel, {
   hasApiKey: true,
-  streamChat: async function* () {},
-  complete: (input) => Effect.tryPromise({ try: () => complete(input), catch: (error) => error }),
+  streamChat: () => Stream.empty,
+  complete: (input) =>
+    Effect.tryPromise({
+      try: () => complete(input),
+      catch: (cause) => new ModelProviderError({ message: "scripted completion failed", cause }),
+    }),
 });
 const LoggerLive = Layer.succeed(StructuredLogger, {
   info: (event, fields) => Effect.sync(() => logEvents.push({ event, fields })),

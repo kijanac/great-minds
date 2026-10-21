@@ -3,7 +3,7 @@ import { appendFile } from "node:fs/promises";
 import { Database, replies } from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
 import { eq } from "drizzle-orm";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Schema, Stream } from "effect";
 
 import { makeAppLayer } from "../../src/app-layer.ts";
 import type { HistoryStoreShape } from "../../src/conversation-history/store.ts";
@@ -31,30 +31,30 @@ Schema.decodeUnknownSync(Schema.NonEmptyString)(process.env.DATA_DIR);
 let modelCalls = 0;
 const LanguageLive = Layer.succeed(LanguageModel, {
   hasApiKey: true,
-  streamChat: (_input: StreamChatInput) => {
-    async function* stream() {
-      modelCalls += 1;
-      await appendFile(markerPath, `model:${mode}\n`, "utf8");
-      console.log(`REPLY provider called mode=${mode}`);
-      if (mode === "resume" || mode === "resume-result" || mode === "save-admission")
-        throw new Error("Provider call must not be repeated or precede admission");
-      if (mode === "pause") {
-        yield tokenPart("partial");
-        await new Promise<never>(() => undefined);
-      } else if ((mode === "save-result" || mode === "fail-result") && modelCalls === 1) {
-        yield toolCallPart(0, "durable-search", "web_search", { query: "durability lookup" });
-        yield finishPart("tool_calls", undefined, { cost: 0 });
-      } else {
-        yield tokenPart("Saved once.");
-        yield finishPart("stop", undefined, { cost: 0 });
-      }
-    }
-    return stream();
-  },
+  streamChat: (_input: StreamChatInput) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        modelCalls += 1;
+        yield* Effect.promise(() => appendFile(markerPath, `model:${mode}\n`, "utf8"));
+        console.log(`REPLY provider called mode=${mode}`);
+        if (mode === "resume" || mode === "resume-result" || mode === "save-admission")
+          return yield* Effect.die(
+            new Error("Provider call must not be repeated or precede admission"),
+          );
+        if (mode === "pause")
+          return Stream.make(tokenPart("partial")).pipe(Stream.concat(Stream.never));
+        if ((mode === "save-result" || mode === "fail-result") && modelCalls === 1)
+          return Stream.make(
+            toolCallPart(0, "durable-search", "web_search", { query: "durability lookup" }),
+            finishPart("tool_calls", undefined, { cost: 0 }),
+          );
+        return Stream.make(tokenPart("Saved once."), finishPart("stop", undefined, { cost: 0 }));
+      }),
+    ),
   complete: () =>
     Effect.gen(function* () {
       yield* Effect.promise(() => appendFile(markerPath, `complete:${mode}\n`, "utf8"));
-      return yield* Effect.fail(new Error("complete unexpectedly called"));
+      return yield* Effect.die(new Error("complete unexpectedly called"));
     }),
 });
 

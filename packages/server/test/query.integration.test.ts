@@ -35,10 +35,10 @@ import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { promptContentHash } from "../src/crypto.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import {
+  ModelProviderError,
   parseOpenRouterStream,
   type LlmAssistantToolCall,
   type LlmMessage,
-  type ModelStreamPart,
 } from "../src/llm.ts";
 import { ParallelSearchService } from "../src/parallel.ts";
 import { makeTestMailer } from "../src/mailer.ts";
@@ -650,30 +650,15 @@ describe("query stream", () => {
   it.each(["Partial answer.", ""])(
     "stops a pending model response with %j, saves it, and follows up in the same conversation",
     async (answer) => {
-      let close!: (result: IteratorResult<ModelStreamPart>) => void;
-      const closed = new Promise<IteratorResult<ModelStreamPart>>((resolve) => {
-        close = resolve;
-      });
-      let sent = false;
+      let released = false;
       const language = makeScriptedLanguageModel({
         streams: [
           {
             kind: "stream",
-            stream: {
-              [Symbol.asyncIterator]: () => ({
-                next: () => {
-                  if (!sent && answer) {
-                    sent = true;
-                    return Promise.resolve({ done: false as const, value: tokenPart(answer) });
-                  }
-                  return closed;
-                },
-                return: () => {
-                  close({ done: true, value: undefined });
-                  return closed;
-                },
-              }),
-            },
+            stream: Stream.fromIterable(answer ? [tokenPart(answer)] : []).pipe(
+              Stream.concat(Stream.never),
+              Stream.ensuring(Effect.sync(() => (released = true))),
+            ),
           },
           { kind: "parts", parts: [tokenPart("A follow-up answer."), finishPart("stop")] },
         ],
@@ -710,7 +695,7 @@ describe("query stream", () => {
         answer,
         error: null,
       });
-      expect(await closed).toEqual({ done: true, value: undefined });
+      await vi.waitFor(() => expect(released).toBe(true));
       expect((await api(`${repliesPath}/${ids.reply_id}/stop`, {})).response.status).toBe(204);
       const nodes = (await readSessionEvents(ids.session_id)).filter(
         (event) => event.type === "settlement",
@@ -841,38 +826,18 @@ describe("query stream", () => {
     const waiting = new Promise<void>((resolve) => {
       markWaiting = resolve;
     });
-    let close!: (result: IteratorResult<ModelStreamPart>) => void;
-    const closed = new Promise<IteratorResult<ModelStreamPart>>((resolve) => {
-      close = resolve;
-    });
     const publishing = await Effect.runPromise(Deferred.make<void>());
     const publish = await Effect.runPromise(Deferred.make<void>());
-    let sent = false;
     let interrupted = false;
     const language = makeScriptedLanguageModel({
       streams: [
         {
           kind: "stream",
-          stream: {
-            [Symbol.asyncIterator]: () => ({
-              next: () => {
-                if (!sent) {
-                  sent = true;
-                  return Promise.resolve({
-                    done: false as const,
-                    value: tokenPart("In-flight partial"),
-                  });
-                }
-                markWaiting();
-                return closed;
-              },
-              return: () => {
-                interrupted = true;
-                close({ done: true, value: undefined });
-                return closed;
-              },
-            }),
-          },
+          stream: Stream.make(tokenPart("In-flight partial")).pipe(
+            Stream.concat(Stream.fromEffectDrain(Effect.sync(markWaiting))),
+            Stream.concat(Stream.never),
+            Stream.ensuring(Effect.sync(() => (interrupted = true))),
+          ),
         },
       ],
     });
@@ -929,7 +894,6 @@ describe("query stream", () => {
         answer: "Frozen answer",
       });
     } finally {
-      close({ done: true, value: undefined });
       await Effect.runPromise(Deferred.succeed(publish, undefined));
     }
   });
@@ -1644,7 +1608,7 @@ describe("query stream", () => {
         {
           kind: "parts",
           parts: [tokenPart("Incomplete answer.")],
-          errorAfterParts: new Error("provider secret"),
+          errorAfterParts: new ModelProviderError({ message: "provider secret" }),
         },
         { kind: "parts", parts: [tokenPart("A later answer."), finishPart("stop")] },
         { kind: "parts", parts: [tokenPart("Complete answer."), finishPart("stop")] },
@@ -1865,7 +1829,7 @@ describe("query stream", () => {
         {
           kind: "parts",
           parts: [tokenPart("Partial BTW.")],
-          errorAfterParts: new Error("provider failure"),
+          errorAfterParts: new ModelProviderError({ message: "provider failure" }),
         },
         ...["First BTW answer.", "Main answer.", "Second BTW answer.", "Continued answer."].map(
           (answer) => ({ kind: "parts" as const, parts: [tokenPart(answer), finishPart("stop")] }),
@@ -1998,7 +1962,7 @@ describe("query stream", () => {
     const language = makeScriptedLanguageModel({
       streams: [
         { kind: "parts", parts: [tokenPart("A."), finishPart("stop")] },
-        { kind: "throw", error: new Error("provider secret") },
+        { kind: "fail", error: new ModelProviderError({ message: "provider secret" }) },
         { kind: "parts", parts: [tokenPart("C."), finishPart("stop")] },
       ],
     });
@@ -2220,15 +2184,18 @@ describe("query stream", () => {
     expect(snapshots.at(-1)?.status).toBe("completed");
   });
 
-  it("persists sanitized setup and mid-loop failures", async () => {
-    const setupLanguage = makeScriptedLanguageModel({ streams: [] });
-    await startHarness({ language: setupLanguage });
-    await writeVaultFile(id.vault, "config.yaml", ": bad: [");
-    const setup = await runReply({ question: "break setup" });
-    expect(setup.snapshots.at(-1)).toMatchObject({
-      status: "failed",
-      error: "Something went wrong while answering. Try again in a minute.",
+  it("fails model-step defects without retry and persists sanitized mid-loop failures", async () => {
+    const defectLanguage = makeScriptedLanguageModel({
+      streams: [{ kind: "stream", stream: Stream.die(new Error("stub defect detail")) }],
     });
+    await startHarness({ language: defectLanguage });
+    const defect = await runReply({ question: "break the model step" });
+    expect(defect.snapshots.at(-1)).toMatchObject({
+      status: "failed",
+      error:
+        "Reply interrupted before an external response could be saved. It was not retried automatically.",
+    });
+    expect(defect.text).not.toContain("stub defect detail");
     await currentState().started.close();
     await rm(currentState().storageRoot, { recursive: true, force: true });
     state = undefined;
@@ -2245,7 +2212,7 @@ describe("query stream", () => {
         {
           kind: "parts",
           parts: [tokenPart("Partial answer that may be incomplete.")],
-          errorAfterParts: new Error("secret provider detail"),
+          errorAfterParts: new ModelProviderError({ message: "secret provider detail" }),
         },
       ],
     });
@@ -2421,7 +2388,7 @@ describe("query stream", () => {
   it("continues invisibly on retryable primary-model fallback", async () => {
     const language = makeScriptedLanguageModel({
       streams: [
-        { kind: "throw", error: retryableModelError("429") },
+        { kind: "fail", error: retryableModelError("429") },
         { kind: "parts", parts: [tokenPart("Fallback"), finishPart("stop", "fallback-gen")] },
       ],
     });

@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { Cause, Effect, Exit, Fiber, Result, Stream } from "effect";
+import { TestClock } from "effect/testing";
+import { assert, describe, expect, it } from "vitest";
 
-import { ModelProviderError, parseOpenRouterStream, type ModelStreamPart } from "../src/llm.ts";
+import { parseOpenRouterStream, type ModelStreamPart } from "../src/llm.ts";
 
 const sseResponse = (blocks: readonly string[], newline = "\n") =>
   new Response(
@@ -10,12 +12,30 @@ const sseResponse = (blocks: readonly string[], newline = "\n") =>
     { headers: { "content-type": "text/event-stream" } },
   );
 
-const collect = async (response: Response) => {
-  const parts: ModelStreamPart[] = [];
-  for await (const part of parseOpenRouterStream(response)) {
-    parts.push(part);
-  }
-  return parts;
+const collect = (response: Response) =>
+  Effect.runPromise(Stream.runCollect(parseOpenRouterStream(response)));
+
+const recordParts = (response: Response, parts: ModelStreamPart[]) =>
+  Stream.runForEach(parseOpenRouterStream(response), (part) =>
+    Effect.sync(() => {
+      parts.push(part);
+    }),
+  );
+
+const collectUntilFailure = (response: Response) =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const parts: ModelStreamPart[] = [];
+      const exit = yield* Effect.exit(recordParts(response, parts));
+      return { parts, exit };
+    }),
+  );
+
+const failureTag = (exit: Exit.Exit<unknown, { readonly _tag: string }>) => {
+  assert(Exit.isFailure(exit));
+  const error = Cause.findError(exit.cause);
+  assert(Result.isSuccess(error));
+  return error.success._tag;
 };
 
 describe("openrouter stream protocol", () => {
@@ -86,6 +106,21 @@ describe("openrouter stream protocol", () => {
     ]);
   });
 
+  it("ignores retry directives and unnamed event fields the way the data-only protocol expects", async () => {
+    const parts = await collect(
+      sseResponse([
+        "retry: 3000",
+        'event: ping\ndata: {"id":"gen-4","choices":[{"index":0,"delta":{"content":"kept"},"finish_reason":"stop"}]}',
+        "data: [DONE]",
+      ]),
+    );
+
+    expect(parts).toEqual([
+      { type: "token", text: "kept" },
+      { type: "finish", finishReason: "stop", generationId: "gen-4", usage: undefined },
+    ]);
+  });
+
   it.each([
     { ending: "EOF", suffix: [] },
     { ending: "DONE without a finish reason", suffix: ["data: [DONE]"] },
@@ -98,57 +133,77 @@ describe("openrouter stream protocol", () => {
   ])(
     "rejects $ending without discarding partial output or authorizing retry",
     async ({ suffix }) => {
-      const parser = parseOpenRouterStream(
+      const { parts, exit } = await collectUntilFailure(
         sseResponse([
           'data: {"choices":[{"delta":{"content":"Partial"},"finish_reason":null}]}',
           ...suffix,
         ]),
-      )[Symbol.asyncIterator]();
-      expect(await parser.next()).toEqual({
-        done: false,
-        value: { type: "token", text: "Partial" },
-      });
-      await expect(parser.next()).rejects.toBeInstanceOf(ModelProviderError);
+      );
+      expect(parts).toEqual([{ type: "token", text: "Partial" }]);
+      expect(failureTag(exit)).toBe("ModelProviderError");
     },
   );
 
   it("does not classify an accepted response with no body as a safe retry", async () => {
-    await expect(collect(new Response(null))).rejects.toBeInstanceOf(ModelProviderError);
+    const { exit } = await collectUntilFailure(new Response(null));
+    expect(failureTag(exit)).toBe("ModelProviderError");
   });
 
   it.each(["", "Partial answer"])(
     "does not classify an accepted stream stall after %j as a safe retry",
     async (partial) => {
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-      const body = new TransformStream<Uint8Array>();
-      const writer = body.writable.getWriter();
-      const parser = parseOpenRouterStream(new Response(body.readable))[Symbol.asyncIterator]();
-      try {
-        if (partial.length > 0) {
-          const token = parser.next();
-          await writer.write(
-            new TextEncoder().encode(
-              `data: ${JSON.stringify({
-                choices: [{ delta: { content: partial } }],
-              })}\n\n`,
+      let enqueue!: (chunk: Uint8Array) => void;
+      const pulls: Array<() => void> = [];
+      const nextPull = () =>
+        new Promise<void>((resolve) => {
+          pulls.push(resolve);
+        });
+      const body = new ReadableStream<Uint8Array>(
+        {
+          start(controller) {
+            enqueue = (chunk) => controller.enqueue(chunk);
+          },
+          pull() {
+            pulls.shift()?.();
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      const parts: ModelStreamPart[] = [];
+      let settled = false;
+      const outcome = await Effect.runPromise(
+        Effect.gen(function* () {
+          const firstPull = nextPull();
+          const fiber = yield* Effect.forkChild(
+            Effect.exit(recordParts(new Response(body), parts)).pipe(
+              Effect.tap(() => Effect.sync(() => (settled = true))),
             ),
           );
-          expect(await token).toEqual({ done: false, value: { type: "token", text: partial } });
-        }
-        const failure = parser.next().catch((error: unknown) => error);
-        await vi.runAllTimersAsync();
-        expect(await failure).toBeInstanceOf(ModelProviderError);
-      } finally {
-        vi.useRealTimers();
-        await writer.close();
-        await parser.return?.();
-      }
+          yield* Effect.promise(() => firstPull);
+          if (partial.length > 0) {
+            const secondPull = nextPull();
+            enqueue(
+              new TextEncoder().encode(
+                `data: ${JSON.stringify({ choices: [{ delta: { content: partial } }] })}\n\n`,
+              ),
+            );
+            yield* Effect.promise(() => secondPull);
+          }
+          yield* TestClock.adjust("29999 millis");
+          expect(settled).toBe(false);
+          yield* TestClock.adjust("1 millis");
+          return yield* Fiber.join(fiber);
+        }).pipe(Effect.provide(TestClock.layer())),
+      );
+      expect(parts).toEqual(partial.length > 0 ? [{ type: "token", text: partial }] : []);
+      expect(failureTag(outcome)).toBe("ModelProviderError");
     },
   );
 
   it("rejects a frame whose declared fields have the wrong shape", async () => {
-    await expect(
-      collect(sseResponse(['data: {"choices":[{"delta":{"content":42}}]}', "data: [DONE]"])),
-    ).rejects.toThrow();
+    const { exit } = await collectUntilFailure(
+      sseResponse(['data: {"choices":[{"delta":{"content":42}}]}', "data: [DONE]"]),
+    );
+    expect(failureTag(exit)).toBe("ModelProviderError");
   });
 });

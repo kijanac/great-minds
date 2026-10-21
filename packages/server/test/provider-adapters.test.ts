@@ -53,7 +53,7 @@ describe("provider adapters", () => {
       const model = yield* LanguageModel;
       const input = { model: "test", messages: [{ role: "user" as const, content: "question" }], tools: [], temperature: 0 };
       if (kind === "stream") {
-        yield* Stream.fromAsyncIterable(model.streamChat(input), (error) => error).pipe(Stream.runDrain);
+        yield* model.streamChat(input).pipe(Stream.runDrain);
       } else {
         yield* model.complete(input);
       }

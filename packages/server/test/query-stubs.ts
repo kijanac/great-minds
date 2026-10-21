@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Stream } from "effect";
 
 import { EmbeddingsService } from "../src/embeddings.ts";
 import { CostLookupService } from "../src/llm-costs.ts";
@@ -7,28 +7,31 @@ import {
   type CompleteInput,
   type LlmUsage,
   type ModelCompletion,
+  type ModelProviderError,
   type ModelStreamPart,
   RetryableModelError,
   type StreamChatInput,
 } from "../src/llm.ts";
 import { ParallelSearchService, type ParallelSearchResult } from "../src/parallel.ts";
 
+type ModelRequestError = RetryableModelError | ModelProviderError;
+
 type StreamScript =
   | {
       readonly kind: "stream";
-      readonly stream: AsyncIterable<ModelStreamPart>;
+      readonly stream: Stream.Stream<ModelStreamPart, ModelRequestError>;
     }
   | {
       readonly kind: "parts";
       readonly parts: readonly ModelStreamPart[];
-      readonly errorAfterParts?: unknown;
+      readonly errorAfterParts?: ModelRequestError;
     }
   | {
-      readonly kind: "throw";
-      readonly error: unknown;
+      readonly kind: "fail";
+      readonly error: ModelRequestError;
     };
 
-type CompleteScript = ModelCompletion | Effect.Effect<ModelCompletion, unknown>;
+type CompleteScript = ModelCompletion | Effect.Effect<ModelCompletion, ModelRequestError>;
 
 export const retryableModelError = (message = "rate limited") =>
   new RetryableModelError({ message });
@@ -85,28 +88,19 @@ export const makeScriptedLanguageModel = (options: {
     streamChat: (input: StreamChatInput) => {
       streamCalls.push(input);
       const script = streamScripts.shift();
-      if (script?.kind === "stream") return script.stream;
-      const run = async function* () {
-        if (script === undefined) {
-          throw new Error("No scripted stream response");
-        }
-        if (script.kind === "throw") {
-          throw script.error;
-        }
-        for (const part of script.parts) {
-          yield part;
-        }
-        if (script.errorAfterParts !== undefined) {
-          throw script.errorAfterParts;
-        }
-      };
-      return run();
+      if (script === undefined) return Stream.die(new Error("No scripted stream response"));
+      if (script.kind === "stream") return script.stream;
+      if (script.kind === "fail") return Stream.fail(script.error);
+      const parts = Stream.fromIterable(script.parts);
+      return script.errorAfterParts === undefined
+        ? parts
+        : Stream.concat(parts, Stream.fail(script.errorAfterParts));
     },
     complete: (input: CompleteInput) => Effect.suspend(() => {
       completeCalls.push(input);
       const script = completionScripts.shift();
       if (script === undefined) {
-        return Effect.fail(new Error("No scripted completion response"));
+        return Effect.die(new Error("No scripted completion response"));
       }
       return Effect.isEffect(script) ? script : Effect.succeed(script);
     }),

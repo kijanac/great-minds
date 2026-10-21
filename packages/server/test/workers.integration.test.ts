@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import * as PgClient from "@effect/sql-pg/PgClient";
 import { Uuid, type FileFingerprint } from "@great-minds/domain";
 import { eq, inArray, sql } from "drizzle-orm";
-import { Effect, Layer, Option, Redacted, Schema } from "effect";
+import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
 import type * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -39,7 +39,7 @@ import {
 } from "../src/file-ingest-batches.ts";
 import { EmbeddingsService } from "../src/embeddings.ts";
 import { JobsService, JobsServiceLive } from "../src/jobs.ts";
-import { LanguageModel } from "../src/llm.ts";
+import { LanguageModel, ModelProviderError } from "../src/llm.ts";
 import { StructuredLogger } from "../src/logging.ts";
 import {
   PipelineRunsService,
@@ -281,8 +281,8 @@ const VaultAccessLive = VaultAccessServiceLive.pipe(Layer.provideMerge(BaseLive)
 const EmbeddingsLive = Layer.succeed(EmbeddingsService, { embed: () => Effect.succeed([]) });
 const LanguageModelLive = Layer.succeed(LanguageModel, {
   hasApiKey: true,
-  streamChat: async function* () {},
-  complete: () => Effect.fail(new Error("unexpected compile LLM call")),
+  streamChat: () => Stream.empty,
+  complete: () => Effect.fail(new ModelProviderError({ message: "unexpected compile LLM call" })),
 });
 const SourceDocumentsLive = SourceDocumentsServiceLive.pipe(
   Layer.provideMerge(StorageLive),

@@ -25,16 +25,16 @@ import { Cause, Context, Data, Effect, Layer, Option, Schema, Stream } from "eff
 import { AppConfig } from "./config.ts";
 import { defaultVaultConfigFile, readVaultConfig, type VaultConfigFile } from "./vault-config.ts";
 import { promptContentHash } from "./crypto.ts";
-import { EmbeddingsService, vectorLiteral } from "./embeddings.ts";
+import { type EmbeddingBatchFailed, EmbeddingsService, vectorLiteral } from "./embeddings.ts";
 import { CostLookupService, recordPrompt } from "./llm-costs.ts";
 import {
-  isRetryableModelError,
   LanguageModel,
   LlmMessageSchema,
   LlmToolDefinitionSchema,
   ModelProviderError,
   type LlmMessage,
   type LlmToolDefinition,
+  type RetryableModelError,
   stripJsonFence,
 } from "./llm.ts";
 import { StructuredLogger } from "./logging.ts";
@@ -53,11 +53,11 @@ type QueryServiceShape = {
   readonly modelAttempt: (
     state: QueryExecutionState,
     onToken: (text: string) => Effect.Effect<void>,
-  ) => Effect.Effect<QueryModelAttemptResult, unknown>;
+  ) => Effect.Effect<QueryModelAttemptResult>;
   readonly runTool: (
     state: QueryExecutionState,
     toolCall: QueryPreparedToolCall,
-  ) => Effect.Effect<QueryToolExecutionResult, unknown>;
+  ) => Effect.Effect<QueryToolExecutionResult, EmbeddingBatchFailed>;
   readonly finalizeExecution: (state: QueryExecutionState) => Effect.Effect<void>;
   readonly draftHint: (
     userId: Uuid,
@@ -267,23 +267,6 @@ const logErrorFields = (error: unknown) => {
     error_message: String(error),
     stack: undefined,
   };
-};
-
-const isInterruptOnly = (cause: Cause.Cause<unknown>) =>
-  cause.reasons.length > 0 && cause.reasons.every(Cause.isInterruptReason);
-
-const causeError = (cause: Cause.Cause<unknown>): unknown => {
-  for (const reason of cause.reasons) {
-    if (Cause.isFailReason(reason)) {
-      return reason.error;
-    }
-  }
-  for (const reason of cause.reasons) {
-    if (Cause.isDieReason(reason)) {
-      return reason.defect;
-    }
-  }
-  return cause;
 };
 
 export const retrievalCore = `You answer questions over a knowledge base by researching its documents with tools, then writing a cited answer. Work in four stages — each stage tells you which tool to reach for. Don't jump straight to whole-base search.
@@ -1167,12 +1150,12 @@ export const QueryServiceLive = Layer.effect(
               }
             }),
             Effect.catchCause((cause) =>
-              isInterruptOnly(cause)
+              Cause.hasInterruptsOnly(cause)
                 ? Effect.interrupt
                 : warnSafely("query.cost_lookup_failed", {
                     correlation_id: context.correlationId,
                     generation_id: generationId,
-                    ...logErrorFields(causeError(cause)),
+                    ...logErrorFields(Cause.squash(cause)),
                   }),
             ),
           ),
@@ -1227,13 +1210,13 @@ export const QueryServiceLive = Layer.effect(
         );
       }).pipe(
         Effect.catchCause((cause) =>
-          isInterruptOnly(cause)
+          Cause.hasInterruptsOnly(cause)
             ? Effect.interrupt
             : logger
                 .warn("query.web_extract_failed", {
                   correlation_id: context.correlationId,
                   query,
-                  ...logErrorFields(causeError(cause)),
+                  ...logErrorFields(Cause.squash(cause)),
                 })
                 .pipe(Effect.as(undefined)),
         ),
@@ -1270,13 +1253,13 @@ export const QueryServiceLive = Layer.effect(
           } satisfies ToolResult;
         }).pipe(
           Effect.catchCause((cause) =>
-            isInterruptOnly(cause)
+            Cause.hasInterruptsOnly(cause)
               ? Effect.interrupt
               : logger
                   .warn("query.web_search_failed", {
                     correlation_id: context.correlationId,
                     query,
-                    ...logErrorFields(causeError(cause)),
+                    ...logErrorFields(Cause.squash(cause)),
                   })
                   .pipe(
                     Effect.as({
@@ -1291,7 +1274,7 @@ export const QueryServiceLive = Layer.effect(
     const dispatchTool = (
       context: QueryExecutionState,
       tool: QueryTool,
-    ): Effect.Effect<ToolResult, unknown> => {
+    ): Effect.Effect<ToolResult, ToolMiss | EmbeddingBatchFailed> => {
       switch (tool.name) {
         case "read_document":
           return readDocumentTool(context, tool.args.path, "vault");
@@ -1323,47 +1306,72 @@ export const QueryServiceLive = Layer.effect(
           finishReason: null,
           toolCalls: new Map(),
         };
-        yield* Stream.fromAsyncIterable(
-          languageModel.streamChat({
+        yield* languageModel
+          .streamChat({
             model,
             messages: context.messages,
             tools: context.tools,
             temperature: 0.3,
-          }),
-          (error) => error,
-        ).pipe(
-          Stream.runForEach((part) => {
-            if (part.type === "token") {
-              state.content += part.text;
-              return onToken(part.text);
-            }
-            if (part.type === "tool_call_delta") {
-              const current = state.toolCalls.get(part.delta.index) ?? {
-                id: "",
-                name: "",
-                arguments: "",
-              };
-              state.toolCalls.set(part.delta.index, {
-                id: part.delta.id ?? current.id,
-                name: part.delta.name ?? current.name,
-                arguments: current.arguments + (part.delta.argumentsDelta ?? ""),
-              });
+          })
+          .pipe(
+            Stream.runForEach((part) => {
+              if (part.type === "token") {
+                state.content += part.text;
+                return onToken(part.text);
+              }
+              if (part.type === "tool_call_delta") {
+                const current = state.toolCalls.get(part.delta.index) ?? {
+                  id: "",
+                  name: "",
+                  arguments: "",
+                };
+                state.toolCalls.set(part.delta.index, {
+                  id: part.delta.id ?? current.id,
+                  name: part.delta.name ?? current.name,
+                  arguments: current.arguments + (part.delta.argumentsDelta ?? ""),
+                });
+                return Effect.void;
+              }
+              state.finishReason = part.finishReason;
+              if (!addUsageCost(context, part.usage)) {
+                addGenerationCostFallback(context, part.generationId);
+              }
               return Effect.void;
-            }
-            state.finishReason = part.finishReason;
-            if (!addUsageCost(context, part.usage)) {
-              addGenerationCostFallback(context, part.generationId);
-            }
-            return Effect.void;
-          }),
-        );
+            }),
+          );
         return state;
+      });
+
+    const modelRoundFailed = (
+      context: QueryExecutionState,
+      model: string,
+      error: RetryableModelError | ModelProviderError,
+    ): Effect.Effect<QueryModelAttemptResult> =>
+      Effect.gen(function* () {
+        if (error._tag === "RetryableModelError") {
+          yield* warnSafely("query.stream_retryable", {
+            correlation_id: context.correlationId,
+            model,
+            ...logErrorFields(error),
+          });
+          const nextModelIndex = context.modelIndex + 1;
+          if (nextModelIndex < context.models.length) {
+            return { kind: "retryable", state: { ...context, modelIndex: nextModelIndex } };
+          }
+          return { kind: "failed", state: context, error: sanitizedStreamError };
+        }
+        yield* errorSafely("query.stream_failed", {
+          correlation_id: context.correlationId,
+          model,
+          ...logErrorFields(error),
+        });
+        return { kind: "failed", state: context, error: sanitizedStreamError };
       });
 
     const executeModelAttempt = (
       input: QueryExecutionState,
       onToken: (text: string) => Effect.Effect<void>,
-    ): Effect.Effect<QueryModelAttemptResult, unknown> =>
+    ): Effect.Effect<QueryModelAttemptResult> =>
       Effect.gen(function* () {
         const context = input;
         const model = input.models[input.modelIndex];
@@ -1382,93 +1390,73 @@ export const QueryServiceLive = Layer.effect(
           model,
           round: context.trace.llmRounds,
         });
-        return yield* Effect.gen(function* () {
-          const roundState = yield* runModelRound(context, model, onToken);
-          if (roundState.finishReason === "tool_calls" && roundState.toolCalls.size > 0) {
-            const rawToolCalls = [...roundState.toolCalls.entries()]
-              .sort(([left], [right]) => left - right)
-              .map(([, toolCall]) => toolCall);
-            const toolCalls: QueryPreparedToolCall[] = [];
-            for (const toolCall of rawToolCalls) {
-              const parsed = yield* Effect.result(parseToolArgs(toolCall.arguments, toolCall.name));
-              if (parsed._tag === "Failure") {
-                return {
-                  kind: "failed",
-                  state: context,
-                  error: parsed.failure.message,
-                } satisfies QueryModelAttemptResult;
-              }
-              const args = parsed.success;
-              const tool = previewQueryTool({ name: toolCall.name, args });
-              const pendingSource = Option.isSome(tool)
-                ? pendingSourceEvent(tool.value)
-                : undefined;
-              toolCalls.push({
-                ...toolCall,
-                args,
-                ...(pendingSource === undefined ? {} : { pendingSource }),
-              });
-            }
-            messages.push({
-              role: "assistant",
-              content: roundState.content.length === 0 ? null : roundState.content,
-              tool_calls: rawToolCalls.map((toolCall) => ({
-                id: toolCall.id,
-                type: "function",
-                function: { name: toolCall.name, arguments: toolCall.arguments },
-              })),
-            });
-            return {
-              kind: "tool_calls",
-              state: context,
-              toolCalls,
-            } satisfies QueryModelAttemptResult;
-          }
-          if (roundState.content.length > 0) {
-            messages.push({ role: "assistant", content: roundState.content });
-          }
-          return {
-            kind: "done",
-            state: context,
-          } satisfies QueryModelAttemptResult;
-        }).pipe(
-          Effect.catchCause((cause) => {
-            if (isInterruptOnly(cause)) {
-              return Effect.failCause(cause);
-            }
-            const error = causeError(cause);
-            const nextState = context;
-            if (isRetryableModelError(error)) {
-              return warnSafely("query.stream_retryable", {
+        const round = yield* Effect.result(
+          runModelRound(context, model, onToken).pipe(
+            Effect.tapDefect((defect) =>
+              errorSafely("query.stream_failed", {
                 correlation_id: context.correlationId,
                 model,
-                ...logErrorFields(error),
-              }).pipe(
-                Effect.map((): QueryModelAttemptResult => {
-                  const nextModelIndex = input.modelIndex + 1;
-                  if (nextModelIndex < input.models.length) {
-                    return {
-                      kind: "retryable",
-                      state: { ...nextState, modelIndex: nextModelIndex },
-                    };
-                  }
-                  return { kind: "failed", state: nextState, error: sanitizedStreamError };
-                }),
-              );
-            }
-            return errorSafely("query.stream_failed", {
-              correlation_id: context.correlationId,
-              model,
-              ...logErrorFields(error),
-            }).pipe(
-              Effect.as({
-                kind: "failed",
-                state: nextState,
-                error: sanitizedStreamError,
-              } satisfies QueryModelAttemptResult),
-            );
-          }),
+                ...logErrorFields(defect),
+              }),
+            ),
+          ),
         );
+        if (round._tag === "Failure") {
+          return yield* modelRoundFailed(context, model, round.failure);
+        }
+        const roundState = round.success;
+        if (roundState.finishReason === "tool_calls" && roundState.toolCalls.size > 0) {
+          const rawToolCalls = [...roundState.toolCalls.entries()]
+            .sort(([left], [right]) => left - right)
+            .map(([, toolCall]) => toolCall);
+          const toolCalls: QueryPreparedToolCall[] = [];
+          for (const toolCall of rawToolCalls) {
+            const parsed = yield* Effect.result(parseToolArgs(toolCall.arguments, toolCall.name));
+            if (parsed._tag === "Failure") {
+              return {
+                kind: "failed",
+                state: context,
+                error: parsed.failure.message,
+              } satisfies QueryModelAttemptResult;
+            }
+            const args = parsed.success;
+            const tool = previewQueryTool({ name: toolCall.name, args });
+            const pendingSource = Option.isSome(tool) ? pendingSourceEvent(tool.value) : undefined;
+            toolCalls.push({
+              ...toolCall,
+              args,
+              ...(pendingSource === undefined ? {} : { pendingSource }),
+            });
+          }
+          messages.push({
+            role: "assistant",
+            content: roundState.content.length === 0 ? null : roundState.content,
+            tool_calls: rawToolCalls.map((toolCall) => ({
+              id: toolCall.id,
+              type: "function",
+              function: { name: toolCall.name, arguments: toolCall.arguments },
+            })),
+          });
+          return {
+            kind: "tool_calls",
+            state: context,
+            toolCalls,
+          } satisfies QueryModelAttemptResult;
+        }
+        if (roundState.content.length > 0) {
+          messages.push({ role: "assistant", content: roundState.content });
+        }
+        return {
+          kind: "done",
+          state: context,
+        } satisfies QueryModelAttemptResult;
+      });
+
+    const logToolFailure = (context: QueryExecutionState, error: unknown) =>
+      errorSafely("query.stream_failed", {
+        correlation_id: context.correlationId,
+        model: context.selectedModel,
+        ...logErrorFields(error),
       });
 
     const executeTool = (input: QueryExecutionState, toolCall: QueryPreparedToolCall) =>
@@ -1482,20 +1470,11 @@ export const QueryServiceLive = Layer.effect(
           );
           return yield* dispatchTool(context, tool);
         }).pipe(
-          Effect.catchCause((cause) => {
-            const error = causeError(cause);
-            if (error instanceof ToolMiss) {
-              return Effect.succeed<ToolResult>({ content: error.message });
-            }
-            if (isInterruptOnly(cause)) {
-              return Effect.failCause(cause);
-            }
-            return errorSafely("query.stream_failed", {
-              correlation_id: context.correlationId,
-              model: context.selectedModel,
-              ...logErrorFields(error),
-            }).pipe(Effect.andThen(Effect.failCause(cause)));
-          }),
+          Effect.catchTag("ToolMiss", (error) =>
+            Effect.succeed<ToolResult>({ content: error.message }),
+          ),
+          Effect.tapError((error) => logToolFailure(context, error)),
+          Effect.tapDefect((defect) => logToolFailure(context, defect)),
         );
         messages.push({
           role: "tool",
@@ -1638,11 +1617,11 @@ export const QueryServiceLive = Layer.effect(
             )
             .pipe(
               Effect.catchCause((cause) =>
-                isInterruptOnly(cause)
+                Cause.hasInterruptsOnly(cause)
                   ? Effect.interrupt
                   : logger.error("query.cost_write_failed", {
                       correlation_id: context.correlationId,
-                      ...logErrorFields(causeError(cause)),
+                      ...logErrorFields(Cause.squash(cause)),
                     }),
               ),
             );
@@ -1695,13 +1674,13 @@ export const QueryServiceLive = Layer.effect(
           return context;
         }).pipe(
           Effect.catchCause((cause) =>
-            isInterruptOnly(cause)
+            Cause.hasInterruptsOnly(cause)
               ? Effect.failCause(cause)
               : errorSafely("query.stream_setup_failed", {
                   correlation_id: correlationId,
                   vault_id: vaultId,
                   user_id: userId,
-                  ...logErrorFields(causeError(cause)),
+                  ...logErrorFields(Cause.squash(cause)),
                 }).pipe(Effect.andThen(Effect.failCause(cause))),
           ),
         );
@@ -1717,13 +1696,13 @@ export const QueryServiceLive = Layer.effect(
           yield* finalize(state);
         }).pipe(
           Effect.catchCause((cause) =>
-            isInterruptOnly(cause)
+            Cause.hasInterruptsOnly(cause)
               ? Effect.interrupt
               : errorSafely("query.stream_finalize_failed", {
                   correlation_id: state.correlationId,
                   vault_id: state.vaultId,
                   user_id: state.userId,
-                  ...logErrorFields(causeError(cause)),
+                  ...logErrorFields(Cause.squash(cause)),
                 }),
           ),
         ),
