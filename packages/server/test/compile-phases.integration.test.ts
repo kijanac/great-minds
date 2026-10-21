@@ -1554,6 +1554,24 @@ describe("M4.3a deterministic compile phases", () => {
     expect(modelCalls).toBe(1);
   });
 
+  it("stops rendering remaining topics once one article fails to materialize", async () => {
+    await seedSourceAndIdeas();
+    let modelCalls = 0;
+    complete = async () => {
+      modelCalls += 1;
+      return {
+        text: JSON.stringify({ body: "# Article\n\nBody.", tags: ["article"] }),
+        finishReason: "stop",
+      };
+    };
+    failWritePath = "wiki/alpha.md";
+    const render = Effect.flatMap(CompilePhases, (phases) =>
+      phases.render(id.vault, id.run, validated),
+    );
+    expect(Exit.isFailure(await run(Effect.exit(render)))).toBe(true);
+    expect(modelCalls).toBe(1);
+  });
+
   it("writes compile LLM cost before publish and publish adds no rows", async () => {
     await seedSourceAndIdeas();
     const topic = validated[0]!;

@@ -11,7 +11,7 @@ import {
 import { Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import type { PgInsertValue } from "drizzle-orm/pg-core";
-import { Data, Effect, Fiber, Schema, SchemaGetter, Semaphore } from "effect";
+import { Data, Effect, Schema, SchemaGetter } from "effect";
 
 import type { AppConfigShape } from "./config.ts";
 import {
@@ -1573,13 +1573,11 @@ const synthesizeTopics = (
       `decompose=${decomposePromptHash}`,
     );
     const contextsById = new Map(contexts.map((idea) => [idea.ideaId, idea]));
-    const localTopics: LocalTopic[] = [];
     let chunksCompleted = 0;
-    const synthesizeSemaphore = yield* Semaphore.make(options.config.compileEnrichConcurrency);
-    const synthesizeFibers = [];
-    for (const [chunkIdx, chunk] of chunks.entries()) {
-      synthesizeFibers.push(
-        yield* Effect.gen(function* () {
+    const chunkTopics = yield* Effect.forEach(
+      chunks,
+      (chunk, chunkIdx) =>
+        Effect.gen(function* () {
           const cacheKey = synthesizeCacheKey({
             ideaIds: chunk,
             promptHash,
@@ -1594,22 +1592,18 @@ const synthesizeTopics = (
           if (present.length === 0) return [];
           const { block, tags } = synthesisIdeaBlock(present);
           const result = yield* Effect.result(
-            synthesizeSemaphore.withPermit(
-              options.jsonCall({
-                vaultId: options.vaultId,
-                runId: options.runId,
-                phase: "synthesize",
-                promptHash: synthesizePromptHash,
-                model: options.config.mapModel,
-                messages: [
-                  { role: "user", content: promptTemplate.replace("{idea_block}", block) },
-                ],
-                temperature: 0.3,
-                responseFormat: jsonObjectResponseFormat,
-                schema: SynthesisResponse,
-                logFields: { chunk_idx: chunkIdx },
-              }),
-            ),
+            options.jsonCall({
+              vaultId: options.vaultId,
+              runId: options.runId,
+              phase: "synthesize",
+              promptHash: synthesizePromptHash,
+              model: options.config.mapModel,
+              messages: [{ role: "user", content: promptTemplate.replace("{idea_block}", block) }],
+              temperature: 0.3,
+              responseFormat: jsonObjectResponseFormat,
+              schema: SynthesisResponse,
+              logFields: { chunk_idx: chunkIdx },
+            }),
           );
           if (result._tag === "Failure") {
             const details = errorDetails(result.failure);
@@ -1638,16 +1632,14 @@ const synthesizeTopics = (
             revisePromptHash,
             decomposePrompt,
             decomposePromptHash,
-            withPermit: (effect) => synthesizeSemaphore.withPermit(effect),
           });
           yield* options.putCache(options.vaultId, "synthesize", cacheKey, {
             localTopics: resolved,
           });
           return resolved;
         }).pipe(
-          Effect.tap((topics) =>
+          Effect.tap(() =>
             Effect.gen(function* () {
-              localTopics.push(...topics);
               chunksCompleted += 1;
               yield* options.pipeline.updateProgress(
                 options.runId,
@@ -1660,12 +1652,10 @@ const synthesizeTopics = (
               );
             }),
           ),
-          Effect.forkChild({ startImmediately: true }),
         ),
-      );
-    }
-    yield* Effect.forEach(synthesizeFibers, Fiber.join, { discard: true });
-    return localTopics;
+      { concurrency: options.config.compileEnrichConcurrency },
+    );
+    return chunkTopics.flat();
   });
 
 const synthesisIdeaBlock = (ideasInChunk: readonly IdeaContext[]) => {
@@ -1867,7 +1857,6 @@ type ChunkGranularityInput = {
   readonly revisePromptHash: string;
   readonly decomposePrompt: string;
   readonly decomposePromptHash: string;
-  readonly withPermit: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
 };
 
 const resolveChunkGranularity = (options: AbstractOptions, input: ChunkGranularityInput) =>
@@ -1881,20 +1870,18 @@ const resolveChunkGranularity = (options: AbstractOptions, input: ChunkGranulari
         .replace("{topic_block}", reviseTopicBlock(topics, tagsByIdeaId))
         .replace("{idea_block}", input.ideaBlock);
       const result = yield* Effect.result(
-        input.withPermit(
-          options.jsonCall({
-            vaultId: options.vaultId,
-            runId: options.runId,
-            phase: "synthesize_revise",
-            promptHash: input.revisePromptHash,
-            model: options.config.mapModel,
-            messages: [{ role: "user", content }],
-            temperature: 0.3,
-            responseFormat: jsonObjectResponseFormat,
-            schema: SynthesisResponse,
-            logFields: { chunk_idx: input.chunkIdx, phase: "synthesize_revise" },
-          }),
-        ),
+        options.jsonCall({
+          vaultId: options.vaultId,
+          runId: options.runId,
+          phase: "synthesize_revise",
+          promptHash: input.revisePromptHash,
+          model: options.config.mapModel,
+          messages: [{ role: "user", content }],
+          temperature: 0.3,
+          responseFormat: jsonObjectResponseFormat,
+          schema: SynthesisResponse,
+          logFields: { chunk_idx: input.chunkIdx, phase: "synthesize_revise" },
+        }),
       );
       if (result._tag === "Failure") {
         const details = errorDetails(result.failure);
@@ -1964,20 +1951,18 @@ const resolveChunkGranularity = (options: AbstractOptions, input: ChunkGranulari
         .replace("{topic_description}", topic.description)
         .replace("{idea_block}", block);
       const result = yield* Effect.result(
-        input.withPermit(
-          options.jsonCall({
-            vaultId: options.vaultId,
-            runId: options.runId,
-            phase: "synthesize_decompose",
-            promptHash: input.decomposePromptHash,
-            model: options.config.mapModel,
-            messages: [{ role: "user", content }],
-            temperature: 0.3,
-            responseFormat: jsonObjectResponseFormat,
-            schema: SynthesisResponse,
-            logFields: { chunk_idx: input.chunkIdx, phase: "synthesize_decompose" },
-          }),
-        ),
+        options.jsonCall({
+          vaultId: options.vaultId,
+          runId: options.runId,
+          phase: "synthesize_decompose",
+          promptHash: input.decomposePromptHash,
+          model: options.config.mapModel,
+          messages: [{ role: "user", content }],
+          temperature: 0.3,
+          responseFormat: jsonObjectResponseFormat,
+          schema: SynthesisResponse,
+          logFields: { chunk_idx: input.chunkIdx, phase: "synthesize_decompose" },
+        }),
       );
       if (result._tag === "Failure") {
         const details = errorDetails(result.failure);
@@ -2727,12 +2712,10 @@ const runRender = (options: RenderOptions) =>
       const documentsById = new Map(documents.map((document) => [document.id, document]));
       const topicsBySlug = new Map(options.validated.map((topic) => [topic.slug, topic]));
       let done = 0;
-      let rendered = 0;
-      const renderSemaphore = yield* Semaphore.make(options.config.compileWriteConcurrency);
-      const renderFibers = [];
-      for (const topic of toRender) {
-        renderFibers.push(
-          yield* Effect.gen(function* () {
+      const rendered = yield* Effect.forEach(
+        toRender,
+        (topic) =>
+          Effect.gen(function* () {
             const numbered = numberedAnchors(topic, ideasById, documentsById);
             const ideaBlock = renderIdeaBlock(topic, numbered, ideasById, documentsById);
             const linkBlock = topic.linkTargets
@@ -2749,20 +2732,18 @@ const runRender = (options: RenderOptions) =>
               .replace("{idea_block}", ideaBlock)
               .replace("{link_targets_block}", linkBlock || "(none)");
             const result = yield* Effect.result(
-              renderSemaphore.withPermit(
-                options.jsonCall({
-                  vaultId: options.vaultId,
-                  runId: options.runId,
-                  phase: "render",
-                  promptHash,
-                  model: options.config.renderModel,
-                  messages: [{ role: "user", content: prompt }],
-                  temperature: 0.3,
-                  responseFormat: jsonObjectResponseFormat,
-                  schema: RenderResponse,
-                  logFields: { topic_id: topic.topicId, topic_slug: topic.slug },
-                }),
-              ),
+              options.jsonCall({
+                vaultId: options.vaultId,
+                runId: options.runId,
+                phase: "render",
+                promptHash,
+                model: options.config.renderModel,
+                messages: [{ role: "user", content: prompt }],
+                temperature: 0.3,
+                responseFormat: jsonObjectResponseFormat,
+                schema: RenderResponse,
+                logFields: { topic_id: topic.topicId, topic_slug: topic.slug },
+              }),
             );
             if (result._tag === "Failure") {
               const details = errorDetails(result.failure);
@@ -2819,9 +2800,8 @@ const runRender = (options: RenderOptions) =>
             yield* options.materializeArticle(options.vaultId, options.runId, topic, finalOutput);
             return true;
           }).pipe(
-            Effect.tap((success) =>
+            Effect.tap(() =>
               Effect.gen(function* () {
-                if (success) rendered += 1;
                 done += 1;
                 yield* options.pipeline.updateProgress(
                   options.runId,
@@ -2837,12 +2817,10 @@ const runRender = (options: RenderOptions) =>
                 );
               }),
             ),
-            Effect.forkChild({ startImmediately: true }),
           ),
-        );
-      }
-      yield* Effect.forEach(renderFibers, Fiber.join, { discard: true });
-      if (rendered === 0 && materialized === 0) {
+        { concurrency: options.config.compileWriteConcurrency },
+      );
+      if (!rendered.includes(true) && materialized === 0) {
         yield* options.pipeline.updateProgress(
           options.runId,
           "render",
