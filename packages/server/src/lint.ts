@@ -5,8 +5,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { Context, Effect, Layer } from "effect";
 
 import { VaultAccessService } from "./vaults.ts";
-
-const WIKI_INDEX_PATH = "wiki/_index.md";
+import { liveArticleConditions } from "./wiki-articles.ts";
 
 const wikiSlug = (path: string) => {
   if (!path.startsWith("wiki/") || !path.endsWith(".md")) {
@@ -43,9 +42,7 @@ export const LintServiceLive = Layer.effect(
             .from(wikiArticles)
             .where(
               and(
-                eq(wikiArticles.vaultId, vaultId),
-                ne(wikiArticles.filePath, WIKI_INDEX_PATH),
-                eq(wikiArticles.archived, false),
+                ...liveArticleConditions(vaultId),
                 sql`NOT EXISTS (
                   SELECT 1 FROM backlinks backlink
                   WHERE backlink.target_article_id = ${wikiArticles.id}
