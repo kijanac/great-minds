@@ -1,53 +1,27 @@
-import { browser } from "$app/environment";
 import type { Uuid } from "@great-minds/domain";
 import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
 
 import { createVault, fetchVaults, getVaultDetail, type CreateVaultInput } from "$lib/api/vaults";
 import { auth } from "$lib/auth.svelte";
-import { clearVaultId, getVaultId, storeVaultId } from "$lib/vault-selection";
+import { getVaultId, storeVaultId } from "$lib/vault-selection";
+import { windowSync } from "$lib/window-sync";
 
 class ActiveVaultSelection {
   id = $state<Uuid | null>(null);
-  #initialized = false;
 
-  #sync = () => {
+  initialize = windowSync(["auth:changed", "storage"], () => {
     this.id = getVaultId();
-  };
-
-  initialize(): () => void {
-    if (!browser) return () => {};
-    this.#sync();
-    if (this.#initialized) return () => {};
-
-    this.#initialized = true;
-    window.addEventListener("auth:changed", this.#sync);
-    window.addEventListener("storage", this.#sync);
-    return () => {
-      window.removeEventListener("auth:changed", this.#sync);
-      window.removeEventListener("storage", this.#sync);
-      this.#initialized = false;
-    };
-  }
+  });
 }
 
 export const activeVault = new ActiveVaultSelection();
 
 export function useVaults() {
-  const vaults = createQuery(() => ({
+  return createQuery(() => ({
     queryKey: ["vaults", auth.userId],
     queryFn: ({ signal }) => fetchVaults(signal),
     enabled: auth.isAuthenticated,
   }));
-
-  $effect(() => {
-    if (!auth.isAuthenticated || !vaults.isSuccess) return;
-    if (vaults.data.some((vault) => vault.id === activeVault.id)) return;
-    const first = vaults.data[0];
-    if (first) storeVaultId(first.id);
-    else if (activeVault.id !== null) clearVaultId();
-  });
-
-  return vaults;
 }
 
 export function useVaultDetail(vaultId: () => Uuid | null, enabled: () => boolean = () => true) {

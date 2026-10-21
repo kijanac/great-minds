@@ -1,4 +1,4 @@
-import { browser } from "$app/environment";
+import { windowSync } from "$lib/window-sync";
 
 export type Theme = "light" | "dark";
 
@@ -20,27 +20,10 @@ function applyTheme(value: Theme): void {
 class ThemeState {
   current = $state<Theme>("dark");
 
-  #initialized = false;
-
-  #sync = () => {
+  initialize = windowSync(["storage"], () => {
     this.current = getTheme();
     applyTheme(this.current);
-  };
-
-  initialize(): () => void {
-    if (!browser) return () => {};
-
-    this.#sync();
-    if (this.#initialized) return () => {};
-
-    this.#initialized = true;
-    window.addEventListener("storage", this.#sync);
-
-    return () => {
-      window.removeEventListener("storage", this.#sync);
-      this.#initialized = false;
-    };
-  }
+  });
 
   toggle(): void {
     const next = this.current === "dark" ? "light" : "dark";

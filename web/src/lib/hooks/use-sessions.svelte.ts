@@ -1,9 +1,15 @@
 import type { SessionId, Uuid } from "@great-minds/domain";
-import { createInfiniteQuery, createMutation, createQuery } from "@tanstack/svelte-query";
+import {
+  createInfiniteQuery,
+  createMutation,
+  createQuery,
+  useQueryClient,
+} from "@tanstack/svelte-query";
 
 import { nextPageOffset } from "$lib/api/pagination";
 import { errorMessage } from "$lib/api/errors";
 import { listSessions, promoteExchange } from "$lib/api/sessions";
+import { invalidateSourceLists } from "$lib/hooks/use-library.svelte";
 import { activeVault } from "$lib/hooks/use-vault.svelte";
 
 export function useSessions() {
@@ -15,9 +21,14 @@ export function useSessions() {
 }
 
 export function useExchangePromotion() {
+  const queryClient = useQueryClient();
   const mutation = createMutation(() => ({
     mutationFn: ({ sessionId, exchangeId }: { sessionId: SessionId; exchangeId: Uuid }) =>
       promoteExchange(sessionId, exchangeId),
+    onSuccess: async (result) => {
+      if (result.mode === "ingested") await invalidateSourceLists(queryClient, activeVault.id);
+      else await queryClient.invalidateQueries({ queryKey: ["proposals", activeVault.id] });
+    },
   }));
 
   return {

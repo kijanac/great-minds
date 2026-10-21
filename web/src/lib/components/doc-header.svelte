@@ -7,11 +7,11 @@
 
   import { articleMeta, type Article, type DocumentScope } from "$lib/api/doc";
   import { errorMessage } from "$lib/api/errors";
-  import { renameReference } from "$lib/api/references";
   import ReferencePromoteAction from "$lib/components/reference-promote-action.svelte";
   import ShareDialog from "$lib/components/share-dialog.svelte";
   import * as Collapsible from "$lib/components/ui/collapsible";
   import { CHIP_BASE, CHIP_INACTIVE } from "$lib/chip";
+  import { useReferenceRename } from "$lib/hooks/use-references.svelte";
   import type { ThreadLike } from "$lib/types";
   import { cn, formatShortDate } from "$lib/utils";
   import type { ReferencePromotionAction as PromotionAction } from "$lib/types";
@@ -48,16 +48,11 @@
   let extraOpen = $state(false);
   let threadsOpen = $state(false);
   // Rename state: while renaming the h1 is replaced by an inline input.
-  // titleOverride carries the locally updated title until the document prop
-  // (query cache) catches up; undefined means "follow the prop".
   let renaming = $state(false);
   let titleDraft = $state("");
-  let titleOverride = $state<string | null | undefined>(undefined);
   let titleInput = $state<HTMLInputElement | null>(null);
   let renameError = $state<string | null>(null);
-  const title = $derived(
-    titleOverride === undefined ? document.title : titleOverride,
-  );
+  const rename = useReferenceRename();
   const notes = $derived(
     threads.filter((thread) => thread.conversation?.kind === "btw"),
   );
@@ -100,7 +95,6 @@
     // A different document arrived: drop any rename state carried over.
     void document.file_path;
     renaming = false;
-    titleOverride = undefined;
     renameError = null;
   });
 
@@ -125,14 +119,13 @@
     }
     const draft = titleDraft.trim();
     const next = draft === "" ? null : draft;
-    if (next === (titleOverride ?? document.title)) {
+    if (next === document.title) {
       renaming = false;
       renameError = null;
       return;
     }
     try {
-      const updated = await renameReference(document.id, next);
-      titleOverride = updated.title;
+      await rename.mutateAsync({ id: document.id, title: next });
       renaming = false;
       renameError = null;
     } catch (error) {
@@ -210,7 +203,7 @@
     <h1
       class="group mb-3 min-w-0 text-[length:var(--text-title)] font-bold text-foreground"
     >
-      {title}{#if scope === "personal" && document.kind === "reference"}<button
+      {document.title}{#if scope === "personal" && document.kind === "reference"}<button
           type="button"
           onclick={() => void startRename()}
           aria-label="rename reference"

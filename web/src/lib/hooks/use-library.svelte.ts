@@ -1,7 +1,12 @@
 import { goto } from "$app/navigation";
 import { page } from "$app/state";
 import type { Uuid } from "@great-minds/domain";
-import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/svelte-query";
+import {
+  createInfiniteQuery,
+  createQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/svelte-query";
 import { untrack } from "svelte";
 
 import { errorMessage } from "$lib/api/errors";
@@ -20,6 +25,14 @@ const PAGE_SIZE = 50;
 export const LIBRARY_ALL = "all";
 export const LIBRARY_ARTICLES = "articles";
 export const LIBRARY_READING_ROOM = "reading-room";
+
+export function invalidateSourceLists(queryClient: QueryClient, vaultId: Uuid | null) {
+  return Promise.all(
+    ["library-sources", "library-facets", "source-count"].map((list) =>
+      queryClient.invalidateQueries({ queryKey: ["vault", vaultId, list] }),
+    ),
+  );
+}
 
 export function useLibrary(
   selectedCard: () => SourceRef | null,
@@ -152,15 +165,6 @@ export function useLibrary(
     replaceLibraryUrl(params);
   }
 
-  async function refreshSources() {
-    await queryClient.invalidateQueries({
-      queryKey: ["vault", activeVault.id, "library-sources"],
-    });
-    await queryClient.invalidateQueries({
-      queryKey: ["vault", activeVault.id, "library-facets"],
-    });
-  }
-
   async function deleteSource(sourceId: Uuid) {
     actionId = sourceId;
     actionError = null;
@@ -175,7 +179,7 @@ export function useLibrary(
       throw error;
     } finally {
       try {
-        await refreshSources();
+        await invalidateSourceLists(queryClient, activeVault.id);
       } catch {
         if (deleted) {
           actionNotice = "Source deleted, but the library could not refresh. Reload to update it.";

@@ -1,14 +1,17 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import { Uuid } from "@great-minds/domain";
+  import { type AssignableMemberRole, Uuid } from "@great-minds/domain";
   import { createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { Option, Schema } from "effect";
 
+  import { errorMessage } from "$lib/api/errors";
   import {
+    assignableRoles,
     deleteVault,
     getVaultConfig,
     inviteMember,
+    isAssignableRole,
     listMembers,
     removeMember,
     transferOwnership,
@@ -43,8 +46,9 @@
   const queryClient = useQueryClient();
 
   let email = $state("");
-  let inviteRole = $state("editor");
+  let inviteRole = $state<AssignableMemberRole>("editor");
   let invitePending = $state(false);
+  let membersError = $state<string | null>(null);
   let savePending = $state(false);
   let deleteOpen = $state(false);
   let deleting = $state(false);
@@ -81,10 +85,13 @@
     const address = email.trim();
     if (!address || invitePending) return;
     invitePending = true;
+    membersError = null;
     try {
       await inviteMember(vaultId!, address, inviteRole);
       email = "";
       await refreshMembers();
+    } catch (error) {
+      membersError = errorMessage(error, "Couldn’t send this invite.");
     } finally {
       invitePending = false;
     }
@@ -105,13 +112,23 @@
   }
 
   async function remove(memberId: Uuid) {
-    await removeMember(vaultId!, memberId);
-    await refreshMembers();
+    membersError = null;
+    try {
+      await removeMember(vaultId!, memberId);
+      await refreshMembers();
+    } catch (error) {
+      membersError = errorMessage(error, "Couldn’t remove this member.");
+    }
   }
 
-  async function changeRole(memberId: Uuid, role: string) {
-    await updateMemberRole(vaultId!, memberId, role);
-    await refreshMembers();
+  async function changeRole(memberId: Uuid, role: AssignableMemberRole) {
+    membersError = null;
+    try {
+      await updateMemberRole(vaultId!, memberId, role);
+      await refreshMembers();
+    } catch (error) {
+      membersError = errorMessage(error, "Couldn’t change this role.");
+    }
   }
 
   async function transfer(memberId: Uuid) {
@@ -129,8 +146,7 @@
       confirmation = "";
       await goto("/", { replaceState: true });
     } catch (error) {
-      deleteError =
-        error instanceof Error ? error.message : "Failed to delete vault.";
+      deleteError = errorMessage(error, "Failed to delete vault.");
     } finally {
       deleting = false;
     }
@@ -198,7 +214,13 @@
               disabled={invitePending}
               class="h-8 rounded-sm border-ink-border bg-transparent px-3 font-mono text-[length:var(--text-small)] text-warm caret-gold placeholder:text-warm-ghost focus-visible:border-gold-dim focus-visible:ring-0 dark:bg-transparent"
             />
-            <Select.Root type="single" bind:value={inviteRole}>
+            <Select.Root
+              type="single"
+              value={inviteRole}
+              onValueChange={(role) => {
+                if (isAssignableRole(role)) inviteRole = role;
+              }}
+            >
               <Select.Trigger
                 size="sm"
                 class="h-8 w-24 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
@@ -206,7 +228,7 @@
                 {inviteRole}
               </Select.Trigger>
               <Select.Content class={SELECT_CONTENT_CLASS}>
-                {#each ["editor", "viewer"] as role (role)}
+                {#each assignableRoles as role (role)}
                   <Select.Item
                     value={role}
                     label={role}
@@ -223,6 +245,18 @@
               ↵
             </span>
           </form>
+          {#if membersError}
+            <Alert
+              variant="destructive"
+              class="mt-3 rounded-sm border-red-400/25 bg-red-400/5"
+            >
+              <AlertDescription
+                class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-red-400/90"
+              >
+                {membersError}
+              </AlertDescription>
+            </Alert>
+          {/if}
         {/if}
 
         {#if config.data}

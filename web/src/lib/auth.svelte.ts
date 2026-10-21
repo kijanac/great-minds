@@ -1,8 +1,9 @@
-import { browser } from "$app/environment";
 import { decodeJwt } from "jose";
 
 import { logout } from "$lib/api/auth";
+import { readStoredTokens } from "$lib/api/token-store";
 import { queryClient } from "$lib/query-client";
+import { windowSync } from "$lib/window-sync";
 
 function isTokenValid(token: string | null): boolean {
   if (!token) return false;
@@ -14,8 +15,7 @@ function isTokenValid(token: string | null): boolean {
   }
 }
 
-function getUserIdFromToken(): string | null {
-  const token = localStorage.getItem("access_token");
+function userIdFromToken(token: string | null): string | null {
   if (!token) return null;
   try {
     const { sub } = decodeJwt(token);
@@ -30,40 +30,14 @@ class AuthState {
   userId = $state<string | null>(null);
   ready = $state(false);
 
-  #initialized = false;
-
-  #sync = () => {
-    const authenticated =
-      isTokenValid(localStorage.getItem("access_token")) ||
-      localStorage.getItem("refresh_token") !== null;
+  initialize = windowSync(["auth:changed", "storage"], () => {
+    const { access, refresh } = readStoredTokens();
+    const authenticated = isTokenValid(access) || refresh !== null;
 
     this.isAuthenticated = authenticated;
-    this.userId = authenticated ? getUserIdFromToken() : null;
+    this.userId = authenticated ? userIdFromToken(access) : null;
     this.ready = true;
-  };
-
-  initialize(): () => void {
-    if (!browser) return () => {};
-
-    this.#sync();
-    if (this.#initialized) return () => {};
-
-    this.#initialized = true;
-    window.addEventListener("auth:changed", this.#sync);
-    window.addEventListener("storage", this.#sync);
-
-    return () => {
-      window.removeEventListener("auth:changed", this.#sync);
-      window.removeEventListener("storage", this.#sync);
-      this.#initialized = false;
-    };
-  }
-
-  login(): void {
-    if (browser) {
-      window.dispatchEvent(new Event("auth:changed"));
-    }
-  }
+  });
 
   logout(): void {
     queryClient.clear();

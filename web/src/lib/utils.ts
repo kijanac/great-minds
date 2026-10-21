@@ -25,6 +25,7 @@ export function genId(prefix: string) {
 export function slugToTitle(slug: string): string {
   return slug
     .split("-")
+    .filter(Boolean)
     .map((w) => w[0].toUpperCase() + w.slice(1))
     .join(" ");
 }

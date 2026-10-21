@@ -19,14 +19,12 @@ export type LinkItem = WikiArticleOverview;
 export type ReferenceArticle = ReferenceOverview & { kind: "reference" };
 export type Article = SourceDocument | WikiArticle | ReferenceArticle;
 export type DocumentScope = "vault" | "personal";
-export type DocumentResponse =
-  | DocResponse
-  | {
-      article: ReferenceArticle;
-      body: string;
-      archived: false;
-      superseded_by: null;
-    };
+export type PersonalDocumentResponse = {
+  article: ReferenceArticle;
+  body: string;
+  archived: false;
+  superseded_by: null;
+};
 
 export type ArticleMeta = {
   readonly title: string | null;
@@ -87,7 +85,7 @@ export function readSourceDocument(sourceId: Uuid, signal?: AbortSignal): Promis
 export async function readPersonalDocument(
   path: string,
   signal?: AbortSignal,
-): Promise<DocumentResponse> {
+): Promise<PersonalDocumentResponse> {
   const data = await run(api.refs.resolveReference({ query: { path } }), { signal });
   return {
     article: { kind: "reference", ...data.reference },

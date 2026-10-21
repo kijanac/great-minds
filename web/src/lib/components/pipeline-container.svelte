@@ -9,6 +9,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import { fly } from "svelte/transition";
 
+  import { errorMessage } from "$lib/api/errors";
   import {
     continueFileIngest,
     getFileIngestBatch,
@@ -58,6 +59,7 @@
   let availableFiles = $state<readonly HashedFile[]>([]);
   let resolverStarted = $state(false);
   let showCompletion = $state(false);
+  let actionError = $state<string | null>(null);
   let componentActive = true;
   let navigationEpoch = 0;
 
@@ -184,8 +186,7 @@
       } catch (error) {
         if (!ownsRoute()) return;
         routeContextResolved = true;
-        resolveError =
-          error instanceof Error ? error.message : "Job unavailable";
+        resolveError = errorMessage(error, "Job unavailable");
       }
     })();
   });
@@ -235,8 +236,7 @@
         }
       } catch (error) {
         if (!ownsResolver()) return;
-        resolveError =
-          error instanceof Error ? error.message : "Job unavailable";
+        resolveError = errorMessage(error, "Job unavailable");
       }
     })();
   });
@@ -282,8 +282,7 @@
       }
     } catch (error) {
       if (!ownsRoute()) return;
-      resolveError =
-        error instanceof Error ? error.message : "Upload unavailable";
+      resolveError = errorMessage(error, "Upload unavailable");
       try {
         const recovered = await getFileIngestBatch(batch.id);
         if (!ownsRoute()) return;
@@ -313,8 +312,7 @@
       void hashFiles(selected)
         .then((files) => runBatchUpload(batch, files))
         .catch((error) => {
-          resolveError =
-            error instanceof Error ? error.message : "Files could not be read";
+          resolveError = errorMessage(error, "Files could not be read");
         });
     };
     input.oncancel = () => input.remove();
@@ -322,28 +320,38 @@
   }
 
   async function cancel() {
-    if (canManage && jobId && jobVaultId) {
+    if (!canManage || !jobId || !jobVaultId) return;
+    actionError = null;
+    try {
       await cancelJob(jobId, jobVaultId);
-      if (fileBatch) {
-        fileBatch = {
-          ...fileBatch,
-          status: "cancelled",
-          error: "Update cancelled",
-          targets: [],
-        };
-      }
-      resolveError = null;
+    } catch (error) {
+      actionError = errorMessage(error, "Couldn’t cancel this run.");
+      return;
     }
+    if (fileBatch) {
+      fileBatch = {
+        ...fileBatch,
+        status: "cancelled",
+        error: "Update cancelled",
+        targets: [],
+      };
+    }
+    resolveError = null;
   }
 
   async function retry() {
     if (!canManage || !jobVaultId || !jobId) return;
+    actionError = null;
     const nextId = newUuid();
-    const job =
-      progress.trigger === "url" && progress.backendPhase === "source_ingest"
-        ? await retryUrlJob(jobId, nextId, jobVaultId)
-        : await requestCompile(nextId, jobVaultId);
-    await goto(`/pipeline/runs/${job.id}`, { replaceState: true });
+    try {
+      const job =
+        progress.trigger === "url" && progress.backendPhase === "source_ingest"
+          ? await retryUrlJob(jobId, nextId, jobVaultId)
+          : await requestCompile(nextId, jobVaultId);
+      await goto(`/pipeline/runs/${job.id}`, { replaceState: true });
+    } catch (error) {
+      actionError = errorMessage(error, "Couldn’t start a new run.");
+    }
   }
 </script>
 
@@ -378,6 +386,19 @@
 
   <div class="min-h-0 flex-1 overflow-y-auto">
     <main class="mx-auto max-w-[640px] px-4 pt-10 pb-20 md:px-10">
+      {#if actionError}
+        <Alert
+          variant="destructive"
+          class="mb-8 rounded-sm border-red-400/25 bg-red-400/5"
+        >
+          <AlertDescription
+            class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-red-400/90"
+          >
+            {actionError}
+          </AlertDescription>
+        </Alert>
+      {/if}
+
       {#if noJobFound && !resolveError}
         <div class="pt-8 text-center">
           <p

@@ -27,7 +27,7 @@ const REFRESH_KEY = "refresh_token";
 
 const announce = () => window.dispatchEvent(new Event("auth:changed"));
 
-const read = (): StoredTokens => ({
+export const readStoredTokens = (): StoredTokens => ({
   session: localStorage.getItem(SESSION_KEY),
   access: localStorage.getItem(ACCESS_KEY),
   refresh: localStorage.getItem(REFRESH_KEY),
@@ -48,7 +48,7 @@ const clear = () => {
 };
 
 export const TokenStoreLive = Layer.succeed(TokenStore, {
-  read: Effect.sync(read),
+  read: Effect.sync(readStoredTokens),
   write: (tokens) =>
     Effect.sync(() => {
       localStorage.setItem(SESSION_KEY, crypto.randomUUID());
@@ -57,7 +57,7 @@ export const TokenStoreLive = Layer.succeed(TokenStore, {
   clear: Effect.sync(clear),
   replaceIfCurrent: (expected, tokens) =>
     Effect.sync(() => {
-      const current = read();
+      const current = readStoredTokens();
       if (
         current.session !== expected.session ||
         current.access !== expected.access ||

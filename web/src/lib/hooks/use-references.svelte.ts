@@ -1,8 +1,12 @@
+import type { Uuid } from "@great-minds/domain";
 import { createInfiniteQuery, createMutation, useQueryClient } from "@tanstack/svelte-query";
 
 import { api, run } from "$lib/api/app";
+import type { PersonalDocumentResponse } from "$lib/api/doc";
 import { errorMessage } from "$lib/api/errors";
 import { nextPageOffset } from "$lib/api/pagination";
+import { renameReference } from "$lib/api/references";
+import { personalDocumentKey } from "$lib/hooks/use-document.svelte";
 
 const PAGE_SIZE = 50;
 
@@ -47,3 +51,17 @@ export function useReferences() {
 }
 
 export type ReadingRoomView = ReturnType<typeof useReferences>;
+
+export function useReferenceRename() {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn: ({ id, title }: { id: Uuid; title: string | null }) => renameReference(id, title),
+    onSuccess: async (reference) => {
+      queryClient.setQueryData<PersonalDocumentResponse>(
+        personalDocumentKey(reference.file_path),
+        (response) => response && { ...response, article: { kind: "reference", ...reference } },
+      );
+      await queryClient.invalidateQueries({ queryKey: ["me", "refs"] });
+    },
+  }));
+}

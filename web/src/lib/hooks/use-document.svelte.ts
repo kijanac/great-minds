@@ -20,9 +20,11 @@ export function useSourceDocument(sourceId: () => Uuid | null) {
   }));
 }
 
+export const personalDocumentKey = (path: string | null) => ["me", "ref", path] as const;
+
 export function usePersonalDocument(path: () => string | null) {
   return createQuery(() => ({
-    queryKey: ["me", "ref", path()],
+    queryKey: personalDocumentKey(path()),
     queryFn: ({ signal }) => readPersonalDocument(path()!, signal),
     enabled: !!path(),
   }));

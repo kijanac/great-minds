@@ -9,7 +9,7 @@ import {
   type VaultDetail,
   type Uuid,
 } from "@great-minds/domain";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 
 import { api, run } from "./app";
 import { decodeInput } from "./runtime";
@@ -18,6 +18,9 @@ export type { VaultConfig, VaultConfigUpdate, VaultDetail };
 export type Membership = MemberWithEmail;
 export type VaultOverview = Vault;
 export type CreateVaultInput = VaultCreate;
+
+export const assignableRoles = AssignableMemberRole.literals;
+export const isAssignableRole = Schema.is(AssignableMemberRole);
 
 const firstPage = { limit: 50, offset: 0 } as const;
 
@@ -56,28 +59,28 @@ export async function listMembers(vaultId: Uuid): Promise<readonly Membership[]>
 export function inviteMember(
   vaultId: Uuid,
   address: string,
-  role: string = "editor",
+  role: AssignableMemberRole,
 ): Promise<Membership> {
   return run(
     Effect.gen(function* () {
       const email = yield* decodeInput(Email, address);
-      const invitedRole = yield* decodeInput(AssignableMemberRole, role);
       return yield* api.vaults.inviteVaultMember({
         params: { vault_id: vaultId },
-        payload: { email, role: invitedRole },
+        payload: { email, role },
       });
     }),
   );
 }
 
-export function updateMemberRole(vaultId: Uuid, userId: Uuid, role: string): Promise<Membership> {
+export function updateMemberRole(
+  vaultId: Uuid,
+  userId: Uuid,
+  role: AssignableMemberRole,
+): Promise<Membership> {
   return run(
-    Effect.gen(function* () {
-      const memberRole = yield* decodeInput(AssignableMemberRole, role);
-      return yield* api.vaults.updateVaultMember({
-        params: { vault_id: vaultId, member_user_id: userId },
-        payload: { role: memberRole },
-      });
+    api.vaults.updateVaultMember({
+      params: { vault_id: vaultId, member_user_id: userId },
+      payload: { role },
     }),
   );
 }

@@ -14,7 +14,6 @@
     loginWithTokenPair,
     requestCode,
   } from "$lib/api/auth";
-  import { auth } from "$lib/auth.svelte";
   import { Alert, AlertDescription } from "$lib/components/ui/alert";
   import { Label } from "$lib/components/ui/label";
 
@@ -40,7 +39,6 @@
     });
     const tokens = await run(api.auth.verifyPasskey({ payload: response }));
     await loginWithTokenPair(tokens);
-    auth.login();
     await goto("/");
   }
 
@@ -83,7 +81,6 @@
       await requestCode(email);
       if (import.meta.env.VITE_SUPPRESS_AUTH) {
         await loginWithCode(email, "000000");
-        auth.login();
         await goto("/");
       } else {
         step = "code";
@@ -101,7 +98,6 @@
     loading = true;
     try {
       await loginWithCode(email, code);
-      auth.login();
       await goto("/");
     } catch {
       error = "Invalid or expired code.";

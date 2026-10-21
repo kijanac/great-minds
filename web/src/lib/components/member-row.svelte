@@ -1,8 +1,14 @@
 <script lang="ts">
+  import type { AssignableMemberRole } from "@great-minds/domain";
   import Crown from "@lucide/svelte/icons/crown";
   import X from "@lucide/svelte/icons/x";
 
-  import type { Membership } from "$lib/api/vaults";
+  import { errorMessage } from "$lib/api/errors";
+  import {
+    assignableRoles,
+    isAssignableRole,
+    type Membership,
+  } from "$lib/api/vaults";
   import { Alert, AlertDescription } from "$lib/components/ui/alert";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
   import { Button } from "$lib/components/ui/button";
@@ -22,7 +28,7 @@
   }: {
     member: Membership;
     isOwner: boolean;
-    onChangeRole: (role: string) => Promise<void>;
+    onChangeRole: (role: AssignableMemberRole) => Promise<void>;
     onRemove: () => Promise<void>;
     onTransfer: () => Promise<void>;
   } = $props();
@@ -39,10 +45,7 @@
       await onTransfer();
       transferOpen = false;
     } catch (cause) {
-      error =
-        cause instanceof Error
-          ? cause.message
-          : "Failed to transfer ownership.";
+      error = errorMessage(cause, "Failed to transfer ownership.");
     } finally {
       transferring = false;
     }
@@ -62,7 +65,8 @@
       <Select.Root
         type="single"
         value={member.role}
-        onValueChange={(role) => role && void onChangeRole(role)}
+        onValueChange={(role) =>
+          isAssignableRole(role) && void onChangeRole(role)}
       >
         <Select.Trigger
           size="sm"
@@ -71,7 +75,7 @@
           {member.role}
         </Select.Trigger>
         <Select.Content class={SELECT_CONTENT_CLASS}>
-          {#each ["editor", "viewer"] as role (role)}
+          {#each assignableRoles as role (role)}
             <Select.Item value={role} label={role} class={SELECT_ITEM_CLASS}>
               {role}
             </Select.Item>
