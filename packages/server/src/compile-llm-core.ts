@@ -9,7 +9,7 @@ import {
   topics,
 } from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
-import { and, asc, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import type { PgInsertValue } from "drizzle-orm/pg-core";
 import { Data, Effect, Option, Schema, SchemaGetter } from "effect";
 
@@ -1100,7 +1100,6 @@ type IdeaContext = {
   readonly kind: string;
   readonly label: string;
   readonly description: string;
-  readonly embedding: readonly number[];
   readonly document: SourceRow;
 };
 
@@ -1114,10 +1113,9 @@ const runAbstract = (options: AbstractOptions) =>
         kind: ideas.kind,
         label: ideas.label,
         description: ideas.description,
-        embedding: ideas.embedding,
       })
       .from(ideas)
-      .where(eq(ideas.vaultId, vaultId))
+      .where(and(eq(ideas.vaultId, vaultId), isNotNull(ideas.embedding)))
       .orderBy(asc(ideas.ideaId)));
     const docs = yield* db.query((d) => d
       .select()
@@ -1126,19 +1124,7 @@ const runAbstract = (options: AbstractOptions) =>
     const docsById = new Map(docs.map((document) => [document.id, document]));
     const contexts: IdeaContext[] = rows.flatMap((row) => {
       const document = docsById.get(row.documentId);
-      return document === undefined || row.embedding === null
-        ? []
-        : [
-            {
-              ideaId: row.ideaId,
-              documentId: row.documentId,
-              kind: row.kind,
-              label: row.label,
-              description: row.description,
-              embedding: row.embedding,
-              document,
-            },
-          ];
+      return document === undefined ? [] : [{ ...row, document }];
     });
 
     yield* pipeline.updateProgress(
@@ -1240,6 +1226,65 @@ const estimateTokens = (idea: IdeaContext) => {
   );
 };
 
+const IDEA_VECTOR_PAGE_SIZE = 2000;
+
+const loadIdeaVectors = (options: AbstractOptions, contexts: readonly IdeaContext[]) =>
+  Effect.gen(function* () {
+    const positions = new Map(contexts.map((idea, index) => [idea.ideaId, index]));
+    let values: Float32Array | undefined;
+    let dimensions = 0;
+    let loaded = 0;
+    let after: Uuid | undefined;
+    while (true) {
+      const cursor = after;
+      const page = yield* options.db.query((d) => d
+        .select({ ideaId: ideas.ideaId, embedding: sql<string>`${ideas.embedding}::text` })
+        .from(ideas)
+        .where(
+          and(
+            eq(ideas.vaultId, options.vaultId),
+            isNotNull(ideas.embedding),
+            cursor === undefined ? undefined : gt(ideas.ideaId, cursor),
+          ),
+        )
+        .orderBy(asc(ideas.ideaId))
+        .limit(IDEA_VECTOR_PAGE_SIZE));
+      for (const row of page) {
+        const position = positions.get(row.ideaId);
+        if (position === undefined) continue;
+        const components = row.embedding.slice(1, -1).split(",");
+        if (values === undefined) {
+          dimensions = components.length;
+          values = new Float32Array(contexts.length * dimensions);
+        }
+        if (components.length !== dimensions) {
+          return yield* Effect.die(
+            new Error(
+              `idea ${row.ideaId} has ${components.length} embedding dimensions, expected ${dimensions}`,
+            ),
+          );
+        }
+        const offset = position * dimensions;
+        for (let index = 0; index < dimensions; index += 1) {
+          values[offset + index] = Number.parseFloat(components[index] ?? "");
+        }
+        loaded += 1;
+      }
+      const last = page.at(-1);
+      if (last === undefined || page.length < IDEA_VECTOR_PAGE_SIZE) break;
+      after = last.ideaId;
+    }
+    if (values === undefined || loaded !== contexts.length) {
+      return yield* Effect.die(
+        new Error(`loaded ${loaded} of ${contexts.length} idea embeddings`),
+      );
+    }
+    const matrix = values;
+    return contexts.map((_idea, index) =>
+      matrix.subarray(index * dimensions, (index + 1) * dimensions),
+    );
+  });
+
 const partitionIdeas = (options: AbstractOptions, contexts: readonly IdeaContext[]) =>
   Effect.gen(function* () {
     if (contexts.length === 0) return [] as readonly (readonly Uuid[])[];
@@ -1253,18 +1298,12 @@ const partitionIdeas = (options: AbstractOptions, contexts: readonly IdeaContext
       contexts.length,
       Math.max(1, Math.ceil(totalTokens / options.config.compilePartitionTargetTokens)),
     );
-    const labels =
-      k === 1
-        ? contexts.map(() => 0)
-        : seededMiniBatchLabels(
-            contexts.map((x) => x.embedding),
-            k,
-          );
-    let chunks = groupLabels(labels);
-    chunks = rebalanceChunks(
-      chunks,
+    const matrix = yield* loadIdeaVectors(options, contexts);
+    const labels = k === 1 ? contexts.map(() => 0) : yield* seededMiniBatchLabels(matrix, k);
+    const chunks = yield* rebalanceChunks(
+      groupLabels(labels),
       tokens,
-      contexts.map((idea) => idea.embedding),
+      matrix,
       Math.trunc(
         options.config.compilePartitionTargetTokens * options.config.compilePartitionMinFactor,
       ),
@@ -1379,7 +1418,7 @@ class Pcg64Seed42 {
   }
 }
 
-const squaredDistance = (left: readonly number[], right: readonly number[]) => {
+const squaredDistance = (left: ArrayLike<number>, right: ArrayLike<number>) => {
   let sum = 0;
   for (let i = 0; i < left.length; i += 1) {
     const delta = (left[i] ?? 0) - (right[i] ?? 0);
@@ -1388,50 +1427,147 @@ const squaredDistance = (left: readonly number[], right: readonly number[]) => {
   return sum;
 };
 
-const chooseCenters = (matrix: readonly (readonly number[])[], k: number) => {
-  const rng = new Mt19937(42);
-  const centers: number[][] = [];
-  const first = Math.min(matrix.length - 1, Math.floor(rng.random() * matrix.length));
-  centers.push([...(matrix[first] ?? [])]);
-  let closest = matrix.map((row) => squaredDistance(row, centers[0] ?? []));
-  for (let centerIndex = 1; centerIndex < k; centerIndex += 1) {
-    const potential = closest.reduce((sum, value) => sum + value, 0);
-    const trials = 2 + Math.floor(Math.log(k));
-    let bestCandidate = 0;
-    let bestPotential = Number.POSITIVE_INFINITY;
-    let bestDistances = closest;
-    for (let trial = 0; trial < trials; trial += 1) {
-      const target = rng.random() * potential;
-      let cumulative = 0;
-      let candidate = matrix.length - 1;
-      for (let row = 0; row < matrix.length; row += 1) {
-        cumulative += closest[row] ?? 0;
-        if (cumulative >= target) {
-          candidate = row;
-          break;
+const chooseCenters = (matrix: readonly ArrayLike<number>[], k: number) =>
+  Effect.gen(function* () {
+    const rng = new Mt19937(42);
+    const centers: number[][] = [];
+    const first = Math.min(matrix.length - 1, Math.floor(rng.random() * matrix.length));
+    centers.push(Array.from(matrix[first] ?? []));
+    let closest = matrix.map((row) => squaredDistance(row, centers[0] ?? []));
+    for (let centerIndex = 1; centerIndex < k; centerIndex += 1) {
+      yield* Effect.yieldNow;
+      const potential = closest.reduce((sum, value) => sum + value, 0);
+      const trials = 2 + Math.floor(Math.log(k));
+      let bestCandidate = 0;
+      let bestPotential = Number.POSITIVE_INFINITY;
+      let bestDistances = closest;
+      for (let trial = 0; trial < trials; trial += 1) {
+        const target = rng.random() * potential;
+        let cumulative = 0;
+        let candidate = matrix.length - 1;
+        for (let row = 0; row < matrix.length; row += 1) {
+          cumulative += closest[row] ?? 0;
+          if (cumulative >= target) {
+            candidate = row;
+            break;
+          }
+        }
+        const distances = matrix.map((row, index) =>
+          Math.min(closest[index] ?? 0, squaredDistance(row, matrix[candidate] ?? [])),
+        );
+        const nextPotential = distances.reduce((sum, value) => sum + value, 0);
+        if (nextPotential < bestPotential) {
+          bestCandidate = candidate;
+          bestPotential = nextPotential;
+          bestDistances = distances;
         }
       }
-      const distances = matrix.map((row, index) =>
-        Math.min(closest[index] ?? 0, squaredDistance(row, matrix[candidate] ?? [])),
-      );
-      const nextPotential = distances.reduce((sum, value) => sum + value, 0);
-      if (nextPotential < bestPotential) {
-        bestCandidate = candidate;
-        bestPotential = nextPotential;
-        bestDistances = distances;
-      }
+      centers.push(Array.from(matrix[bestCandidate] ?? []));
+      closest = bestDistances;
     }
-    centers.push([...(matrix[bestCandidate] ?? [])]);
-    closest = bestDistances;
-  }
-  return centers;
-};
+    return centers;
+  });
 
-const kmeansLabels = (matrix: readonly (readonly number[])[], k: number) => {
-  let centers = chooseCenters(matrix, k);
-  let labels = matrix.map(() => 0);
-  for (let iteration = 0; iteration < 100; iteration += 1) {
-    const next = matrix.map((row) => {
+const kmeansLabels = (matrix: readonly ArrayLike<number>[], k: number) =>
+  Effect.gen(function* () {
+    let centers = yield* chooseCenters(matrix, k);
+    let labels = matrix.map(() => 0);
+    for (let iteration = 0; iteration < 100; iteration += 1) {
+      yield* Effect.yieldNow;
+      const next = matrix.map((row) => {
+        let best = 0;
+        let distance = Number.POSITIVE_INFINITY;
+        for (let center = 0; center < centers.length; center += 1) {
+          const candidate = squaredDistance(row, centers[center] ?? []);
+          if (candidate < distance) {
+            best = center;
+            distance = candidate;
+          }
+        }
+        return best;
+      });
+      const unchanged = next.every((label, index) => label === labels[index]);
+      labels = next;
+      const sums = centers.map((center) => center.map(() => 0));
+      const counts = centers.map(() => 0);
+      for (const [rowIndex, row] of matrix.entries()) {
+        const label = labels[rowIndex] ?? 0;
+        counts[label] = (counts[label] ?? 0) + 1;
+        for (let dimension = 0; dimension < row.length; dimension += 1) {
+          (sums[label] ?? [])[dimension] =
+            ((sums[label] ?? [])[dimension] ?? 0) + (row[dimension] ?? 0);
+        }
+      }
+      centers = centers.map((center, label) =>
+        (counts[label] ?? 0) === 0
+          ? center
+          : (sums[label] ?? []).map((sum) => sum / (counts[label] ?? 1)),
+      );
+      if (unchanged && iteration > 0) break;
+    }
+    return labels;
+  });
+
+const seededMiniBatchLabels = (matrix: readonly ArrayLike<number>[], k: number) =>
+  Effect.gen(function* () {
+    const permutation = new Pcg64Seed42();
+    const batchSize = 1024;
+    let centers: number[][] | undefined;
+    let counts: number[] = [];
+    let previous: number[][] | undefined;
+    for (let epoch = 0; epoch < 10; epoch += 1) {
+      const order = permutation.permutation(matrix.length);
+      for (let start = 0; start < order.length; start += batchSize) {
+        yield* Effect.yieldNow;
+        const batch = order
+          .slice(start, start + batchSize)
+          .map((row) => Array.from(matrix[row] ?? [], Math.fround));
+        if (centers === undefined) {
+          if (batch.length < k) {
+            return yield* Effect.die(new Error("k-means batch has fewer rows than clusters"));
+          }
+          centers = (yield* chooseCenters(batch, k)).map((center) => center.map(Math.fround));
+          counts = centers.map(() => 0);
+        }
+        const labels = batch.map((row) => {
+          let best = 0;
+          let distance = Number.POSITIVE_INFINITY;
+          for (let center = 0; center < (centers?.length ?? 0); center += 1) {
+            const candidate = squaredDistance(row, centers?.[center] ?? []);
+            if (candidate < distance) {
+              best = center;
+              distance = candidate;
+            }
+          }
+          return best;
+        });
+        for (let center = 0; center < centers.length; center += 1) {
+          const members = batch.filter((_row, index) => labels[index] === center);
+          if (members.length === 0) continue;
+          const oldCount = counts[center] ?? 0;
+          const nextCount = oldCount + members.length;
+          centers[center] = (centers[center] ?? []).map((value, dimension) => {
+            let sum = Math.fround(value * oldCount);
+            for (const row of members) sum = Math.fround(sum + (row[dimension] ?? 0));
+            return Math.fround(sum / nextCount);
+          });
+          counts[center] = nextCount;
+        }
+      }
+      if (centers === undefined) return [];
+      if (previous !== undefined) {
+        let shiftSquared = 0;
+        for (let center = 0; center < centers.length; center += 1) {
+          shiftSquared += squaredDistance(centers[center] ?? [], previous[center] ?? []);
+        }
+        if (Math.sqrt(shiftSquared) < 1e-3) break;
+      }
+      previous = centers.map((center) => [...center]);
+    }
+    if (centers === undefined) return [];
+    const labels: number[] = [];
+    for (const [index, row] of matrix.entries()) {
+      if (index % batchSize === 0) yield* Effect.yieldNow;
       let best = 0;
       let distance = Number.POSITIVE_INFINITY;
       for (let center = 0; center < centers.length; center += 1) {
@@ -1441,96 +1577,10 @@ const kmeansLabels = (matrix: readonly (readonly number[])[], k: number) => {
           distance = candidate;
         }
       }
-      return best;
-    });
-    const unchanged = next.every((label, index) => label === labels[index]);
-    labels = next;
-    const sums = centers.map((center) => center.map(() => 0));
-    const counts = centers.map(() => 0);
-    for (const [rowIndex, row] of matrix.entries()) {
-      const label = labels[rowIndex] ?? 0;
-      counts[label] = (counts[label] ?? 0) + 1;
-      for (let dimension = 0; dimension < row.length; dimension += 1) {
-        (sums[label] ?? [])[dimension] =
-          ((sums[label] ?? [])[dimension] ?? 0) + (row[dimension] ?? 0);
-      }
+      labels.push(best);
     }
-    centers = centers.map((center, label) =>
-      (counts[label] ?? 0) === 0
-        ? center
-        : (sums[label] ?? []).map((sum) => sum / (counts[label] ?? 1)),
-    );
-    if (unchanged && iteration > 0) break;
-  }
-  return labels;
-};
-
-const seededMiniBatchLabels = (matrix: readonly (readonly number[])[], k: number) => {
-  const permutation = new Pcg64Seed42();
-  const batchSize = 1024;
-  let centers: number[][] | undefined;
-  let counts: number[] = [];
-  let previous: number[][] | undefined;
-  for (let epoch = 0; epoch < 10; epoch += 1) {
-    const order = permutation.permutation(matrix.length);
-    for (let start = 0; start < order.length; start += batchSize) {
-      const batch = order
-        .slice(start, start + batchSize)
-        .map((row) => (matrix[row] ?? []).map(Math.fround));
-      if (centers === undefined) {
-        if (batch.length < k) throw new Error("k-means batch has fewer rows than clusters");
-        centers = chooseCenters(batch, k).map((center) => center.map(Math.fround));
-        counts = centers.map(() => 0);
-      }
-      const labels = batch.map((row) => {
-        let best = 0;
-        let distance = Number.POSITIVE_INFINITY;
-        for (let center = 0; center < (centers?.length ?? 0); center += 1) {
-          const candidate = squaredDistance(row, centers?.[center] ?? []);
-          if (candidate < distance) {
-            best = center;
-            distance = candidate;
-          }
-        }
-        return best;
-      });
-      for (let center = 0; center < centers.length; center += 1) {
-        const members = batch.filter((_row, index) => labels[index] === center);
-        if (members.length === 0) continue;
-        const oldCount = counts[center] ?? 0;
-        const nextCount = oldCount + members.length;
-        centers[center] = (centers[center] ?? []).map((value, dimension) => {
-          let sum = Math.fround(value * oldCount);
-          for (const row of members) sum = Math.fround(sum + (row[dimension] ?? 0));
-          return Math.fround(sum / nextCount);
-        });
-        counts[center] = nextCount;
-      }
-    }
-    if (centers === undefined) return [];
-    if (previous !== undefined) {
-      let shiftSquared = 0;
-      for (let center = 0; center < centers.length; center += 1) {
-        shiftSquared += squaredDistance(centers[center] ?? [], previous[center] ?? []);
-      }
-      if (Math.sqrt(shiftSquared) < 1e-3) break;
-    }
-    previous = centers.map((center) => [...center]);
-  }
-  if (centers === undefined) return [];
-  return matrix.map((row) => {
-    let best = 0;
-    let distance = Number.POSITIVE_INFINITY;
-    for (let center = 0; center < centers.length; center += 1) {
-      const candidate = squaredDistance(row, centers[center] ?? []);
-      if (candidate < distance) {
-        best = center;
-        distance = candidate;
-      }
-    }
-    return best;
+    return labels;
   });
-};
 
 const groupLabels = (labels: readonly number[]) => {
   const groups = new Map<number, number[]>();
@@ -1545,7 +1595,7 @@ const groupLabels = (labels: readonly number[]) => {
 const chunkTokens = (chunk: readonly number[], tokens: readonly number[]) =>
   chunk.reduce((sum, row) => sum + (tokens[row] ?? 0), 0);
 
-const meanVector = (chunk: readonly number[], matrix: readonly (readonly number[])[]) => {
+const meanVector = (chunk: readonly number[], matrix: readonly ArrayLike<number>[]) => {
   const dimensions = matrix[0]?.length ?? 0;
   const result = Array.from({ length: dimensions }, () => 0);
   for (const row of chunk) {
@@ -1559,27 +1609,28 @@ const meanVector = (chunk: readonly number[], matrix: readonly (readonly number[
 const splitChunk = (
   chunk: readonly number[],
   tokens: readonly number[],
-  matrix: readonly (readonly number[])[],
+  matrix: readonly ArrayLike<number>[],
   maxTokens: number,
-): number[][] => {
-  if (chunkTokens(chunk, tokens) <= maxTokens || chunk.length < 2) return [[...chunk]];
-  const ordered = [...chunk].toSorted((left, right) => left - right);
-  const labels = kmeansLabels(
-    ordered.map((row) => matrix[row] ?? []),
-    2,
-  );
-  let first = ordered.filter((_row, index) => labels[index] === 0);
-  let second = ordered.filter((_row, index) => labels[index] === 1);
-  if (first.length === 0 || second.length === 0) {
-    const middle = Math.floor(ordered.length / 2);
-    first = ordered.slice(0, middle);
-    second = ordered.slice(middle);
-  }
-  return [
-    ...splitChunk(first, tokens, matrix, maxTokens),
-    ...splitChunk(second, tokens, matrix, maxTokens),
-  ];
-};
+): Effect.Effect<number[][]> =>
+  Effect.gen(function* () {
+    if (chunkTokens(chunk, tokens) <= maxTokens || chunk.length < 2) return [[...chunk]];
+    const ordered = [...chunk].toSorted((left, right) => left - right);
+    const labels = yield* kmeansLabels(
+      ordered.map((row) => matrix[row] ?? []),
+      2,
+    );
+    let first = ordered.filter((_row, index) => labels[index] === 0);
+    let second = ordered.filter((_row, index) => labels[index] === 1);
+    if (first.length === 0 || second.length === 0) {
+      const middle = Math.floor(ordered.length / 2);
+      first = ordered.slice(0, middle);
+      second = ordered.slice(middle);
+    }
+    return [
+      ...(yield* splitChunk(first, tokens, matrix, maxTokens)),
+      ...(yield* splitChunk(second, tokens, matrix, maxTokens)),
+    ];
+  });
 
 const normalize = (vector: readonly number[]) => {
   const norm = Math.hypot(...vector);
@@ -1589,46 +1640,49 @@ const normalize = (vector: readonly number[]) => {
 const rebalanceChunks = (
   initial: readonly (readonly number[])[],
   tokens: readonly number[],
-  matrix: readonly (readonly number[])[],
+  matrix: readonly ArrayLike<number>[],
   minTokens: number,
   maxTokens: number,
-) => {
-  let chunks = initial.flatMap((chunk) => splitChunk(chunk, tokens, matrix, maxTokens));
-  while (chunks.length > 1) {
-    const sizes = chunks.map((chunk) => chunkTokens(chunk, tokens));
-    const undersize = sizes
-      .map((size, index) => ({ size, index, first: Math.min(...(chunks[index] ?? [])) }))
-      .filter((entry) => entry.size < minTokens)
-      .toSorted((left, right) => left.size - right.size || left.first - right.first);
-    const source = undersize[0];
-    if (source === undefined) break;
-    const sourceCenter = normalize(meanVector(chunks[source.index] ?? [], matrix));
-    const candidates = chunks
-      .map((chunk, index) => ({
-        index,
-        distance:
-          1 -
-          normalize(meanVector(chunk, matrix)).reduce(
-            (sum, value, dimension) => sum + value * (sourceCenter[dimension] ?? 0),
-            0,
-          ),
-      }))
-      .filter(
-        (candidate) =>
-          candidate.index !== source.index &&
-          (sizes[candidate.index] ?? 0) + source.size <= maxTokens,
-      )
-      .toSorted((left, right) => left.distance - right.distance || left.index - right.index);
-    const nearest = candidates[0];
-    if (nearest === undefined) break;
-    const merged = [...(chunks[source.index] ?? []), ...(chunks[nearest.index] ?? [])].toSorted(
-      (left, right) => left - right,
-    );
-    chunks = chunks.filter((_chunk, index) => index !== source.index && index !== nearest.index);
-    chunks.push(merged);
-  }
-  return chunks;
-};
+) =>
+  Effect.gen(function* () {
+    let chunks: number[][] = [];
+    for (const chunk of initial) chunks.push(...(yield* splitChunk(chunk, tokens, matrix, maxTokens)));
+    while (chunks.length > 1) {
+      yield* Effect.yieldNow;
+      const sizes = chunks.map((chunk) => chunkTokens(chunk, tokens));
+      const undersize = sizes
+        .map((size, index) => ({ size, index, first: Math.min(...(chunks[index] ?? [])) }))
+        .filter((entry) => entry.size < minTokens)
+        .toSorted((left, right) => left.size - right.size || left.first - right.first);
+      const source = undersize[0];
+      if (source === undefined) break;
+      const sourceCenter = normalize(meanVector(chunks[source.index] ?? [], matrix));
+      const candidates = chunks
+        .map((chunk, index) => ({
+          index,
+          distance:
+            1 -
+            normalize(meanVector(chunk, matrix)).reduce(
+              (sum, value, dimension) => sum + value * (sourceCenter[dimension] ?? 0),
+              0,
+            ),
+        }))
+        .filter(
+          (candidate) =>
+            candidate.index !== source.index &&
+            (sizes[candidate.index] ?? 0) + source.size <= maxTokens,
+        )
+        .toSorted((left, right) => left.distance - right.distance || left.index - right.index);
+      const nearest = candidates[0];
+      if (nearest === undefined) break;
+      const merged = [...(chunks[source.index] ?? []), ...(chunks[nearest.index] ?? [])].toSorted(
+        (left, right) => left - right,
+      );
+      chunks = chunks.filter((_chunk, index) => index !== source.index && index !== nearest.index);
+      chunks.push(merged);
+    }
+    return chunks;
+  });
 
 const synthesizeTopics = (
   options: AbstractOptions,
