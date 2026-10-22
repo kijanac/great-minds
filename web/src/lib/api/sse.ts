@@ -14,8 +14,21 @@ class Disconnected extends Data.TaggedError("Disconnected") {}
 
 const reconnectDelay = (attempt: number) => Duration.millis(Math.min(1000 * 2 ** attempt, 10_000));
 
-const reconnectable = (error: HttpClientError.HttpClientError) =>
-  error.reason._tag === "TransportError";
+const gatewayUnavailable = new Set([502, 503, 504]);
+
+const reconnectable = (error: HttpClientError.HttpClientError) => {
+  switch (error.reason._tag) {
+    case "TransportError":
+      return true;
+    case "DecodeError":
+    case "StatusCodeError": {
+      const status = error.reason.response.status;
+      return (status >= 200 && status < 300) || gatewayUnavailable.has(status);
+    }
+    default:
+      return false;
+  }
+};
 
 export const followSnapshots = <A>(
   connect: Stream.Stream<Sse.EventEncoded, StreamFailure>,

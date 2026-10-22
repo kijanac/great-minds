@@ -1,9 +1,10 @@
 import { Forbidden, SessionId, Unauthorized, Uuid } from "@great-minds/domain";
-import { Effect, Fiber, Layer, Semaphore, Stream } from "effect";
+import { Effect, Fiber, Layer, Schema, Semaphore, Stream } from "effect";
 import { HttpClientRequest } from "effect/unstable/http";
 import { describe, expect, it } from "vitest";
 
 import { ApiError, makeApi } from "./runtime";
+import { followSnapshots } from "./sse";
 import { TokenStore, type StoredTokens } from "./token-store";
 
 const vaultId = Uuid.make("018f6a2e-0000-7000-8000-000000000001", {
@@ -629,4 +630,53 @@ describe("makeApi streams", () => {
     expect((failure as Error).name).toBe("AbortError");
     expect(failure).toBeInstanceOf(Error);
   });
+
+  it("keeps following a job through a dropped connection and a gateway outage", async () => {
+    const droppedAfterFirstSnapshot = () => {
+      const frames = ['data: {"n":1}\n\n'];
+      return new Response(
+        new ReadableStream<Uint8Array>(
+          {
+            pull(controller) {
+              const frame = frames.shift();
+              if (frame === undefined) controller.error(new TypeError("Load failed"));
+              else controller.enqueue(new TextEncoder().encode(frame));
+            },
+          },
+          { highWaterMark: 0 },
+        ),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    };
+    const responses = [
+      droppedAfterFirstSnapshot,
+      () => new Response("Service Unavailable", { status: 503 }),
+      () => sseResponse(['data: {"n":2}\n\n']),
+    ];
+    let attempt = 0;
+    const { fetchImpl, requests } = fetchResponding(() => responses[attempt++]());
+    const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
+    const { api, stream } = makeApi({
+      baseUrl,
+      fetch: fetchImpl,
+      tokens: tokens.layer,
+    });
+
+    const snapshots = await collect(
+      stream(
+        followSnapshots(
+          Stream.unwrap(
+            api.jobs.streamJob({
+              params: { vault_id: vaultId, job_id: vaultId },
+            }),
+          ),
+          Schema.Struct({ n: Schema.Number }),
+          (snapshot) => snapshot.n === 2,
+        ),
+      ),
+    );
+
+    expect(snapshots).toEqual([{ n: 1 }, { n: 2 }]);
+    expect(requests).toHaveLength(3);
+  }, 10_000);
 });

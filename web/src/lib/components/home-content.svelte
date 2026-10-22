@@ -202,14 +202,12 @@
                   <Button
                     variant="outline"
                     href="/library"
-                    class="h-auto min-w-0 shrink flex-col items-start gap-1 rounded-sm border-ink-border px-4 py-1.5 text-left font-mono text-[length:var(--text-chrome)] tracking-[0.14em] whitespace-normal text-warm-faint hover:border-gold-dim hover:text-warm sm:flex-row sm:items-center sm:gap-2.5"
+                    aria-label={`${currentVault.name} library`}
+                    class="h-auto min-w-0 shrink rounded-sm border-ink-border px-4 py-1.5 text-left font-mono text-[length:var(--text-chrome)] tracking-[0.14em] whitespace-normal text-warm-faint hover:border-gold-dim hover:text-warm"
                   >
                     <span class="min-w-0 [overflow-wrap:anywhere]"
                       >{currentVault.name}</span
                     >
-                    <span class="text-warm-ghost group-hover/button:text-warm">
-                      library →
-                    </span>
                   </Button>
                   <HealthIndicator
                     status={health.status}
