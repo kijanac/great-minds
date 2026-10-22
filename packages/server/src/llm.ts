@@ -119,6 +119,7 @@ export class ModelProviderError extends Data.TaggedError("ModelProviderError")<{
   readonly message: string;
   readonly cause?: unknown;
   readonly issue?: Schema.SchemaError["issue"];
+  readonly transient?: boolean;
 }> {}
 
 export const stripJsonFence = (raw: string) =>
@@ -127,6 +128,7 @@ export const stripJsonFence = (raw: string) =>
 const streamChunkTimeoutMs = 30_000;
 const rateLimitRetries = 6;
 const maxRateLimitBackoffMs = 60_000;
+const transientRetries = 2;
 
 const rateLimitRetry = {
   times: rateLimitRetries,
@@ -144,6 +146,13 @@ const rateLimitRetry = {
         ),
     ),
   ),
+};
+
+const transientRetry = {
+  times: transientRetries,
+  while: (error: RetryableModelError | ModelProviderError) =>
+    error._tag === "ModelProviderError" && error.transient === true,
+  schedule: Schedule.exponential("2 seconds"),
 };
 
 const openRouterHeaders = (apiKey: string) => ({
@@ -425,7 +434,7 @@ const makeLanguageModel = Effect.gen(function* () {
             signal,
           }),
         catch: (cause) =>
-          new ModelProviderError({ message: "model provider request failed", cause }),
+          new ModelProviderError({ message: "model provider request failed", cause, transient: true }),
       });
       if (response.status === 429) {
         return yield* new RetryableModelError({
@@ -437,6 +446,7 @@ const makeLanguageModel = Effect.gen(function* () {
         const detail = yield* responseDetail(response);
         return yield* new ModelProviderError({
           message: `model provider returned ${response.status}: ${detail}`,
+          transient: response.status >= 500,
         });
       }
       return response;
@@ -454,6 +464,7 @@ const makeLanguageModel = Effect.gen(function* () {
           new ModelProviderError({
             message: "model provider returned an unreadable completion",
             cause,
+            transient: true,
           }),
       });
       const completion = yield* decodeWireCompletion(payload).pipe(
@@ -472,7 +483,7 @@ const makeLanguageModel = Effect.gen(function* () {
         generationId: completion.id ?? undefined,
         usage: usageFrom(completion.usage),
       } satisfies ModelCompletion;
-    }).pipe(Effect.scoped, Effect.retry(rateLimitRetry));
+    }).pipe(Effect.scoped, Effect.retry(rateLimitRetry), Effect.retry(transientRetry));
 
   return { hasApiKey: apiKey !== undefined, streamChat, complete } satisfies LanguageModelShape;
 });

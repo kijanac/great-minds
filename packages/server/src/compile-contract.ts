@@ -151,10 +151,19 @@ export const renderCacheKey = (input: {
     `model=${input.model}`,
   );
 
+const PHASE_FAILURE_MESSAGE_LIMIT = 500;
+
 export const phaseFailure = (phase: CompilePhase, cause: unknown) => {
   if (cause instanceof CompilePhaseNotPorted || cause instanceof CompilePhaseFailed) return cause;
   const error = errorDetails(cause);
-  return new CompilePhaseFailed({ phase, ...error });
+  return new CompilePhaseFailed({
+    phase,
+    errorType: error.errorType,
+    message:
+      error.message.length > PHASE_FAILURE_MESSAGE_LIMIT
+        ? `${error.message.slice(0, PHASE_FAILURE_MESSAGE_LIMIT)}…`
+        : error.message,
+  });
 };
 
 export type TopicComposition = {

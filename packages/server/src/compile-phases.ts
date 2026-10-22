@@ -5,6 +5,7 @@ import {
   backlinks,
   Database,
   ideas,
+  inUuidArray,
   type DatabaseInfraError,
   type TransactionClient,
   searchIndex,
@@ -13,6 +14,7 @@ import {
   topicMembership,
   topicRelated,
   topics,
+  uuidPairs,
   wikiArticles,
 } from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
@@ -546,7 +548,7 @@ export const CompilePhasesLive = Layer.effect(
                             tx
                               .select({ id: ideas.documentId })
                               .from(ideas)
-                              .where(inArray(ideas.ideaId, requested)),
+                              .where(inUuidArray(ideas.ideaId, requested)),
                           ),
                         ),
                       )
@@ -560,8 +562,8 @@ export const CompilePhasesLive = Layer.effect(
                       .from(ideas)
                       .where(
                         and(
-                          inArray(ideas.ideaId, requested),
-                          inArray(
+                          inUuidArray(ideas.ideaId, requested),
+                          inUuidArray(
                             ideas.documentId,
                             sources.map((source) => source.id),
                           ),
@@ -579,26 +581,27 @@ export const CompilePhasesLive = Layer.effect(
                   .filter((ideaId) => liveIds.has(ideaId))
                   .map((ideaId) => ({ topicId: topic.topicId, ideaId })),
               );
-              if (memberships.length > 0) yield* tx.insert(topicMembership).values(memberships);
+              if (memberships.length > 0) {
+                yield* tx.insert(topicMembership).select(() =>
+                  uuidPairs(
+                    memberships.map((membership) => membership.topicId),
+                    memberships.map((membership) => membership.ideaId),
+                  ),
+                );
+              }
             }),
           );
-          const vaultTopicIds = yield* db.query((d) => d
-            .select({ id: topics.topicId })
-            .from(topics)
-            .where(eq(topics.vaultId, vaultId)));
-          if (vaultTopicIds.length > 0) {
-            yield* db.query((d) => d
-              .delete(topicLinks)
-              .where(
-                inArray(
-                  topicLinks.sourceTopicId,
-                  vaultTopicIds.map((row) => row.id),
-                ),
-              ));
-          }
+          yield* db.query((d) => d
+            .delete(topicLinks)
+            .where(
+              inArray(
+                topicLinks.sourceTopicId,
+                d.select({ id: topics.topicId }).from(topics).where(eq(topics.vaultId, vaultId)),
+              ),
+            ));
           const slugToId = new Map(validated.map((topic) => [topic.slug, topic.topicId]));
           const links = validated.flatMap((topic) =>
-            topic.linkTargets.flatMap((slug) => {
+            [...new Set(topic.linkTargets)].flatMap((slug) => {
               const target = slugToId.get(slug);
               return target === undefined || target === topic.topicId
                 ? []

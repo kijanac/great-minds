@@ -107,6 +107,25 @@ describe("provider adapters", () => {
     }).pipe(Effect.provide(TestClock.layer())));
   });
 
+  it("retries server errors and cut-off completion bodies twice", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response("Service Unavailable", { status: 503 }))
+      .mockResolvedValueOnce(new Response('{"choices": [', { status: 200 }))
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "Recovered." } }] }));
+    vi.stubGlobal("fetch", fetch);
+    await runtime.runPromise(Effect.gen(function* () {
+      const model = yield* LanguageModel;
+      const fiber = yield* Effect.forkChild(model.complete({ model: "test", messages: [], temperature: 0 }));
+      yield* TestClock.adjust(0);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      yield* TestClock.adjust(2_000);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      yield* TestClock.adjust(4_000);
+      expect(yield* Fiber.join(fiber)).toMatchObject({ text: "Recovered." });
+      expect(fetch).toHaveBeenCalledTimes(3);
+    }).pipe(Effect.provide(TestClock.layer())));
+  });
+
   it("does not retry rejected or malformed completion responses", async () => {
     const fetch = vi.fn()
       .mockResolvedValueOnce(new Response("Unauthorized", { status: 401 }))

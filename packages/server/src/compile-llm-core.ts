@@ -3,6 +3,7 @@ import {
   compileCacheEntries,
   Database,
   ideas,
+  inUuidArray,
   llmCostEvents,
   sourceDocuments,
   topicMembership,
@@ -2815,7 +2816,7 @@ const runRender = (options: RenderOptions) =>
                   description: ideas.description,
                 })
                 .from(ideas)
-                .where(inArray(ideas.ideaId, neededIds)),
+                .where(inUuidArray(ideas.ideaId, neededIds)),
             );
       const anchorRows =
         neededIds.length === 0
@@ -2824,7 +2825,7 @@ const runRender = (options: RenderOptions) =>
               d
                 .select()
                 .from(anchors)
-                .where(inArray(anchors.ideaId, neededIds))
+                .where(inUuidArray(anchors.ideaId, neededIds))
                 .orderBy(asc(anchors.ideaId), asc(anchors.position)),
             );
       const anchorsByIdea = new Map<string, Anchor[]>();
