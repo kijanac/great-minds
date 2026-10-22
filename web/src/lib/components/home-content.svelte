@@ -24,7 +24,6 @@
   import { usePanelCard } from "$lib/hooks/use-panel-card.svelte";
   import { usePanelContent } from "$lib/hooks/use-panel-content.svelte";
   import { useSessions } from "$lib/hooks/use-sessions.svelte";
-  import { useVaultCounts } from "$lib/hooks/use-vault-counts.svelte";
   import {
     activeVault,
     useVaultDetail,
@@ -46,7 +45,6 @@
   const sessions = useSessions();
   const vaults = useVaults();
   const health = useHealthReport();
-  const counts = useVaultCounts();
   const activeJob = useActiveJob();
   const initial = untrack(() => ({
     saved,
@@ -203,25 +201,15 @@
                 {#if currentVault}
                   <Button
                     variant="outline"
-                    onclick={() => void goto("/library")}
+                    href="/library"
                     class="h-auto min-w-0 shrink flex-col items-start gap-1 rounded-sm border-ink-border px-4 py-1.5 text-left font-mono text-[length:var(--text-chrome)] tracking-[0.14em] whitespace-normal text-warm-faint hover:border-gold-dim hover:text-warm sm:flex-row sm:items-center sm:gap-2.5"
                   >
                     <span class="min-w-0 [overflow-wrap:anywhere]"
                       >{currentVault.name}</span
                     >
-                    {#if counts.articleTotal !== null && counts.sourceTotal !== null}
-                      <span
-                        class="text-warm-ghost group-hover/button:text-warm"
-                      >
-                        {counts.articleTotal}&nbsp;article{counts.articleTotal ===
-                        1
-                          ? ""
-                          : "s"} · {counts.sourceTotal}&nbsp;source{counts.sourceTotal ===
-                        1
-                          ? ""
-                          : "s"} →
-                      </span>
-                    {/if}
+                    <span class="text-warm-ghost group-hover/button:text-warm">
+                      library →
+                    </span>
                   </Button>
                   <HealthIndicator
                     status={health.status}

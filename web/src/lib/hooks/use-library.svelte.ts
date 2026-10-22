@@ -28,7 +28,7 @@ export const LIBRARY_READING_ROOM = "reading-room";
 
 export function invalidateSourceLists(queryClient: QueryClient, vaultId: Uuid | null) {
   return Promise.all(
-    ["library-sources", "library-facets", "source-count"].map((list) =>
+    ["library-sources", "library-facets"].map((list) =>
       queryClient.invalidateQueries({ queryKey: ["vault", vaultId, list] }),
     ),
   );
