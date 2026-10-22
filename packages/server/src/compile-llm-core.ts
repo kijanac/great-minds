@@ -11,7 +11,7 @@ import {
 import { Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import type { PgInsertValue } from "drizzle-orm/pg-core";
-import { Data, Effect, Schema, SchemaGetter } from "effect";
+import { Data, Effect, Option, Schema, SchemaGetter } from "effect";
 
 import type { AppConfigShape } from "./config.ts";
 import {
@@ -383,7 +383,90 @@ export const assignmentsResponseFormat = {
   },
 } as const;
 
-const jsonObjectResponseFormat = { type: "json_object" } as const;
+export const cleanupResponseFormat = {
+  type: "json_schema",
+  json_schema: {
+    name: "cleanup",
+    strict: true,
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        slug_renames: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: { canonical_tag: { type: "string" }, new_slug: { type: "string" } },
+            required: ["canonical_tag", "new_slug"],
+          },
+        },
+        supersessions: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              archived_tag: { type: "string" },
+              successor_tag: { type: ["string", "null"] },
+            },
+            required: ["archived_tag", "successor_tag"],
+          },
+        },
+      },
+      required: ["slug_renames", "supersessions"],
+    },
+  },
+} as const;
+
+export const synthesisResponseFormat = {
+  type: "json_schema",
+  json_schema: {
+    name: "synthesis",
+    strict: true,
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        topics: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              slug: { type: "string" },
+              title: { type: "string" },
+              description: { type: "string" },
+              subsumed_idea_ids: {
+                type: "array",
+                items: { type: "string", pattern: "^idea_[0-9]+$" },
+              },
+            },
+            required: ["slug", "title", "description", "subsumed_idea_ids"],
+          },
+        },
+      },
+      required: ["topics"],
+    },
+  },
+} as const;
+
+export const articleResponseFormat = {
+  type: "json_schema",
+  json_schema: {
+    name: "article",
+    strict: true,
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        body: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+      },
+      required: ["body", "tags"],
+    },
+  },
+} as const;
 
 const formatEnrichedFields = (fields: readonly EnrichedField[]) =>
   fields
@@ -447,7 +530,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
         const completion = yield* languageModel.complete({
           model: input.model,
           messages: input.messages,
-          temperature: input.temperature,
+          temperature: Option.getOrUndefined(input.temperature),
           responseFormat: input.responseFormat,
           requestProfile: "compile",
         });
@@ -609,7 +692,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
                     messages: [
                       { role: "user", content: renderedTemplate.replace("{doc_content}", body) },
                     ],
-                    temperature: 0.2,
+                    temperature: config.extractTemperature,
                     responseFormat,
                     schema: ExtractResponse,
                     logFields: { document_id: document.id, path: document.filePath },
@@ -974,7 +1057,7 @@ type JsonCall = <A>(input: {
   readonly promptHash: string;
   readonly model: string;
   readonly messages: readonly LlmMessage[];
-  readonly temperature: number;
+  readonly temperature: Option.Option<number>;
   readonly responseFormat: Record<string, unknown>;
   readonly schema: Schema.Decoder<A>;
   readonly maxParseRetries?: number;
@@ -1599,8 +1682,8 @@ const synthesizeTopics = (
               promptHash: synthesizePromptHash,
               model: options.config.mapModel,
               messages: [{ role: "user", content: promptTemplate.replace("{idea_block}", block) }],
-              temperature: 0.3,
-              responseFormat: jsonObjectResponseFormat,
+              temperature: options.config.mapTemperature,
+              responseFormat: synthesisResponseFormat,
               schema: SynthesisResponse,
               logFields: { chunk_idx: chunkIdx },
             }),
@@ -1877,8 +1960,8 @@ const resolveChunkGranularity = (options: AbstractOptions, input: ChunkGranulari
           promptHash: input.revisePromptHash,
           model: options.config.mapModel,
           messages: [{ role: "user", content }],
-          temperature: 0.3,
-          responseFormat: jsonObjectResponseFormat,
+          temperature: options.config.mapTemperature,
+          responseFormat: synthesisResponseFormat,
           schema: SynthesisResponse,
           logFields: { chunk_idx: input.chunkIdx, phase: "synthesize_revise" },
         }),
@@ -1958,8 +2041,8 @@ const resolveChunkGranularity = (options: AbstractOptions, input: ChunkGranulari
           promptHash: input.decomposePromptHash,
           model: options.config.mapModel,
           messages: [{ role: "user", content }],
-          temperature: 0.3,
-          responseFormat: jsonObjectResponseFormat,
+          temperature: options.config.mapTemperature,
+          responseFormat: synthesisResponseFormat,
           schema: SynthesisResponse,
           logFields: { chunk_idx: input.chunkIdx, phase: "synthesize_decompose" },
         }),
@@ -2166,7 +2249,7 @@ const canonicalizeTopics = (
               .replace("{local_topic_block}", localBlock),
           },
         ],
-        temperature: 0.2,
+        temperature: options.config.reduceTemperature,
         responseFormat: registryResponseFormat,
         schema: RegistryResponse,
         logFields: { vault_id: options.vaultId, phase: "canonicalize_registry" },
@@ -2247,7 +2330,7 @@ const canonicalizeTopics = (
             ],
           },
         ],
-        temperature: 0.1,
+        temperature: options.config.reduceTemperature,
         responseFormat: assignmentsResponseFormat,
         schema: AssignmentsResponse,
         maxParseRetries: 2,
@@ -2443,8 +2526,8 @@ const validateTopics = (
               .replace("{supersession_block}", supersessionBlock),
           },
         ],
-        temperature: 0.1,
-        responseFormat: jsonObjectResponseFormat,
+        temperature: options.config.reduceTemperature,
+        responseFormat: cleanupResponseFormat,
         schema: CleanupResponse,
         logFields: { vault_id: options.vaultId, phase: "validate_cleanup" },
       });
@@ -2739,8 +2822,8 @@ const runRender = (options: RenderOptions) =>
                 promptHash,
                 model: options.config.renderModel,
                 messages: [{ role: "user", content: prompt }],
-                temperature: 0.3,
-                responseFormat: jsonObjectResponseFormat,
+                temperature: options.config.renderTemperature,
+                responseFormat: articleResponseFormat,
                 schema: RenderResponse,
                 logFields: { topic_id: topic.topicId, topic_slug: topic.slug },
               }),

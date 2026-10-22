@@ -30,6 +30,10 @@ export type AppConfigShape = {
   readonly mapModel: string;
   readonly reduceModel: string;
   readonly renderModel: string;
+  readonly extractTemperature: Option.Option<number>;
+  readonly mapTemperature: Option.Option<number>;
+  readonly reduceTemperature: Option.Option<number>;
+  readonly renderTemperature: Option.Option<number>;
   readonly compileEnrichConcurrency: number;
   readonly compileWriteConcurrency: number;
   readonly compilePartitionTargetTokens: number;
@@ -51,7 +55,7 @@ export type AppConfigShape = {
   readonly serverPort: number;
 };
 
-export const DEFAULT_RENDER_MODEL = "qwen/qwen3.6-plus";
+export const DEFAULT_RENDER_MODEL = "z-ai/glm-5.3";
 
 export const optionalRedactedValue = (value: Option.Option<Redacted.Redacted<string>>) =>
   Option.match(value, {
@@ -68,6 +72,25 @@ const positiveInt = (name: string) =>
   Config.schema(Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))), name);
 const positiveNumber = (name: string) =>
   Config.schema(Schema.Number.pipe(Schema.check(Schema.isGreaterThan(0))), name);
+const samplingTemperature = (name: string, fallback: Option.Option<number>) =>
+  Config.option(
+    Config.schema(
+      Schema.Union([
+        Schema.Literal("none"),
+        Schema.Number.pipe(
+          Schema.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(2)),
+        ),
+      ]),
+      name,
+    ),
+  ).pipe(
+    Config.map(
+      Option.match({
+        onNone: () => fallback,
+        onSome: (value) => (value === "none" ? Option.none() : Option.some(value)),
+      }),
+    ),
+  );
 
 const validateRedacted = (value: Redacted.Redacted<string>) =>
   Schema.decodeUnknownEffect(Schema.NonEmptyString)(Redacted.value(value)).pipe(
@@ -126,9 +149,13 @@ const appConfig = Config.all({
   extractModel: nonEmptyString("EXTRACT_MODEL").pipe(Config.withDefault("deepseek/deepseek-v3.2")),
   mapModel: nonEmptyString("MAP_MODEL").pipe(Config.withDefault("deepseek/deepseek-v3.2")),
   reduceModel: nonEmptyString("REDUCE_MODEL").pipe(
-    Config.withDefault("anthropic/claude-sonnet-4.6"),
+    Config.withDefault("anthropic/claude-sonnet-5.5"),
   ),
   renderModel: nonEmptyString("RENDER_MODEL").pipe(Config.withDefault(DEFAULT_RENDER_MODEL)),
+  extractTemperature: samplingTemperature("EXTRACT_TEMPERATURE", Option.some(0.2)),
+  mapTemperature: samplingTemperature("MAP_TEMPERATURE", Option.some(0.3)),
+  reduceTemperature: samplingTemperature("REDUCE_TEMPERATURE", Option.none()),
+  renderTemperature: samplingTemperature("RENDER_TEMPERATURE", Option.some(0.3)),
   compileEnrichConcurrency: positiveInt("COMPILE_ENRICH_CONCURRENCY").pipe(Config.withDefault(20)),
   compileWriteConcurrency: positiveInt("COMPILE_WRITE_CONCURRENCY").pipe(Config.withDefault(3)),
   compilePartitionTargetTokens: positiveInt("COMPILE_PARTITION_TARGET_TOKENS").pipe(

@@ -1,14 +1,16 @@
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import { describe, expect, it } from "vitest";
 
 import {
+  articleResponseFormat,
   assignmentsResponseFormat,
+  cleanupResponseFormat,
   codePointLength,
   extractResponseFormat,
   normalizePythonWhitespace,
   registryResponseFormat,
+  synthesisResponseFormat,
 } from "../src/compile-llm-core.ts";
 import { completionRequestBody, type LlmMessage } from "../src/llm.ts";
 
@@ -29,39 +31,23 @@ const entry = (sequence: number) => {
   return found;
 };
 
-const canonical = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, item]) => [key, canonical(item)]),
-    );
-  }
-  return value;
-};
-
-const sortedKeyHash = (value: unknown) =>
-  createHash("sha256")
-    .update(JSON.stringify(canonical(value)))
-    .digest("hex");
-
-const expectCassetteRequest = (
+const expectRecordedPrompt = (
   sequence: number,
   input: Parameters<typeof completionRequestBody>[0],
 ) => {
   const recorded = entry(sequence).requestBody;
-  const composed = completionRequestBody(input);
-  expect(sortedKeyHash(composed)).toBe(sortedKeyHash(recorded));
-  expect(composed).toEqual(recorded);
+  expect(completionRequestBody({ ...input, messages: recorded.messages })).toEqual({
+    ...recorded,
+    response_format: input.responseFormat,
+    provider: { require_parameters: true },
+  });
 };
 
 describe("compile LLM request composition", () => {
-  it("extract matches a real source-card cassette request at the raw tier", () => {
-    const recorded = entry(1).requestBody;
-    expectCassetteRequest(1, {
+  it("sends every recorded compile prompt with a strict schema to capable hosts only", () => {
+    expectRecordedPrompt(1, {
       model: "deepseek/deepseek-v3.2",
-      messages: recorded.messages,
+      messages: [],
       temperature: 0.2,
       responseFormat: extractResponseFormat({
         thematicHint: "",
@@ -71,56 +57,57 @@ describe("compile LLM request composition", () => {
       }),
       requestProfile: "compile",
     });
-  });
-
-  it("synthesize matches a real JSON-object cassette request at the raw tier", () => {
-    const recorded = entry(11).requestBody;
-    expectCassetteRequest(11, {
+    expectRecordedPrompt(11, {
       model: "deepseek/deepseek-v3.2",
-      messages: recorded.messages,
+      messages: [],
       temperature: 0.3,
-      responseFormat: "json_object",
+      responseFormat: synthesisResponseFormat,
       requestProfile: "compile",
     });
-  });
-
-  it("canonical registry and assignment match real strict-schema cassette requests", () => {
-    const registry = entry(53).requestBody;
-    expectCassetteRequest(53, {
+    expectRecordedPrompt(53, {
       model: "anthropic/claude-sonnet-4.6",
-      messages: registry.messages,
+      messages: [],
       temperature: 0.2,
       responseFormat: registryResponseFormat,
       requestProfile: "compile",
     });
-
-    const assignment = entry(54).requestBody;
-    expectCassetteRequest(54, {
+    expectRecordedPrompt(54, {
       model: "anthropic/claude-sonnet-4.6",
-      messages: assignment.messages,
+      messages: [],
       temperature: 0.1,
       responseFormat: assignmentsResponseFormat,
       requestProfile: "compile",
     });
-  });
-
-  it("render and validation cleanup match real JSON-object cassette requests", () => {
-    const render = entry(55).requestBody;
-    expectCassetteRequest(55, {
+    expectRecordedPrompt(55, {
       model: "qwen/qwen3.6-plus",
-      messages: render.messages,
+      messages: [],
       temperature: 0.3,
-      responseFormat: "json_object",
+      responseFormat: articleResponseFormat,
       requestProfile: "compile",
     });
-
-    const cleanup = entry(78).requestBody;
-    expectCassetteRequest(78, {
+    expectRecordedPrompt(78, {
       model: "anthropic/claude-sonnet-4.6",
-      messages: cleanup.messages,
+      messages: [],
       temperature: 0.1,
-      responseFormat: "json_object",
+      responseFormat: cleanupResponseFormat,
       requestProfile: "compile",
+    });
+  });
+
+  it("omits temperature for models whose hosts reject one", () => {
+    expect(
+      completionRequestBody({
+        model: "anthropic/claude-sonnet-5.5",
+        messages: [],
+        responseFormat: cleanupResponseFormat,
+        requestProfile: "compile",
+      }),
+    ).toEqual({
+      model: "anthropic/claude-sonnet-5.5",
+      messages: [],
+      response_format: cleanupResponseFormat,
+      usage: { include: true },
+      provider: { require_parameters: true },
     });
   });
 });

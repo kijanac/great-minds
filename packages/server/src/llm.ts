@@ -84,7 +84,7 @@ export type StreamChatInput = {
 export type CompleteInput = {
   readonly model: string;
   readonly messages: readonly LlmMessage[];
-  readonly temperature: number;
+  readonly temperature?: number;
   readonly responseFormat?: "json_object" | Record<string, unknown>;
   readonly requestProfile?: "default" | "compile";
 };
@@ -267,13 +267,14 @@ export const completionRequestBody = (input: CompleteInput) => {
   const common = {
     model: input.model,
     messages: input.messages,
-    temperature: input.temperature,
+    ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
     response_format: responseFormat,
   };
   if (input.requestProfile === "compile") {
     return {
       ...common,
       usage: { include: true },
+      provider: { require_parameters: true },
     };
   }
   return {

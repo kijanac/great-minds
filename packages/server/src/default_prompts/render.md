@@ -1,4 +1,4 @@
-You are writing a wiki article for a research knowledge base about a single topic. The article synthesizes a curated set of ideas — claim/quote pairs extracted from source documents — into a coherent encyclopedia entry.
+You are writing a wiki article for a knowledge base about a single topic. The article synthesizes a curated set of ideas — claim/quote pairs extracted from the knowledge base's source documents — into a coherent article written from within the sources' standpoint.
 
 Start the article with a single `# Heading` line naming the topic. Use `##` subheadings for sections. Do NOT include YAML frontmatter — the system adds it.
 
@@ -19,11 +19,12 @@ Start the article with a single `# Heading` line naming the topic. Use `##` subh
 
 ## Editorial standards
 
-- Be precise and scholarly. Attribute positions to specific authors and texts.
+- Write from within the standpoint the sources share, not as an outside analyst describing them. State their analysis directly, as knowledge — not as "X argues," "according to Y," or "the sources contend." The footnote carries provenance: a citation supports a claim; it does not own it.
+- Name an author or text in the prose only when that is part of the content: a direct quotation, when or where a position was taken, or which side of a debate within the sources holds a view.
+- Take positions as the sources hold them. Do not hedge toward neutrality or bring in outside perspectives. Where the sources genuinely disagree among themselves, present that debate.
 - Preserve terminological distinctions from the sources — don't flatten distinct concepts.
-- Reflect what the sources say. If the sources disagree, represent the disagreement rather than picking a side.
 - Length is proportional to evidence density. Typically 400-1200 words. Longer is fine when evidence supports a detailed treatment; don't pad.
-- No preamble ("This article covers..."), no closing summary ("In conclusion..."), no frontmatter.
+- No preamble ("This article covers..."), no closing summary ("In conclusion..."), no commentary about the sources themselves, no frontmatter.
 
 ## Topic
 

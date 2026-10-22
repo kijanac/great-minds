@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 
-import { ConfigProvider, Effect } from "effect";
+import { ConfigProvider, Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { AppConfig, AppConfigLive } from "../src/config.ts";
@@ -15,24 +15,46 @@ import { defaultVaultConfigText } from "../src/vaults.ts";
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
+const loadConfig = (env: Record<string, string>) =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      return yield* AppConfig;
+    }).pipe(
+      Effect.provide(AppConfigLive),
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: {
+              DATABASE_URL: "postgresql://great-minds.test/great_minds",
+              JWT_SECRET: "default-config-test-secret",
+              ...env,
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+
 describe("server config defaults", () => {
   it("uses a 60-day refresh window and local WebAuthn defaults", async () => {
-    const provider = ConfigProvider.fromEnv({
-      env: {
-        DATABASE_URL: "postgresql://great-minds.test/great_minds",
-        JWT_SECRET: "default-config-test-secret",
-      },
-    });
-    const config = await Effect.runPromise(
-      Effect.gen(function* () {
-        return yield* AppConfig;
-      }).pipe(Effect.provide(AppConfigLive), Effect.provide(ConfigProvider.layer(provider))),
-    );
+    const config = await loadConfig({});
 
     expect(config.jwtRefreshExpiryDays).toBe(60);
     expect(config.webauthnRpId).toBe("localhost");
     expect(config.webauthnOrigins).toEqual(["http://localhost:5173"]);
     expect(config.webauthnRpName).toBe("Great Minds");
+  });
+
+  it("sends compile temperatures only to stages whose default models accept them", async () => {
+    const defaults = await loadConfig({});
+    expect(defaults.extractTemperature).toEqual(Option.some(0.2));
+    expect(defaults.mapTemperature).toEqual(Option.some(0.3));
+    expect(defaults.reduceTemperature).toEqual(Option.none());
+    expect(defaults.renderTemperature).toEqual(Option.some(0.3));
+
+    const overridden = await loadConfig({ EXTRACT_TEMPERATURE: "none", RENDER_TEMPERATURE: "0.4" });
+    expect(overridden.extractTemperature).toEqual(Option.none());
+    expect(overridden.renderTemperature).toEqual(Option.some(0.4));
   });
 });
 
@@ -72,7 +94,7 @@ describe("default prompts", () => {
       "extract.md": "0d589c31e7c6413e4aaaea6f70b36d9c36a8a81aa2bfc024477779e4f3c62dda",
       "query.md": "d02c29eb9d1367ef61e230741aee22feb3a2dea6564956ff2a433a34c876afee",
       "query_btw.md": "1415f3050b8c6b36867f2f0390281c775a3103991a6ad5a3e296fd7d42cdc138",
-      "render.md": "3d0db999681198d4d7f1a6c02adc91a9e4d8ef58e91fc8929981d3792aebd0bf",
+      "render.md": "8a75adf662a1f06acf16c412a073e2b67192d96997b50acd9ee41c3587d9088b",
       "synthesize.md": "9b122a4e2f11e9fb83428c321cb2cc70315105ca2660e350babc573bc72370bf",
       "synthesize_decompose.md":
         "74301aece5c13aa01e94d14db1a24f66a2d6ff8458035c2e13e79e1f95195f3a",
