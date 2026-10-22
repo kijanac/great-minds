@@ -394,6 +394,13 @@ const VaultHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "vaults", (
         return yield* vaultsService.getVaultDetail(current.user_id, params.vault_id);
       }),
     )
+    .handle("renameVault", ({ params, payload }) =>
+      Effect.gen(function* () {
+        const vaultsService = yield* VaultsService;
+        const current = yield* CurrentAuth;
+        yield* vaultsService.renameVault(current.user_id, params.vault_id, payload);
+      }),
+    )
     .handle("getVaultConfig", ({ params }) =>
       Effect.gen(function* () {
         const vaultsService = yield* VaultsService;

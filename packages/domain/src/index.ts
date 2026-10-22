@@ -303,6 +303,11 @@ export const VaultCreate = Schema.Struct({
 });
 export type VaultCreate = typeof VaultCreate.Type;
 
+export const VaultRename = Schema.Struct({
+  name: Schema.Trim.check(Schema.isMinLength(1)),
+});
+export type VaultRename = typeof VaultRename.Type;
+
 export const Vault = Schema.Struct({
   id: Uuid,
   name: Schema.String,
@@ -1535,6 +1540,12 @@ const VaultsApiGroup = HttpApiGroup.make("vaults").add(
       vault_id: Uuid,
     },
     success: VaultDetail,
+    error: ForbiddenValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.patch("renameVault", "/vaults/:vault_id", {
+    params: { vault_id: Uuid },
+    payload: VaultRename,
+    success: HttpApiSchema.NoContent,
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("getVaultConfig", "/vaults/:vault_id/config", {

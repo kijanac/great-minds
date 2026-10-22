@@ -1,7 +1,13 @@
 import type { Uuid } from "@great-minds/domain";
 import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
 
-import { createVault, fetchVaults, getVaultDetail, type CreateVaultInput } from "$lib/api/vaults";
+import {
+  createVault,
+  fetchVaults,
+  getVaultDetail,
+  renameVault,
+  type CreateVaultInput,
+} from "$lib/api/vaults";
 import { auth } from "$lib/auth.svelte";
 import { getVaultId, storeVaultId } from "$lib/vault-selection";
 import { windowSync } from "$lib/window-sync";
@@ -42,6 +48,19 @@ export function useCreateVault() {
     onSuccess: async (vault) => {
       await queryClient.invalidateQueries({ queryKey: ["vaults"] });
       storeVaultId(vault.id);
+    },
+  }));
+}
+
+export function useRenameVault() {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn: ({ vaultId, name }: { vaultId: Uuid; name: string }) => renameVault(vaultId, name),
+    onSuccess: async (_, { vaultId }) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["vault", vaultId, "detail"] }),
+        queryClient.invalidateQueries({ queryKey: ["vaults"] }),
+      ]);
     },
   }));
 }

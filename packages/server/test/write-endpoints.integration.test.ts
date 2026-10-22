@@ -840,6 +840,47 @@ describe("M3.1 write endpoint integration", () => {
     expect(denied.body).toMatchObject({ detail: "Only vault owners can perform this action" });
   });
 
+  it("renames a vault only for its current owner without changing its content or identity", async () => {
+    const { aliceToken, bobToken, carolToken, malloryToken } = currentFixture();
+    const config = "thematic_hint: Original focus\nkinds: [person]\n";
+    await writeVaultFile(id.vault, "config.yaml", config);
+    const path = `/vaults/${id.vault}`;
+    expect((await api("PATCH", path, aliceToken, { name: "  " })).status).toBe(422);
+    for (const token of [bobToken, carolToken, malloryToken]) {
+      expect((await api("PATCH", path, token, { name: "Denied" })).status).toBe(403);
+    }
+    expect((await api("PATCH", path, aliceToken, { name: "  Research Library  " })).status).toBe(
+      204,
+    );
+    expect((await api("GET", path, aliceToken)).body).toMatchObject({
+      id: id.vault,
+      name: "Research Library",
+      owner_id: id.alice,
+      member_count: 3,
+    });
+    expect((await api("GET", "/vaults", aliceToken)).body).toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({ id: id.vault, name: "Research Library" }),
+      ]),
+    });
+    expect(await readVaultFile(id.vault, "config.yaml")).toBe(config);
+    expect(
+      (await api("POST", `${path}/transfer-ownership`, aliceToken, { new_owner_user_id: id.bob }))
+        .status,
+    ).toBe(204);
+    expect((await api("PATCH", path, aliceToken, { name: "Former owner" })).status).toBe(403);
+    expect((await api("PATCH", path, bobToken, { name: "New owner’s library" })).status).toBe(204);
+    await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db.query((d) =>
+          d.update(vaults).set({ deletedAt: initialTime }).where(eq(vaults.id, id.vault)),
+        );
+      }),
+    );
+    expect((await api("PATCH", path, bobToken, { name: "Deleted vault" })).status).toBe(403);
+  });
+
   it("manages members with owner guards, invite role limits, 404s, and ownership transfer", async () => {
     const { aliceToken, bobToken } = currentFixture();
     const invalidInvite = await api("POST", `/vaults/${id.vault}/members`, aliceToken, {
@@ -935,10 +976,14 @@ describe("M3.1 write endpoint integration", () => {
     const members = await api("GET", `/vaults/${id.vault}/members`, bobToken);
     expect(members.status).toBe(200);
     expect(members.body).toMatchObject({
-      items: expect.arrayContaining([
-        expect.objectContaining({ user_id: id.alice, role: "editor" }),
-        expect.objectContaining({ user_id: id.bob, role: "owner" }),
-      ]),
+      items: [
+        { user_id: id.bob, role: "owner" },
+        { user_id: id.alice, role: "editor" },
+        { email: "new@example.com", role: "viewer" },
+      ],
+    });
+    expect((await api("GET", `/vaults/${id.vault}/members?limit=1`, bobToken)).body).toMatchObject({
+      items: [{ user_id: id.bob, role: "owner" }],
     });
   });
 

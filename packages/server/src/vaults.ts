@@ -27,6 +27,7 @@ import {
   type VaultConfigUpdate,
   type VaultDetail,
   type VaultPage,
+  type VaultRename,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, notExists, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
@@ -76,6 +77,11 @@ type VaultsServiceShape = {
   ) => Effect.Effect<Vault>;
   readonly listVaults: (userId: Uuid, params: PageParams) => Effect.Effect<VaultPage>;
   readonly getVaultDetail: (userId: Uuid, vaultId: Uuid) => Effect.Effect<VaultDetail, Forbidden>;
+  readonly renameVault: (
+    userId: Uuid,
+    vaultId: Uuid,
+    input: VaultRename,
+  ) => Effect.Effect<void, Forbidden>;
   readonly getVaultConfig: (userId: Uuid, vaultId: Uuid) => Effect.Effect<VaultConfig, Forbidden>;
   readonly updateVaultConfig: (
     userId: Uuid,
@@ -659,6 +665,13 @@ export const VaultsServiceLive = Layer.effect(
             article_count: oneTotal(articleCounts),
           };
         }),
+      renameVault: (userId, vaultId, input) =>
+        db.transaction((tx) =>
+          Effect.gen(function* () {
+            yield* lockOwnedVault(tx, userId, vaultId);
+            yield* tx.update(vaults).set({ name: input.name }).where(eq(vaults.id, vaultId));
+          }),
+        ),
       getVaultConfig: (userId, vaultId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
@@ -689,7 +702,7 @@ export const VaultsServiceLive = Layer.effect(
               .innerJoin(users, eq(users.id, vaultMemberships.userId))
               .innerJoin(vaults, eq(vaults.id, vaultMemberships.vaultId))
               .where(eq(vaultMemberships.vaultId, vaultId))
-              .orderBy(asc(users.email))
+              .orderBy(desc(eq(vaultMemberships.userId, vaults.ownerId)), asc(users.email))
               .limit(params.limit)
               .offset(params.offset),
           );

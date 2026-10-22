@@ -18,7 +18,13 @@
     updateMemberRole,
     updateVaultConfig,
   } from "$lib/api/vaults";
-  import { useVaultDetail } from "$lib/hooks/use-vault.svelte";
+  import {
+    switchVault,
+    useRenameVault,
+    useVaultDetail,
+  } from "$lib/hooks/use-vault.svelte";
+  import VaultTitle from "$lib/components/vault-title.svelte";
+  import VaultOwnershipTransfer from "$lib/components/vault-ownership-transfer.svelte";
   import MemberRow from "$lib/components/member-row.svelte";
   import PageHeader from "$lib/components/page-header.svelte";
   import ProposalsSection from "$lib/components/proposals-section.svelte";
@@ -57,6 +63,7 @@
   let deleteError = $state<string | null>(null);
 
   const vault = useVaultDetail(() => vaultId);
+  const rename = useRenameVault();
   const isOwner = $derived(vault.data?.role === "owner");
   const members = createQuery(() => ({
     queryKey: ["vault", vaultId, "members"],
@@ -135,6 +142,7 @@
   async function transfer(memberId: Uuid) {
     await transferOwnership(vaultId!, memberId);
     await refreshMembers();
+    await queryClient.invalidateQueries({ queryKey: ["vaults"] });
   }
 
   async function confirmDelete() {
@@ -181,33 +189,55 @@
           </div>
         </div>
       {:else if vaultId && vault.data}
-        <h1 class="mb-1 font-serif text-[length:var(--text-heading)] text-warm">
-          {vault.data.name}
-        </h1>
-        <p
-          class="mb-8 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
+        {#key vaultId}
+          <VaultTitle
+            name={vault.data.name}
+            editable={isOwner}
+            onRename={(name) => rename.mutateAsync({ vaultId: vaultId!, name })}
+          />
+        {/key}
+        <div
+          class="mb-8 flex flex-wrap items-center justify-between gap-x-4 gap-y-2"
         >
-          {vault.data.article_count} articles · {vault.data.member_count} member{vault
-            .data.member_count !== 1
-            ? "s"
-            : ""} · {vault.data.role}
-        </p>
+          <p
+            class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
+          >
+            {vault.data.article_count} articles · {vault.data.member_count} member{vault
+              .data.member_count !== 1
+              ? "s"
+              : ""} · {vault.data.role}
+          </p>
+          <Button
+            variant="ghost"
+            onclick={() => {
+              switchVault(vaultId!);
+              void goto("/health");
+            }}
+            class="h-auto rounded-sm px-0 py-2 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-gold-muted hover:bg-transparent hover:text-gold"
+          >
+            vault health →
+          </Button>
+        </div>
 
         {#if isOwner}
-          <h2
-            class="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase"
-          >
-            members
-          </h2>
+          <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <h2
+              class="font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase"
+            >
+              members
+            </h2>
+            <VaultOwnershipTransfer
+              members={members.data ?? []}
+              onTransfer={transfer}
+            />
+          </div>
 
           <div class="mb-6 space-y-1">
             {#each members.data ?? [] as member (member.user_id)}
               <MemberRow
                 {member}
-                {isOwner}
                 onChangeRole={(role) => changeRole(member.user_id, role)}
                 onRemove={() => remove(member.user_id)}
-                onTransfer={() => transfer(member.user_id)}
               />
             {/each}
           </div>
@@ -254,10 +284,10 @@
           {#if membersError}
             <Alert
               variant="destructive"
-              class="mt-3 rounded-sm border-red-400/25 bg-red-400/5"
+              class="mt-3 rounded-sm border-destructive/30 bg-destructive/5"
             >
               <AlertDescription
-                class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-red-400/90"
+                class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-destructive"
               >
                 {membersError}
               </AlertDescription>
@@ -307,15 +337,15 @@
         {#if isOwner}
           <section class="mt-16 border-t border-ink-border pt-8">
             <h2
-              class="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-red-400/70 uppercase"
+              class="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-destructive uppercase"
             >
               danger zone
             </h2>
             <p
               class="mb-4 text-[length:var(--text-small)] leading-relaxed text-warm-ghost"
             >
-              Permanently delete this vault, all its documents, wiki articles,
-              and R2 storage. This cannot be undone.
+              Permanently delete this vault and all its documents, articles, and
+              conversations for everyone in the vault. This cannot be undone.
             </p>
 
             <AlertDialog.Root bind:open={deleteOpen}>
@@ -323,8 +353,8 @@
                 {#snippet child({ props })}
                   <Button
                     {...props}
-                    variant="ghost"
-                    class="h-auto rounded-sm px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-red-400/70 hover:bg-red-400/5 hover:text-red-400"
+                    variant="destructive"
+                    class="h-auto rounded-sm border-destructive/60 px-3 py-2 font-mono text-[length:var(--text-chrome)] tracking-[0.06em]"
                   >
                     delete vault
                   </Button>
@@ -340,9 +370,10 @@
                   <AlertDialog.Description
                     class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost"
                   >
-                    This permanently deletes the vault, all its documents, wiki
-                    articles, and R2 storage. This cannot be undone. Type
-                    <span class="text-red-400">delete</span> to confirm.
+                    This permanently deletes all documents, articles, and
+                    conversations for everyone in the vault. This cannot be
+                    undone. Type
+                    <span class="text-destructive">delete</span> to confirm.
                   </AlertDialog.Description>
                 </AlertDialog.Header>
                 <div class="space-y-2">
@@ -360,16 +391,16 @@
                         void confirmDelete();
                       }
                     }}
-                    class="h-8 rounded-sm border-red-400/30 bg-transparent px-3 font-mono text-[length:var(--text-small)] text-red-400 caret-red-400 placeholder:text-red-400/30 focus-visible:border-red-400/60 focus-visible:ring-0 dark:bg-transparent"
+                    class="h-8 rounded-sm border-destructive/60 bg-transparent px-3 font-mono text-[length:var(--text-small)] text-destructive caret-destructive placeholder:text-warm-ghost focus-visible:border-destructive focus-visible:ring-0 dark:bg-transparent"
                     placeholder="delete"
                   />
                   {#if deleteError}
                     <Alert
                       variant="destructive"
-                      class="rounded-sm border-red-400/25 bg-red-400/5"
+                      class="rounded-sm border-destructive/30 bg-destructive/5"
                     >
                       <AlertDescription
-                        class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-red-400/90"
+                        class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-destructive"
                       >
                         {deleteError}
                       </AlertDescription>
@@ -389,7 +420,7 @@
                       event.preventDefault();
                       void confirmDelete();
                     }}
-                    class="border border-red-400/30 bg-red-400/10 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-red-400 hover:bg-red-400/20 disabled:opacity-40"
+                    class="border border-destructive/60 bg-destructive/10 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-destructive hover:bg-destructive/20 disabled:opacity-40"
                   >
                     {deleting ? "deleting…" : "delete vault"}
                   </AlertDialog.Action>

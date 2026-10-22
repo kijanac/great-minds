@@ -40,6 +40,21 @@
 </script>
 
 <main class="mx-auto max-w-[740px] px-4 pt-8 pb-20 md:px-10">
+  <header class="mb-8">
+    <p
+      class="mb-2 font-mono text-[length:var(--text-chrome)] tracking-[0.14em] text-gold-muted uppercase"
+    >
+      vault health
+    </p>
+    {#if health.vaultName}
+      <h1
+        class="font-serif text-[length:var(--text-heading)] text-warm [overflow-wrap:anywhere]"
+      >
+        {health.vaultName}
+      </h1>
+    {/if}
+  </header>
+
   {#if health.status === "loading"}
     <div class="space-y-8">
       <div class="space-y-3">

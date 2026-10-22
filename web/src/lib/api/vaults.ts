@@ -45,6 +45,10 @@ export function createVault(input: CreateVaultInput): Promise<VaultOverview> {
   return run(api.vaults.createVault({ payload: input }));
 }
 
+export function renameVault(vaultId: Uuid, name: string): Promise<void> {
+  return run(api.vaults.renameVault({ params: { vault_id: vaultId }, payload: { name } }));
+}
+
 export function getVaultDetail(vaultId: Uuid): Promise<VaultDetail> {
   return run(api.vaults.getVault({ params: { vault_id: vaultId } }));
 }

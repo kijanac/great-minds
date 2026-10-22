@@ -20,7 +20,10 @@
 </script>
 
 <svelte:head>
-  <title>Health | Great Minds</title>
+  <title
+    >{health.currentVault ? `${health.currentVault.name} — Health` : "Health"} | Great
+    Minds</title
+  >
 </svelte:head>
 
 <PanelHost open={!!card.selectedCard} onClose={card.close}>

@@ -9,16 +9,16 @@
       // right color before any stylesheet loads (ssr=false ships no CSS'd HTML).
       // Literals must match --background in index.css; CSS vars don't exist yet.
       // theme.svelte.ts removes the inline style once stylesheets are live.
+      let current = matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
       try {
-        const theme = localStorage.getItem("theme");
-        const current = theme === "light" || theme === "dark" ? theme : "dark";
-        document.documentElement.classList.add(current);
-        document.documentElement.style.backgroundColor =
-          current === "light" ? "#d5ccbc" : "#0c0c0c";
-      } catch {
-        document.documentElement.classList.add("dark");
-        document.documentElement.style.backgroundColor = "#0c0c0c";
-      }
+        const stored = localStorage.getItem("theme");
+        if (stored === "light" || stored === "dark") current = stored;
+      } catch {}
+      document.documentElement.classList.add(current);
+      document.documentElement.style.backgroundColor =
+        current === "light" ? "#d5ccbc" : "#0c0c0c";
     </script>
     %sveltekit.head%
   </head>

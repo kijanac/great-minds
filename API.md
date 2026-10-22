@@ -848,6 +848,15 @@ Response: `200` with a `VaultDetail` (a `Vault` plus):
 
 Errors: `403 Forbidden`, `422 Validation`.
 
+#### PATCH /v1/vaults/:vault_id
+
+**Auth:** Vault owner.
+
+Rename the vault with `{ "name": "Research Library" }`. Surrounding whitespace
+is trimmed; an empty name is rejected (`422`). Returns `204 No Content`.
+The vault ID, membership, documents, articles, and conversations are unchanged.
+Former owners and vaults being deleted cannot rename (`403`).
+
 #### GET /v1/vaults/:vault_id/config
 
 Auth: required.
@@ -889,7 +898,8 @@ Errors: `403 Forbidden`, `422 Validation`.
 
 Auth: required.
 
-Lists the vault's members.
+Lists the vault's members, owner first and remaining members by email.
+Only the vault owner can list members.
 
 Path parameters: `vault_id` (`Uuid`).
 
