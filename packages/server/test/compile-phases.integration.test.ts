@@ -1163,7 +1163,14 @@ describe("M4.3a deterministic compile phases", () => {
     await insertSource(id.source, path);
     complete = async () => ({
       text: JSON.stringify({
-        ...fullCard([{ kind: "concept", label: "Idea", description: "Description", anchors: [] }]),
+        ...fullCard([
+          {
+            kind: "concept",
+            label: "Idea",
+            description: "Description",
+            anchors: [{ claim: "Claim", quote: "Body" }],
+          },
+        ]),
         title: "Extracted title",
         precis: "Extracted precis",
       }),
@@ -1193,12 +1200,21 @@ describe("M4.3a deterministic compile phases", () => {
     expect(files.get(path)).toBe(rewritten);
     const settled = await registry();
     expect(settled).toEqual([{ etag: "etag-two", updatedAt: expect.any(Date) }]);
+    const anchorVersions = () =>
+      run(
+        Effect.flatMap(Database, (db) =>
+          db.query((d) => d.select({ version: sql<string>`xmin::text` }).from(anchors)).pipe(Effect.orDie),
+        ),
+      );
+    const versions = await anchorVersions();
+    expect(versions).toHaveLength(1);
 
     storageReads.length = 0;
     await run(ingest);
     expect(storageReads).toEqual([]);
     await run(extract);
     expect(await registry()).toEqual(settled);
+    expect(await anchorVersions()).toEqual(versions);
     storageReads.length = 0;
     embeddingRequests.length = 0;
     await run(ingest);

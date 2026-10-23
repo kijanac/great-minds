@@ -40,7 +40,7 @@ import type { PipelineRunsService } from "./pipeline-runs.ts";
 import { progressSteps } from "./pipeline-runs.ts";
 import { loadPrompt } from "./prompts.ts";
 import { formatUuid7, type RandomBytesService } from "./random.ts";
-import type { ContentStorage } from "./storage.ts";
+import { READ_CONCURRENCY, type ContentStorage } from "./storage.ts";
 import type { SourceDocumentsService } from "./source-documents.ts";
 import {
   defaultVaultConfigFile,
@@ -857,101 +857,128 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
         );
       }
 
-      for (const { document, card } of ready) {
-        yield* sourceRegistry.rewrite(
-          document,
-          ({ body }) => {
-            const frontmatter: Record<string, unknown> = {
-              canonical_url: document.canonicalUrl,
-              source_type: document.sourceType,
-              url: document.url,
-              origin: document.origin,
-              session_id: document.provenanceSessionId,
-              exchange_id: document.provenanceExchangeId,
-              session_query: document.provenanceSessionQuery,
-              source_doc_path: document.provenanceSourceDocPath,
-              source_anchor: document.provenanceSourceAnchor,
-              source_paragraph_index: document.provenanceSourceParagraphIndex,
-              anchored_to: document.provenanceAnchoredTo,
-              anchored_section: document.provenanceAnchoredSection,
-              intent: document.provenanceIntent,
-              title: card.title,
-              precis: card.precis,
-              author: card.author,
-              date: card.publishedDate,
-              genre: card.genre,
-              tags: card.tags.length > 0 ? [...card.tags] : null,
-              ...card.derivedExtras,
-            };
-            return {
-              frontmatter: Object.fromEntries(
-                Object.entries(frontmatter).filter(
-                  ([, value]) => value !== null && value !== undefined,
+      yield* Effect.forEach(
+        ready,
+        ({ document, card }) =>
+          sourceRegistry.rewrite(
+            document,
+            ({ body }) => {
+              const frontmatter: Record<string, unknown> = {
+                canonical_url: document.canonicalUrl,
+                source_type: document.sourceType,
+                url: document.url,
+                origin: document.origin,
+                session_id: document.provenanceSessionId,
+                exchange_id: document.provenanceExchangeId,
+                session_query: document.provenanceSessionQuery,
+                source_doc_path: document.provenanceSourceDocPath,
+                source_anchor: document.provenanceSourceAnchor,
+                source_paragraph_index: document.provenanceSourceParagraphIndex,
+                anchored_to: document.provenanceAnchoredTo,
+                anchored_section: document.provenanceAnchoredSection,
+                intent: document.provenanceIntent,
+                title: card.title,
+                precis: card.precis,
+                author: card.author,
+                date: card.publishedDate,
+                genre: card.genre,
+                tags: card.tags.length > 0 ? [...card.tags] : null,
+                ...card.derivedExtras,
+              };
+              return {
+                frontmatter: Object.fromEntries(
+                  Object.entries(frontmatter).filter(
+                    ([, value]) => value !== null && value !== undefined,
+                  ),
                 ),
-              ),
-              body,
-            };
-          },
-          (tx) =>
-            Effect.gen(function* () {
-              const ideaIds = card.ideas.map((idea) => idea.ideaId);
-              const stale = yield* tx
-                .select({ id: ideas.ideaId })
-                .from(ideas)
-                .where(
-                  and(
-                    eq(ideas.documentId, document.id),
-                    ideaIds.length === 0 ? undefined : notInArray(ideas.ideaId, ideaIds),
-                  ),
-                );
-              if (stale.length > 0) {
-                const staleIds = stale.map((idea) => idea.id);
-                yield* tx.delete(ideas).where(inArray(ideas.ideaId, staleIds));
-              }
-              const persisted = yield* tx
-                .select({ id: ideas.ideaId })
-                .from(ideas)
-                .where(eq(ideas.documentId, document.id));
-              const present = new Set(persisted.map((idea) => idea.id));
-              if (persisted.length > 0) {
-                yield* tx.delete(anchors).where(inArray(anchors.ideaId, [...present]));
-                const rows = card.ideas
-                  .filter((idea) => present.has(idea.ideaId))
-                  .flatMap((idea) =>
-                    idea.anchors.map((anchor, position) => ({
-                      ideaId: idea.ideaId,
-                      position,
-                      ...anchor,
-                    })),
+                body,
+              };
+            },
+            (tx) =>
+              Effect.gen(function* () {
+                const ideaIds = card.ideas.map((idea) => idea.ideaId);
+                const stale = yield* tx
+                  .select({ id: ideas.ideaId })
+                  .from(ideas)
+                  .where(
+                    and(
+                      eq(ideas.documentId, document.id),
+                      ideaIds.length === 0 ? undefined : notInArray(ideas.ideaId, ideaIds),
+                    ),
                   );
-                if (rows.length > 0) yield* tx.insert(anchors).values(rows);
-              }
-              yield* tx
-                .update(sourceDocuments)
-                .set({
-                  title: card.title,
-                  precis: card.precis,
-                  author: card.author,
-                  publishedDate: card.publishedDate,
-                  genre: card.genre,
-                  tags: [...card.tags],
-                  derivedExtras: card.derivedExtras,
-                  updatedAt: sql`now()`,
-                })
-                .where(
-                  and(
-                    eq(sourceDocuments.id, document.id),
-                    sql`(${sourceDocuments.title}, ${sourceDocuments.precis}, ${sourceDocuments.author},
-                      ${sourceDocuments.publishedDate}, ${sourceDocuments.genre},
-                      to_jsonb(${sourceDocuments.tags}), ${sourceDocuments.derivedExtras})
-                      is distinct from (${card.title}::text, ${card.precis}::text, ${card.author}::text,
-                      ${card.publishedDate}::text, ${card.genre}::text,
-                      ${JSON.stringify(card.tags)}::jsonb, ${JSON.stringify(card.derivedExtras)}::jsonb)`,
-                  ),
-                );
-            }),
-        );
-      }
+                if (stale.length > 0) {
+                  const staleIds = stale.map((idea) => idea.id);
+                  yield* tx.delete(ideas).where(inArray(ideas.ideaId, staleIds));
+                }
+                const persisted = yield* tx
+                  .select({ id: ideas.ideaId })
+                  .from(ideas)
+                  .where(eq(ideas.documentId, document.id));
+                const present = new Set(persisted.map((idea) => idea.id));
+                if (persisted.length > 0) {
+                  const rows = card.ideas
+                    .filter((idea) => present.has(idea.ideaId))
+                    .flatMap((idea) =>
+                      idea.anchors.map((anchor, position) => ({
+                        ideaId: idea.ideaId,
+                        position,
+                        ...anchor,
+                      })),
+                    );
+                  const stored = yield* tx
+                    .select({
+                      ideaId: anchors.ideaId,
+                      position: anchors.position,
+                      claim: anchors.claim,
+                      quote: anchors.quote,
+                      chunkIndex: anchors.chunkIndex,
+                    })
+                    .from(anchors)
+                    .where(inArray(anchors.ideaId, [...present]));
+                  const signature = (anchor: (typeof stored)[number]) =>
+                    JSON.stringify([
+                      anchor.ideaId,
+                      anchor.position,
+                      anchor.claim,
+                      anchor.quote,
+                      anchor.chunkIndex,
+                    ]);
+                  const current = new Set(stored.map(signature));
+                  if (
+                    rows.length !== stored.length ||
+                    !rows.every((row) => current.has(signature(row)))
+                  ) {
+                    yield* tx.delete(anchors).where(inArray(anchors.ideaId, [...present]));
+                    if (rows.length > 0) yield* tx.insert(anchors).values(rows);
+                  }
+                }
+                yield* tx
+                  .update(sourceDocuments)
+                  .set({
+                    title: card.title,
+                    precis: card.precis,
+                    author: card.author,
+                    publishedDate: card.publishedDate,
+                    genre: card.genre,
+                    tags: [...card.tags],
+                    derivedExtras: card.derivedExtras,
+                    updatedAt: sql`now()`,
+                  })
+                  .where(
+                    and(
+                      eq(sourceDocuments.id, document.id),
+                      sql`(${sourceDocuments.title}, ${sourceDocuments.precis}, ${sourceDocuments.author},
+                        ${sourceDocuments.publishedDate}, ${sourceDocuments.genre},
+                        to_jsonb(${sourceDocuments.tags}), ${sourceDocuments.derivedExtras})
+                        is distinct from (${card.title}::text, ${card.precis}::text, ${card.author}::text,
+                        ${card.publishedDate}::text, ${card.genre}::text,
+                        ${JSON.stringify(card.tags)}::jsonb, ${JSON.stringify(card.derivedExtras)}::jsonb)`,
+                    ),
+                  );
+              }),
+          ),
+        { concurrency: READ_CONCURRENCY, discard: true },
+      );
 
       yield* pipeline.updateProgress(
         runId,
