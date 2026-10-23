@@ -46,6 +46,8 @@ export const vaultOwner = (id: Uuid): StorageOwner => ({ kind: "vault", id });
 
 export const userOwner = (id: Uuid): StorageOwner => ({ kind: "user", id });
 
+export const READ_CONCURRENCY = 16;
+
 type ContentStorageShape = {
   readonly listMarkdown: (
     owner: StorageOwner,

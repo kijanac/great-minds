@@ -141,6 +141,7 @@ const config: AppConfigShape = {
 
 const files = new Map<string, string>();
 const etags = new Map<string, string>();
+const storageReads: string[] = [];
 const embeddingRequests: string[][] = [];
 const logEvents: { readonly event: string; readonly fields: Record<string, unknown> }[] = [];
 
@@ -159,8 +160,19 @@ const writeFile = (path: string, content: string) => {
   if (path === failWritePath) throw new Error("compile replay write fault");
 };
 
+const sourceStorage = versionedSourceStorage(files, writeFile);
 const StorageLive = Layer.succeed(ContentStorage, {
-  ...versionedSourceStorage(files, writeFile),
+  ...sourceStorage,
+  readText: (owner, path) =>
+    Effect.suspend(() => {
+      storageReads.push(path);
+      return sourceStorage.readText(owner, path);
+    }),
+  readVersionedText: (owner, path) =>
+    Effect.suspend(() => {
+      storageReads.push(path);
+      return sourceStorage.readVersionedText(owner, path);
+    }),
   listMarkdown: (_vaultId, scope) =>
     Effect.succeed(
       [...files.keys()]
@@ -477,6 +489,7 @@ describe("M4.3a deterministic compile phases", () => {
   beforeEach(async () => {
     files.clear();
     etags.clear();
+    storageReads.length = 0;
     embeddingRequests.length = 0;
     logEvents.length = 0;
     embed = defaultEmbed;
@@ -1141,6 +1154,57 @@ describe("M4.3a deterministic compile phases", () => {
     embeddingRequests.length = 0;
     await run(Effect.flatMap(CompilePhases, (phases) => phases.ingest(id.vault, id.run)));
     expect(embeddingRequests).toEqual([]);
+  });
+
+  it("extract keeps an unchanged source's ETag and date, so the next ingest reads nothing", async () => {
+    const path = "raw/docs/source.md";
+    files.set(path, `---\nsource_id: ${id.source}\n---\n# Source\n\nBody\n`);
+    etags.set(path, "etag-one");
+    await insertSource(id.source, path);
+    complete = async () => ({
+      text: JSON.stringify({
+        ...fullCard([{ kind: "concept", label: "Idea", description: "Description", anchors: [] }]),
+        title: "Extracted title",
+        precis: "Extracted precis",
+      }),
+      finishReason: "stop",
+    });
+    const ingest = Effect.flatMap(CompilePhases, (phases) => phases.ingest(id.vault, id.run));
+    const extract = Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run));
+    const registry = () =>
+      run(
+        Effect.flatMap(Database, (db) => db.query((d) => d
+          .select({ etag: sourceDocuments.etag, updatedAt: sourceDocuments.updatedAt })
+          .from(sourceDocuments)
+          .where(eq(sourceDocuments.id, id.source)))
+          .pipe(Effect.orDie)),
+      );
+
+    await run(ingest);
+    await run(extract);
+    const rewritten = files.get(path);
+    expect(parseFrontmatter(rewritten ?? "").frontmatter).toMatchObject({
+      title: "Extracted title",
+    });
+    expect(await registry()).toEqual([{ etag: null, updatedAt: expect.any(Date) }]);
+    etags.set(path, "etag-two");
+    await run(ingest);
+    await run(extract);
+    expect(files.get(path)).toBe(rewritten);
+    const settled = await registry();
+    expect(settled).toEqual([{ etag: "etag-two", updatedAt: expect.any(Date) }]);
+
+    storageReads.length = 0;
+    await run(ingest);
+    expect(storageReads).toEqual([]);
+    await run(extract);
+    expect(await registry()).toEqual(settled);
+    storageReads.length = 0;
+    embeddingRequests.length = 0;
+    await run(ingest);
+    expect(storageReads).toEqual([]);
+    expect(embeddingRequests).toEqual([]);
+    expect(await registry()).toEqual(settled);
   });
 
   it("ingest withholds the ETag for a timed-out embedding batch so the next run re-indexes it", async () => {

@@ -21,7 +21,7 @@ import {
   readSourceControl,
   sourceIdentityFromFrontmatter,
 } from "./source-identity.ts";
-import { ContentStorage, StorageFileMissing, vaultOwner } from "./storage.ts";
+import { ContentStorage, READ_CONCURRENCY, StorageFileMissing, vaultOwner } from "./storage.ts";
 
 type SourceDocumentRow = typeof sourceDocuments.$inferSelect;
 export type SourceIncarnationRow = typeof sourceIncarnations.$inferSelect;
@@ -179,7 +179,6 @@ const ownedSource = (
 type DiscoveredSource = {
   readonly source: SourceDocumentRow;
   readonly etag: string | null;
-  readonly content?: string;
 };
 
 const admissionFields = {
@@ -319,7 +318,7 @@ const ingestSet = {
   provenanceAnchoredSection: sql`excluded.provenance_anchored_section`,
   provenanceIntent: sql`excluded.provenance_intent`,
   title: sql`excluded.title`,
-  updatedAt: sql`now()`,
+  updatedAt: sql`case when ${sourceDocuments.fileHash} is distinct from excluded.file_hash or ${sourceDocuments.filePath} is distinct from excluded.file_path or ${sourceDocuments.incarnationId} is distinct from excluded.incarnation_id then now() else ${sourceDocuments.updatedAt} end`,
 };
 
 const makeSourceDocuments = Effect.gen(function* () {
@@ -515,6 +514,10 @@ const makeSourceDocuments = Effect.gen(function* () {
       const snapshot = yield* readSnapshot(source);
       if (snapshot === undefined) return false;
       const owned = ownedSource(source, transform(snapshot.parsed), source.clientHash);
+      const changed =
+        owned.content !== snapshot.file.content ||
+        owned.source.fileHash !== source.fileHash ||
+        owned.source.bodyHash !== source.bodyHash;
       if (owned.content !== snapshot.file.content) {
         const written = yield* storage
           .writeTextIfVersion(
@@ -531,16 +534,22 @@ const makeSourceDocuments = Effect.gen(function* () {
           yield* tx
             .update(sourceIncarnations)
             .set({ unversioned: false })
-            .where(eq(sourceIncarnations.id, source.incarnationId));
-          yield* tx
-            .update(sourceDocuments)
-            .set({
-              fileHash: owned.source.fileHash,
-              bodyHash: owned.source.bodyHash,
-              etag: null,
-              updatedAt: sql`now()`,
-            })
-            .where(eq(sourceDocuments.id, source.id));
+            .where(
+              and(
+                eq(sourceIncarnations.id, source.incarnationId),
+                eq(sourceIncarnations.unversioned, true),
+              ),
+            );
+          if (changed)
+            yield* tx
+              .update(sourceDocuments)
+              .set({
+                fileHash: owned.source.fileHash,
+                bodyHash: owned.source.bodyHash,
+                etag: null,
+                updatedAt: sql`now()`,
+              })
+              .where(eq(sourceDocuments.id, source.id));
           yield* project(tx);
         }),
       );
@@ -696,7 +705,26 @@ const makeSourceDocuments = Effect.gen(function* () {
           registeredById.set(row.source.id, row.source);
         }
       }
-      const files = yield* storage.listMarkdown(vaultOwner(vaultId), "raw");
+      const files = (yield* storage.listMarkdown(vaultOwner(vaultId), "raw")).filter(
+        (file) => !file.path.slice(file.path.lastIndexOf("/") + 1).startsWith("_"),
+      );
+      const cached = (file: (typeof files)[number]) => {
+        const prior = registered.get(file.path);
+        return prior !== undefined && file.etag !== null && file.etag === prior.etag
+          ? { kind: "cached" as const, etag: file.etag, source: prior }
+          : undefined;
+      };
+      const reads = yield* Effect.forEach(
+        files,
+        (file) =>
+          cached(file) === undefined
+            ? storage.readText(vaultOwner(vaultId), file.path).pipe(
+                Effect.map((content) => parseSourceDocument(vaultId, file.path, content)),
+                Effect.catchTag("StorageFileMissing", () => Effect.succeed(undefined)),
+              )
+            : Effect.succeed(undefined),
+        { concurrency: READ_CONCURRENCY },
+      );
       const seen = new Map<Uuid, string>();
       type Candidate =
         | { readonly kind: "cached"; readonly etag: string; readonly source: SourceDocumentRow }
@@ -704,21 +732,14 @@ const makeSourceDocuments = Effect.gen(function* () {
             readonly kind: "read";
             readonly etag: string | null;
             readonly source: ParsedSourceDocument;
-            readonly content: string;
           };
       const candidates: Candidate[] = [];
-      for (const file of files) {
-        if (file.path.slice(file.path.lastIndexOf("/") + 1).startsWith("_")) continue;
+      for (const [index, file] of files.entries()) {
         const prior = registered.get(file.path);
-        let candidate: Candidate;
-        if (prior !== undefined && file.etag !== null && file.etag === prior.etag) {
-          candidate = { kind: "cached", etag: file.etag, source: prior };
-        } else {
-          const content = yield* storage
-            .readText(vaultOwner(vaultId), file.path)
-            .pipe(Effect.catchTag("StorageFileMissing", () => Effect.succeed(null)));
-          if (content === null) continue;
-          const source = parseSourceDocument(vaultId, file.path, content);
+        let candidate: Candidate | undefined = cached(file);
+        if (candidate === undefined) {
+          const source = reads[index];
+          if (source === undefined) continue;
           const incarnation = history.get(source.id);
           if (incarnation !== undefined) {
             if (incarnation.deletedAt !== null) continue;
@@ -742,7 +763,7 @@ const makeSourceDocuments = Effect.gen(function* () {
               }),
             );
           }
-          candidate = { kind: "read", etag: file.etag, source, content };
+          candidate = { kind: "read", etag: file.etag, source };
         }
         const earlier = seen.get(candidate.source.id);
         if (earlier !== undefined && earlier !== file.path) {
@@ -761,8 +782,7 @@ const makeSourceDocuments = Effect.gen(function* () {
           discovered.push({ source: candidate.source, etag: candidate.etag });
         } else {
           const source = yield* refresh(candidate.source, registeredById.get(candidate.source.id));
-          if (source !== undefined)
-            discovered.push({ source, etag: candidate.etag, content: candidate.content });
+          if (source !== undefined) discovered.push({ source, etag: candidate.etag });
         }
       }
       for (const source of registered.values()) {

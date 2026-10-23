@@ -938,7 +938,17 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
                   derivedExtras: card.derivedExtras,
                   updatedAt: sql`now()`,
                 })
-                .where(eq(sourceDocuments.id, document.id));
+                .where(
+                  and(
+                    eq(sourceDocuments.id, document.id),
+                    sql`(${sourceDocuments.title}, ${sourceDocuments.precis}, ${sourceDocuments.author},
+                      ${sourceDocuments.publishedDate}, ${sourceDocuments.genre},
+                      to_jsonb(${sourceDocuments.tags}), ${sourceDocuments.derivedExtras})
+                      is distinct from (${card.title}::text, ${card.precis}::text, ${card.author}::text,
+                      ${card.publishedDate}::text, ${card.genre}::text,
+                      ${JSON.stringify(card.tags)}::jsonb, ${JSON.stringify(card.derivedExtras)}::jsonb)`,
+                  ),
+                );
             }),
         );
       }

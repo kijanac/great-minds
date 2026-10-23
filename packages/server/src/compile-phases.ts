@@ -47,7 +47,7 @@ import {
 } from "./markdown.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
-import { ContentStorage, vaultOwner } from "./storage.ts";
+import { ContentStorage, READ_CONCURRENCY, vaultOwner } from "./storage.ts";
 import { RandomBytesService } from "./random.ts";
 
 const compareText = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
@@ -68,7 +68,6 @@ type SearchDocument =
       readonly path: string;
       readonly etag: string | null;
       readonly source: typeof sourceDocuments.$inferSelect;
-      readonly content?: string;
     }
   | { readonly kind: "wiki"; readonly path: string; readonly etag: string | null };
 
@@ -153,17 +152,6 @@ export const CompilePhasesLive = Layer.effect(
     const rebuildSearchScope = (vaultId: Uuid, runId: Uuid, scope: "raw" | "wiki") =>
       Effect.gen(function* () {
         const prefix = `${scope}/`;
-        const existing = yield* db.query((d) => d
-          .select({
-            path: searchIndex.path,
-            chunkIndex: searchIndex.chunkIndex,
-            contentHash: searchIndex.contentHash,
-          })
-          .from(searchIndex)
-          .where(and(eq(searchIndex.vaultId, vaultId), like(searchIndex.path, `${prefix}%`))));
-        const existingHashes = new Map(
-          existing.map((row) => [`${row.path}\u0000${row.chunkIndex}`, row.contentHash]),
-        );
         const files: SearchDocument[] =
           scope === "raw"
             ? (yield* sourceRegistry.discover(vaultId)).map((document) => ({
@@ -181,137 +169,188 @@ export const CompilePhasesLive = Layer.effect(
           document.kind === "source"
             ? sourceRegistry.withCurrent(document.source, mutate)
             : db.transaction((tx) => mutate(tx).pipe(Effect.as(true)));
-        const current = new Map<SearchDocument, Set<number>>();
-        const changed: { readonly document: SearchDocument; readonly chunk: SearchChunk }[] = [];
+        const reportProgress = (done: number) =>
+          scope === "raw"
+            ? pipeline.updateProgress(
+                runId,
+                "ingest",
+                "progress",
+                progressSteps(INGEST_STEP_LABELS, "index_sources", {
+                  counts: { index_sources: [done, files.length] },
+                }),
+              )
+            : Effect.void;
+        yield* reportProgress(0);
 
-        if (scope === "raw") {
-          yield* pipeline.updateProgress(
-            runId,
-            "ingest",
-            "progress",
-            progressSteps(INGEST_STEP_LABELS, "index_sources", {
-              counts: { index_sources: [0, files.length] },
-            }),
-          );
-        }
-
-        for (const [fileIndex, file] of files.entries()) {
-          const hasMetadata = existingHashes.has(`${file.path}\u0000-1`);
-          if (
-            file.kind === "source" &&
-            file.etag !== null &&
-            file.source.etag === file.etag &&
-            hasMetadata
-          ) {
-            current.set(
-              file,
-              new Set(
-                existing.filter((row) => row.path === file.path).map((row) => row.chunkIndex),
+        const indexedPaths: string[] = [];
+        let indexedChunks = 0;
+        let embedOffset = 0;
+        for (let start = 0; start < files.length; start += 100) {
+          const batch = files.slice(start, start + 100);
+          const indexed = yield* db.query((d) => d
+            .select({
+              path: searchIndex.path,
+              chunkIndex: searchIndex.chunkIndex,
+              contentHash: searchIndex.contentHash,
+            })
+            .from(searchIndex)
+            .where(
+              and(
+                eq(searchIndex.vaultId, vaultId),
+                inArray(
+                  searchIndex.path,
+                  batch.map((file) => file.path),
+                ),
               ),
-            );
-            continue;
+            ));
+          const existing = new Map<string, Map<number, string>>();
+          for (const row of indexed) {
+            const hashes = existing.get(row.path) ?? new Map<number, string>();
+            hashes.set(row.chunkIndex, row.contentHash);
+            existing.set(row.path, hashes);
           }
-          const parsed =
-            file.kind === "source"
-              ? file.content === undefined
-                ? yield* sourceRegistry.readCurrent(file.source)
-                : parseFrontmatter(file.content)
-              : parseFrontmatter(yield* storage.readText(vaultOwner(vaultId), file.path));
-          if (parsed === undefined) continue;
-          const chunks = chunkDocument(parsed);
-          current.set(file, new Set(chunks.map((chunk) => chunk.chunkIndex)));
-          for (const chunk of chunks) {
-            if (existingHashes.get(`${file.path}\u0000${chunk.chunkIndex}`) !== chunk.contentHash) {
-              changed.push({ document: file, chunk });
+
+          const stale: SearchDocument[] = [];
+          for (const file of batch) {
+            if (
+              file.kind === "source" &&
+              file.etag !== null &&
+              file.source.etag === file.etag &&
+              existing.get(file.path)?.has(-1)
+            )
+              indexedChunks += existing.get(file.path)?.size ?? 0;
+            else stale.push(file);
+          }
+          const markdown = yield* Effect.forEach(
+            stale,
+            (file) =>
+              file.kind === "source"
+                ? sourceRegistry.readCurrent(file.source)
+                : storage
+                    .readText(vaultOwner(vaultId), file.path)
+                    .pipe(Effect.map((content) => parseFrontmatter(content))),
+            { concurrency: READ_CONCURRENCY },
+          );
+          const documents: {
+            readonly file: SearchDocument;
+            readonly indexes: ReadonlySet<number>;
+            readonly changed: readonly SearchChunk[];
+          }[] = [];
+          for (const [index, file] of stale.entries()) {
+            const parsed = markdown[index];
+            if (parsed === undefined) continue;
+            const chunks = chunkDocument(parsed);
+            documents.push({
+              file,
+              indexes: new Set(chunks.map((chunk) => chunk.chunkIndex)),
+              changed: chunks.filter(
+                (chunk) => existing.get(file.path)?.get(chunk.chunkIndex) !== chunk.contentHash,
+              ),
+            });
+          }
+
+          const pending = documents.flatMap((document) =>
+            document.changed.map((chunk) => ({ document, chunk })),
+          );
+          const rows = new Map<(typeof documents)[number], PgInsertValue<typeof searchIndex>[]>();
+          const unindexed = new Set<(typeof documents)[number]>();
+          for (let offset = 0; offset < pending.length; offset += 50) {
+            const slice = pending.slice(offset, offset + 50);
+            const embedded = yield* Effect.result(
+              embeddings.embed(slice.map(({ chunk }) => chunk.body)),
+            );
+            if (embedded._tag === "Failure") {
+              if (!isTimeoutError(embedded.failure)) return yield* Effect.fail(embedded.failure);
+              const details = errorDetails(embedded.failure.cause);
+              yield* logger.warn("search_index.embed_batch_timeout", {
+                vault_id: vaultId,
+                run_id: runId,
+                scope,
+                batch_offset: embedOffset + offset,
+                batch_size: slice.length,
+                error_type: details.errorType,
+                error: details.message.slice(0, 300),
+              });
+              for (const { document } of slice) unindexed.add(document);
+              continue;
+            }
+            for (const [index, { document, chunk }] of slice.entries()) {
+              const embedding = embedded.success[index];
+              if (embedding === undefined) throw new Error(`Embedding ${index} missing from batch`);
+              const documentRows = rows.get(document) ?? [];
+              documentRows.push({
+                vaultId,
+                path: document.file.path,
+                chunkIndex: chunk.chunkIndex,
+                heading: chunk.heading,
+                body: chunk.body,
+                contentHash: chunk.contentHash,
+                tsv: sql`to_tsvector('english', ${chunk.body})`,
+                embedding: sql`${vectorLiteral(embedding)}::vector`,
+                updatedAt: sql`now()`,
+              });
+              rows.set(document, documentRows);
             }
           }
-          if (scope === "raw" && (fileIndex + 1) % 100 === 0) {
-            yield* pipeline.updateProgress(
-              runId,
-              "ingest",
-              "progress",
-              progressSteps(INGEST_STEP_LABELS, "index_sources", {
-                counts: { index_sources: [fileIndex + 1, files.length] },
+          embedOffset += pending.length;
+
+          for (const document of documents) {
+            const { file, indexes } = document;
+            const upserts = rows.get(document) ?? [];
+            const removed = [...(existing.get(file.path)?.keys() ?? [])].some(
+              (chunkIndex) => !indexes.has(chunkIndex),
+            );
+            const etag =
+              file.kind === "source" &&
+              file.etag !== null &&
+              file.etag !== file.source.etag &&
+              !unindexed.has(document)
+                ? { id: file.source.id, value: file.etag }
+                : undefined;
+            indexedChunks += indexes.size;
+            if (indexes.size > 0) indexedPaths.push(file.path);
+            if (upserts.length === 0 && !removed && etag === undefined) continue;
+            yield* project(file, (tx) =>
+              Effect.gen(function* () {
+                if (upserts.length > 0)
+                  yield* tx
+                    .insert(searchIndex)
+                    .values(upserts)
+                    .onConflictDoUpdate({
+                      target: [searchIndex.vaultId, searchIndex.path, searchIndex.chunkIndex],
+                      set: {
+                        heading: sql`excluded.heading`,
+                        body: sql`excluded.body`,
+                        contentHash: sql`excluded.content_hash`,
+                        tsv: sql`excluded.tsv`,
+                        embedding: sql`excluded.embedding`,
+                        updatedAt: sql`excluded.updated_at`,
+                      },
+                    });
+                if (removed)
+                  yield* tx
+                    .delete(searchIndex)
+                    .where(
+                      and(
+                        eq(searchIndex.vaultId, vaultId),
+                        eq(searchIndex.path, file.path),
+                        indexes.size === 0
+                          ? undefined
+                          : notInArray(searchIndex.chunkIndex, [...indexes]),
+                      ),
+                    );
+                if (etag !== undefined)
+                  yield* tx
+                    .update(sourceDocuments)
+                    .set({ etag: etag.value })
+                    .where(eq(sourceDocuments.id, etag.id));
               }),
             );
           }
-        }
-
-        if (scope === "raw") {
-          yield* pipeline.updateProgress(
-            runId,
-            "ingest",
-            "progress",
-            progressSteps(INGEST_STEP_LABELS, "index_sources", {
-              counts: { index_sources: [files.length, files.length] },
-            }),
-          );
-        }
-
-        const unindexedPaths = new Set<string>();
-        for (let offset = 0; offset < changed.length; offset += 50) {
-          const batch = changed.slice(offset, offset + 50);
-          const embedded = yield* Effect.result(
-            embeddings.embed(batch.map(({ chunk }) => chunk.body)),
-          );
-          if (embedded._tag === "Failure") {
-            if (!isTimeoutError(embedded.failure)) return yield* Effect.fail(embedded.failure);
-            const details = errorDetails(embedded.failure.cause);
-            yield* logger.warn("search_index.embed_batch_timeout", {
-              vault_id: vaultId,
-              run_id: runId,
-              scope,
-              batch_offset: offset,
-              batch_size: batch.length,
-              error_type: details.errorType,
-              error: details.message.slice(0, 300),
-            });
-            for (const { document } of batch) unindexedPaths.add(document.path);
-            continue;
-          }
-          const byDocument = new Map<SearchDocument, PgInsertValue<typeof searchIndex>[]>();
-          for (const [index, { document, chunk }] of batch.entries()) {
-            const embedding = embedded.success[index];
-            if (embedding === undefined) throw new Error(`Embedding ${index} missing from batch`);
-            const rows = byDocument.get(document) ?? [];
-            rows.push({
-              vaultId,
-              path: document.path,
-              chunkIndex: chunk.chunkIndex,
-              heading: chunk.heading,
-              body: chunk.body,
-              contentHash: chunk.contentHash,
-              tsv: sql`to_tsvector('english', ${chunk.body})`,
-              embedding: sql`${vectorLiteral(embedding)}::vector`,
-              updatedAt: sql`now()`,
-            });
-            byDocument.set(document, rows);
-          }
-          for (const [document, rows] of byDocument) {
-            yield* project(document, (tx) =>
-              tx
-                .insert(searchIndex)
-                .values(rows)
-                .onConflictDoUpdate({
-                  target: [searchIndex.vaultId, searchIndex.path, searchIndex.chunkIndex],
-                  set: {
-                    heading: sql`excluded.heading`,
-                    body: sql`excluded.body`,
-                    contentHash: sql`excluded.content_hash`,
-                    tsv: sql`excluded.tsv`,
-                    embedding: sql`excluded.embedding`,
-                    updatedAt: sql`excluded.updated_at`,
-                  },
-                })
-                .pipe(Effect.asVoid),
-            );
-          }
+          yield* reportProgress(start + batch.length);
         }
 
         if (scope === "wiki") {
-          const currentPaths = [...current]
-            .filter(([, indexes]) => indexes.size > 0)
-            .map(([file]) => file.path);
           yield* db.query((tx) =>
             tx
               .delete(searchIndex)
@@ -319,41 +358,14 @@ export const CompilePhasesLive = Layer.effect(
                 and(
                   eq(searchIndex.vaultId, vaultId),
                   like(searchIndex.path, `${prefix}%`),
-                  currentPaths.length === 0
+                  indexedPaths.length === 0
                     ? undefined
-                    : notInArray(searchIndex.path, currentPaths),
+                    : notInArray(searchIndex.path, indexedPaths),
                 ),
               ),
           );
         }
-        for (const [document, indexes] of current) {
-          yield* project(document, (tx) =>
-            Effect.gen(function* () {
-              yield* tx
-                .delete(searchIndex)
-                .where(
-                  and(
-                    eq(searchIndex.vaultId, vaultId),
-                    eq(searchIndex.path, document.path),
-                    indexes.size === 0
-                      ? undefined
-                      : notInArray(searchIndex.chunkIndex, [...indexes]),
-                  ),
-                );
-              if (
-                document.kind === "source" &&
-                document.etag !== null &&
-                !unindexedPaths.has(document.path)
-              ) {
-                yield* tx
-                  .update(sourceDocuments)
-                  .set({ etag: document.etag, updatedAt: sql`now()` })
-                  .where(eq(sourceDocuments.id, document.source.id));
-              }
-            }),
-          );
-        }
-        return [...current.values()].reduce((total, indexes) => total + indexes.size, 0);
+        return indexedChunks;
       });
 
     const materializeCachedArticle = (
