@@ -1414,9 +1414,10 @@ Errors: `400 BadRequest`, `403 Forbidden`, `404 NotFound`, `422 Validation`.
 
 Auth: required.
 
-Ingests a reader's suggestion about a document in the vault (a disagreement,
-correction, addition, or restructuring note). The server attaches the
-suggestion to the relevant source.
+Stores a reader's suggestion about a passage of a vault document as a new user
+source; an editor's suggestion becomes a review proposal instead. When
+`anchored_section` is given, the stored note quotes it above the suggestion
+text, so extraction sees what the suggestion responds to.
 
 Path parameters: `vault_id` (`Uuid`).
 
@@ -1425,9 +1426,8 @@ Request body (`UserSuggestion`):
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `body` | string | yes | The suggestion text. |
-| `intent` | `"disagree"` \| `"correct"` \| `"add_context"` \| `"restructure"` | yes | What kind of suggestion this is. |
 | `anchored_to` | string | no | Document the suggestion is anchored to. Defaults to `""`. |
-| `anchored_section` | string | no | Section within the document. Defaults to `""`. |
+| `anchored_section` | string | no | The passage the suggestion responds to. Defaults to `""`. |
 
 Response: `201 Created` with a `UserSuggestionResult`:
 

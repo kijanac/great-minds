@@ -2,7 +2,6 @@ import {
   FileFingerprint,
   type FileIngestBatch,
   type Uuid,
-  type UserSuggestionIntent,
   type UserSuggestionResult,
 } from "@great-minds/domain";
 import { Effect } from "effect";
@@ -15,7 +14,7 @@ import { errorMessage } from "./errors";
 import { withApiErrors } from "./runtime";
 import { selectedVault } from "./selected-vault";
 
-export type { FileIngestBatch, UserSuggestionIntent, UserSuggestionResult };
+export type { FileIngestBatch, UserSuggestionResult };
 
 const PUT_CONCURRENCY = 4;
 
@@ -242,7 +241,6 @@ export async function* continueFileIngest(
 
 export function postUserSuggestion(params: {
   body: string;
-  intent: UserSuggestionIntent;
   anchoredTo: string;
   anchoredSection: string;
 }): Promise<UserSuggestionResult> {
@@ -251,7 +249,6 @@ export function postUserSuggestion(params: {
       params: { vault_id: selectedVault() },
       payload: {
         body: params.body,
-        intent: params.intent,
         anchored_to: params.anchoredTo,
         anchored_section: params.anchoredSection,
       },

@@ -18,6 +18,7 @@
   import { parseMarkdown } from "$lib/markdown";
   import type { HastNode } from "$lib/markdown-plugins";
   import { passageMark } from "$lib/passage-navigation";
+  import { selectionPassage } from "$lib/selection-passage";
   import { splitStreamingMarkdown } from "$lib/streaming-markdown";
   import type { SelectionInfo, ThreadLike } from "$lib/types";
 
@@ -404,6 +405,7 @@
       blockOffset: offset,
       quote,
       context: element.textContent ?? "",
+      passage: selectionPassage(range),
       rect: range.getBoundingClientRect(),
       exchangeId,
     });

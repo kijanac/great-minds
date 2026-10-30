@@ -57,6 +57,7 @@ export interface ThreadLike {
 }
 
 export interface SelectionInfo extends TextAnchor {
+  passage: string;
   rect: DOMRect;
   exchangeId: Uuid;
 }

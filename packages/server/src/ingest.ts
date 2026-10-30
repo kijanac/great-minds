@@ -13,7 +13,6 @@ import {
   type SessionExchangeEvent,
   type SessionOrigin,
   type UserSuggestion,
-  type UserSuggestionIntent,
   type UserSuggestionResult,
   Uuid,
 } from "@great-minds/domain";
@@ -131,15 +130,19 @@ const utcTimestamp = (date: Date) =>
     .replaceAll(":", "")
     .replace(/\.\d{3}Z$/, "Z");
 
-const userSuggestionDest = (
-  now: Date,
-  intent: UserSuggestionIntent,
-  anchoredTo: string,
-  sourceId: Uuid,
-) => {
+const userSuggestionDest = (now: Date, anchoredTo: string, sourceId: Uuid) => {
   const anchorSlug = anchoredTo.length > 0 ? slugify(anchoredTo) || "general" : "general";
-  return `raw/user/${utcTimestamp(now)}-${anchorSlug}-${intent}-${sourceId}.md`;
+  return `raw/user/${utcTimestamp(now)}-${anchorSlug}-${sourceId}.md`;
 };
+
+const userSuggestionContent = ({ body, anchored_section: passage }: UserSuggestion) =>
+  passage.trim().length === 0
+    ? body
+    : `On this passage of the wiki:\n\n${passage
+        .trim()
+        .split("\n")
+        .map((line) => `> ${line}`)
+        .join("\n")}\n\n${body}`;
 
 const sourcePathWithId = (filePath: string, sourceId: Uuid) => {
   const parsed = posix.parse(filePath);
@@ -269,24 +272,21 @@ export const IngestServiceLive = Layer.effect(
           }
           const now = yield* clock.now;
           const sourceId = Uuid.make(randomUUID(), { disableChecks: true });
-          const dest = userSuggestionDest(now, input.intent, input.anchored_to, sourceId);
+          const dest = userSuggestionDest(now, input.anchored_to, sourceId);
+          const content = userSuggestionContent(input);
           const frontmatter = {
             sourceType: "user",
             origin: "user-suggestion",
             anchoredTo: input.anchored_to,
             anchoredSection: input.anchored_section,
-            intent: input.intent,
           };
           if (scope.role === "owner") {
             const source = yield* sourceDocumentsWrite.admit(vaultId, sourceId, dest);
-            const document = yield* publishSource(source, buildDocument(input.body, frontmatter));
+            const document = yield* publishSource(source, buildDocument(content, frontmatter));
             return { ...document, mode: "ingested" } satisfies UserSuggestionResult;
           }
           const source = yield* sourceDocumentsWrite.admit(vaultId, sourceId, dest);
-          const rendered = identifySourceMarkdown(
-            buildDocument(input.body, frontmatter),
-            sourceId,
-          );
+          const rendered = identifySourceMarkdown(buildDocument(content, frontmatter), sourceId);
           yield* proposals.createRendered(source, userId, {
             contentType: "user_suggestion",
             title: null,

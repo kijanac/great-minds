@@ -431,17 +431,8 @@ export const RawSource = Schema.Struct({
 });
 export type RawSource = typeof RawSource.Type;
 
-export const UserSuggestionIntent = Schema.Literals([
-  "disagree",
-  "correct",
-  "add_context",
-  "restructure",
-] as const);
-export type UserSuggestionIntent = typeof UserSuggestionIntent.Type;
-
 export const UserSuggestion = Schema.Struct({
   body: Schema.String,
-  intent: UserSuggestionIntent,
   anchored_to: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
   anchored_section: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
 });

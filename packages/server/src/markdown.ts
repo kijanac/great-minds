@@ -19,7 +19,6 @@ type BuildDocumentInput = {
   readonly sourceParagraphIndex?: number | null;
   readonly anchoredTo?: string | null;
   readonly anchoredSection?: string | null;
-  readonly intent?: string | null;
 };
 
 type Block = {
@@ -154,7 +153,6 @@ export const buildDocument = (content: string, input: BuildDocumentInput = {}) =
     source_paragraph_index: input.sourceParagraphIndex,
     anchored_to: input.anchoredTo,
     anchored_section: input.anchoredSection,
-    intent: input.intent,
   };
   return buildFrontmatter(known) + injectAnchors(content);
 };

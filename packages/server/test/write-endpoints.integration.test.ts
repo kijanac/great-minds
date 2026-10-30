@@ -1992,85 +1992,79 @@ describe("M3.1 write endpoint integration", () => {
     expect(replayed).toBe(204);
   });
 
-  it("branches all user suggestion intents between owner direct ingest and editor proposals", async () => {
+  it("quotes the passage in user suggestions between owner direct ingest and editor proposals", async () => {
     const { aliceToken, bobToken, carolToken } = currentFixture();
-    const intents = ["disagree", "correct", "add_context", "restructure"] as const;
 
-    for (const [index, intent] of intents.entries()) {
-      currentState().clock.set(new Date(initialTime.getTime() + index * 1000));
-      const owner = await api("POST", `/vaults/${id.vault}/ingest/user-suggestion`, aliceToken, {
-        body: `Owner ${intent} suggestion.`,
-        intent,
-        anchored_to: `Owner Anchor ${intent}`,
-        anchored_section: "section-one",
-      });
-      expect(owner.status).toBe(201);
-      expect(asRecord(owner.body).mode).toBe("ingested");
-      const ownerPath = String(asRecord(owner.body).file_path);
-      const ownerText = await readVaultFile(id.vault, ownerPath);
-      expect(ownerText).toContain("source_type: user");
-      expect(ownerText).toContain("origin: user-suggestion");
-      expect(ownerText).toContain(`intent: ${intent}`);
-      expect(ownerText).toContain(`anchored_to: Owner Anchor ${intent}`);
+    const owner = await api("POST", `/vaults/${id.vault}/ingest/user-suggestion`, aliceToken, {
+      body: "Owner suggestion.",
+      anchored_to: "Owner Anchor",
+      anchored_section: "The passage the owner selected.",
+    });
+    expect(owner.status).toBe(201);
+    expect(asRecord(owner.body).mode).toBe("ingested");
+    const ownerText = await readVaultFile(id.vault, String(asRecord(owner.body).file_path));
+    expect(ownerText).toContain("source_type: user");
+    expect(ownerText).toContain("origin: user-suggestion");
+    expect(ownerText).toContain("anchored_to: Owner Anchor");
+    expect(ownerText).toContain("> The passage the owner selected.");
+    expect(ownerText).toContain("Owner suggestion.");
+    expect(ownerText).not.toContain("intent:");
 
-      currentState().clock.set(new Date(initialTime.getTime() + (index + 10) * 1000));
-      const editor = await api("POST", `/vaults/${id.vault}/ingest/user-suggestion`, bobToken, {
-        body: `Editor ${intent} suggestion.`,
-        intent,
-        anchored_to: `Editor Anchor ${intent}`,
-        anchored_section: "section-two",
-      });
-      expect(editor.status).toBe(201);
-      const editorResult = asRecord(editor.body);
-      expect(editorResult.mode).toBe("proposed");
-      const editorId = String(editorResult.id);
-      const editorPath = String(editorResult.file_path);
-      const proposalRows = await runDb(
-        Effect.gen(function* () {
-          const db = yield* Database;
-          return yield* db
-            .query((d) =>
-              d
-                .select()
-                .from(sourceProposals)
-                .where(
-                  and(
-                    eq(sourceProposals.vaultId, id.vault),
-                    eq(sourceProposals.destPath, editorPath),
-                  ),
+    currentState().clock.set(new Date(initialTime.getTime() + 1000));
+    const editor = await api("POST", `/vaults/${id.vault}/ingest/user-suggestion`, bobToken, {
+      body: "Editor suggestion.",
+      anchored_to: "Editor Anchor",
+      anchored_section: "The passage the editor selected.",
+    });
+    expect(editor.status).toBe(201);
+    const editorResult = asRecord(editor.body);
+    expect(editorResult.mode).toBe("proposed");
+    const editorPath = String(editorResult.file_path);
+    const proposalRows = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db
+          .query((d) =>
+            d
+              .select()
+              .from(sourceProposals)
+              .where(
+                and(
+                  eq(sourceProposals.vaultId, id.vault),
+                  eq(sourceProposals.destPath, editorPath),
                 ),
-            )
-            .pipe(Effect.orDie);
-        }),
-      );
-      expect(proposalRows).toHaveLength(1);
-      expect(proposalRows[0]).toMatchObject({
-        status: "PENDING",
-        contentType: "user_suggestion",
-        sourceId: editorId,
-      });
-      const staged = await readFile(
-        join(currentState().storageRoot, "proposals", `${proposalRows[0]!.id}.md`),
-        "utf8",
-      );
-      expect(staged).toContain(`intent: ${intent}`);
-      expect(staged).toContain(`anchored_to: Editor Anchor ${intent}`);
-    }
+              ),
+          )
+          .pipe(Effect.orDie);
+      }),
+    );
+    expect(proposalRows).toHaveLength(1);
+    expect(proposalRows[0]).toMatchObject({
+      status: "PENDING",
+      contentType: "user_suggestion",
+      sourceId: String(editorResult.id),
+    });
+    const staged = await readFile(
+      join(currentState().storageRoot, "proposals", `${proposalRows[0]!.id}.md`),
+      "utf8",
+    );
+    expect(staged).toContain("anchored_to: Editor Anchor");
+    expect(staged).toContain("> The passage the editor selected.");
+    expect(staged).toContain("Editor suggestion.");
+    expect(staged).not.toContain("intent:");
 
-    expect(await countTable(sourceDocuments)).toBe(4);
-    expect(await countTable(sourceProposals)).toBe(4);
+    expect(await countTable(sourceDocuments)).toBe(1);
+    expect(await countTable(sourceProposals)).toBe(1);
     expect(await countTable(compileIntents)).toBe(1);
 
     const blank = await api("POST", `/vaults/${id.vault}/ingest/user-suggestion`, aliceToken, {
       body: "   ",
-      intent: "correct",
     });
     expect(blank.status).toBe(400);
     expect(blank.body).toMatchObject({ detail: "body is empty" });
 
     const viewer = await api("POST", `/vaults/${id.vault}/ingest/user-suggestion`, carolToken, {
       body: "Viewer suggestion",
-      intent: "correct",
     });
     expect(viewer.status).toBe(403);
   });

@@ -1,18 +1,12 @@
 <script lang="ts">
-  import type {
-    UserSuggestionIntent,
-    UserSuggestionResult,
-  } from "$lib/api/ingest";
+  import type { UserSuggestionResult } from "$lib/api/ingest";
   import { errorMessage } from "$lib/api/errors";
-  import { CHIP_ACTIVE, CHIP_BASE, CHIP_INACTIVE } from "$lib/chip";
   import { Button } from "$lib/components/ui/button";
   import { Label } from "$lib/components/ui/label";
   import { Textarea } from "$lib/components/ui/textarea";
-  import { cn } from "$lib/utils";
 
   export interface SuggestionPayload {
     body: string;
-    intent: UserSuggestionIntent;
   }
 
   type SuggestionMode = UserSuggestionResult["mode"];
@@ -31,42 +25,11 @@
     onClose: () => void;
   } = $props();
 
-  const INTENT_OPTIONS = [
-    {
-      value: "disagree",
-      label: "disagree",
-      hint: "Offer a different interpretation or position.",
-    },
-    {
-      value: "correct",
-      label: "correct",
-      hint: "Fix a factual error or sharpen a specific claim.",
-    },
-    {
-      value: "add_context",
-      label: "add context",
-      hint: "Add evidence, background, or a missing angle.",
-    },
-    {
-      value: "restructure",
-      label: "restructure",
-      hint: "Suggest a better scope, emphasis, or organization.",
-    },
-  ] as const satisfies readonly {
-    value: UserSuggestionIntent;
-    label: string;
-    hint: string;
-  }[];
-
-  let intent = $state<UserSuggestionIntent>("add_context");
   let body = $state("");
   let submitting = $state(false);
   let error = $state<string | null>(null);
   let submittedMode = $state<SuggestionMode | null>(null);
 
-  const selectedIntent = $derived(
-    INTENT_OPTIONS.find((option) => option.value === intent)!,
-  );
   const canSubmit = $derived(body.trim().length > 0 && !submitting);
 
   async function submit(event: SubmitEvent) {
@@ -75,7 +38,7 @@
     submitting = true;
     error = null;
     try {
-      submittedMode = await onSubmit({ body: body.trim(), intent });
+      submittedMode = await onSubmit({ body: body.trim() });
     } catch (cause) {
       error = errorMessage(
         cause,
@@ -163,39 +126,6 @@
           </blockquote>
         </div>
 
-        <fieldset class="space-y-2" disabled={submitting}>
-          <legend
-            class="font-mono text-[length:var(--text-chrome)] text-warm-ghost uppercase"
-          >
-            intent
-          </legend>
-          <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {#each INTENT_OPTIONS as option (option.value)}
-              <Button
-                type="button"
-                variant="ghost"
-                aria-pressed={intent === option.value}
-                onclick={() => (intent = option.value)}
-                title={option.hint}
-                class={cn(
-                  CHIP_BASE,
-                  "min-h-11 w-full justify-center whitespace-normal",
-                  intent === option.value ? CHIP_ACTIVE : CHIP_INACTIVE,
-                )}
-              >
-                {option.label}
-              </Button>
-            {/each}
-          </div>
-          <p
-            id="suggestion-intent-hint"
-            class="text-pretty font-mono text-[length:var(--text-chrome)] leading-relaxed text-warm-ghost"
-            aria-live="polite"
-          >
-            {selectedIntent.hint}
-          </p>
-        </fieldset>
-
         <div class="space-y-2">
           <Label
             for="suggestion-body"
@@ -210,10 +140,8 @@
             autofocus
             disabled={submitting}
             aria-invalid={error !== null}
-            aria-describedby={error
-              ? "suggestion-intent-hint suggestion-body-error"
-              : "suggestion-intent-hint"}
-            placeholder="What should the knowledge base understand instead?"
+            aria-describedby={error ? "suggestion-body-error" : undefined}
+            placeholder="What should the knowledge base know about this passage?"
             class="min-h-28 max-h-52 resize-y rounded-sm border-ink-border bg-transparent font-serif text-[length:var(--text-body)] leading-relaxed text-foreground placeholder:text-input focus-visible:border-gold-dim focus-visible:ring-0"
           />
           {#if error}

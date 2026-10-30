@@ -89,7 +89,7 @@ Checked and ruled out — fully implemented on main, fully captured in current d
 
 **From `refactor_plan.md` / `context.md`:**
 - Single ingress rail with `source_type` frontmatter (document/user/lint/session) — built (`ingest_service.py`, `documents/models.py`); the `lint` ingress value was never exercised since the lint agent never landed.
-- Structured user-suggestion intent picker (DISAGREE/CORRECT/ADD_CONTEXT/RESTRUCTURE) with anchor provenance in frontmatter — built end to end: article selection popover → same-surface suggestion composer → `postUserSuggestion` → owner ingest or editor review proposal.
+- Structured user-suggestion intent picker (DISAGREE/CORRECT/ADD_CONTEXT/RESTRUCTURE) with anchor provenance in frontmatter — built end to end: article selection popover → same-surface suggestion composer → `postUserSuggestion` → owner ingest or editor review proposal. The intent picker was later removed: no model read the intent, and the stored note now quotes the selected passage so extraction sees what it responds to.
 - UUID7 + slug-continuity identity scheme — built, carried Concept→Topic.
 - Archive/supersession flow (M7) — built (`abstract/validate.py`, `superseded_by` pointers).
 - documents-table split into `source_documents`/`wiki_articles` with article-ID backlinks — fully executed; `context.md` contains no unexecuted future-work items.
