@@ -40,7 +40,7 @@ Ideas, open questions, and deferred work items mined from superseded planning do
 
 ## Product / UX
 
-**Worldview vs. research mode as an explicit vault-creation toggle** — `architecture_notes_and_convo_snippets.md` (opening brain-dump + mode-specific render-prompt fork) + `refactor_plan.md` Phase 0 (explicitly deferred there too) — Two discrete modes chosen at vault creation, each forking the article-writing system prompt: encyclopedic/attributive vs. speaking-from-within-the-corpus. Current vault config (`kinds` + `thematic_hint`) has no mode field. Since 2026-10-22 the default render prompt writes every article from within the sources' standpoint, matching the query stance, so the open idea is only a per-vault toggle back to the encyclopedic/attributive style.
+**Worldview vs. research mode as an explicit vault-creation toggle** — `architecture_notes_and_convo_snippets.md` (opening brain-dump + mode-specific render-prompt fork) + `refactor_plan.md` Phase 0 (explicitly deferred there too) — Two discrete modes chosen at vault creation, each forking the article-writing system prompt: encyclopedic/attributive vs. speaking-from-within-the-corpus. Current vault config (`kinds` + `thematic_hint`) has no mode field. The default render prompt is encyclopedic and attributive, attributing positions the way someone who shares the sources' view would; the open idea is a per-vault toggle to writing from within the sources' standpoint.
 
 ## Infra / Ops
 

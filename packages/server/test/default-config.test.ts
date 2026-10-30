@@ -94,7 +94,7 @@ describe("default prompts", () => {
       "extract.md": "0d589c31e7c6413e4aaaea6f70b36d9c36a8a81aa2bfc024477779e4f3c62dda",
       "query.md": "d02c29eb9d1367ef61e230741aee22feb3a2dea6564956ff2a433a34c876afee",
       "query_btw.md": "1415f3050b8c6b36867f2f0390281c775a3103991a6ad5a3e296fd7d42cdc138",
-      "render.md": "8a75adf662a1f06acf16c412a073e2b67192d96997b50acd9ee41c3587d9088b",
+      "render.md": "b5dea1a1d30f7b4574e8fbb80bc70ad839de6ccc455b31576b4a920a4a130ad7",
       "synthesize.md": "9b122a4e2f11e9fb83428c321cb2cc70315105ca2660e350babc573bc72370bf",
       "synthesize_decompose.md":
         "74301aece5c13aa01e94d14db1a24f66a2d6ff8458035c2e13e79e1f95195f3a",
