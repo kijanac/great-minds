@@ -57,6 +57,11 @@ describe("server config defaults", () => {
     expect(overridden.renderTemperature).toEqual(Option.some(0.4));
   });
 
+  it("embeds four search batches at a time unless configured otherwise", async () => {
+    expect((await loadConfig({})).compileEmbedConcurrency).toBe(4);
+    expect((await loadConfig({ COMPILE_EMBED_CONCURRENCY: "2" })).compileEmbedConcurrency).toBe(2);
+  });
+
   it("runs the themes Update pipeline unless the registry fallback is chosen", async () => {
     expect((await loadConfig({})).compilePipeline).toBe("themes");
     expect((await loadConfig({ COMPILE_PIPELINE: "registry" })).compilePipeline).toBe("registry");

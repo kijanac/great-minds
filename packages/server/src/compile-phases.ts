@@ -257,11 +257,16 @@ export const CompilePhasesLive = Layer.effect(
           );
           const rows = new Map<(typeof documents)[number], PgInsertValue<typeof searchIndex>[]>();
           const unindexed = new Set<(typeof documents)[number]>();
-          for (let offset = 0; offset < pending.length; offset += 50) {
+          const embeddedBatches = yield* Effect.forEach(
+            Array.from({ length: Math.ceil(pending.length / 50) }, (_unused, index) => index * 50),
+            (offset) =>
+              Effect.result(
+                embeddings.embed(pending.slice(offset, offset + 50).map(({ chunk }) => chunk.body)),
+              ).pipe(Effect.map((embedded) => ({ offset, embedded }))),
+            { concurrency: config.compileEmbedConcurrency },
+          );
+          for (const { offset, embedded } of embeddedBatches) {
             const slice = pending.slice(offset, offset + 50);
-            const embedded = yield* Effect.result(
-              embeddings.embed(slice.map(({ chunk }) => chunk.body)),
-            );
             if (embedded._tag === "Failure") {
               if (!isTimeoutError(embedded.failure)) return yield* Effect.fail(embedded.failure);
               const details = errorDetails(embedded.failure.cause);

@@ -37,6 +37,7 @@ export type AppConfigShape = {
   readonly renderReasoningEffort: Option.Option<ReasoningEffort>;
   readonly compileEnrichConcurrency: number;
   readonly compileWriteConcurrency: number;
+  readonly compileEmbedConcurrency: number;
   readonly compilePartitionTargetTokens: number;
   readonly compilePartitionMinFactor: number;
   readonly compilePartitionMaxFactor: number;
@@ -172,6 +173,7 @@ const appConfig = Config.all({
   ),
   compileEnrichConcurrency: positiveInt("COMPILE_ENRICH_CONCURRENCY").pipe(Config.withDefault(20)),
   compileWriteConcurrency: positiveInt("COMPILE_WRITE_CONCURRENCY").pipe(Config.withDefault(3)),
+  compileEmbedConcurrency: positiveInt("COMPILE_EMBED_CONCURRENCY").pipe(Config.withDefault(4)),
   compilePartitionTargetTokens: positiveInt("COMPILE_PARTITION_TARGET_TOKENS").pipe(
     Config.withDefault(100_000),
   ),

@@ -97,6 +97,7 @@ const config: AppConfigShape = {
   compilePremergeJaccardThreshold: 0.8,
   compileDeriveRelatedLimit: 20,
   compilePipeline: "themes",
+  compileEmbedConcurrency: 1,
   pipelineConcurrency: 1,
   goldensRandomSeed: Option.none(),
   goldensClock: Option.none(),

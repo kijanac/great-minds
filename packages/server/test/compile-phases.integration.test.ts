@@ -127,6 +127,7 @@ const config: AppConfigShape = {
   compilePremergeJaccardThreshold: 0.8,
   compileDeriveRelatedLimit: 20,
   compilePipeline: "registry",
+  compileEmbedConcurrency: 4,
   pipelineConcurrency: 1,
   goldensRandomSeed: Option.none(),
   goldensClock: Option.none(),
@@ -1165,6 +1166,18 @@ describe("M4.3a deterministic compile phases", () => {
       `---\nsource_id: ${id.source}\ntitle: Long\n---\n${paragraphs.join("\n\n")}\n`,
     );
     etags.set("raw/docs/long.md", "etag-long");
+    let inFlight = 0;
+    let mostInFlight = 0;
+    embed = async (texts) => {
+      inFlight += 1;
+      mostInFlight = Math.max(mostInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      inFlight -= 1;
+      return texts.map((text) => {
+        const paragraph = /Paragraph (\d+)/.exec(text);
+        return [1, paragraph === null ? -1 : Number(paragraph[1]), ...Array.from({ length: 1022 }, () => 0)];
+      });
+    };
     const indexed = await run(
       Effect.gen(function* () {
         const db = yield* Database;
@@ -1183,7 +1196,14 @@ describe("M4.3a deterministic compile phases", () => {
         const phases = yield* CompilePhases;
         yield* phases.ingest(id.vault, id.run);
         return yield* db
-          .query((d) => d.select({ chunkIndex: searchIndex.chunkIndex }).from(searchIndex))
+          .query((d) =>
+            d
+              .select({
+                chunkIndex: searchIndex.chunkIndex,
+                marker: sql<number>`(${searchIndex.embedding}::real[])[2]`,
+              })
+              .from(searchIndex),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -1191,6 +1211,11 @@ describe("M4.3a deterministic compile phases", () => {
       -1,
       ...paragraphs.map((_paragraph, index) => index),
     ]);
+    expect(indexed.every((row) => row.marker === (row.chunkIndex === -1 ? -1 : row.chunkIndex))).toBe(
+      true,
+    );
+    expect(mostInFlight).toBeGreaterThan(1);
+    expect(mostInFlight).toBeLessThanOrEqual(config.compileEmbedConcurrency);
   });
 
   it("extract keeps an unchanged source's ETag and date, so the next ingest reads nothing", async () => {
