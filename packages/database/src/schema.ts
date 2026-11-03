@@ -14,6 +14,7 @@ import {
   customType,
   doublePrecision,
   foreignKey,
+  halfvec,
   index,
   integer,
   jsonb,
@@ -846,6 +847,68 @@ export const ideas = pgTable(
     }).onDelete("cascade"),
     index("ix_ideas_vault_id").on(table.vaultId),
     index("ix_ideas_document_id").on(table.documentId),
+  ],
+);
+
+export const topicProposals = pgTable(
+  "topic_proposals",
+  {
+    id: uuidColumn("id").defaultRandom().primaryKey(),
+    vaultId: uuidColumn("vault_id").notNull(),
+    documentId: uuidColumn("document_id").notNull(),
+    askKey: text("ask_key").notNull(),
+    position: integer("position").notNull(),
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    inclusionTest: text("inclusion_test").notNull(),
+    ideaIds: uuidColumn("idea_ids").array().notNull(),
+    embedding: halfvec("embedding", { dimensions: 1024 }).notNull(),
+    paired: boolean("paired").default(false).notNull(),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.vaultId],
+      foreignColumns: [vaults.id],
+      name: "topic_proposals_vault_id_fkey",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.documentId],
+      foreignColumns: [sourceDocuments.id],
+      name: "topic_proposals_document_id_fkey",
+    }).onDelete("cascade"),
+    unique("topic_proposals_document_answer_position_key").on(
+      table.documentId,
+      table.askKey,
+      table.position,
+    ),
+    index("ix_topic_proposals_vault_id").on(table.vaultId),
+  ],
+);
+
+export const topicCandidates = pgTable(
+  "topic_candidates",
+  {
+    vaultId: uuidColumn("vault_id").notNull(),
+    lowerId: uuidColumn("lower_id").notNull(),
+    higherId: uuidColumn("higher_id").notNull(),
+    similarity: doublePrecision("similarity").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.lowerId, table.higherId] }),
+    foreignKey({
+      columns: [table.lowerId],
+      foreignColumns: [topicProposals.id],
+      name: "topic_candidates_lower_id_fkey",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.higherId],
+      foreignColumns: [topicProposals.id],
+      name: "topic_candidates_higher_id_fkey",
+    }).onDelete("cascade"),
+    check("topic_candidates_ordered", sql`${table.lowerId} < ${table.higherId}`),
+    index("ix_topic_candidates_vault_id").on(table.vaultId),
+    index("ix_topic_candidates_higher_id").on(table.higherId),
   ],
 );
 

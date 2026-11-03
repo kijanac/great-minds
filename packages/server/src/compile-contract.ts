@@ -16,6 +16,16 @@ export const ABSTRACT_STEP_LABELS = {
   canonicalize_registry: "Organizing topics",
   validate_registry: "Finalizing topics",
 } as const;
+export const THEMES_ABSTRACT_STEP_LABELS = {
+  propose_topics: "Finding each source's topics",
+  group_topics: "Grouping topics into themes",
+  build_articles: "Building articles from themes",
+} as const;
+export const THEMES_RENDER_STEP_LABELS = {
+  write_articles: "Writing articles",
+  link_articles: "Linking articles",
+  index_articles: "Indexing articles",
+} as const;
 export const DERIVE_STEP_LABELS = { find_related: "Connecting related topics" } as const;
 export const RENDER_STEP_LABELS = {
   plan_articles: "Planning articles",
@@ -219,7 +229,11 @@ export const resolveCompositionIdentity = (
     else remaining.push(prior);
   }
 
-  type CarryCandidate = { readonly prior: TopicComposition; readonly index: number; readonly overlap: number };
+  type CarryCandidate = {
+    readonly prior: TopicComposition;
+    readonly index: number;
+    readonly overlap: number;
+  };
   const carryCandidates: CarryCandidate[] = [];
   for (const prior of remaining) {
     const surviving = prior.ideaIds.filter((ideaId) => universe.has(ideaId));

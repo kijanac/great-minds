@@ -33,6 +33,7 @@ import {
   type ValidatedTopic,
 } from "./compile-contract.ts";
 import { makeCompileLlmCore } from "./compile-llm-core.ts";
+import { makeThemesPipeline } from "./compile-themes-pipeline.ts";
 import { AppConfig } from "./config.ts";
 import { bodyContentHash, contentHash, fileContentHash } from "./crypto.ts";
 import { EmbeddingsService, isTimeoutError, vectorLiteral } from "./embeddings.ts";
@@ -499,6 +500,19 @@ export const CompilePhasesLive = Layer.effect(
       materializeArticle: materializeCachedArticle,
       rebuildWiki: (vaultId, runId) => rebuildSearchScope(vaultId, runId, "wiki"),
     });
+    const themesPipeline = makeThemesPipeline({
+      config,
+      db,
+      embeddings,
+      languageModel,
+      logger,
+      pipeline,
+      storage,
+      archiveTransitions: applyArchiveTransitions,
+      materializeArticle: materializeCachedArticle,
+      rebuildWiki: (vaultId, runId) => rebuildSearchScope(vaultId, runId, "wiki"),
+    });
+    const themes = config.compilePipeline === "themes";
 
     return {
       archiveTransitions: applyArchiveTransitions,
@@ -521,7 +535,7 @@ export const CompilePhasesLive = Layer.effect(
           );
         }),
       extract: llmCore.extract,
-      abstract: llmCore.abstract,
+      abstract: themes ? themesPipeline.abstract : llmCore.abstract,
       derive: (vaultId, runId, validated) =>
         Effect.gen(function* () {
           if (validated.length === 0) {
@@ -667,7 +681,7 @@ export const CompilePhasesLive = Layer.effect(
             }),
           );
         }),
-      render: llmCore.render,
+      render: themes ? themesPipeline.render : llmCore.render,
       verify: (vaultId, runId) =>
         Effect.gen(function* () {
           yield* pipeline.updateProgress(

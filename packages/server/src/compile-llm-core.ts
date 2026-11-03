@@ -2286,7 +2286,7 @@ export const premergeTopics = (
     .toSorted((left, right) => compareText(left.slug, right.slug));
 };
 
-const slugifyRegistry = (title: string, seen: Set<string>) => {
+export const slugifyRegistry = (title: string, seen: Set<string>) => {
   const base =
     title
       .toLowerCase()
