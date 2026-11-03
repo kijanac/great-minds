@@ -129,6 +129,21 @@
           </ul>
         {/if}
 
+        {#each stage.warnings as warning (warning.message)}
+          <div
+            class="mt-3 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-red-400/90"
+          >
+            <p>{warning.count} {warning.message}</p>
+            {#if warning.items.length > 0}
+              <ul class="mt-1 space-y-0.5 text-warm-ghost">
+                {#each warning.items as item, index (index)}
+                  <li class="[overflow-wrap:anywhere]">{item}</li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        {/each}
+
         {#if hasCount}
           <Progress
             value={(stage.done / stage.total) * 100}

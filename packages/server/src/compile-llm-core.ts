@@ -670,7 +670,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
 
       const ready: { readonly document: SourceRow; readonly card: SourceCard }[] = [];
       let documentsCompleted = 0;
-      let documentsFailed = 0;
+      const unread: string[] = [];
       yield* Effect.forEach(
         documents,
         (document) =>
@@ -726,7 +726,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
             if (result._tag === "Success") {
               if (result.success !== undefined) ready.push({ document, card: result.success });
             } else {
-              documentsFailed += 1;
+              unread.push(document.title ?? document.filePath);
               const details = errorDetails(result.failure);
               yield* logger.warn("doc_failed", {
                 vault_id: vaultId,
@@ -749,11 +749,13 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           }),
         { concurrency: config.compileEnrichConcurrency, discard: true },
       );
-      if (documentsFailed > 0) {
-        yield* pipeline.recordShortfall(
-          runId,
-          `${documentsFailed} of ${documents.length} documents could not be read`,
-        );
+      if (unread.length > 0) {
+        yield* pipeline.recordWarning(runId, {
+          phase: "extract",
+          message: `of ${documents.length} documents could not be read`,
+          count: unread.length,
+          items: unread.toSorted(),
+        });
       }
 
       const existing = new Set(
@@ -1845,10 +1847,12 @@ const synthesizeTopics = (
       { concurrency: options.config.compileEnrichConcurrency },
     );
     if (chunksFailed > 0) {
-      yield* options.pipeline.recordShortfall(
-        options.runId,
-        `${chunksFailed} of ${chunks.length} idea groups could not be summarized; their ideas are missing from this Update`,
-      );
+      yield* options.pipeline.recordWarning(options.runId, {
+        phase: "abstract",
+        message: `of ${chunks.length} idea groups could not be summarized; their ideas are missing from this Update`,
+        count: chunksFailed,
+        items: [],
+      });
     }
     return chunkTopics.flat();
   });
@@ -3018,10 +3022,12 @@ const runRender = (options: RenderOptions) =>
       );
       const articlesFailed = rendered.filter((ok) => !ok).length;
       if (articlesFailed > 0) {
-        yield* options.pipeline.recordShortfall(
-          options.runId,
-          `${articlesFailed} of ${toRender.length} articles could not be written`,
-        );
+        yield* options.pipeline.recordWarning(options.runId, {
+          phase: "render",
+          message: `of ${toRender.length} articles could not be written`,
+          count: articlesFailed,
+          items: [],
+        });
       }
       if (!rendered.includes(true) && materialized === 0) {
         yield* options.pipeline.updateProgress(

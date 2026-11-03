@@ -4,7 +4,7 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { Effect, Option } from "effect";
 
 import { buildArticles } from "./compile-articles.ts";
-import { makeAskRunner } from "./compile-asks.ts";
+import { makeAskRunner, type Progress } from "./compile-asks.ts";
 import {
   THEMES_ABSTRACT_STEP_LABELS,
   THEMES_RENDER_STEP_LABELS,
@@ -50,8 +50,8 @@ export const makeThemesPipeline = (options: {
   const { config, db, embeddings, languageModel, logger, pipeline, storage } = options;
   const runnerFor = (vaultId: Uuid, runId: Uuid) =>
     makeAskRunner({ db, languageModel, logger }, { vaultId, runId });
-  const shortfall = (runId: Uuid, count: number, what: string) =>
-    count === 0 ? Effect.void : pipeline.recordShortfall(runId, `${count} ${what}`);
+  const warn = (runId: Uuid, phase: string, count: number, message: string) =>
+    count === 0 ? Effect.void : pipeline.recordWarning(runId, { phase, message, count, items: [] });
   const promptsFor = (vaultId: Uuid) =>
     Effect.gen(function* () {
       const vaultConfig = yield* readVaultConfig(storage, vaultId).pipe(
@@ -65,48 +65,84 @@ export const makeThemesPipeline = (options: {
           Effect.map((text) => text.replaceAll("{vault_focus}", () => focus)),
         );
     });
-  const abstractStep = (runId: Uuid, active: string, completed: readonly string[]) =>
-    pipeline.updateProgress(
-      runId,
-      "abstract",
-      "progress",
-      progressSteps(THEMES_ABSTRACT_STEP_LABELS, active, { completed: new Set(completed) }),
+  const stepper = (runId: Uuid, phase: string, labels: Record<string, string>) => {
+    const counts: Record<string, readonly [number, number]> = {};
+    const completed = new Set<string>();
+    let active = "";
+    let written = -1;
+    const start = (step: string) =>
+      Effect.suspend(() => {
+        if (active !== "") completed.add(active);
+        active = step;
+        written = -1;
+        return pipeline.updateProgress(
+          runId,
+          phase,
+          "progress",
+          progressSteps(labels, active, { completed, counts }),
+        );
+      });
+    const progress: Progress = (step, done, total) =>
+      Effect.suspend(() => {
+        counts[step] = [done, total];
+        if (step !== active) return Effect.void;
+        if (done !== total && written >= 0 && done - written < Math.max(1, total / 100))
+          return Effect.void;
+        written = done;
+        return pipeline.updateProgress(
+          runId,
+          phase,
+          "progress",
+          progressSteps(labels, active, { completed, counts }),
+        );
+      });
+    const finish = Effect.suspend(() =>
+      pipeline.updateProgress(
+        runId,
+        phase,
+        "completed",
+        progressSteps(labels, active, { completed: new Set(Object.keys(labels)), counts }),
+      ),
     );
-  const renderStep = (runId: Uuid, active: string, completed: readonly string[]) =>
-    pipeline.updateProgress(
-      runId,
-      "render",
-      "progress",
-      progressSteps(THEMES_RENDER_STEP_LABELS, active, { completed: new Set(completed) }),
-    );
+    return { start, progress, finish };
+  };
 
   const abstract = (vaultId: Uuid, runId: Uuid) =>
     Effect.gen(function* () {
       const runner = yield* runnerFor(vaultId, runId);
       const prompt = yield* promptsFor(vaultId);
+      const steps = stepper(runId, "abstract", THEMES_ABSTRACT_STEP_LABELS);
       const themeSettings = {
         model: config.mapModel,
         proposePrompt: yield* prompt("propose_topics"),
         judgePrompt: yield* prompt("judge_same_topic"),
         concurrency: config.compileEnrichConcurrency,
         pivotsInFlight: PIVOTS_IN_FLIGHT,
+        progress: steps.progress,
       };
-      yield* abstractStep(runId, "propose_topics", []);
+      yield* steps.start("propose_topics");
       const proposed = yield* proposeTopics({ db, embeddings, runner }, vaultId, themeSettings);
-      yield* abstractStep(runId, "group_topics", ["propose_topics"]);
+      yield* steps.start("group_topics");
       yield* pairCandidates(db, vaultId);
       const grouped = yield* groupThemes({ db, embeddings, runner }, vaultId, themeSettings);
-      yield* abstractStep(runId, "build_articles", ["propose_topics", "group_topics"]);
+      yield* steps.start("build_articles");
       const built = yield* buildArticles({ db, runner }, vaultId, grouped.themes, {
         model: config.mapModel,
         mergePrompt: yield* prompt("judge_same_entry"),
         placePrompt: yield* prompt("place_in_article"),
         concurrency: config.compileEnrichConcurrency,
         pivotsInFlight: PIVOTS_IN_FLIGHT,
+        progress: steps.progress,
       });
-      yield* shortfall(runId, proposed.failedDocuments, "documents could not be read for topics");
-      yield* shortfall(
+      yield* warn(
         runId,
+        "abstract",
+        proposed.failedDocuments,
+        "documents could not be read for topics",
+      );
+      yield* warn(
+        runId,
+        "abstract",
         grouped.failedJudgments + built.failedQuestions,
         "grouping questions failed",
       );
@@ -173,14 +209,7 @@ export const makeThemesPipeline = (options: {
               },
             }),
         );
-      yield* pipeline.updateProgress(
-        runId,
-        "abstract",
-        "completed",
-        progressSteps(THEMES_ABSTRACT_STEP_LABELS, "build_articles", {
-          completed: new Set(Object.keys(THEMES_ABSTRACT_STEP_LABELS)),
-        }),
-      );
+      yield* steps.finish;
       return validated;
     });
 
@@ -188,7 +217,8 @@ export const makeThemesPipeline = (options: {
     Effect.gen(function* () {
       const runner = yield* runnerFor(vaultId, runId);
       const prompt = yield* promptsFor(vaultId);
-      yield* renderStep(runId, "write_articles", []);
+      const steps = stepper(runId, "render", THEMES_RENDER_STEP_LABELS);
+      yield* steps.start("write_articles");
       const written = yield* writeArticles(
         { db, runner },
         vaultId,
@@ -204,9 +234,10 @@ export const makeThemesPipeline = (options: {
           temperature: Option.getOrUndefined(config.renderTemperature),
           reasoningEffort: Option.getOrUndefined(config.renderReasoningEffort),
           concurrency: config.compileWriteConcurrency,
+          progress: steps.progress,
         },
       );
-      yield* renderStep(runId, "link_articles", ["write_articles"]);
+      yield* steps.start("link_articles");
       const linked = yield* findLinks(
         { embeddings, runner },
         validated.map((topic) => ({
@@ -222,9 +253,10 @@ export const makeThemesPipeline = (options: {
           pickPrompt: yield* prompt("pick_link_target"),
           checkPrompt: yield* prompt("check_link"),
           concurrency: config.compileEnrichConcurrency,
+          progress: steps.progress,
         },
       );
-      yield* renderStep(runId, "index_articles", ["write_articles", "link_articles"]);
+      yield* steps.start("index_articles");
       const topicById = new Map(validated.map((topic) => [topic.topicId, topic]));
       const live = new Set(written.articles.map((article) => article.id));
       const hrefOf = (target: Uuid) => {
@@ -251,21 +283,15 @@ export const makeThemesPipeline = (options: {
               targetTopicId: link.target,
             });
       if (edges.size > 0) yield* db.query((d) => d.insert(topicLinks).values([...edges.values()]));
-      yield* shortfall(
+      yield* warn(
         runId,
+        "render",
         written.failedArticles,
         `of ${validated.length} articles could not be written`,
       );
-      yield* shortfall(runId, linked.failedQuestions, "link questions failed");
+      yield* warn(runId, "render", linked.failedQuestions, "link questions failed");
       yield* options.rebuildWiki(vaultId, runId);
-      yield* pipeline.updateProgress(
-        runId,
-        "render",
-        "completed",
-        progressSteps(THEMES_RENDER_STEP_LABELS, "index_articles", {
-          completed: new Set(Object.keys(THEMES_RENDER_STEP_LABELS)),
-        }),
-      );
+      yield* steps.finish;
     });
 
   return { abstract, render };

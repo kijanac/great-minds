@@ -296,6 +296,33 @@ afterEach(async () => {
   }
 });
 
+const ingestStage = {
+  phase: "ingest",
+  steps: [
+    {
+      key: "index_sources",
+      label: "Indexing for search",
+      status: "running" as const,
+      done: 1,
+      total: 2,
+      detail: "",
+    },
+  ],
+};
+const publishStage = {
+  phase: "publish",
+  steps: [
+    {
+      key: "finalize_compile",
+      label: "Finalizing compile",
+      status: "completed" as const,
+      done: 1,
+      total: 1,
+      detail: "",
+    },
+  ],
+};
+
 describe("compile and job HTTP routes", () => {
   it("submits a fresh run, coalesces against the pending intent, lists it, and reads it", async () => {
     const first = await request(`/v1/vaults/${ids.vault}/compile`, current().aliceToken, {
@@ -310,7 +337,8 @@ describe("compile and job HTTP routes", () => {
       status: "pending",
       current_phase: "",
       phase_status: "",
-      progress_steps: [],
+      stages: [],
+      warnings: [],
       error: null,
       stream_url: `/jobs/${ids.run}/stream`,
     });
@@ -361,7 +389,6 @@ describe("compile and job HTTP routes", () => {
             status: "pending",
             currentPhase: "",
             phaseStatus: "",
-            progressSteps: [],
           }))
           .pipe(Effect.orDie),
       ),
@@ -528,7 +555,6 @@ describe("job progress SSE", () => {
             status: "pending",
             currentPhase: "",
             phaseStatus: "",
-            progressSteps: [],
             createdAt: now,
             updatedAt: now,
           }))
@@ -552,16 +578,7 @@ describe("job progress SSE", () => {
             status: "running",
             currentPhase: "ingest",
             phaseStatus: "progress",
-            progressSteps: [
-              {
-                key: "index_sources",
-                label: "Indexing for search",
-                status: "running",
-                done: 1,
-                total: 2,
-                detail: "",
-              },
-            ],
+            stages: [ingestStage],
             updatedAt: new Date("2026-07-12T12:00:01Z"),
           })
           .where(eq(pipelineRuns.id, ids.run)))
@@ -577,16 +594,7 @@ describe("job progress SSE", () => {
             status: "completed",
             currentPhase: "publish",
             phaseStatus: "completed",
-            progressSteps: [
-              {
-                key: "finalize_compile",
-                label: "Finalizing compile",
-                status: "completed",
-                done: 1,
-                total: 1,
-                detail: "",
-              },
-            ],
+            stages: [ingestStage, publishStage],
             updatedAt: new Date("2026-07-12T12:00:02Z"),
             completedAt: new Date("2026-07-12T12:00:02Z"),
           })
@@ -606,6 +614,7 @@ describe("job progress SSE", () => {
     expect(
       events.slice(1, 4).map((event) => (event.data as { job_status: string }).job_status),
     ).toEqual(["pending", "running", "completed"]);
+    expect(events[3]?.data).toMatchObject({ stages: [ingestStage, publishStage], warnings: [] });
     expect(events[4]?.data).toEqual({ id: ids.run });
   });
 
@@ -621,7 +630,6 @@ describe("job progress SSE", () => {
             status: "failed",
             currentPhase: "extract",
             phaseStatus: "failed",
-            progressSteps: [],
             error: "extract seam unavailable",
             completedAt: now,
           }))
@@ -665,7 +673,6 @@ describe("job progress SSE", () => {
               status: "pending",
               currentPhase: "",
               phaseStatus: "",
-              progressSteps: [],
             }),
           )
           .pipe(Effect.orDie);

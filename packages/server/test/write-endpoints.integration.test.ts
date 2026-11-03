@@ -3093,7 +3093,6 @@ describe("M3.1 write endpoint integration", () => {
                   status: "pending",
                   currentPhase: "source_ingest",
                   phaseStatus: "started",
-                  progressSteps: [],
                   ingestTaskId: id.m32UrlReconcileRun,
                   activeTaskId: id.m32UrlReconcileRun,
                   activeTaskType: "url_ingest",
@@ -3362,7 +3361,6 @@ describe("M3.1 write endpoint integration", () => {
               status: "completed",
               currentPhase: "render",
               phaseStatus: "completed",
-              progressSteps: [],
             }),
           )
           .pipe(Effect.orDie);

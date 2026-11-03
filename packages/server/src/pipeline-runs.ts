@@ -1,5 +1,5 @@
 import { compileIntents, Database, pipelineRuns } from "@great-minds/database";
-import type { PipelineProgressStep, Uuid } from "@great-minds/domain";
+import type { PipelineProgressStep, PipelineWarning, Uuid } from "@great-minds/domain";
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
@@ -14,7 +14,7 @@ type PipelineRunsServiceShape = {
     steps: readonly PipelineProgressStep[],
     error?: string,
   ) => Effect.Effect<void>;
-  readonly recordShortfall: (runId: Uuid, shortfall: string) => Effect.Effect<void>;
+  readonly recordWarning: (runId: Uuid, warning: PipelineWarning) => Effect.Effect<void>;
   readonly failPreservingProgress: (runId: Uuid, error: string) => Effect.Effect<void>;
   readonly fail: (runId: Uuid, error: string) => Effect.Effect<void>;
   readonly recoverZombies: (olderThan: Date) => Effect.Effect<number>;
@@ -77,7 +77,11 @@ export const PipelineRunsServiceLive = Layer.effect(
         .set({
           currentPhase: phase,
           phaseStatus,
-          progressSteps: [...steps],
+          stages: sql`(
+            select coalesce(jsonb_agg(stage order by position), '[]'::jsonb)
+            from jsonb_array_elements(${pipelineRuns.stages}) with ordinality as listed(stage, position)
+            where stage ->> 'phase' <> ${phase}
+          ) || jsonb_build_array(${JSON.stringify({ phase, steps })}::jsonb)`,
           status:
             phaseStatus === "failed"
               ? "failed"
@@ -150,11 +154,15 @@ export const PipelineRunsServiceLive = Layer.effect(
           )
           .pipe(Effect.asVoid),
       updateProgress,
-      recordShortfall: (runId, shortfall) =>
+      recordWarning: (runId, warning) =>
         db.query((d) => d
           .update(pipelineRuns)
           .set({
-            error: sql`CASE WHEN strpos(coalesce(${pipelineRuns.error}, ''), ${shortfall}::text) > 0 THEN ${pipelineRuns.error} ELSE concat_ws('; ', ${pipelineRuns.error}, ${shortfall}::text) END`,
+            warnings: sql`(
+              select coalesce(jsonb_agg(listed order by position), '[]'::jsonb)
+              from jsonb_array_elements(${pipelineRuns.warnings}) with ordinality as kept(listed, position)
+              where (listed ->> 'phase', listed ->> 'message') <> (${warning.phase}, ${warning.message})
+            ) || jsonb_build_array(${JSON.stringify(warning)}::jsonb)`,
             updatedAt: sql`now()`,
           })
           .where(

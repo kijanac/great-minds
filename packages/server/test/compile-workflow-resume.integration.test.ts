@@ -31,7 +31,7 @@ const seedRun = (runId: string, intentId: string) =>
   runSql(
     Effect.gen(function* () {
       const sql = yield* PgClient.PgClient;
-      yield* sql`insert into pipeline_runs(id,vault_id,trigger,status,current_phase,phase_status,progress_steps,compile_intent_id) values (${runId}::uuid,${ids.vault}::uuid,'manual','pending','','','[]'::jsonb,${intentId}::uuid)`;
+      yield* sql`insert into pipeline_runs(id,vault_id,trigger,status,current_phase,phase_status,compile_intent_id) values (${runId}::uuid,${ids.vault}::uuid,'manual','pending','','',${intentId}::uuid)`;
       yield* sql`insert into compile_intents(id,vault_id,pipeline_run_id) values (${intentId}::uuid,${ids.vault}::uuid,${runId}::uuid)`;
     }),
   );

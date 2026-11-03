@@ -35,7 +35,8 @@ const progressSnapshot = (row: typeof pipelineRuns.$inferSelect): JobProgressSna
   job_status: row.status,
   phase: row.currentPhase,
   phase_status: row.phaseStatus,
-  steps: row.progressSteps,
+  stages: row.stages,
+  warnings: row.warnings,
   ...(row.error ? { error: row.error } : {}),
   updated_at: row.updatedAt,
   completed_at: row.completedAt,
@@ -107,7 +108,6 @@ export const JobsServiceLive = Layer.effect(
                 status: "pending",
                 currentPhase: "",
                 phaseStatus: "",
-                progressSteps: [],
               })
               .onConflictDoNothing({ target: pipelineRuns.id })
               .returning({ id: pipelineRuns.id });

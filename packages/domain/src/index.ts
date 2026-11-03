@@ -539,6 +539,20 @@ export const PipelineProgressStep = Schema.Struct({
 });
 export type PipelineProgressStep = typeof PipelineProgressStep.Type;
 
+export const PipelineStage = Schema.Struct({
+  phase: Schema.String,
+  steps: Schema.Array(PipelineProgressStep),
+});
+export type PipelineStage = typeof PipelineStage.Type;
+
+export const PipelineWarning = Schema.Struct({
+  phase: Schema.String,
+  message: Schema.String,
+  count: Schema.Number,
+  items: Schema.Array(Schema.String),
+});
+export type PipelineWarning = typeof PipelineWarning.Type;
+
 export const JobResponse = Schema.Struct({
   id: Uuid,
   vault_id: Uuid,
@@ -546,7 +560,8 @@ export const JobResponse = Schema.Struct({
   status: Schema.Literals(["pending", "running", "completed", "failed", "cancelled"] as const),
   current_phase: Schema.String,
   phase_status: Schema.String,
-  progress_steps: Schema.Array(PipelineProgressStep),
+  stages: Schema.Array(PipelineStage),
+  warnings: Schema.Array(PipelineWarning),
   error: Schema.NullOr(Schema.String),
   created_at: IsoDateTime,
   updated_at: IsoDateTime,
@@ -586,7 +601,8 @@ export const JobProgressSnapshot = Schema.Struct({
   job_status: Schema.Literals(["pending", "running", "completed", "failed", "cancelled"] as const),
   phase: Schema.String,
   phase_status: Schema.String,
-  steps: Schema.Array(PipelineProgressStep),
+  stages: Schema.Array(PipelineStage),
+  warnings: Schema.Array(PipelineWarning),
   error: Schema.optionalKey(Schema.String),
   updated_at: Schema.NullOr(IsoDateTime),
   completed_at: Schema.NullOr(IsoDateTime),

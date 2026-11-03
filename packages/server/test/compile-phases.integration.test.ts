@@ -272,7 +272,6 @@ const seedBase = () =>
           status: "pending",
           currentPhase: "",
           phaseStatus: "",
-          progressSteps: [],
         }))
         .pipe(Effect.orDie);
     }),

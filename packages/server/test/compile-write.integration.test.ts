@@ -51,6 +51,7 @@ const settings = {
   temperature: 0.3,
   reasoningEffort: "high" as const,
   concurrency: 2,
+  progress: () => Effect.void,
 };
 
 const calls: CompleteInput[] = [];

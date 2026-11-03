@@ -57,6 +57,7 @@ const settings = {
   pickPrompt: await prompt("pick_link_target"),
   checkPrompt: await prompt("check_link"),
   concurrency: 4,
+  progress: () => Effect.void,
 };
 
 const calls: CompleteInput[] = [];

@@ -67,6 +67,7 @@ const settings = {
   placePrompt: await prompt("place_in_article"),
   concurrency: 4,
   pivotsInFlight: 8,
+  progress: () => Effect.void,
 };
 
 const calls: CompleteInput[] = [];

@@ -568,7 +568,6 @@ const seed = () =>
           status: "pending",
           currentPhase: "",
           phaseStatus: "",
-          progressSteps: [],
         }))
         .pipe(Effect.orDie);
     }),
@@ -727,7 +726,6 @@ describe("M4.2 durable workers", () => {
             status: "pending",
             currentPhase: "",
             phaseStatus: "",
-            progressSteps: [],
           }))
           .pipe(Effect.orDie);
         const replay = yield* executeStaged({
@@ -835,7 +833,6 @@ describe("M4.2 durable workers", () => {
             status: "pending",
             currentPhase: "",
             phaseStatus: "",
-            progressSteps: [],
           }))
           .pipe(Effect.orDie);
 
@@ -919,7 +916,6 @@ describe("M4.2 durable workers", () => {
             status: "running",
             currentPhase: "source_ingest",
             phaseStatus: "completed",
-            progressSteps: [],
             compileIntentId: id.queuedIntent,
           }))
           .pipe(Effect.orDie);
@@ -975,7 +971,6 @@ describe("M4.2 durable workers", () => {
             status: "running",
             currentPhase: "source_ingest",
             phaseStatus: "started",
-            progressSteps: [],
             activeTaskId: id.cancelIngestRun,
             activeTaskType: "staged_file_ingest",
           }))
@@ -1088,7 +1083,7 @@ describe("M4.2 durable workers", () => {
       error: "1 of 3 files could not be ingested",
       compileIntentId: null,
     });
-    expect(rows.pipeline[0]?.progressSteps).toContainEqual(
+    expect(rows.pipeline[0]?.stages.at(-1)?.steps).toContainEqual(
       expect.objectContaining({
         key: "read_files",
         status: "failed",
@@ -1108,7 +1103,6 @@ describe("M4.2 durable workers", () => {
             status: "pending",
             currentPhase: "",
             phaseStatus: "",
-            progressSteps: [],
           }))
           .pipe(Effect.orDie);
         return yield* executeStaged({
@@ -1172,7 +1166,6 @@ describe("M4.2 durable workers", () => {
             status: "pending",
             currentPhase: "",
             phaseStatus: "",
-            progressSteps: [],
           }))
           .pipe(Effect.orDie);
         return yield* executeStaged({
@@ -1242,7 +1235,7 @@ describe("M4.2 durable workers", () => {
       error: "1 of 2 files could not be ingested",
       compileIntentId: null,
     });
-    expect(state.run[0]?.progressSteps).toContainEqual(
+    expect(state.run[0]?.stages.at(-1)?.steps).toContainEqual(
       expect.objectContaining({
         key: "read_files",
         status: "failed",
@@ -1271,7 +1264,6 @@ describe("M4.2 durable workers", () => {
             status: "pending",
             currentPhase: "",
             phaseStatus: "",
-            progressSteps: [],
           }))
           .pipe(Effect.orDie);
         return yield* Effect.exit(
@@ -1336,7 +1328,6 @@ describe("M4.2 durable workers", () => {
             status: "pending",
             currentPhase: "",
             phaseStatus: "",
-            progressSteps: [],
           }))
           .pipe(Effect.orDie);
       }),
@@ -1440,7 +1431,7 @@ describe("M4.2 durable workers", () => {
       phaseStatus: "completed",
       error: null,
     });
-    expect(rows.pipeline[0]?.progressSteps).toEqual([
+    expect(rows.pipeline[0]?.stages.at(-1)?.steps).toEqual([
       {
         key: "phase",
         label: "compile completed early: no validated topics",
@@ -1465,7 +1456,6 @@ describe("M4.2 durable workers", () => {
             status: "pending",
             currentPhase: "",
             phaseStatus: "",
-            progressSteps: [],
           }))
           .pipe(Effect.orDie);
       }),
@@ -1515,7 +1505,7 @@ describe("M4.2 durable workers", () => {
         error_message: "forced render seam",
       }),
     });
-    expect(rows[0]?.progressSteps).toEqual([
+    expect(rows[0]?.stages.at(-1)?.steps).toEqual([
       {
         key: "plan_articles",
         label: "Planning articles",
@@ -1556,7 +1546,6 @@ describe("M4.2 durable workers", () => {
             status: "pending",
             currentPhase: "source_ingest",
             phaseStatus: "completed",
-            progressSteps: [],
             updatedAt: new Date(0),
           }))
           .pipe(Effect.orDie);
@@ -1596,7 +1585,6 @@ describe("M4.2 durable workers", () => {
             status: "running",
             currentPhase: "source_ingest",
             phaseStatus: "started",
-            progressSteps: [],
             activeTaskId: id.zombieRun,
             activeTaskType: "staged_file_ingest",
             updatedAt: new Date(0),
@@ -1622,7 +1610,6 @@ describe("M4.2 durable workers", () => {
             status: "running",
             currentPhase: "source_ingest",
             phaseStatus: "completed",
-            progressSteps: [],
             compileIntentId: id.maskedCompileIntent,
             activeTaskId: id.maskedCompileIntent,
             activeTaskType: "compile",
@@ -1707,7 +1694,6 @@ describe("M4.2 durable workers", () => {
             status: "running",
             currentPhase: "ingest",
             phaseStatus: "progress",
-            progressSteps: [],
             compileIntentId: intentId,
             activeTaskId: intentId,
             activeTaskType: "compile",
@@ -1793,7 +1779,6 @@ describe("M4.2 durable workers", () => {
             status: "failed",
             currentPhase: "source_ingest",
             phaseStatus: "failed",
-            progressSteps: [],
             completedAt: new Date(),
           }))
           .pipe(Effect.orDie);
@@ -1827,7 +1812,6 @@ describe("M4.2 durable workers", () => {
             status: "cancelled",
             currentPhase: "source_ingest",
             phaseStatus: "cancelled",
-            progressSteps: [],
             completedAt: new Date(),
           }))
           .pipe(Effect.orDie);

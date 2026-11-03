@@ -37,12 +37,18 @@ export const followSnapshots = <A>(
 ): Stream.Stream<A, StreamFailure> => {
   const decode = Schema.decodeEffect(Schema.fromJsonString(schema));
 
-  function attempt(count: number): Stream.Stream<A, StreamFailure> {
+  function attempt(previous: number): Stream.Stream<A, StreamFailure> {
+    let count = previous;
     return connect.pipe(
       Stream.concat(Stream.fail(new Disconnected())),
       Stream.takeWhile((event) => event.event !== "done"),
       Stream.filter((event) => event.event === "message" && event.data.length > 0),
       Stream.mapEffect((event) => decode(event.data)),
+      Stream.tap(() =>
+        Effect.sync(() => {
+          count = 0;
+        }),
+      ),
       Stream.takeUntil(isTerminal),
       Stream.catchTags({
         Disconnected: () => reconnectAfter(reconnectDelay(count), count),

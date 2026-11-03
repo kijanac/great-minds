@@ -3,7 +3,7 @@ import type { Uuid } from "@great-minds/domain";
 import { asc, eq } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 
-import type { AskRunner } from "./compile-asks.ts";
+import type { AskRunner, Progress } from "./compile-asks.ts";
 import type { ReasoningEffort } from "./config.ts";
 import { responseFormat } from "./compile-themes.ts";
 
@@ -34,6 +34,7 @@ export type WriterSettings = {
   readonly temperature: number | undefined;
   readonly reasoningEffort: ReasoningEffort | undefined;
   readonly concurrency: number;
+  readonly progress: Progress;
 };
 
 export type PublishedArticle = {
@@ -180,6 +181,8 @@ export const writeArticles = (
       return { numbered, prompt };
     };
 
+    let writtenCount = 0;
+    yield* settings.progress("write_articles", 0, articles.length);
     const written = yield* Effect.forEach(
       articles,
       (article) => {
@@ -201,6 +204,12 @@ export const writeArticles = (
               tags: normalizeTags(answer.tags),
             })),
             Effect.catchTag("AskFailed", () => Effect.succeed(undefined)),
+            Effect.tap(() =>
+              Effect.suspend(() => {
+                writtenCount += 1;
+                return settings.progress("write_articles", writtenCount, articles.length);
+              }),
+            ),
           );
       },
       { concurrency: settings.concurrency },

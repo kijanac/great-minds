@@ -116,9 +116,14 @@ export const UrlIngestServiceLive = Layer.effect(
               status: "pending",
               currentPhase: "source_ingest",
               phaseStatus: "started",
-              progressSteps: progressSteps(URL_INGEST_STEP_LABELS, "fetch_url", {
-                counts: { fetch_url: [0, 1] },
-              }),
+              stages: [
+                {
+                  phase: "source_ingest",
+                  steps: progressSteps(URL_INGEST_STEP_LABELS, "fetch_url", {
+                    counts: { fetch_url: [0, 1] },
+                  }),
+                },
+              ],
               ingestTaskId: jobId,
               activeTaskId: jobId,
               activeTaskType: URL_INGEST_TASK_TYPE,

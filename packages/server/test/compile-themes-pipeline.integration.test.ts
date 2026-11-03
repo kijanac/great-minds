@@ -18,6 +18,7 @@ import {
   wikiArticles,
 } from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
+import { eq } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -234,7 +235,6 @@ const compile = (runId: Uuid) =>
           status: "running",
           currentPhase: "",
           phaseStatus: "",
-          progressSteps: [],
         }),
       );
       const phases = yield* CompilePhases;
@@ -361,6 +361,39 @@ describe("the themes Update pipeline", () => {
     expect(state.links).toEqual([{ sourceTopicId: alpha?.topicId, targetTopicId: beta?.topicId }]);
     expect(state.backlinks).toHaveLength(1);
     expect(state.memberships).toHaveLength(10);
+    const [stored] = await run(
+      Effect.flatMap(Database, (db) =>
+        db.query((d) =>
+          d
+            .select({ stages: pipelineRuns.stages, warnings: pipelineRuns.warnings })
+            .from(pipelineRuns)
+            .where(eq(pipelineRuns.id, id.run)),
+        ),
+      ),
+    );
+    expect(stored?.stages.map((stage) => stage.phase)).toEqual([
+      "abstract",
+      "derive",
+      "render",
+      "verify",
+    ]);
+    const stepsOf = (phase: string) =>
+      Object.fromEntries(
+        (stored?.stages.find((stage) => stage.phase === phase)?.steps ?? []).map((step) => [
+          step.key,
+          [step.status, step.done, step.total],
+        ]),
+      );
+    expect(stepsOf("abstract")).toEqual({
+      propose_topics: ["completed", 10, 10],
+      group_topics: ["completed", 10, 10],
+      build_articles: ["completed", 2, 2],
+    });
+    expect(stepsOf("render")).toMatchObject({
+      write_articles: ["completed", 2, 2],
+      link_articles: ["completed", expect.any(Number), expect.any(Number)],
+    });
+    expect(stored?.warnings).toEqual([]);
     const checks = calls.filter((call) => contentOf(call).startsWith("A wiki article links"));
     expect(checks.map((call) => [call.model, call.temperature])).toEqual([
       ["anthropic/claude-sonnet-5.5", undefined],

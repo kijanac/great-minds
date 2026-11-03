@@ -444,7 +444,6 @@ const seedFixtures = async (): Promise<Fixture> => {
             status: "completed",
             currentPhase: "render",
             phaseStatus: "completed",
-            progressSteps: [],
             createdAt: new Date("2026-07-05T00:00:00.000Z"),
             updatedAt: new Date("2026-07-05T01:00:00.000Z"),
           }),

@@ -1,4 +1,9 @@
-import type { JobProgressSnapshot, PipelineProgressStep, Uuid } from "@great-minds/domain";
+import type {
+  JobProgressSnapshot,
+  PipelineProgressStep,
+  PipelineWarning,
+  Uuid,
+} from "@great-minds/domain";
 import { useQueryClient } from "@tanstack/svelte-query";
 
 import { errorMessage } from "$lib/api/errors";
@@ -35,17 +40,10 @@ export interface StageProgress {
   done: number;
   total: number;
   steps: readonly ProgressStep[];
+  warnings: readonly PipelineWarning[];
   active: boolean;
   complete: boolean;
   errored: boolean;
-}
-
-interface PipelineEvent {
-  backendPhase: BackendPhase;
-  phase: PipelineStage;
-  phase_status: string;
-  steps: readonly ProgressStep[];
-  error?: string;
 }
 
 const PHASE_TO_STAGE: Record<BackendPhase, PipelineStage> = {
@@ -70,68 +68,49 @@ const STAGES: { stage: PipelineStage; label: string }[] = [
   { stage: "publishing", label: "Publishing" },
 ];
 
-function emptyStages(): StageProgress[] {
-  return STAGES.map((stage) => ({
-    stage: stage.stage,
-    label: stage.label,
-    detail: "",
-    done: 0,
-    total: 1,
-    steps: [],
-    active: false,
-    complete: false,
-    errored: false,
-  }));
-}
-
 const isBackendPhase = (phase: string): phase is BackendPhase => phase in PHASE_TO_STAGE;
 
-function normalizeEvent(snapshot: JobProgressSnapshot): PipelineEvent | null {
-  if (!isBackendPhase(snapshot.phase)) return null;
-  return {
-    backendPhase: snapshot.phase,
-    phase: PHASE_TO_STAGE[snapshot.phase],
-    phase_status: snapshot.phase_status,
-    steps: snapshot.steps,
-    ...(snapshot.error === undefined ? {} : { error: snapshot.error }),
-  };
-}
+const runningDetail = (step: ProgressStep | undefined) =>
+  step === undefined
+    ? ""
+    : step.detail ||
+      (step.total && step.total > 0 && step.done != null
+        ? `${step.label} ${step.done} of ${step.total}…`
+        : `${step.label}…`);
 
-function applyEvent(previous: StageProgress[], event: PipelineEvent): StageProgress[] {
-  const phaseIndex = STAGES.findIndex((stage) => stage.stage === event.phase);
-  if (phaseIndex === -1) return previous;
-
-  return previous.map((stage, index) => {
-    if (index < phaseIndex) {
-      return { ...stage, active: false, complete: true, errored: false };
-    }
-    if (index === phaseIndex) {
-      const complete = event.phase_status === "completed";
-      const failed = event.phase_status === "failed";
-      const activeStep = complete ? null : event.steps.find((step) => step.status === "running");
-      const total = activeStep?.total && activeStep.total > 0 ? activeStep.total : 1;
-      const done = activeStep?.done ?? 0;
-      return {
-        ...stage,
-        active: !complete && !failed,
-        complete,
-        errored: failed,
-        done,
-        total,
-        steps: event.steps,
-        detail:
-          failed && event.error
-            ? event.error
-            : activeStep?.detail
-              ? activeStep.detail
-              : activeStep
-                ? activeStep.total && activeStep.total > 0 && activeStep.done != null
-                  ? `${activeStep.label} ${activeStep.done} of ${activeStep.total}…`
-                  : `${activeStep.label}…`
-                : "",
-      };
-    }
-    return { ...stage, active: false, complete: false, errored: false };
+export function stagesFrom(snapshot: JobProgressSnapshot | null): StageProgress[] {
+  const current =
+    snapshot !== null && isBackendPhase(snapshot.phase) ? PHASE_TO_STAGE[snapshot.phase] : null;
+  const currentIndex = STAGES.findIndex((stage) => stage.stage === current);
+  const finished = snapshot?.job_status === "completed";
+  const stepsOf = new Map<PipelineStage, readonly ProgressStep[]>();
+  for (const stored of snapshot?.stages ?? [])
+    if (isBackendPhase(stored.phase)) stepsOf.set(PHASE_TO_STAGE[stored.phase], stored.steps);
+  return STAGES.map(({ stage, label }, index) => {
+    const steps = stepsOf.get(stage) ?? [];
+    const isCurrent = index === currentIndex;
+    const failed = isCurrent && snapshot?.phase_status === "failed";
+    const complete =
+      finished ||
+      (currentIndex !== -1 && index < currentIndex) ||
+      (isCurrent && snapshot?.phase_status === "completed");
+    const active = isCurrent && !complete && !failed && snapshot?.job_status !== "cancelled";
+    const running = active ? steps.find((step) => step.status === "running") : undefined;
+    const warnings = (snapshot?.warnings ?? []).filter(
+      (warning) => isBackendPhase(warning.phase) && PHASE_TO_STAGE[warning.phase] === stage,
+    );
+    return {
+      stage,
+      label,
+      detail: failed ? (snapshot?.error ?? "") : runningDetail(running),
+      done: running?.done ?? 0,
+      total: running?.total && running.total > 0 ? running.total : 1,
+      steps,
+      warnings,
+      active,
+      complete,
+      errored: failed,
+    };
   });
 }
 
@@ -140,21 +119,17 @@ export function useJobSSE(
   jobVaultId: () => Uuid | null = () => activeVault.id,
 ) {
   const queryClient = useQueryClient();
-  let stages = $state<StageProgress[]>(emptyStages());
-  let overallDone = $state(false);
-  let overallError = $state<string | null>(null);
-  let overallShortfall = $state<string | null>(null);
-  let overallCancelled = $state(false);
+  let snapshot = $state<JobProgressSnapshot | null>(null);
   let streamError = $state<string | null>(null);
   let connection = $state(0);
-  let trigger = $state<JobProgressSnapshot["trigger"] | undefined>(undefined);
-  let backendPhase = $state("");
-
-  function invalidateActivePipeline(vaultId: Uuid) {
-    void queryClient.invalidateQueries({
-      queryKey: ["vault", vaultId, "active-job"],
-    });
-  }
+  let followed: Uuid | null = null;
+  const status = $derived(snapshot?.job_status);
+  const failed = $derived(status === "failed" || snapshot?.phase_status === "failed");
+  const done = $derived(
+    status === "completed" ||
+      (snapshot?.phase === "publish" && snapshot.phase_status === "completed"),
+  );
+  const terminal = $derived(failed || done || status === "cancelled");
 
   $effect(() => {
     const id = jobId();
@@ -162,97 +137,56 @@ export function useJobSSE(
     void connection;
     if (!id || !vaultId) return;
     const vaultKey = vaultId;
-    const jobKey = id;
-
-    overallDone = false;
-    overallError = null;
-    overallShortfall = null;
-    overallCancelled = false;
-    streamError = null;
-    trigger = undefined;
-    backendPhase = "";
-    stages = emptyStages();
-
-    const controller = new AbortController();
-    let terminal = false;
-
-    function applySnapshot(snapshot: JobProgressSnapshot) {
-      trigger = snapshot.trigger;
-      backendPhase = snapshot.phase;
-      const data = normalizeEvent(snapshot);
-
-      if (snapshot.job_status === "cancelled") {
-        terminal = true;
-        overallCancelled = true;
-        if (data) stages = applyEvent(stages, data);
-        invalidateActivePipeline(vaultKey);
-        return;
-      }
-      if (snapshot.phase_status === "failed" || snapshot.job_status === "failed") {
-        terminal = true;
-        overallError = snapshot.error ?? "Pipeline failed";
-        if (data) stages = applyEvent(stages, data);
-        invalidateActivePipeline(vaultKey);
-        return;
-      }
-      if (data?.backendPhase === "publish" && data.phase_status === "completed") {
-        terminal = true;
-        overallShortfall = snapshot.error ?? null;
-        stages = applyEvent(stages, data).map((stage) => ({
-          ...stage,
-          active: false,
-          complete: true,
-        }));
-        overallDone = true;
-        invalidateActivePipeline(vaultKey);
-        return;
-      }
-      if (snapshot.job_status === "completed") {
-        terminal = true;
-        overallDone = true;
-        overallShortfall = snapshot.error ?? null;
-        invalidateActivePipeline(vaultKey);
-      }
-      if (data) stages = applyEvent(stages, data);
+    if (followed !== id) {
+      followed = id;
+      snapshot = null;
     }
+    streamError = null;
+    const controller = new AbortController();
+    let ended = false;
 
     async function follow() {
       try {
-        for await (const snapshot of followJob(jobKey, vaultKey, controller.signal)) {
-          applySnapshot(snapshot);
+        for await (const next of followJob(id!, vaultKey, controller.signal)) {
+          snapshot = next;
         }
-        if (!terminal && !controller.signal.aborted) {
-          streamError = "Progress stream ended before the run finished";
-          invalidateActivePipeline(vaultKey);
-        }
+        ended = true;
       } catch (error) {
         if (controller.signal.aborted) return;
         streamError = errorMessage(error, "Progress stream unavailable");
-        invalidateActivePipeline(vaultKey);
       }
+      if (controller.signal.aborted) return;
+      if (ended && !terminal) streamError = "Progress stream ended before the run finished";
+      void queryClient.invalidateQueries({ queryKey: ["vault", vaultKey, "active-job"] });
     }
 
     void follow();
-    return () => {
-      controller.abort();
+    return () => controller.abort();
+  });
+
+  $effect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && !terminal) connection += 1;
     };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   });
 
   return {
     get stages() {
-      return stages;
+      return stagesFrom(snapshot);
+    },
+    get warned() {
+      return (snapshot?.warnings.length ?? 0) > 0;
     },
     get overallDone() {
-      return overallDone;
+      return done && !failed;
     },
     get overallError() {
-      return overallError;
-    },
-    get overallShortfall() {
-      return overallShortfall;
+      return failed ? (snapshot?.error ?? "Pipeline failed") : null;
     },
     get overallCancelled() {
-      return overallCancelled;
+      return status === "cancelled";
     },
     get streamError() {
       return streamError;
@@ -261,10 +195,10 @@ export function useJobSSE(
       connection += 1;
     },
     get trigger() {
-      return trigger;
+      return snapshot?.trigger;
     },
     get backendPhase() {
-      return backendPhase;
+      return snapshot?.phase ?? "";
     },
   };
 }

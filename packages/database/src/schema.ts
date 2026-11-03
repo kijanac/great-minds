@@ -2,7 +2,8 @@ import { sql } from "drizzle-orm";
 import type {
   FileFingerprint,
   JobResponse,
-  PipelineProgressStep,
+  PipelineStage,
+  PipelineWarning,
   ReplySnapshot,
   SessionId,
   Uuid,
@@ -302,8 +303,12 @@ export const pipelineRuns = pgTable(
     status: text("status").$type<JobResponse["status"]>().notNull(),
     currentPhase: text("current_phase").notNull(),
     phaseStatus: text("phase_status").notNull(),
-    progressSteps: jsonb("progress_steps")
-      .$type<readonly PipelineProgressStep[]>()
+    stages: jsonb("stages")
+      .$type<readonly PipelineStage[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    warnings: jsonb("warnings")
+      .$type<readonly PipelineWarning[]>()
       .default(sql`'[]'::jsonb`)
       .notNull(),
     error: text("error"),

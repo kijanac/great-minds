@@ -14,7 +14,8 @@ const snapshot = (job_status: string, phase: string, phase_status: string) =>
     job_status,
     phase,
     phase_status,
-    steps: [],
+    stages: [],
+    warnings: [],
     updated_at: null,
     completed_at: null,
   })}\n\n`;

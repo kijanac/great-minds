@@ -1,7 +1,7 @@
 import type { Uuid } from "@great-minds/domain";
 import { Effect, Schema } from "effect";
 
-import type { AskFailed, AskRunner } from "./compile-asks.ts";
+import type { AskFailed, AskRunner, Progress } from "./compile-asks.ts";
 import type { ArticleContent } from "./compile-write.ts";
 import { responseFormat } from "./compile-themes.ts";
 import type { EmbeddingsService } from "./embeddings.ts";
@@ -23,6 +23,7 @@ export type LinkSettings = {
   readonly pickPrompt: string;
   readonly checkPrompt: string;
   readonly concurrency: number;
+  readonly progress: Progress;
 };
 
 export type ArticleText = { readonly id: Uuid; readonly body: string };
@@ -120,6 +121,13 @@ export const findLinks = (
         ),
       );
 
+    let checkedCount = 0;
+    let checkTotal = texts.length;
+    const checked = Effect.suspend(() => {
+      checkedCount += 1;
+      return settings.progress("link_articles", checkedCount, checkTotal);
+    });
+    yield* settings.progress("link_articles", 0, checkTotal);
     const mentioned = yield* Effect.forEach(
       texts,
       (text) => {
@@ -157,10 +165,11 @@ export const findLinks = (
               }),
             ),
           [],
-        );
+        ).pipe(Effect.tap(() => checked));
       },
       { concurrency: settings.concurrency },
     ).pipe(Effect.map((lists) => lists.flat()));
+    checkTotal += mentioned.length;
 
     const ids = catalogue.map((article) => article.id);
     const embedAll = (inputs: readonly string[]) =>
@@ -287,7 +296,7 @@ export const findLinks = (
           return check.verdict === "yes"
             ? [{ source: mention.source, link: { phrase: mention.phrase, target } }]
             : [];
-        }),
+        }).pipe(Effect.tap(() => checked)),
       { concurrency: settings.concurrency },
     ).pipe(Effect.map((lists) => lists.flat()));
 

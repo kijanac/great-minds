@@ -25,6 +25,8 @@ export class AskFailed extends Schema.TaggedError<AskFailed>()("AskFailed", {
   message: Schema.String,
 }) {}
 
+export type Progress = (step: string, done: number, total: number) => Effect.Effect<void>;
+
 export type AskRunner = {
   readonly ask: <A, I>(request: AskRequest<A, I>) => Effect.Effect<A, AskFailed>;
   readonly preloadKind: (kind: string) => Effect.Effect<void>;

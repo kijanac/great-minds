@@ -273,7 +273,6 @@ export const CompileIntentReconcilerLive = Layer.effect(
                   status: "pending",
                   currentPhase: "",
                   phaseStatus: "",
-                  progressSteps: [],
                   compileIntentId: intent.id,
                 })
                 .onConflictDoNothing({ target: pipelineRuns.id });

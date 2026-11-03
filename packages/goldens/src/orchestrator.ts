@@ -163,9 +163,11 @@ const normalizedSse = async (baseUrl: string, bearer: string, runId: string) => 
   const stepsByPhase = Object.fromEntries(
     phasesSeen.map((phase) => {
       const steps = new Map<string, string>();
-      for (const frame of messages.filter((candidate) => candidate.data?.phase === phase)) {
-        for (const step of (frame.data?.steps ?? []) as Row[])
-          steps.set(String(step.key), String(step.label));
+      for (const frame of messages) {
+        for (const stage of (frame.data?.stages ?? []) as Row[])
+          if (stage.phase === phase)
+            for (const step of (stage.steps ?? []) as Row[])
+              steps.set(String(step.key), String(step.label));
       }
       return [phase, [...steps].map(([key, label]) => ({ key, label }))];
     }),
@@ -221,7 +223,7 @@ const compile = async (baseUrl: string, bearer: string, runId: string, env: Node
         "-v",
         "ON_ERROR_STOP=1",
         "-c",
-        `select jsonb_build_object('status',status,'current_phase',current_phase,'phase_status',phase_status,'progress_steps',progress_steps,'error',error) from pipeline_runs where id=${sqlString(runId)}`,
+        `select jsonb_build_object('status',status,'current_phase',current_phase,'phase_status',phase_status,'stages',stages,'error',error) from pipeline_runs where id=${sqlString(runId)}`,
       ],
       { cwd: repoRoot, env },
     );
@@ -229,7 +231,7 @@ const compile = async (baseUrl: string, bearer: string, runId: string, env: Node
     const progress = JSON.stringify({
       phase: job.current_phase,
       phase_status: job.phase_status,
-      steps: job.progress_steps,
+      stages: job.stages,
     });
     if (progress !== previous) {
       seen.push(JSON.parse(progress) as Json);
@@ -524,7 +526,7 @@ const stagedWorkerScenario = async (
     status: terminal.status,
     phase: terminal.current_phase,
     phaseStatus: terminal.phase_status,
-    steps: terminal.progress_steps,
+    stages: terminal.stages,
     error: terminal.error,
   } satisfies Row;
 };

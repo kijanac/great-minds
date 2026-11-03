@@ -45,6 +45,7 @@ const settings = {
   judgePrompt: await prompt("judge_same_topic"),
   concurrency: 4,
   pivotsInFlight: 8,
+  progress: () => Effect.void,
 };
 
 const calls: CompleteInput[] = [];
@@ -251,6 +252,7 @@ describe("pivot grouping", () => {
               Effect.as(open.filter((other) => same(pivot, other))),
             ),
           1 + (hash(`m${trial}`) % 8),
+          () => Effect.void,
         ),
       );
       expect(Object.fromEntries(leader)).toEqual(

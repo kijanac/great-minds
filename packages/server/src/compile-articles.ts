@@ -3,7 +3,7 @@ import { Uuid } from "@great-minds/domain";
 import { sql } from "drizzle-orm";
 import { Effect, Schema, Semaphore } from "effect";
 
-import type { AskRunner } from "./compile-asks.ts";
+import type { AskRunner, Progress } from "./compile-asks.ts";
 import { loadBlocks, pivotGroups, responseFormat, type Theme } from "./compile-themes.ts";
 import { contentHash } from "./crypto.ts";
 
@@ -35,6 +35,7 @@ export type ArticleSettings = {
   readonly placePrompt: string;
   readonly concurrency: number;
   readonly pivotsInFlight: number;
+  readonly progress: Progress;
 };
 
 export type Article = {
@@ -159,12 +160,16 @@ export const buildArticles = (
             ),
         { concurrency: "unbounded" },
       ).pipe(Effect.map((joined) => joined.flat()));
+    const report = (done: number) => settings.progress("build_articles", done, themes.length);
+    yield* report(0);
     const merged = yield* pivotGroups(
       bigIds.toSorted(byOrder),
       neighbours,
       judgeMerge,
       settings.pivotsInFlight,
+      report,
     );
+    let placedCount = big.length;
 
     const parent = new Map<Uuid, Uuid>();
     const find = (id: Uuid): Uuid => {
@@ -274,7 +279,14 @@ export const buildArticles = (
             if (answer?.verdict === "yes") return [theme.id, article] as const;
           }
           return undefined;
-        }),
+        }).pipe(
+          Effect.tap(() =>
+            Effect.suspend(() => {
+              placedCount += 1;
+              return report(placedCount);
+            }),
+          ),
+        ),
       { concurrency: settings.concurrency },
     );
     for (const placement of placements) {

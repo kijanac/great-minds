@@ -618,16 +618,17 @@ export const FileIngestBatchesLive = Layer.effect(
                   status: "running",
                   currentPhase: "source_ingest",
                   phaseStatus: "started",
-                  progressSteps: progressSteps(
-                    STAGED_FILE_INGEST_STEP_LABELS,
-                    "prepare_sources",
+                  stages: [
                     {
-                      counts: {
-                        prepare_sources: [0, manifest.length],
-                        read_files: [0, manifest.length],
-                      },
+                      phase: "source_ingest",
+                      steps: progressSteps(STAGED_FILE_INGEST_STEP_LABELS, "prepare_sources", {
+                        counts: {
+                          prepare_sources: [0, manifest.length],
+                          read_files: [0, manifest.length],
+                        },
+                      }),
                     },
-                  ),
+                  ],
                 })
                 .onConflictDoNothing({ target: pipelineRuns.id })
                 .returning({ id: pipelineRuns.id });

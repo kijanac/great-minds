@@ -11,7 +11,7 @@ import { Uuid } from "@great-minds/domain";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { Effect, Queue, Schema, Semaphore } from "effect";
 
-import { askKey, type AskRunner } from "./compile-asks.ts";
+import { askKey, type AskRunner, type Progress } from "./compile-asks.ts";
 import { contentHash } from "./crypto.ts";
 import type { EmbeddingsService } from "./embeddings.ts";
 
@@ -65,6 +65,7 @@ export type ThemeSettings = {
   readonly judgePrompt: string;
   readonly concurrency: number;
   readonly pivotsInFlight: number;
+  readonly progress: Progress;
 };
 
 export type Theme = {
@@ -88,6 +89,7 @@ export const pivotGroups = <K extends string, E, R>(
   neighbours: ReadonlyMap<K, readonly K[]>,
   judge: (pivot: K, open: readonly K[]) => Effect.Effect<readonly K[], E, R>,
   pivotsInFlight: number,
+  onSettled: (settled: number) => Effect.Effect<void>,
 ) =>
   Effect.gen(function* () {
     const state = new Map<K, "open" | "active" | "absorbed" | "done">(
@@ -98,6 +100,7 @@ export const pivotGroups = <K extends string, E, R>(
     const active = new Set<K>();
     const finished = yield* Queue.unbounded<{ readonly id: K; readonly same: readonly K[] }, E>();
     let first = 0;
+    let settledCount = 0;
     const openOf = (id: K) =>
       (neighbours.get(id) ?? []).filter((other) => state.get(other) === "open");
     const settled = (id: K | undefined) =>
@@ -146,9 +149,12 @@ export const pivotGroups = <K extends string, E, R>(
         if (!joined.has(other)) continue;
         state.set(other, "absorbed");
         leader.set(other, id);
+        settledCount += 1;
       }
       state.set(id, "done");
       leader.set(id, id);
+      settledCount += 1;
+      yield* onSettled(settledCount);
       yield* startReady;
       yield* Effect.yieldNow;
     }
@@ -256,8 +262,15 @@ export const proposeTopics = (dependencies: Dependencies, vaultId: Uuid, setting
   Effect.gen(function* () {
     const { db, embeddings, runner } = dependencies;
     const { documents, ideasOf, claimsOf } = yield* loadDocuments(db, vaultId);
+    const asking = documents.filter((document) => (ideasOf.get(document.id) ?? []).length > 0);
+    let answeredCount = 0;
+    const tick = Effect.suspend(() => {
+      answeredCount += 1;
+      return settings.progress("propose_topics", answeredCount, asking.length);
+    });
+    yield* settings.progress("propose_topics", 0, asking.length);
     const asked = yield* Effect.forEach(
-      documents.filter((document) => (ideasOf.get(document.id) ?? []).length > 0),
+      asking,
       (document) => {
         const { tags, request } = proposalRequest(
           settings,
@@ -278,6 +291,7 @@ export const proposeTopics = (dependencies: Dependencies, vaultId: Uuid, setting
           Effect.catchTag("AskFailed", () =>
             Effect.succeed({ documentId: document.id, failed: true as const }),
           ),
+          Effect.tap(() => tick),
         );
       },
       { concurrency: settings.concurrency },
@@ -497,7 +511,10 @@ export const groupThemes = (dependencies: Dependencies, vaultId: Uuid, settings:
         { concurrency: "unbounded" },
       ).pipe(Effect.map((joined) => joined.flat()));
     const order = proposals.map((proposal) => proposal.id).toSorted(byOrder);
-    const leader = yield* pivotGroups(order, neighbours, judge, settings.pivotsInFlight);
+    yield* settings.progress("group_topics", 0, order.length);
+    const leader = yield* pivotGroups(order, neighbours, judge, settings.pivotsInFlight, (settled) =>
+      settings.progress("group_topics", settled, order.length),
+    );
     const leaders = order.map((id) => leader.get(id) ?? id);
     const faceResult = yield* db.query((d) =>
       d.execute(sql`

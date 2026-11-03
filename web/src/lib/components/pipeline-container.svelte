@@ -601,11 +601,11 @@
           >
             Knowledge base updated
           </p>
-          {#if progress.overallShortfall}
+          {#if progress.warned}
             <p
               class="mb-3 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-red-400/90"
             >
-              Incomplete: {progress.overallShortfall}. Run Update again to retry.
+              Some parts were left out; the steps above list them.
             </p>
           {/if}
           {#if result.data}
