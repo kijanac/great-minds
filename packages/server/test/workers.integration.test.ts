@@ -84,6 +84,10 @@ const id = {
   replayDecisionRun: uuid("10000000-0000-4000-8000-000000000021"),
   maskedCompileRun: uuid("10000000-0000-4000-8000-000000000019"),
   maskedCompileIntent: uuid("10000000-0000-4000-8000-000000000020"),
+  deadCompileRun: uuid("10000000-0000-4000-8000-000000000022"),
+  deadCompileIntent: uuid("10000000-0000-4000-8000-000000000023"),
+  suspendedCompileRun: uuid("10000000-0000-4000-8000-000000000024"),
+  suspendedCompileIntent: uuid("10000000-0000-4000-8000-000000000025"),
 } as const;
 
 const resumeRunnerPath = fileURLToPath(
@@ -1682,6 +1686,97 @@ describe("M4.2 durable workers", () => {
       phaseStatus: "failed",
       error: "Pipeline interrupted — server may have restarted during processing.",
     });
+  });
+
+  it("fails a stale run whose compile workflow ended without recording it, and keeps a suspended one", async () => {
+    const seed = (
+      runId: Uuid,
+      intentId: Uuid,
+      requestId: bigint,
+      replyValue: Record<string, unknown>,
+    ) =>
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db.query((d) => d
+          .insert(pipelineRuns)
+          .values({
+            id: runId,
+            vaultId: id.vault,
+            trigger: "manual",
+            status: "running",
+            currentPhase: "ingest",
+            phaseStatus: "progress",
+            progressSteps: [],
+            compileIntentId: intentId,
+            activeTaskId: intentId,
+            activeTaskType: "compile",
+            updatedAt: new Date(0),
+          }))
+          .pipe(Effect.orDie);
+        yield* db.query((d) => d
+          .insert(compileIntents)
+          .values({
+            id: intentId,
+            vaultId: id.vault,
+            pipelineRunId: runId,
+            dispatchedAt: new Date(0),
+            dispatchedTaskId: intentId,
+          }))
+          .pipe(Effect.orDie);
+        const replyId = requestId + 1n;
+        yield* db.query((d) => d
+          .execute(sql`
+          INSERT INTO cluster_messages (
+            id, message_id, shard_id, entity_type, entity_id, kind, tag, payload, processed,
+            request_id, last_reply_id
+          ) VALUES (
+            ${requestId}, ${`Workflow/CompileTask/${intentId}/run/`}, 'default:1',
+            'Workflow/CompileTask', ${intentId}, 0, 'run',
+            ${JSON.stringify({ intentId, vaultId: id.vault, pipelineRunId: runId })}, true,
+            ${requestId}, ${replyId}
+          )
+        `))
+          .pipe(Effect.orDie);
+        yield* db.query((d) => d
+          .execute(sql`
+          INSERT INTO cluster_replies (id, kind, request_id, payload, sequence, acked)
+          VALUES (
+            ${replyId}, 0, ${requestId},
+            ${JSON.stringify({ _tag: "Success", value: replyValue })}, NULL, false
+          )
+        `))
+          .pipe(Effect.orDie);
+      });
+    const recovered = await run(
+      Effect.gen(function* () {
+        yield* seed(id.deadCompileRun, id.deadCompileIntent, 900000000000000101n, {
+          _tag: "Complete",
+          exit: { _tag: "Failure", cause: [{ _tag: "Die", defect: "Connection terminated" }] },
+        });
+        yield* seed(id.suspendedCompileRun, id.suspendedCompileIntent, 900000000000000201n, {
+          _tag: "Suspended",
+        });
+        const pipeline = yield* PipelineRunsService;
+        return yield* pipeline.recoverZombies(new Date(Date.now() - 120_000));
+      }),
+    );
+    expect(recovered).toBe(1);
+    const rows = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db.query((d) => d
+          .select({ id: pipelineRuns.id, status: pipelineRuns.status })
+          .from(pipelineRuns)
+          .where(inArray(pipelineRuns.id, [id.deadCompileRun, id.suspendedCompileRun])))
+          .pipe(Effect.orDie);
+      }),
+    );
+    expect(new Map(rows.map((row) => [row.id, row.status]))).toEqual(
+      new Map([
+        [id.deadCompileRun, "failed"],
+        [id.suspendedCompileRun, "running"],
+      ]),
+    );
   });
 
   it("does not satisfy a terminal run without a compile workflow journal entry", async () => {

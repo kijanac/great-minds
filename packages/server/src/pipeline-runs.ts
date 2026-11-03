@@ -221,7 +221,7 @@ export const PipelineRunsServiceLive = Layer.effect(
                       FROM cluster_messages message
                       -- entity_type is 'Workflow/' + the Workflow.make tag; renaming a
                       -- workflow tag must update this list or zombie recovery goes blind
-                      WHERE (
+                      WHERE ((
                         ${pipelineRuns.activeTaskType} = 'staged_file_ingest'
                         AND message.entity_type = 'Workflow/StagedFileIngest'
                         AND message.payload::jsonb ->> 'pipelineRunId' = ${pipelineRuns.id}::text
@@ -233,6 +233,15 @@ export const PipelineRunsServiceLive = Layer.effect(
                         ${pipelineRuns.activeTaskType} = 'compile'
                         AND message.entity_type = 'Workflow/CompileTask'
                         AND message.payload::jsonb ->> 'intentId' = ${pipelineRuns.activeTaskId}::text
+                      ))
+                      AND (
+                        NOT message.processed
+                        OR EXISTS (
+                          SELECT 1
+                          FROM cluster_replies reply
+                          WHERE reply.id = message.last_reply_id
+                            AND reply.payload::jsonb -> 'value' ->> '_tag' = 'Suspended'
+                        )
                       )
                     )
                   )
