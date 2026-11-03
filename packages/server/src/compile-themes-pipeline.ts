@@ -23,6 +23,7 @@ import type { StructuredLogger } from "./logging.ts";
 import { progressSteps, type PipelineRunsService } from "./pipeline-runs.ts";
 import { loadPrompt } from "./prompts.ts";
 import type { ContentStorage } from "./storage.ts";
+import { defaultVaultConfigFile, readVaultConfig } from "./vault-config.ts";
 
 const PIVOTS_IN_FLIGHT = 120;
 
@@ -51,6 +52,19 @@ export const makeThemesPipeline = (options: {
     makeAskRunner({ db, languageModel, logger }, { vaultId, runId });
   const shortfall = (runId: Uuid, count: number, what: string) =>
     count === 0 ? Effect.void : pipeline.recordShortfall(runId, `${count} ${what}`);
+  const promptsFor = (vaultId: Uuid) =>
+    Effect.gen(function* () {
+      const vaultConfig = yield* readVaultConfig(storage, vaultId).pipe(
+        Effect.catchTag("VaultConfigMalformed", () => Effect.succeed(defaultVaultConfigFile)),
+      );
+      const hint = vaultConfig.thematicHint.trim();
+      const focus =
+        hint === "" ? "" : ` Its editorial focus: ${/[.!?]$/.test(hint) ? hint : `${hint}.`}`;
+      return (name: string) =>
+        loadPrompt(storage, vaultId, name).pipe(
+          Effect.map((text) => text.replaceAll("{vault_focus}", () => focus)),
+        );
+    });
   const abstractStep = (runId: Uuid, active: string, completed: readonly string[]) =>
     pipeline.updateProgress(
       runId,
@@ -69,10 +83,11 @@ export const makeThemesPipeline = (options: {
   const abstract = (vaultId: Uuid, runId: Uuid) =>
     Effect.gen(function* () {
       const runner = yield* runnerFor(vaultId, runId);
+      const prompt = yield* promptsFor(vaultId);
       const themeSettings = {
         model: config.mapModel,
-        proposePrompt: yield* loadPrompt(storage, vaultId, "propose_topics"),
-        judgePrompt: yield* loadPrompt(storage, vaultId, "judge_same_topic"),
+        proposePrompt: yield* prompt("propose_topics"),
+        judgePrompt: yield* prompt("judge_same_topic"),
         concurrency: config.compileEnrichConcurrency,
         pivotsInFlight: PIVOTS_IN_FLIGHT,
       };
@@ -84,8 +99,8 @@ export const makeThemesPipeline = (options: {
       yield* abstractStep(runId, "build_articles", ["propose_topics", "group_topics"]);
       const built = yield* buildArticles({ db, runner }, vaultId, grouped.themes, {
         model: config.mapModel,
-        mergePrompt: yield* loadPrompt(storage, vaultId, "judge_same_entry"),
-        placePrompt: yield* loadPrompt(storage, vaultId, "place_in_article"),
+        mergePrompt: yield* prompt("judge_same_entry"),
+        placePrompt: yield* prompt("place_in_article"),
         concurrency: config.compileEnrichConcurrency,
         pivotsInFlight: PIVOTS_IN_FLIGHT,
       });
@@ -172,6 +187,7 @@ export const makeThemesPipeline = (options: {
   const render = (vaultId: Uuid, runId: Uuid, validated: readonly ValidatedTopic[]) =>
     Effect.gen(function* () {
       const runner = yield* runnerFor(vaultId, runId);
+      const prompt = yield* promptsFor(vaultId);
       yield* renderStep(runId, "write_articles", []);
       const written = yield* writeArticles(
         { db, runner },
@@ -184,7 +200,7 @@ export const makeThemesPipeline = (options: {
         })),
         {
           model: config.renderModel,
-          prompt: yield* loadPrompt(storage, vaultId, "write_article"),
+          prompt: yield* prompt("write_article"),
           temperature: Option.getOrUndefined(config.renderTemperature),
           reasoningEffort: Option.getOrUndefined(config.renderReasoningEffort),
           concurrency: config.compileWriteConcurrency,
@@ -202,9 +218,9 @@ export const makeThemesPipeline = (options: {
         {
           pickModel: config.mapModel,
           checkModel: config.reduceModel,
-          mentionPrompt: yield* loadPrompt(storage, vaultId, "find_mentions"),
-          pickPrompt: yield* loadPrompt(storage, vaultId, "pick_link_target"),
-          checkPrompt: yield* loadPrompt(storage, vaultId, "check_link"),
+          mentionPrompt: yield* prompt("find_mentions"),
+          pickPrompt: yield* prompt("pick_link_target"),
+          checkPrompt: yield* prompt("check_link"),
           concurrency: config.compileEnrichConcurrency,
         },
       );

@@ -1,4 +1,4 @@
-You are comparing two topics proposed for a wiki built from a large library of political and historical writings. Each topic was proposed from one source document, and different documents often propose the same topic in different words. Decide how the two topics relate, judging by what each one covers and by the evidence placed under it, not by the wording of the titles alone.
+You are comparing two topics proposed for a wiki built from a library of documents.{vault_focus} Each topic was proposed from one source document, and different documents often propose the same topic in different words. Decide how the two topics relate, judging by what each one covers and by the evidence placed under it, not by the wording of the titles alone.
 
 Choose exactly one relation:
 

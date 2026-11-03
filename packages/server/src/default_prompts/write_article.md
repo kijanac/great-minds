@@ -40,4 +40,4 @@ Return a JSON object with two fields:
 
 `body` is the article's markdown body following all the rules above.
 
-`tags` is 3-6 short, lowercase, hyphen-separated keywords describing the article's subject (e.g. `imperialism`, `monopoly-capitalism`, `1916`, `lenin`). These power tag-based browsing and agent retrieval — pick concrete topical anchors, not generic categories. Avoid adjectives, full sentences, and umbrella terms like `concept` or `theory`.
+`tags` is 3-6 short, lowercase, hyphen-separated keywords describing the article's subject (e.g. `urban-renewal`, `bike-lanes`, `1970s`, `jane-jacobs`). These power tag-based browsing and agent retrieval — pick concrete topical anchors, not generic categories. Avoid adjectives, full sentences, and umbrella terms like `concept` or `theory`.

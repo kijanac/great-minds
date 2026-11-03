@@ -275,6 +275,7 @@ describe("the themes Update pipeline", () => {
     calls.length = 0;
     files.clear();
     files.set("wiki/old-topic.md", "---\ntopic_id: old\n---\n# Old topic\n");
+    files.set("config.yaml", 'thematic_hint: "Food bank operations, plans and people"\n');
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
@@ -363,6 +364,11 @@ describe("the themes Update pipeline", () => {
     expect(checks.map((call) => [call.model, call.temperature])).toEqual([
       ["anthropic/claude-sonnet-5.5", undefined],
     ]);
+    const focused = calls.filter((call) =>
+      contentOf(call).includes("Its editorial focus: Food bank operations, plans and people."),
+    );
+    expect(focused.length).toBeGreaterThan(0);
+    expect(calls.some((call) => contentOf(call).includes("{vault_focus}"))).toBe(false);
     const writes = calls.filter((call) => contentOf(call).startsWith("You are writing"));
     expect(
       writes.every((call) => call.reasoningEffort === "high" && call.temperature === 0.3),
