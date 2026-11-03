@@ -145,6 +145,8 @@ export function useJobSSE(
   let overallError = $state<string | null>(null);
   let overallShortfall = $state<string | null>(null);
   let overallCancelled = $state(false);
+  let streamError = $state<string | null>(null);
+  let connection = $state(0);
   let trigger = $state<JobProgressSnapshot["trigger"] | undefined>(undefined);
   let backendPhase = $state("");
 
@@ -157,6 +159,7 @@ export function useJobSSE(
   $effect(() => {
     const id = jobId();
     const vaultId = jobVaultId();
+    void connection;
     if (!id || !vaultId) return;
     const vaultKey = vaultId;
     const jobKey = id;
@@ -165,6 +168,7 @@ export function useJobSSE(
     overallError = null;
     overallShortfall = null;
     overallCancelled = false;
+    streamError = null;
     trigger = undefined;
     backendPhase = "";
     stages = emptyStages();
@@ -218,14 +222,12 @@ export function useJobSSE(
           applySnapshot(snapshot);
         }
         if (!terminal && !controller.signal.aborted) {
-          terminal = true;
-          overallError = "Pipeline ended without terminal status";
+          streamError = "Progress stream ended before the run finished";
           invalidateActivePipeline(vaultKey);
         }
       } catch (error) {
         if (controller.signal.aborted) return;
-        terminal = true;
-        overallError = errorMessage(error, "Progress stream unavailable");
+        streamError = errorMessage(error, "Progress stream unavailable");
         invalidateActivePipeline(vaultKey);
       }
     }
@@ -251,6 +253,12 @@ export function useJobSSE(
     },
     get overallCancelled() {
       return overallCancelled;
+    },
+    get streamError() {
+      return streamError;
+    },
+    reconnect() {
+      connection += 1;
     },
     get trigger() {
       return trigger;

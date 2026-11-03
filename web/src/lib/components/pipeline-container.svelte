@@ -448,6 +448,24 @@
         </div>
       {/if}
 
+      {#if progress.streamError && !resolveError}
+        <div class="mb-8 rounded-sm border border-gold-dim bg-ink-raised p-5">
+          <p
+            class="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
+          >
+            Lost touch with this run: {progress.streamError}
+          </p>
+          <Button
+            variant="ghost"
+            size="xs"
+            onclick={() => progress.reconnect()}
+            class="h-auto rounded-sm px-3 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover"
+          >
+            reconnect
+          </Button>
+        </div>
+      {/if}
+
       {#if progress.overallError || resolveError}
         <Alert
           variant="destructive"
