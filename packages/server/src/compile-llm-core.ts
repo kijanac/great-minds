@@ -8,6 +8,7 @@ import {
   sourceDocuments,
   topicMembership,
   topics,
+  vaults,
 } from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
 import { and, asc, eq, gt, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
@@ -539,6 +540,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
         yield* db.query((d) => d
           .insert(llmCostEvents)
           .values({
+            userId: sql`(select ${vaults.ownerId} from ${vaults} where ${vaults.id} = ${input.vaultId})`,
             vaultId: input.vaultId,
             eventType: "compile",
             phase: input.phase,

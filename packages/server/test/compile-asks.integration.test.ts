@@ -115,6 +115,7 @@ describe("saved model questions", () => {
     const state = await rows();
     expect(state.saved).toHaveLength(1);
     expect(state.costs.map((row) => row.runId)).toEqual([id.run]);
+    expect(state.costs.map((row) => row.userId)).toEqual([id.user]);
   });
 
   it("records the cost of a cut-off or malformed reply but saves no answer, so the next run asks again", async () => {

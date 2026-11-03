@@ -1,6 +1,6 @@
-import { compileCacheEntries, type Database, llmCostEvents } from "@great-minds/database";
+import { compileCacheEntries, type Database, llmCostEvents, vaults } from "@great-minds/database";
 import type { Uuid } from "@great-minds/domain";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 
 import type { ReasoningEffort } from "./config.ts";
@@ -120,6 +120,7 @@ export const makeAskRunner = (
         const cost = completion.usage?.cost ?? 0;
         yield* db.query((d) =>
           d.insert(llmCostEvents).values({
+            userId: sql`(select ${vaults.ownerId} from ${vaults} where ${vaults.id} = ${scope.vaultId})`,
             vaultId: scope.vaultId,
             eventType: "compile",
             phase,

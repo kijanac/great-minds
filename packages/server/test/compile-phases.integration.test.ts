@@ -1745,6 +1745,7 @@ describe("M4.3a deterministic compile phases", () => {
     expect(counts.beforePublish).toHaveLength(1);
     expect(counts.afterPublish).toHaveLength(1);
     expect(counts.afterPublish[0]?.costUsd).toBe("0.125000");
+    expect(counts.afterPublish[0]?.userId).toBe(id.user);
   });
 
   it("archives rendered and unrendered topics with terminal supersession pointers", async () => {
