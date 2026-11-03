@@ -112,6 +112,29 @@ describe("compile LLM request composition", () => {
   });
 });
 
+describe("compile reasoning effort", () => {
+  it("sends the requested reasoning effort alongside the strict schema", () => {
+    expect(
+      completionRequestBody({
+        model: "z-ai/glm-5.3",
+        messages: [],
+        temperature: 0.3,
+        reasoningEffort: "high",
+        responseFormat: articleResponseFormat,
+        requestProfile: "compile",
+      }),
+    ).toEqual({
+      model: "z-ai/glm-5.3",
+      messages: [],
+      temperature: 0.3,
+      reasoning: { effort: "high" },
+      response_format: articleResponseFormat,
+      usage: { include: true },
+      provider: { require_parameters: true },
+    });
+  });
+});
+
 describe("Python text-kernel alignment", () => {
   it("normalizes Python Unicode whitespace without treating BOM as whitespace", () => {
     expect(normalizePythonWhitespace(" alpha\u0085\u001cbeta\u3000gamma ")).toBe(

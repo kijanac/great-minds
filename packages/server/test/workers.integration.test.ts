@@ -142,6 +142,7 @@ const config: AppConfigShape = {
   mapTemperature: Option.some(0.3),
   reduceTemperature: Option.none(),
   renderTemperature: Option.none(),
+  renderReasoningEffort: Option.none(),
   compileEnrichConcurrency: 1,
   compileWriteConcurrency: 1,
   compilePartitionTargetTokens: 100_000,

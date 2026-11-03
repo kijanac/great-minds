@@ -1,7 +1,7 @@
 import { Context, Data, Duration, Effect, Layer, Schedule, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
 
-import { AppConfig, optionalRedactedValue } from "./config.ts";
+import { AppConfig, optionalRedactedValue, type ReasoningEffort } from "./config.ts";
 import { scopedAbortSignal } from "./scoped-abort-signal.ts";
 
 export const LlmToolDefinitionSchema = Schema.Struct({
@@ -85,6 +85,7 @@ export type CompleteInput = {
   readonly model: string;
   readonly messages: readonly LlmMessage[];
   readonly temperature?: number;
+  readonly reasoningEffort?: ReasoningEffort;
   readonly responseFormat?: "json_object" | Record<string, unknown>;
   readonly requestProfile?: "default" | "compile";
 };
@@ -277,6 +278,9 @@ export const completionRequestBody = (input: CompleteInput) => {
     model: input.model,
     messages: input.messages,
     ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
+    ...(input.reasoningEffort === undefined
+      ? {}
+      : { reasoning: { effort: input.reasoningEffort } }),
     response_format: responseFormat,
   };
   if (input.requestProfile === "compile") {

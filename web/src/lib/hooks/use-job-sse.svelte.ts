@@ -119,15 +119,16 @@ function applyEvent(previous: StageProgress[], event: PipelineEvent): StageProgr
         done,
         total,
         steps: event.steps,
-        detail: event.error
-          ? event.error
-          : activeStep?.detail
-            ? activeStep.detail
-            : activeStep
-              ? activeStep.total && activeStep.total > 0 && activeStep.done != null
-                ? `${activeStep.label} ${activeStep.done} of ${activeStep.total}…`
-                : `${activeStep.label}…`
-              : "",
+        detail:
+          failed && event.error
+            ? event.error
+            : activeStep?.detail
+              ? activeStep.detail
+              : activeStep
+                ? activeStep.total && activeStep.total > 0 && activeStep.done != null
+                  ? `${activeStep.label} ${activeStep.done} of ${activeStep.total}…`
+                  : `${activeStep.label}…`
+                : "",
       };
     }
     return { ...stage, active: false, complete: false, errored: false };
@@ -142,6 +143,7 @@ export function useJobSSE(
   let stages = $state<StageProgress[]>(emptyStages());
   let overallDone = $state(false);
   let overallError = $state<string | null>(null);
+  let overallShortfall = $state<string | null>(null);
   let overallCancelled = $state(false);
   let trigger = $state<JobProgressSnapshot["trigger"] | undefined>(undefined);
   let backendPhase = $state("");
@@ -161,6 +163,7 @@ export function useJobSSE(
 
     overallDone = false;
     overallError = null;
+    overallShortfall = null;
     overallCancelled = false;
     trigger = undefined;
     backendPhase = "";
@@ -190,6 +193,7 @@ export function useJobSSE(
       }
       if (data?.backendPhase === "publish" && data.phase_status === "completed") {
         terminal = true;
+        overallShortfall = snapshot.error ?? null;
         stages = applyEvent(stages, data).map((stage) => ({
           ...stage,
           active: false,
@@ -202,6 +206,7 @@ export function useJobSSE(
       if (snapshot.job_status === "completed") {
         terminal = true;
         overallDone = true;
+        overallShortfall = snapshot.error ?? null;
         invalidateActivePipeline(vaultKey);
       }
       if (data) stages = applyEvent(stages, data);
@@ -240,6 +245,9 @@ export function useJobSSE(
     },
     get overallError() {
       return overallError;
+    },
+    get overallShortfall() {
+      return overallShortfall;
     },
     get overallCancelled() {
       return overallCancelled;

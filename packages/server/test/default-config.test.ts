@@ -56,6 +56,16 @@ describe("server config defaults", () => {
     expect(overridden.extractTemperature).toEqual(Option.none());
     expect(overridden.renderTemperature).toEqual(Option.some(0.4));
   });
+
+  it("asks the writer for high reasoning effort unless configured otherwise", async () => {
+    expect((await loadConfig({})).renderReasoningEffort).toEqual(Option.some("high"));
+    expect((await loadConfig({ RENDER_REASONING_EFFORT: "none" })).renderReasoningEffort).toEqual(
+      Option.none(),
+    );
+    expect((await loadConfig({ RENDER_REASONING_EFFORT: "low" })).renderReasoningEffort).toEqual(
+      Option.some("low"),
+    );
+  });
 });
 
 describe("default vault config", () => {

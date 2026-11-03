@@ -14,7 +14,7 @@ import { and, asc, eq, gt, inArray, isNotNull, notInArray, sql } from "drizzle-o
 import type { PgInsertValue } from "drizzle-orm/pg-core";
 import { Data, Effect, Option, Schema, SchemaGetter } from "effect";
 
-import type { AppConfigShape } from "./config.ts";
+import type { AppConfigShape, ReasoningEffort } from "./config.ts";
 import {
   ABSTRACT_STEP_LABELS,
   canonicalizeAssignCacheKey,
@@ -532,6 +532,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           model: input.model,
           messages: input.messages,
           temperature: Option.getOrUndefined(input.temperature),
+          reasoningEffort: input.reasoningEffort,
           responseFormat: input.responseFormat,
           requestProfile: "compile",
         });
@@ -573,7 +574,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           attempt,
           max_attempts: totalAttempts,
           error_type: details.errorType,
-          error: details.message.slice(0, 300),
+          error: details.message,
           ...input.logFields,
         });
       }
@@ -667,6 +668,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
 
       const ready: { readonly document: SourceRow; readonly card: SourceCard }[] = [];
       let documentsCompleted = 0;
+      let documentsFailed = 0;
       yield* Effect.forEach(
         documents,
         (document) =>
@@ -722,6 +724,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
             if (result._tag === "Success") {
               if (result.success !== undefined) ready.push({ document, card: result.success });
             } else {
+              documentsFailed += 1;
               const details = errorDetails(result.failure);
               yield* logger.warn("doc_failed", {
                 vault_id: vaultId,
@@ -729,7 +732,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
                 document_id: document.id,
                 path: document.filePath,
                 error_type: details.errorType,
-                error: details.message.slice(0, 300),
+                error: details.message,
               });
             }
             documentsCompleted += 1;
@@ -744,6 +747,12 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
           }),
         { concurrency: config.compileEnrichConcurrency, discard: true },
       );
+      if (documentsFailed > 0) {
+        yield* pipeline.recordShortfall(
+          runId,
+          `${documentsFailed} of ${documents.length} documents could not be read`,
+        );
+      }
 
       const existing = new Set(
         (yield* db.query((d) =>
@@ -791,7 +800,7 @@ export const makeCompileLlmCore = (options: CompileLlmCoreOptions) => {
             batch_offset: offset,
             batch_size: batch.length,
             error_type: details.errorType,
-            error: details.message.slice(0, 300),
+            error: details.message,
           });
           continue;
         }
@@ -1096,6 +1105,7 @@ type JsonCall = <A>(input: {
   readonly model: string;
   readonly messages: readonly LlmMessage[];
   readonly temperature: Option.Option<number>;
+  readonly reasoningEffort?: ReasoningEffort;
   readonly responseFormat: Record<string, unknown>;
   readonly schema: Schema.Decoder<A>;
   readonly maxParseRetries?: number;
@@ -1749,6 +1759,7 @@ const synthesizeTopics = (
     );
     const contextsById = new Map(contexts.map((idea) => [idea.ideaId, idea]));
     let chunksCompleted = 0;
+    let chunksFailed = 0;
     const chunkTopics = yield* Effect.forEach(
       chunks,
       (chunk, chunkIdx) =>
@@ -1781,13 +1792,14 @@ const synthesizeTopics = (
             }),
           );
           if (result._tag === "Failure") {
+            chunksFailed += 1;
             const details = errorDetails(result.failure);
             yield* options.logger.warn("chunk_failed", {
               vault_id: options.vaultId,
               run_id: options.runId,
               chunk_idx: chunkIdx,
               error_type: details.errorType,
-              error: details.message.slice(0, 300),
+              error: details.message,
             });
             return [];
           }
@@ -1830,6 +1842,12 @@ const synthesizeTopics = (
         ),
       { concurrency: options.config.compileEnrichConcurrency },
     );
+    if (chunksFailed > 0) {
+      yield* options.pipeline.recordShortfall(
+        options.runId,
+        `${chunksFailed} of ${chunks.length} idea groups could not be summarized; their ideas are missing from this Update`,
+      );
+    }
     return chunkTopics.flat();
   });
 
@@ -2065,7 +2083,7 @@ const resolveChunkGranularity = (options: AbstractOptions, input: ChunkGranulari
           run_id: options.runId,
           chunk_idx: input.chunkIdx,
           error_type: details.errorType,
-          error: details.message.slice(0, 300),
+          error: details.message,
         });
         break;
       }
@@ -2146,7 +2164,7 @@ const resolveChunkGranularity = (options: AbstractOptions, input: ChunkGranulari
           run_id: options.runId,
           chunk_idx: input.chunkIdx,
           error_type: details.errorType,
-          error: details.message.slice(0, 300),
+          error: details.message,
         });
         next.push(topic);
         continue;
@@ -2915,6 +2933,7 @@ const runRender = (options: RenderOptions) =>
                 model: options.config.renderModel,
                 messages: [{ role: "user", content: prompt }],
                 temperature: options.config.renderTemperature,
+                reasoningEffort: Option.getOrUndefined(options.config.renderReasoningEffort),
                 responseFormat: articleResponseFormat,
                 schema: RenderResponse,
                 logFields: { topic_id: topic.topicId, topic_slug: topic.slug },
@@ -2928,7 +2947,7 @@ const runRender = (options: RenderOptions) =>
                 topic_id: topic.topicId,
                 topic_slug: topic.slug,
                 error_type: details.errorType,
-                error: details.message.slice(0, 300),
+                error: details.message,
               });
               return false;
             }
@@ -2957,7 +2976,7 @@ const runRender = (options: RenderOptions) =>
                 topic_id: topic.topicId,
                 topic_slug: topic.slug,
                 error_type: details.errorType,
-                error: details.message.slice(0, 300),
+                error: details.message,
               });
               return false;
             }
@@ -2995,6 +3014,13 @@ const runRender = (options: RenderOptions) =>
           ),
         { concurrency: options.config.compileWriteConcurrency },
       );
+      const articlesFailed = rendered.filter((ok) => !ok).length;
+      if (articlesFailed > 0) {
+        yield* options.pipeline.recordShortfall(
+          options.runId,
+          `${articlesFailed} of ${toRender.length} articles could not be written`,
+        );
+      }
       if (!rendered.includes(true) && materialized === 0) {
         yield* options.pipeline.updateProgress(
           options.runId,

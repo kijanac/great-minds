@@ -269,7 +269,7 @@ export const CompilePhasesLive = Layer.effect(
                 batch_offset: embedOffset + offset,
                 batch_size: slice.length,
                 error_type: details.errorType,
-                error: details.message.slice(0, 300),
+                error: details.message,
               });
               for (const { document } of slice) unindexed.add(document);
               continue;

@@ -34,6 +34,7 @@ export type AppConfigShape = {
   readonly mapTemperature: Option.Option<number>;
   readonly reduceTemperature: Option.Option<number>;
   readonly renderTemperature: Option.Option<number>;
+  readonly renderReasoningEffort: Option.Option<ReasoningEffort>;
   readonly compileEnrichConcurrency: number;
   readonly compileWriteConcurrency: number;
   readonly compilePartitionTargetTokens: number;
@@ -56,6 +57,8 @@ export type AppConfigShape = {
 };
 
 export const DEFAULT_RENDER_MODEL = "z-ai/glm-5.3";
+
+export type ReasoningEffort = "low" | "high" | "max";
 
 export const optionalRedactedValue = (value: Option.Option<Redacted.Redacted<string>>) =>
   Option.match(value, {
@@ -156,6 +159,16 @@ const appConfig = Config.all({
   mapTemperature: samplingTemperature("MAP_TEMPERATURE", Option.some(0.3)),
   reduceTemperature: samplingTemperature("REDUCE_TEMPERATURE", Option.none()),
   renderTemperature: samplingTemperature("RENDER_TEMPERATURE", Option.some(0.3)),
+  renderReasoningEffort: Config.option(
+    Config.literals(["none", "low", "high", "max"] as const, "RENDER_REASONING_EFFORT"),
+  ).pipe(
+    Config.map(
+      Option.match({
+        onNone: () => Option.some<ReasoningEffort>("high"),
+        onSome: (value) => (value === "none" ? Option.none() : Option.some(value)),
+      }),
+    ),
+  ),
   compileEnrichConcurrency: positiveInt("COMPILE_ENRICH_CONCURRENCY").pipe(Config.withDefault(20)),
   compileWriteConcurrency: positiveInt("COMPILE_WRITE_CONCURRENCY").pipe(Config.withDefault(3)),
   compilePartitionTargetTokens: positiveInt("COMPILE_PARTITION_TARGET_TOKENS").pipe(

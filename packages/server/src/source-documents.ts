@@ -140,7 +140,7 @@ const sourceFromMarkdown = (
     provenanceAnchoredTo: stringField(parsed.frontmatter, "anchored_to"),
     provenanceAnchoredSection: stringField(parsed.frontmatter, "anchored_section"),
     provenanceIntent: stringField(parsed.frontmatter, "intent"),
-    title: documentTitle(parsed.body),
+    title: stringField(parsed.frontmatter, "title") ?? documentTitle(parsed.body),
   };
 };
 

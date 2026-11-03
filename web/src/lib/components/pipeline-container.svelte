@@ -583,6 +583,13 @@
           >
             Knowledge base updated
           </p>
+          {#if progress.overallShortfall}
+            <p
+              class="mb-3 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-red-400/90"
+            >
+              Incomplete: {progress.overallShortfall}. Run Update again to retry.
+            </p>
+          {/if}
           {#if result.data}
             <p
               class="mb-5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"

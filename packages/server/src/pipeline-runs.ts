@@ -14,6 +14,7 @@ type PipelineRunsServiceShape = {
     steps: readonly PipelineProgressStep[],
     error?: string,
   ) => Effect.Effect<void>;
+  readonly recordShortfall: (runId: Uuid, shortfall: string) => Effect.Effect<void>;
   readonly failPreservingProgress: (runId: Uuid, error: string) => Effect.Effect<void>;
   readonly fail: (runId: Uuid, error: string) => Effect.Effect<void>;
   readonly recoverZombies: (olderThan: Date) => Effect.Effect<number>;
@@ -149,6 +150,17 @@ export const PipelineRunsServiceLive = Layer.effect(
           )
           .pipe(Effect.asVoid),
       updateProgress,
+      recordShortfall: (runId, shortfall) =>
+        db.query((d) => d
+          .update(pipelineRuns)
+          .set({
+            error: sql`CASE WHEN strpos(coalesce(${pipelineRuns.error}, ''), ${shortfall}::text) > 0 THEN ${pipelineRuns.error} ELSE concat_ws('; ', ${pipelineRuns.error}, ${shortfall}::text) END`,
+            updatedAt: sql`now()`,
+          })
+          .where(
+            and(runOrCompileGroup(runId), inArray(pipelineRuns.status, ["pending", "running"])),
+          ))
+          .pipe(Effect.asVoid),
       failPreservingProgress: (runId, error) =>
         db.query((d) => d
           .update(pipelineRuns)
