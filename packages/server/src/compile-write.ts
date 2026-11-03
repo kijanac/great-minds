@@ -3,6 +3,7 @@ import type { Uuid } from "@great-minds/domain";
 import { asc, eq } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 
+import { append } from "./collections.ts";
 import type { AskRunner, Progress } from "./compile-asks.ts";
 import type { ReasoningEffort } from "./config.ts";
 import { responseFormat } from "./compile-themes.ts";
@@ -152,8 +153,7 @@ export const writeArticles = (
     );
     const ideaById = new Map(ideaRows.map((idea) => [idea.ideaId, idea]));
     const anchorsOf = new Map<Uuid, (typeof anchorRows)[number][]>();
-    for (const anchor of anchorRows)
-      anchorsOf.set(anchor.ideaId, [...(anchorsOf.get(anchor.ideaId) ?? []), anchor]);
+    for (const anchor of anchorRows) append(anchorsOf, anchor.ideaId, anchor);
     const sourceById = new Map(sourceRows.map((source) => [source.id, source]));
     yield* runner.preloadKind("write_article");
 

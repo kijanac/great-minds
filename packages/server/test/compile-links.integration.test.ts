@@ -56,6 +56,7 @@ const settings = {
   mentionPrompt: await prompt("find_mentions"),
   pickPrompt: await prompt("pick_link_target"),
   checkPrompt: await prompt("check_link"),
+  embeddingModel: "qwen/qwen3-embedding-8b",
   concurrency: 4,
   progress: () => Effect.void,
 };

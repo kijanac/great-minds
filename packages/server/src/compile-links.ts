@@ -1,7 +1,11 @@
 import type { Uuid } from "@great-minds/domain";
 import { Effect, Schema } from "effect";
 
+import { Buffer } from "node:buffer";
+
+import { append } from "./collections.ts";
 import type { AskFailed, AskRunner, Progress } from "./compile-asks.ts";
+import { contentHash } from "./crypto.ts";
 import type { ArticleContent } from "./compile-write.ts";
 import { responseFormat } from "./compile-themes.ts";
 import type { EmbeddingsService } from "./embeddings.ts";
@@ -22,6 +26,7 @@ export type LinkSettings = {
   readonly mentionPrompt: string;
   readonly pickPrompt: string;
   readonly checkPrompt: string;
+  readonly embeddingModel: string;
   readonly concurrency: number;
   readonly progress: Progress;
 };
@@ -63,6 +68,12 @@ const normalized = (vector: readonly number[]) => {
   const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0)) || 1;
   return Float32Array.from(vector, (value) => value / norm);
 };
+
+const toBase64 = (vector: Float32Array) =>
+  Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength).toString("base64");
+
+const fromBase64 = (text: string) =>
+  new Float32Array(Uint8Array.from(Buffer.from(text, "base64")).buffer);
 
 const dot = (left: Float32Array, right: Float32Array) => {
   let total = 0;
@@ -110,6 +121,7 @@ export const findLinks = (
     yield* runner.preloadKind("find_mentions");
     yield* runner.preloadKind("pick_link_target");
     yield* runner.preloadKind("check_link");
+    yield* runner.preloadKind("embed");
     let failedQuestions = 0;
     const counted = <A>(effect: Effect.Effect<A, AskFailed>, fallback: A) =>
       effect.pipe(
@@ -174,10 +186,22 @@ export const findLinks = (
     const ids = catalogue.map((article) => article.id);
     const embedAll = (inputs: readonly string[]) =>
       Effect.gen(function* () {
-        const out: Float32Array[] = [];
-        for (let offset = 0; offset < inputs.length; offset += EMBEDDING_BATCH) {
-          const vectors = yield* embeddings.embed(inputs.slice(offset, offset + EMBEDDING_BATCH));
-          for (const vector of vectors) out.push(normalized(vector));
+        const keys = inputs.map((input) => contentHash(settings.embeddingModel, input));
+        const out: (Float32Array | undefined)[] = [];
+        const missing: number[] = [];
+        for (const [index, key] of keys.entries()) {
+          const saved = yield* runner.recall("embed", key, Schema.String);
+          if (saved === undefined) missing.push(index);
+          out[index] = saved === undefined ? undefined : fromBase64(saved);
+        }
+        for (let offset = 0; offset < missing.length; offset += EMBEDDING_BATCH) {
+          const batch = missing.slice(offset, offset + EMBEDDING_BATCH);
+          const vectors = yield* embeddings.embed(batch.map((index) => inputs[index] ?? ""));
+          for (const [position, index] of batch.entries()) {
+            const vector = normalized(vectors[position] ?? []);
+            out[index] = vector;
+            yield* runner.keep("embed", keys[index] ?? "", Schema.String, toBase64(vector));
+          }
         }
         return out;
       });
@@ -301,7 +325,6 @@ export const findLinks = (
     ).pipe(Effect.map((lists) => lists.flat()));
 
     const linksOf = new Map<Uuid, Link[]>();
-    for (const { source, link } of found)
-      linksOf.set(source, [...(linksOf.get(source) ?? []), link]);
+    for (const { source, link } of found) append(linksOf, source, link);
     return { linksOf, mentions: mentioned.length, links: found.length, failedQuestions };
   });

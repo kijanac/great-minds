@@ -49,6 +49,7 @@ import {
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
 import { ContentStorage, READ_CONCURRENCY, vaultOwner } from "./storage.ts";
+import { append } from "./collections.ts";
 import { RandomBytesService } from "./random.ts";
 
 const SEARCH_WRITE_BATCH = 200;
@@ -643,41 +644,43 @@ export const CompilePhasesLive = Layer.effect(
           );
           if (links.length > 0) yield* db.query((d) => d.insert(topicLinks).values(links));
 
-          const related = new Map<string, { id: Uuid; shared: number; jaccard: number }[]>();
-          for (const topic of validated) related.set(topic.topicId, []);
-          for (let leftIndex = 0; leftIndex < validated.length; leftIndex += 1) {
-            const left = validated[leftIndex];
-            if (left === undefined) continue;
-            const leftIds = new Set(left.subsumedIdeaIds);
-            for (let rightIndex = leftIndex + 1; rightIndex < validated.length; rightIndex += 1) {
-              const right = validated[rightIndex];
-              if (right === undefined) continue;
-              const rightIds = new Set(right.subsumedIdeaIds);
-              let shared = 0;
-              for (const ideaId of leftIds) if (rightIds.has(ideaId)) shared += 1;
-              if (shared === 0) continue;
-              const jaccard = shared / (leftIds.size + rightIds.size - shared);
-              related.get(left.topicId)!.push({ id: right.topicId, shared, jaccard });
-              related.get(right.topicId)!.push({ id: left.topicId, shared, jaccard });
-            }
-          }
-          for (const topic of validated) {
-            yield* db.query((d) => d
-              .delete(topicRelated)
-              .where(eq(topicRelated.topicId, topic.topicId)));
-            const rows = (related.get(topic.topicId) ?? [])
-              .toSorted(
-                (left, right) => right.jaccard - left.jaccard || compareText(left.id, right.id),
-              )
-              .slice(0, config.compileDeriveRelatedLimit)
-              .map((row) => ({
+          const ideaSets = validated.map((topic) => new Set(topic.subsumedIdeaIds));
+          const topicsOfIdea = new Map<string, number[]>();
+          ideaSets.forEach((set, index) => {
+            for (const ideaId of set) append(topicsOfIdea, ideaId, index);
+          });
+          const relatedRows = validated.flatMap((topic, index) => {
+            const shared = new Map<number, number>();
+            for (const ideaId of ideaSets[index] ?? [])
+              for (const other of topicsOfIdea.get(ideaId) ?? [])
+                if (other !== index) shared.set(other, (shared.get(other) ?? 0) + 1);
+            const size = ideaSets[index]?.size ?? 0;
+            return [...shared]
+              .map(([other, count]) => ({
                 topicId: topic.topicId,
-                relatedTopicId: row.id,
-                sharedIdeas: row.shared,
-                jaccard: row.jaccard,
-              }));
-            if (rows.length > 0) yield* db.query((d) => d.insert(topicRelated).values(rows));
-          }
+                relatedTopicId: validated[other]?.topicId ?? topic.topicId,
+                sharedIdeas: count,
+                jaccard: count / (size + (ideaSets[other]?.size ?? 0) - count),
+              }))
+              .toSorted(
+                (left, right) =>
+                  right.jaccard - left.jaccard ||
+                  compareText(left.relatedTopicId, right.relatedTopicId),
+              )
+              .slice(0, config.compileDeriveRelatedLimit);
+          });
+          yield* db.query((d) =>
+            d.delete(topicRelated).where(
+              inUuidArray(
+                topicRelated.topicId,
+                validated.map((topic) => topic.topicId),
+              ),
+            ),
+          );
+          for (let offset = 0; offset < relatedRows.length; offset += SEARCH_WRITE_BATCH)
+            yield* db.query((d) =>
+              d.insert(topicRelated).values(relatedRows.slice(offset, offset + SEARCH_WRITE_BATCH)),
+            );
           yield* pipeline.updateProgress(
             runId,
             "derive",
@@ -691,6 +694,15 @@ export const CompilePhasesLive = Layer.effect(
       render: themes ? themesPipeline.render : llmCore.render,
       verify: (vaultId, runId) =>
         Effect.gen(function* () {
+          if (themes)
+            return yield* pipeline.updateProgress(
+              runId,
+              "verify",
+              "completed",
+              progressSteps(VERIFY_STEP_LABELS, "check_links", {
+                completed: new Set(Object.keys(VERIFY_STEP_LABELS)),
+              }),
+            );
           yield* pipeline.updateProgress(
             runId,
             "verify",

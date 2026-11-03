@@ -14,7 +14,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { buildArticles } from "../src/compile-articles.ts";
 import { makeAskRunner } from "../src/compile-asks.ts";
-import type { Theme } from "../src/compile-themes.ts";
+import { loadBlocks, loadLibrary, type Theme } from "../src/compile-themes.ts";
 import type { CompleteInput, ModelCompletion } from "../src/llm.ts";
 import { seedLegacySources } from "./fixtures/source-documents.ts";
 import { runHistoryDatabase } from "./fixtures/reply-history-database.ts";
@@ -98,7 +98,8 @@ const build = (runId: Uuid) =>
         { db, languageModel, logger },
         { vaultId: id.vault, runId },
       );
-      return yield* buildArticles({ db, runner }, id.vault, themes, settings);
+      const blocks = yield* loadBlocks(db, id.vault, yield* loadLibrary(db, id.vault));
+      return yield* buildArticles({ db, runner }, blocks, themes, settings);
     }),
   );
 

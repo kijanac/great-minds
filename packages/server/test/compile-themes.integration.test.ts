@@ -16,7 +16,14 @@ import { Effect, Schema, Stream } from "effect";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { makeAskRunner } from "../src/compile-asks.ts";
-import { groupThemes, pairCandidates, pivotGroups, proposeTopics } from "../src/compile-themes.ts";
+import {
+  groupThemes,
+  loadBlocks,
+  loadLibrary,
+  pairCandidates,
+  pivotGroups,
+  proposeTopics,
+} from "../src/compile-themes.ts";
 import type { CompleteInput, ModelCompletion } from "../src/llm.ts";
 import { seedLegacySources } from "./fixtures/source-documents.ts";
 import { runHistoryDatabase } from "./fixtures/reply-history-database.ts";
@@ -97,9 +104,16 @@ const build = (runId: Uuid) =>
         { vaultId: id.vault, runId },
       );
       const dependencies = { db, embeddings, runner };
-      const proposed = yield* proposeTopics(dependencies, id.vault, settings);
+      const library = yield* loadLibrary(db, id.vault);
+      const proposed = yield* proposeTopics(dependencies, id.vault, library, settings);
       const paired = yield* pairCandidates(db, id.vault);
-      const { themes, failedJudgments } = yield* groupThemes(dependencies, id.vault, settings);
+      const blocks = yield* loadBlocks(db, id.vault, library);
+      const { themes, failedJudgments } = yield* groupThemes(
+        dependencies,
+        id.vault,
+        blocks,
+        settings,
+      );
       const candidates = yield* db.query((d) => d.select().from(topicCandidates));
       return { proposed, paired, themes, failedJudgments, candidates };
     }),

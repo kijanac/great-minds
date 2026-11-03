@@ -187,11 +187,16 @@ const LanguageModelLive = Layer.succeed(LanguageModel, {
     }),
 });
 const axis = (text: string) => (/beta/i.test(text) ? 1 : /alpha/i.test(text) ? 0 : 2);
+const embedded: string[] = [];
 const EmbeddingsLive = Layer.succeed(EmbeddingsService, {
   embed: (texts) =>
-    Effect.succeed(
+    Effect.sync(() => {
+      embedded.push(...texts);
+    }).pipe(
+      Effect.as(
       texts.map((text) =>
         Array.from({ length: 1024 }, (_unused, index) => (index === axis(text) ? 1 : 0)),
+      ),
       ),
     ),
 });
@@ -274,6 +279,7 @@ describe("the themes Update pipeline", () => {
 
   beforeEach(async () => {
     calls.length = 0;
+    embedded.length = 0;
     files.clear();
     files.set("wiki/old-topic.md", "---\ntopic_id: old\n---\n# Old topic\n");
     files.set("config.yaml", 'thematic_hint: "Food bank operations, plans and people"\n');
@@ -413,8 +419,11 @@ describe("the themes Update pipeline", () => {
     const first = await compile(id.run);
     const before = new Map(files);
     calls.length = 0;
+    embedded.length = 0;
     const again = await compile(id.rerun);
     expect(calls).toHaveLength(0);
+    expect(embedded).toEqual([]);
+    expect((await rows()).backlinks).toHaveLength(1);
     expect(again).toEqual(first);
     expect(files.get("wiki/alpha.md")).toBe(before.get("wiki/alpha.md"));
     expect(files.get("wiki/beta.md")).toBe(before.get("wiki/beta.md"));

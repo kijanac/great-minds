@@ -11,6 +11,7 @@ import { Uuid } from "@great-minds/domain";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { Effect, Queue, Schema, Semaphore } from "effect";
 
+import { append } from "./collections.ts";
 import { askKey, type AskRunner, type Progress } from "./compile-asks.ts";
 import { contentHash } from "./crypto.ts";
 import type { EmbeddingsService } from "./embeddings.ts";
@@ -162,7 +163,7 @@ export const pivotGroups = <K extends string, E, R>(
     return leader;
   });
 
-const loadDocuments = (db: Database["Service"], vaultId: Uuid) =>
+export const loadLibrary = (db: Database["Service"], vaultId: Uuid) =>
   Effect.gen(function* () {
     const documents = yield* db.query((d) =>
       d
@@ -199,11 +200,9 @@ const loadDocuments = (db: Database["Service"], vaultId: Uuid) =>
         .orderBy(asc(anchors.ideaId), asc(anchors.position)),
     );
     const claimsOf = new Map<string, string[]>();
-    for (const row of claimRows)
-      claimsOf.set(row.ideaId, [...(claimsOf.get(row.ideaId) ?? []), row.claim]);
+    for (const row of claimRows) append(claimsOf, row.ideaId, row.claim);
     const ideasOf = new Map<string, (typeof ideaRows)[number][]>();
-    for (const row of ideaRows)
-      ideasOf.set(row.documentId, [...(ideasOf.get(row.documentId) ?? []), row]);
+    for (const row of ideaRows) append(ideasOf, row.documentId, row);
     return {
       documents,
       ideasOf,
@@ -258,10 +257,18 @@ const proposalRequest = (
   };
 };
 
-export const proposeTopics = (dependencies: Dependencies, vaultId: Uuid, settings: ThemeSettings) =>
+export type Library = Effect.Success<ReturnType<typeof loadLibrary>>;
+
+export const proposeTopics = (
+  dependencies: Dependencies,
+  vaultId: Uuid,
+  library: Library,
+  settings: ThemeSettings,
+) =>
   Effect.gen(function* () {
     const { db, embeddings, runner } = dependencies;
-    const { documents, ideasOf, claimsOf } = yield* loadDocuments(db, vaultId);
+    const { documents, ideasOf, claimsOf } = library;
+    yield* runner.preloadKind("propose_topics");
     const asking = documents.filter((document) => (ideasOf.get(document.id) ?? []).length > 0);
     let answeredCount = 0;
     const tick = Effect.suspend(() => {
@@ -396,9 +403,9 @@ export const pairCandidates = (db: Database["Service"], vaultId: Uuid) =>
     return { paired: unpaired.length };
   });
 
-export const loadBlocks = (db: Database["Service"], vaultId: Uuid) =>
+export const loadBlocks = (db: Database["Service"], vaultId: Uuid, library: Library) =>
   Effect.gen(function* () {
-    const { documents, ideaById, claimsOf } = yield* loadDocuments(db, vaultId);
+    const { documents, ideaById, claimsOf } = library;
     const documentById = new Map(documents.map((document) => [document.id, document]));
     const proposals = yield* db.query((d) =>
       d
@@ -438,10 +445,17 @@ export const loadBlocks = (db: Database["Service"], vaultId: Uuid) =>
     return { proposals, blocks, ideaById, claimsOf };
   });
 
-export const groupThemes = (dependencies: Dependencies, vaultId: Uuid, settings: ThemeSettings) =>
+export type Blocks = Effect.Success<ReturnType<typeof loadBlocks>>;
+
+export const groupThemes = (
+  dependencies: Dependencies,
+  vaultId: Uuid,
+  loaded: Blocks,
+  settings: ThemeSettings,
+) =>
   Effect.gen(function* () {
     const { db, runner } = dependencies;
-    const { proposals, blocks } = yield* loadBlocks(db, vaultId);
+    const { proposals, blocks } = loaded;
     const candidates = yield* db.query((d) =>
       d
         .select({
@@ -454,8 +468,8 @@ export const groupThemes = (dependencies: Dependencies, vaultId: Uuid, settings:
     );
     const scored = new Map<Uuid, [Uuid, number][]>();
     for (const { lowerId, higherId, similarity } of candidates) {
-      scored.set(lowerId, [...(scored.get(lowerId) ?? []), [higherId, similarity]]);
-      scored.set(higherId, [...(scored.get(higherId) ?? []), [lowerId, similarity]]);
+      append(scored, lowerId, [higherId, similarity]);
+      append(scored, higherId, [lowerId, similarity]);
     }
     const orderKey = new Map(
       proposals.map((proposal) => [
@@ -529,7 +543,7 @@ export const groupThemes = (dependencies: Dependencies, vaultId: Uuid, settings:
     const membersOf = new Map<Uuid, Uuid[]>();
     order.forEach((id, index) => {
       const group = leaders[index] ?? id;
-      membersOf.set(group, [...(membersOf.get(group) ?? []), id]);
+      append(membersOf, group, id);
     });
     const faceOf = new Map(faces.rows.map((row) => [row.leader, row.face]));
     const themes = [...membersOf].map(([group, members]): Theme => {

@@ -30,6 +30,17 @@ export type Progress = (step: string, done: number, total: number) => Effect.Eff
 export type AskRunner = {
   readonly ask: <A, I>(request: AskRequest<A, I>) => Effect.Effect<A, AskFailed>;
   readonly preloadKind: (kind: string) => Effect.Effect<void>;
+  readonly recall: <A, I>(
+    kind: string,
+    key: string,
+    codec: Schema.Codec<A, I>,
+  ) => Effect.Effect<A | undefined>;
+  readonly keep: <A, I>(
+    kind: string,
+    key: string,
+    codec: Schema.Codec<A, I>,
+    value: A,
+  ) => Effect.Effect<void>;
 };
 
 export const askKey = (request: AskRequest<unknown, unknown>) =>
@@ -94,6 +105,17 @@ export const makeAskRunner = (
         return yield* Schema.decodeUnknownEffect(answer)(row.value).pipe(Effect.orDie);
       });
 
+    const keep = <A, I>(kind: string, key: string, codec: Schema.Codec<A, I>, value: A) =>
+      Effect.gen(function* () {
+        const encoded = yield* Schema.encodeEffect(codec)(value).pipe(Effect.orDie);
+        yield* db.query((d) =>
+          d
+            .insert(compileCacheEntries)
+            .values({ vaultId: scope.vaultId, phase: `ask:${kind}`, cacheKey: key, value: encoded })
+            .onConflictDoNothing(),
+        );
+      });
+
     const ask = <A, I>(request: AskRequest<A, I>) =>
       Effect.gen(function* () {
         const phase = `ask:${request.kind}`;
@@ -150,13 +172,7 @@ export const makeAskRunner = (
               new AskFailed({ kind: request.kind, reason: "malformed", message: error.message }),
           ),
         );
-        const value = yield* Schema.encodeEffect(request.answer)(answer).pipe(Effect.orDie);
-        yield* db.query((d) =>
-          d
-            .insert(compileCacheEntries)
-            .values({ vaultId: scope.vaultId, phase, cacheKey: key, value })
-            .onConflictDoNothing(),
-        );
+        yield* keep(request.kind, key, request.answer, answer);
         return answer;
       }).pipe(
         Effect.tapError((error) =>
@@ -172,5 +188,10 @@ export const makeAskRunner = (
         ),
       );
 
-    return { ask, preloadKind } satisfies AskRunner;
+    return {
+      ask,
+      preloadKind,
+      recall: (kind, key, codec) => saved(`ask:${kind}`, key, codec),
+      keep,
+    } satisfies AskRunner;
   });

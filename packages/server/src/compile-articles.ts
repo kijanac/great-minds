@@ -4,7 +4,8 @@ import { sql } from "drizzle-orm";
 import { Effect, Schema, Semaphore } from "effect";
 
 import type { AskRunner, Progress } from "./compile-asks.ts";
-import { loadBlocks, pivotGroups, responseFormat, type Theme } from "./compile-themes.ts";
+import { append } from "./collections.ts";
+import { type Blocks, pivotGroups, responseFormat, type Theme } from "./compile-themes.ts";
 import { contentHash } from "./crypto.ts";
 
 const ARTICLE_MIN_DOCUMENTS = 5;
@@ -58,13 +59,13 @@ const nameKey = (title: string) =>
 
 export const buildArticles = (
   dependencies: { readonly db: Database["Service"]; readonly runner: AskRunner },
-  vaultId: Uuid,
+  loaded: Blocks,
   themes: readonly Theme[],
   settings: ArticleSettings,
 ) =>
   Effect.gen(function* () {
     const { db, runner } = dependencies;
-    const { proposals, blocks, ideaById, claimsOf } = yield* loadBlocks(db, vaultId);
+    const { proposals, blocks, ideaById, claimsOf } = loaded;
     const proposalById = new Map(proposals.map((proposal) => [proposal.id, proposal]));
     const orderKey = (id: Uuid) => {
       const proposal = proposalById.get(id);
@@ -117,8 +118,8 @@ export const buildArticles = (
             .pipe(Effect.flatMap(Schema.decodeUnknownEffect(PairRows)), Effect.orDie);
     const neighbours = new Map<Uuid, Uuid[]>();
     for (const { a, b } of mergePairs.rows) {
-      neighbours.set(a, [...(neighbours.get(a) ?? []), b]);
-      neighbours.set(b, [...(neighbours.get(b) ?? []), a]);
+      append(neighbours, a, b);
+      append(neighbours, b, a);
     }
 
     const permits = yield* Semaphore.make(settings.concurrency);
@@ -197,7 +198,7 @@ export const buildArticles = (
     const groups = new Map<Uuid, Theme[]>();
     for (const theme of big) {
       const root = find(theme.id);
-      groups.set(root, [...(groups.get(root) ?? []), theme]);
+      append(groups, root, theme);
     }
     const headOf = (members: readonly Theme[]) =>
       members.toSorted(
@@ -294,8 +295,7 @@ export const buildArticles = (
     }
 
     const themesOf = new Map<Uuid, Uuid[]>();
-    for (const [theme, article] of articleOfTheme)
-      themesOf.set(article, [...(themesOf.get(article) ?? []), theme]);
+    for (const [theme, article] of articleOfTheme) append(themesOf, article, theme);
     const articles = [...heads.values()].map((head): Article => {
       const themeIds = (themesOf.get(head.id) ?? []).toSorted(byOrder);
       const members = themeIds.flatMap((id) => themeById.get(id) ?? []);

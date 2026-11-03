@@ -1,4 +1,4 @@
-import { type Database, topicLinks, topics } from "@great-minds/database";
+import { backlinks, type Database, topicLinks, topics, wikiArticles } from "@great-minds/database";
 import type { Uuid } from "@great-minds/domain";
 import { eq, inArray, sql } from "drizzle-orm";
 import { Effect, Option } from "effect";
@@ -14,7 +14,13 @@ import {
 } from "./compile-contract.ts";
 import { findLinks, withLinks } from "./compile-links.ts";
 import { slugifyRegistry } from "./compile-llm-core.ts";
-import { groupThemes, pairCandidates, proposeTopics } from "./compile-themes.ts";
+import {
+  groupThemes,
+  loadBlocks,
+  loadLibrary,
+  pairCandidates,
+  proposeTopics,
+} from "./compile-themes.ts";
 import { writeArticles } from "./compile-write.ts";
 import type { AppConfigShape } from "./config.ts";
 import type { EmbeddingsService } from "./embeddings.ts";
@@ -121,12 +127,24 @@ export const makeThemesPipeline = (options: {
         progress: steps.progress,
       };
       yield* steps.start("propose_topics");
-      const proposed = yield* proposeTopics({ db, embeddings, runner }, vaultId, themeSettings);
+      const library = yield* loadLibrary(db, vaultId);
+      const proposed = yield* proposeTopics(
+        { db, embeddings, runner },
+        vaultId,
+        library,
+        themeSettings,
+      );
       yield* steps.start("group_topics");
       yield* pairCandidates(db, vaultId);
-      const grouped = yield* groupThemes({ db, embeddings, runner }, vaultId, themeSettings);
+      const blocks = yield* loadBlocks(db, vaultId, library);
+      const grouped = yield* groupThemes(
+        { db, embeddings, runner },
+        vaultId,
+        blocks,
+        themeSettings,
+      );
       yield* steps.start("build_articles");
-      const built = yield* buildArticles({ db, runner }, vaultId, grouped.themes, {
+      const built = yield* buildArticles({ db, runner }, blocks, grouped.themes, {
         model: config.mapModel,
         mergePrompt: yield* prompt("judge_same_entry"),
         placePrompt: yield* prompt("place_in_article"),
@@ -252,6 +270,7 @@ export const makeThemesPipeline = (options: {
           mentionPrompt: yield* prompt("find_mentions"),
           pickPrompt: yield* prompt("pick_link_target"),
           checkPrompt: yield* prompt("check_link"),
+          embeddingModel: config.embeddingModel,
           concurrency: config.compileEnrichConcurrency,
           progress: steps.progress,
         },
@@ -283,6 +302,29 @@ export const makeThemesPipeline = (options: {
               targetTopicId: link.target,
             });
       if (edges.size > 0) yield* db.query((d) => d.insert(topicLinks).values([...edges.values()]));
+      const pages =
+        ids.length === 0
+          ? []
+          : yield* db.query((d) =>
+              d
+                .select({ id: wikiArticles.id, topicId: wikiArticles.topicId })
+                .from(wikiArticles)
+                .where(inArray(wikiArticles.topicId, ids)),
+            );
+      const pageOf = new Map(pages.map((page) => [page.topicId, page.id]));
+      const rewritten = pages.filter((page) => live.has(page.topicId)).map((page) => page.id);
+      if (rewritten.length > 0)
+        yield* db.query((d) =>
+          d.delete(backlinks).where(inArray(backlinks.sourceArticleId, rewritten)),
+        );
+      const pageEdges = [...edges.values()].flatMap((edge) => {
+        const sourceArticleId = pageOf.get(edge.sourceTopicId);
+        const targetArticleId = pageOf.get(edge.targetTopicId);
+        return sourceArticleId === undefined || targetArticleId === undefined
+          ? []
+          : [{ sourceArticleId, targetArticleId }];
+      });
+      if (pageEdges.length > 0) yield* db.query((d) => d.insert(backlinks).values(pageEdges));
       yield* warn(
         runId,
         "render",
