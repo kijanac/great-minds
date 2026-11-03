@@ -1158,6 +1158,41 @@ describe("M4.3a deterministic compile phases", () => {
     expect(embeddingRequests).toEqual([]);
   });
 
+  it("ingest indexes every chunk of a document longer than one search write", async () => {
+    const paragraphs = Array.from({ length: 450 }, (_unused, index) => `Paragraph ${index} ^p${index}`);
+    files.set(
+      "raw/docs/long.md",
+      `---\nsource_id: ${id.source}\ntitle: Long\n---\n${paragraphs.join("\n\n")}\n`,
+    );
+    etags.set("raw/docs/long.md", "etag-long");
+    const indexed = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .transaction((tx) =>
+            seedLegacySources(tx, {
+              id: id.source,
+              vaultId: id.vault,
+              filePath: "raw/docs/long.md",
+              fileHash: "file",
+              bodyHash: "body",
+              sourceType: "document",
+            }),
+          )
+          .pipe(Effect.orDie);
+        const phases = yield* CompilePhases;
+        yield* phases.ingest(id.vault, id.run);
+        return yield* db
+          .query((d) => d.select({ chunkIndex: searchIndex.chunkIndex }).from(searchIndex))
+          .pipe(Effect.orDie);
+      }),
+    );
+    expect(indexed.map((row) => row.chunkIndex).toSorted((left, right) => left - right)).toEqual([
+      -1,
+      ...paragraphs.map((_paragraph, index) => index),
+    ]);
+  });
+
   it("extract keeps an unchanged source's ETag and date, so the next ingest reads nothing", async () => {
     const path = "raw/docs/source.md";
     files.set(path, `---\nsource_id: ${id.source}\n---\n# Source\n\nBody\n`);

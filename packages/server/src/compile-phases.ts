@@ -51,6 +51,8 @@ import { SourceDocumentsService } from "./source-documents.ts";
 import { ContentStorage, READ_CONCURRENCY, vaultOwner } from "./storage.ts";
 import { RandomBytesService } from "./random.ts";
 
+const SEARCH_WRITE_BATCH = 200;
+
 const compareText = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 const metadataText = (frontmatter: Record<string, unknown>) => {
   const parts: string[] = [];
@@ -313,10 +315,10 @@ export const CompilePhasesLive = Layer.effect(
             if (upserts.length === 0 && !removed && etag === undefined) continue;
             yield* project(file, (tx) =>
               Effect.gen(function* () {
-                if (upserts.length > 0)
+                for (let offset = 0; offset < upserts.length; offset += SEARCH_WRITE_BATCH)
                   yield* tx
                     .insert(searchIndex)
-                    .values(upserts)
+                    .values(upserts.slice(offset, offset + SEARCH_WRITE_BATCH))
                     .onConflictDoUpdate({
                       target: [searchIndex.vaultId, searchIndex.path, searchIndex.chunkIndex],
                       set: {
