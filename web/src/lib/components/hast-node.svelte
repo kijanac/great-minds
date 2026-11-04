@@ -76,7 +76,7 @@
       h1: "mt-[26px] mb-[11px] text-[length:var(--text-heading)] font-bold text-foreground -tracking-[0.01em] first:mt-0",
       h2: "mt-[26px] mb-[11px] text-[length:var(--text-heading)] font-bold text-foreground -tracking-[0.01em] first:mt-0",
       h3: "mt-[18px] mb-2 font-mono text-[length:var(--text-chrome)] font-medium tracking-[0.14em] text-gold uppercase",
-      p: "mb-0.5 text-[length:var(--text-body)] leading-[1.82] text-warm-dim",
+      p: "mb-4 text-[length:var(--text-body)] leading-[1.82] text-warm-dim last:mb-0",
       ul: "mb-2 ml-2 list-inside list-disc text-[length:var(--text-body)] leading-[1.82] text-warm-dim",
       ol: "mb-2 ml-2 list-inside list-decimal text-[length:var(--text-body)] leading-[1.82] text-warm-dim",
       li: "mb-1",

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { goto } from "$app/navigation";
+  import { afterNavigate, goto } from "$app/navigation";
   import type { SessionId } from "@great-minds/domain";
 
   import HomeContent from "$lib/components/home-content.svelte";
@@ -20,6 +20,12 @@
 
   const vaults = useVaults();
   const saved = useSavedSession(() => sessionId ?? null);
+  let visit = $state(0);
+  let mounted = false;
+  afterNavigate(() => {
+    if (mounted) visit += 1;
+    mounted = true;
+  });
 
   $effect(() => {
     if (vaults.isSuccess && !sessionId && vaults.data.length === 0) {
@@ -55,7 +61,7 @@
 {:else if saved.data?.kind === "btw"}
   <LoadingState label="Opening BTW…" />
 {:else}
-  {#key sessionId ?? "new"}
+  {#key `${sessionId ?? "new"}:${visit}`}
     <HomeContent saved={saved.data} {initialQuery} {origin} />
   {/key}
 {/if}

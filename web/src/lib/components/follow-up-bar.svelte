@@ -51,10 +51,10 @@
 </script>
 
 <div
-  class="shrink-0 animate-[slide-up_0.28s_cubic-bezier(0.4,0,0.2,1)] border-t border-ink-subtle pt-3 pr-4 pb-3.5 pl-[var(--shell-utility-inset)] motion-reduce:animate-none md:pr-10"
+  class="shrink-0 animate-[slide-up_0.28s_cubic-bezier(0.4,0,0.2,1)] border-t border-ink-subtle pt-3 pr-4 pl-[var(--shell-utility-inset)] md:pr-[var(--shell-utility-inset)] pb-[max(0.875rem,env(safe-area-inset-bottom))] motion-reduce:animate-none"
 >
   <form
-    class="mx-auto flex w-full max-w-[740px] flex-col gap-2"
+    class="mx-auto flex w-full max-w-[740px] flex-col gap-2 md:px-10"
     onsubmit={(event) => {
       event.preventDefault();
       submit();
@@ -87,13 +87,13 @@
       </div>
     {/if}
 
-    <div class="flex items-end gap-3">
+    <div class="flex items-center gap-3">
       <textarea
         bind:value
         {disabled}
         rows={2}
         aria-label="Continue the conversation"
-        class="max-h-52 min-h-12 w-full min-w-0 flex-1 resize-y border-0 border-b border-b-gold-dim bg-transparent py-1 font-serif text-[length:var(--text-small)] leading-[1.7] text-warm-dim italic caret-gold outline-none transition-colors placeholder:text-warm-faint focus:border-b-gold disabled:opacity-50"
+        class="field-sizing-content max-h-52 min-h-12 w-full min-w-0 flex-1 resize-none border-0 border-b border-b-gold-dim bg-transparent py-1 font-serif text-[length:var(--text-small)] leading-[1.7] text-warm-dim italic caret-gold outline-none transition-colors placeholder:text-warm-faint focus:border-b-gold disabled:opacity-50"
         placeholder={chips.length > 0
           ? "Add context or send selected passages…"
           : "Continue the conversation…"}
