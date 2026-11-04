@@ -1,4 +1,4 @@
-import { Database, wikiArticles } from "@great-minds/database";
+import { backlinks, Database, wikiArticles } from "@great-minds/database";
 import {
   Forbidden,
   type PageParams,
@@ -93,7 +93,9 @@ export const WikiServiceLive = Layer.effect(
           return yield* listPage(
             query,
             listedArticleConditions(vaultId, query),
-            asc(sql`lower(${wikiArticles.title})`),
+            query.sort === "linked"
+              ? sql`(select count(*) from ${backlinks} where ${backlinks.targetArticleId} = ${wikiArticles.id}) desc, lower(${wikiArticles.title})`
+              : asc(sql`lower(${wikiArticles.title})`),
           );
         }),
       listRecent: (userId, vaultId, params) =>

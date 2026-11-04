@@ -3,6 +3,7 @@ import { page } from "$app/state";
 import type { Uuid } from "@great-minds/domain";
 import {
   createInfiniteQuery,
+  createMutation,
   createQuery,
   useQueryClient,
   type QueryClient,
@@ -16,7 +17,8 @@ import {
   fetchSourceDocuments,
   requestSourceDeletion,
 } from "$lib/api/sources";
-import { fetchWikiArticles } from "$lib/api/wiki";
+import { requestCompile } from "$lib/api/jobs";
+import { fetchAllWikiArticles, fetchWikiArticles } from "$lib/api/wiki";
 import { usePanelContent } from "$lib/hooks/use-panel-content.svelte";
 import { activeVault, useVaultDetail } from "$lib/hooks/use-vault.svelte";
 import type { SourceRef } from "$lib/types";
@@ -24,7 +26,9 @@ import type { SourceRef } from "$lib/types";
 const PAGE_SIZE = 50;
 export const LIBRARY_ALL = "all";
 export const LIBRARY_ARTICLES = "articles";
+export const LIBRARY_SOURCES = "sources";
 export const LIBRARY_READING_ROOM = "reading-room";
+const START_HERE = 8;
 
 export function invalidateSourceLists(queryClient: QueryClient, vaultId: Uuid | null) {
   return Promise.all(
@@ -50,9 +54,13 @@ export function useLibrary(
   const sourceType = $derived(
     activeType === LIBRARY_ALL ||
       activeType === LIBRARY_ARTICLES ||
+      activeType === LIBRARY_SOURCES ||
       activeType === LIBRARY_READING_ROOM
       ? undefined
       : activeType,
+  );
+  const showContents = $derived(
+    activeType === LIBRARY_ALL && activeTag === "" && searchQuery === "",
   );
 
   $effect(() => {
@@ -84,6 +92,26 @@ export function useLibrary(
     enabled: !!activeVault.id,
   }));
 
+  const contents = createQuery(() => ({
+    queryKey: ["vault", activeVault.id, "library-contents"],
+    queryFn: async () => {
+      const [all, linked] = await Promise.all([
+        fetchAllWikiArticles(),
+        fetchWikiArticles({ sort: "linked", limit: START_HERE }),
+      ]);
+      return { all, startHere: linked.items };
+    },
+    enabled: !!activeVault.id && showContents,
+  }));
+
+  const update = createMutation(() => ({
+    mutationFn: () => requestCompile(),
+    onSuccess: async (job) => {
+      await queryClient.invalidateQueries({ queryKey: ["vault", activeVault.id, "active-job"] });
+      await goto(`/pipeline/runs/${job.id}`);
+    },
+  }));
+
   const articles = createInfiniteQuery(() => ({
     queryKey: ["vault", activeVault.id, "library-articles", searchQuery, activeTag],
     queryFn: ({ pageParam }) =>
@@ -95,7 +123,7 @@ export function useLibrary(
       }),
     initialPageParam: 0,
     getNextPageParam: (lastPage) => nextPageOffset(lastPage),
-    enabled: !!activeVault.id,
+    enabled: !!activeVault.id && !showContents && activeType !== LIBRARY_SOURCES,
   }));
 
   const sources = createInfiniteQuery(() => ({
@@ -118,16 +146,17 @@ export function useLibrary(
     initialPageParam: 0,
     getNextPageParam: (lastPage) => nextPageOffset(lastPage),
     enabled:
-      !!activeVault.id && activeType !== LIBRARY_ARTICLES && activeType !== LIBRARY_READING_ROOM,
+      !!activeVault.id &&
+      !showContents &&
+      activeType !== LIBRARY_ARTICLES &&
+      activeType !== LIBRARY_READING_ROOM,
   }));
 
   const role = useVaultDetail(() => activeVault.id);
 
   const panel = usePanelContent(selectedCard);
 
-  const sourceFacets = $derived([...(facets.data?.facets.source_types ?? [])]);
   const sourceTotal = $derived(facets.data?.pagination.total ?? 0);
-  const articleTotal = $derived(articles.data?.pages[0]?.pagination.total ?? 0);
   // Wiki pin: a wiki article whose title or slug matches the active tag
   // (case-insensitive), surfaced from the already-fetched articles as a
   // distinct synthesis row. Absence is normal.
@@ -152,16 +181,14 @@ export function useLibrary(
     });
   }
 
+  function showAll() {
+    replaceLibraryUrl(new URLSearchParams());
+  }
+
   function chooseType(value: string) {
     const params = new URLSearchParams(page.url.searchParams);
     if (!value || value === LIBRARY_ALL) params.delete("type");
     else params.set("type", value);
-    replaceLibraryUrl(params);
-  }
-
-  function clearTag() {
-    const params = new URLSearchParams(page.url.searchParams);
-    params.delete("tag");
     replaceLibraryUrl(params);
   }
 
@@ -223,17 +250,18 @@ export function useLibrary(
     get articleItems() {
       return articles.data?.pages.flatMap((result) => result.items) ?? [];
     },
-    get articleTotal() {
-      return articleTotal;
-    },
     articles,
     chooseType,
-    clearTag,
+    contents,
     deleteSource,
-    get headerCount() {
-      if (activeType === LIBRARY_ALL) return articleTotal + sourceTotal;
-      if (activeType === LIBRARY_ARTICLES) return articleTotal;
-      return sources.data?.pages[0]?.pagination.total ?? 0;
+    get canUpdate() {
+      return role.data?.role === "owner";
+    },
+    get lastUpdated() {
+      const times = (contents.data?.all ?? []).flatMap((article) =>
+        article.updated_at === null ? [] : [article.updated_at.getTime()],
+      );
+      return times.length === 0 ? null : new Date(Math.max(...times));
     },
     get loading() {
       return articles.isLoading || sources.isLoading || facets.isLoading;
@@ -243,6 +271,14 @@ export function useLibrary(
       return pinArticle;
     },
     requestDeletion,
+    showAll,
+    get showContents() {
+      return showContents;
+    },
+    get sourceTotal() {
+      return sourceTotal;
+    },
+    update,
     get role() {
       return role.data?.role ?? null;
     },
@@ -252,19 +288,10 @@ export function useLibrary(
     setSearch(value: string) {
       search = value;
     },
-    get showCounts() {
-      return searchQuery === "";
-    },
-    get sourceFacets() {
-      return sourceFacets;
-    },
     get sourceItems() {
       return sources.data?.pages.flatMap((result) => result.items) ?? [];
     },
     sources,
-    get totalCount() {
-      return articleTotal + sourceTotal;
-    },
   };
 }
 

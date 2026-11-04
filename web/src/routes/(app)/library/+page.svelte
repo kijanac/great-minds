@@ -3,19 +3,18 @@
   import Search from "@lucide/svelte/icons/search";
 
   import ArticlePanel from "$lib/components/article-panel.svelte";
-  import HealthIndicator from "$lib/components/health-indicator.svelte";
   import LibraryContent from "$lib/components/library-content.svelte";
   import PageHeader from "$lib/components/page-header.svelte";
   import PanelHost from "$lib/components/panel-host.svelte";
   import { Input } from "$lib/components/ui/input";
   import type { ReferenceOverview } from "$lib/api/references";
-  import { useHealthReport } from "$lib/hooks/use-health-report.svelte";
   import {
     LIBRARY_READING_ROOM,
     useLibrary,
   } from "$lib/hooks/use-library.svelte";
   import { usePanelCard } from "$lib/hooks/use-panel-card.svelte";
   import { useReferences } from "$lib/hooks/use-references.svelte";
+  import { activeVault } from "$lib/hooks/use-vault.svelte";
 
   const card = usePanelCard();
   const library = useLibrary(
@@ -25,14 +24,19 @@
     },
   );
   const readingRoom = useReferences();
-  const health = useHealthReport();
-  const headerCount = $derived(
-    library.activeType === LIBRARY_READING_ROOM
-      ? library.activeTag
-        ? 0
-        : readingRoom.total
-      : library.headerCount,
-  );
+
+  let updatedSinceVisit = $state(false);
+  let checkedVault: string | null = null;
+  $effect(() => {
+    const vaultId = activeVault.id;
+    const updated = library.lastUpdated;
+    if (!vaultId || !updated || checkedVault === vaultId) return;
+    checkedVault = vaultId;
+    const key = `library-seen:${vaultId}`;
+    const seen = Number(localStorage.getItem(key) ?? "0");
+    updatedSinceVisit = seen > 0 && updated.getTime() > seen;
+    localStorage.setItem(key, String(updated.getTime()));
+  });
 
   function openReference(reference: ReferenceOverview) {
     void goto(`/refs/${reference.file_path}`);
@@ -49,7 +53,7 @@
 
   const actions = {
     chooseType: library.chooseType,
-    clearTag: library.clearTag,
+    showAll: library.showAll,
     openArticle: card.openArticle,
     openSource: card.openSource,
     openReference,
@@ -80,20 +84,6 @@
   {/snippet}
 
   <div class="flex h-dvh flex-col overflow-hidden">
-    {#snippet detail()}
-      {#if headerCount > 0}
-        <span
-          class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-        >
-          {headerCount}
-        </span>
-      {/if}
-      <HealthIndicator
-        status={health.status}
-        count={health.count}
-        onOpen={() => void goto("/health")}
-      />
-    {/snippet}
     {#snippet search()}
       {#if library.activeType !== LIBRARY_READING_ROOM}
         <div class="flex w-full max-w-[300px] items-center gap-2">
@@ -109,13 +99,12 @@
     {/snippet}
     <PageHeader
       title="library"
-      {detail}
       trailing={search}
       onHome={() => void goto("/")}
     />
 
     <div class="min-h-0 flex-1 overflow-y-auto">
-      <LibraryContent {library} {readingRoom} {actions} />
+      <LibraryContent {library} {readingRoom} {actions} {updatedSinceVisit} />
     </div>
   </div>
 </PanelHost>

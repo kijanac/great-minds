@@ -16,7 +16,9 @@
 >
   {@render children()}
   {#if utility}
-    <div class="fixed bottom-4 left-4 z-[100]">
+    <div
+      class="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-4 z-[100] rounded-sm bg-background/90 backdrop-blur-sm"
+    >
       {@render utility()}
     </div>
   {/if}

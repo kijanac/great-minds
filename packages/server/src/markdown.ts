@@ -86,6 +86,34 @@ export const markdownParagraphs = (content: string) => {
   return paragraphs;
 };
 
+const OPENING_LIMIT = 240;
+
+const plainProse = (markdown: string) =>
+  markdown
+    .replace(/\[\^\d+\]/g, "")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__|\*|_)(\S[^*_]*?)\1/g, "$2")
+    .replace(/\s+/g, " ")
+    .trim();
+
+export const openingSentence = (body: string) => {
+  const prose = body
+    .split(/\n\s*\n/)
+    .map((block) => block.trim())
+    .find((block) => block !== "" && !/^(#|\[\^|---|>|[-*] |\d+\. |\|)/.test(block));
+  if (prose === undefined) return "";
+  const text = plainProse(prose);
+  for (const match of text.matchAll(/[.!?](?=\s+["“(A-Z])/g)) {
+    const end = match.index + 1;
+    if (/(^|\s)([A-Z]|St|Mr|Mrs|Dr|Jr|Sr|No|Vol|vs|cf)$/.test(text.slice(0, end - 1))) continue;
+    if (end >= 40) return end <= OPENING_LIMIT ? text.slice(0, end) : shortened(text);
+  }
+  return text.length <= OPENING_LIMIT ? text : shortened(text);
+};
+
+const shortened = (text: string) =>
+  `${text.slice(0, OPENING_LIMIT).replace(/\s+\S*$/, "").replace(/[,;:—–-]$/, "")}…`;
+
 export const extractWikiLinkTargets = (content: string) => {
   const paths: string[] = [];
   const seen = new Set<string>();

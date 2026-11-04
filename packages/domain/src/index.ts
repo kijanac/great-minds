@@ -665,6 +665,7 @@ export const WikiListQuery = Schema.Struct({
   run: Schema.optionalKey(Uuid),
   contains: Schema.optionalKey(Schema.String),
   tag: Schema.optionalKey(Schema.String),
+  sort: Schema.optionalKey(Schema.Literals(["title", "linked"] as const)),
 });
 export type WikiListQuery = typeof WikiListQuery.Type;
 

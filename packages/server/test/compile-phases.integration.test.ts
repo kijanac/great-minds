@@ -1910,7 +1910,22 @@ describe("M4.3a deterministic compile phases", () => {
     );
     expect(edges).toEqual([{ sourceArticleId: id.articleA, targetArticleId: id.articleB }]);
     expect(files.get("wiki/_index.md")).toBe(
-      "# Wiki Index\n\n_2 rendered articles_\n\n- [Alpha](wiki/alpha.md) — Alpha description\n- [Beta](wiki/beta.md) — Beta description\n",
+      [
+        "# Contents",
+        "",
+        "_2 articles_",
+        "",
+        "## Start here",
+        "",
+        "- [Beta](wiki/beta.md) — Beta description",
+        "- [Alpha](wiki/alpha.md) — Alpha description",
+        "",
+        "## All articles",
+        "",
+        "- [Alpha](wiki/alpha.md) — Alpha description",
+        "- [Beta](wiki/beta.md) — Beta description",
+        "",
+      ].join("\n"),
     );
     expect(files.get("raw/_index.md")).toContain("[raw/docs/source.md](raw/docs/source.md)");
     const log = await readFile(join(dataDir, ".compile", id.vault, "log.md"), "utf8");

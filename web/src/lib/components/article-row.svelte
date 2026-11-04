@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { WikiArticleOverview } from "$lib/types";
-  import { formatShortDate } from "$lib/utils";
 
   let {
     article,
@@ -14,9 +13,9 @@
 <button
   type="button"
   onclick={() => onOpen(article)}
-  class="group flex w-full items-start justify-between gap-4 rounded-sm px-3 py-3 text-left hover:bg-ink-raised focus-visible:bg-ink-raised focus-visible:outline-none"
+  class="group block w-full rounded-sm px-3 py-3 text-left hover:bg-ink-raised focus-visible:bg-ink-raised focus-visible:outline-none"
 >
-  <span class="min-w-0 flex-1">
+  <span class="block min-w-0">
     <span
       class="block font-serif text-[length:var(--text-body)] text-warm-dim transition-colors group-hover:text-warm [overflow-wrap:anywhere]"
     >
@@ -29,10 +28,5 @@
         {article.precis}
       </span>
     {/if}
-  </span>
-  <span
-    class="mt-0.5 shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost"
-  >
-    {formatShortDate(article.updated_at)}
   </span>
 </button>

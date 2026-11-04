@@ -43,16 +43,19 @@ import { StructuredLogger } from "./logging.ts";
 import {
   extractWikiLinkTargets,
   markdownParagraphs,
+  openingSentence,
   parseFrontmatter,
   serializeFrontmatter,
 } from "./markdown.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
+import { liveArticleConditions } from "./wiki-articles.ts";
 import { ContentStorage, READ_CONCURRENCY, vaultOwner } from "./storage.ts";
 import { append } from "./collections.ts";
 import { RandomBytesService } from "./random.ts";
 
 const SEARCH_WRITE_BATCH = 200;
+const START_HERE = 8;
 
 const compareText = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 const metadataText = (frontmatter: Record<string, unknown>) => {
@@ -395,6 +398,7 @@ export const CompilePhasesLive = Layer.effect(
           }
         }
         const path = `wiki/${topic.slug}.md`;
+        const precis = openingSentence(output.body) || topic.description;
         const previousRows = yield* db.query((d) => d
           .select({ filePath: wikiArticles.filePath })
           .from(wikiArticles)
@@ -422,7 +426,7 @@ export const CompilePhasesLive = Layer.effect(
             fileHash: fileContentHash(content),
             bodyHash: bodyContentHash(output.body),
             title: topic.title,
-            precis: topic.description,
+            precis,
             tags,
             renderRunId: runId,
             archived: false,
@@ -434,7 +438,7 @@ export const CompilePhasesLive = Layer.effect(
               fileHash: fileContentHash(content),
               bodyHash: bodyContentHash(output.body),
               title: topic.title,
-              precis: topic.description,
+              precis,
               tags,
               renderRunId: runId,
               archived: false,
@@ -799,11 +803,6 @@ export const CompilePhasesLive = Layer.effect(
             "progress",
             progressSteps(PUBLISH_STEP_LABELS, "publish_wiki"),
           );
-          const rendered = yield* db.query((d) => d
-            .select()
-            .from(topics)
-            .where(and(eq(topics.vaultId, vaultId), eq(topics.articleStatus, "rendered")))
-            .orderBy(asc(topics.title)));
           const documents = yield* db.query((d) => d
             .select()
             .from(sourceDocuments)
@@ -816,19 +815,37 @@ export const CompilePhasesLive = Layer.effect(
               counts: { publish_wiki: [0, 2] },
             }),
           );
+          const listed = yield* db.query((d) =>
+            d
+              .select({
+                title: wikiArticles.title,
+                filePath: wikiArticles.filePath,
+                precis: wikiArticles.precis,
+                inbound: sql<number>`(select count(*)::int from ${backlinks} where ${backlinks.targetArticleId} = ${wikiArticles.id})`,
+              })
+              .from(wikiArticles)
+              .where(and(...liveArticleConditions(vaultId))),
+          );
+          const entry = (article: (typeof listed)[number]) =>
+            `- [${article.title}](${article.filePath}) — ${article.precis.trim().replaceAll("\n", " ")}`;
+          const byTitle = listed.toSorted((left, right) =>
+            compareText(left.title.toLowerCase(), right.title.toLowerCase()),
+          );
           const wikiLines = [
-            "# Wiki Index",
+            "# Contents",
             "",
-            `_${rendered.length} rendered article${rendered.length === 1 ? "" : "s"}_`,
+            `_${listed.length} article${listed.length === 1 ? "" : "s"}_`,
             "",
-            ...rendered
-              .toSorted((left, right) =>
-                compareText(left.title.toLowerCase(), right.title.toLowerCase()),
-              )
-              .map(
-                (topic) =>
-                  `- [${topic.title}](wiki/${topic.slug}.md) — ${topic.description.trim().replaceAll("\n", " ")}`,
-              ),
+            "## Start here",
+            "",
+            ...byTitle
+              .toSorted((left, right) => right.inbound - left.inbound)
+              .slice(0, START_HERE)
+              .map(entry),
+            "",
+            "## All articles",
+            "",
+            ...byTitle.map(entry),
             "",
           ];
           yield* storage.writeText(vaultOwner(vaultId), "wiki/_index.md", wikiLines.join("\n"));

@@ -266,7 +266,11 @@ const rows = () =>
         memberships: yield* db.query((d) => d.select().from(topicMembership)),
         articles: yield* db.query((d) =>
           d
-            .select({ topicId: wikiArticles.topicId, path: wikiArticles.filePath })
+            .select({
+              topicId: wikiArticles.topicId,
+              path: wikiArticles.filePath,
+              precis: wikiArticles.precis,
+            })
             .from(wikiArticles),
         ),
       };
@@ -367,6 +371,9 @@ describe("the themes Update pipeline", () => {
     expect(state.links).toEqual([{ sourceTopicId: alpha?.topicId, targetTopicId: beta?.topicId }]);
     expect(state.backlinks).toHaveLength(1);
     expect(state.memberships).toHaveLength(10);
+    expect(state.articles.find((article) => article.path === "wiki/alpha.md")?.precis).toBe(
+      "Alpha grew beside the Beta movement.",
+    );
     const [stored] = await run(
       Effect.flatMap(Database, (db) =>
         db.query((d) =>
