@@ -160,6 +160,28 @@ describe("provider adapters", () => {
     });
   }, 10_000);
 
+  it("waits out embedding rate limits like completions instead of failing the batch", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response("", { status: 429, headers: { "retry-after": "30" } }))
+      .mockResolvedValueOnce(new Response("", { status: 429 }))
+      .mockResolvedValueOnce(new Response("", { status: 429 }))
+      .mockResolvedValueOnce(Response.json({ data: [{ index: 0, embedding: [1, 0] }] }));
+    vi.stubGlobal("fetch", fetch);
+    await runtime.runPromise(Effect.gen(function* () {
+      const embeddings = yield* EmbeddingsService;
+      const fiber = yield* Effect.forkChild(embeddings.embed(["alpha"]));
+      yield* TestClock.adjust(29_999);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      yield* TestClock.adjust(1);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      yield* TestClock.adjust(4_000);
+      expect(fetch).toHaveBeenCalledTimes(3);
+      yield* TestClock.adjust(8_000);
+      expect(yield* Fiber.join(fiber)).toEqual([[1, 0]]);
+      expect(fetch).toHaveBeenCalledTimes(4);
+    }).pipe(Effect.provide(TestClock.layer())));
+  });
+
   it("aborts a generation-cost body read when its Effect is interrupted", async () => {
     let ready!: () => void;
     const reading = new Promise<void>((resolve) => {

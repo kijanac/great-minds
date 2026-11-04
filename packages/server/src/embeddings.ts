@@ -1,13 +1,18 @@
 import { Buffer } from "node:buffer";
 
-import { Context, Data, Effect, Layer, Schedule, Schema } from "effect";
+import { Context, Data, Effect, Layer, Schema } from "effect";
 
 import { AppConfig, optionalRedactedValue } from "./config.ts";
-import { ModelProviderError } from "./llm.ts";
+import {
+  ModelProviderError,
+  rateLimitRetry,
+  RetryableModelError,
+  retryAfterMs,
+  transientRetry,
+} from "./llm.ts";
 
 const embeddingDimensions = 1024;
 const embeddingTimeoutMs = 300_000;
-const embeddingRetry = { schedule: Schedule.exponential("2 seconds"), times: 2 } as const;
 
 type EmbeddingsShape = {
   readonly embed: (texts: readonly string[]) => Effect.Effect<readonly (readonly number[])[], EmbeddingBatchFailed>;
@@ -137,30 +142,53 @@ export const EmbeddingsLive = Layer.effect(
             new EmbeddingBatchFailed({ message: "OpenRouter API key is not configured" }),
           );
         }
-        return Effect.tryPromise({
-          try: async (signal) => {
-            const response = await fetch(`${config.openRouterApiUrl.replace(/\/$/, "")}/embeddings`, {
-              method: "POST",
-              headers: {
-                authorization: `Bearer ${apiKey}`,
-                "content-type": "application/json",
-              },
-              body: JSON.stringify(embeddingRequestBody(texts, config.embeddingModel)),
-              signal: AbortSignal.any([signal, AbortSignal.timeout(embeddingTimeoutMs)]),
+        return Effect.gen(function* () {
+          const response = yield* Effect.tryPromise({
+            try: (signal) =>
+              fetch(`${config.openRouterApiUrl.replace(/\/$/, "")}/embeddings`, {
+                method: "POST",
+                headers: {
+                  authorization: `Bearer ${apiKey}`,
+                  "content-type": "application/json",
+                },
+                body: JSON.stringify(embeddingRequestBody(texts, config.embeddingModel)),
+                signal: AbortSignal.any([signal, AbortSignal.timeout(embeddingTimeoutMs)]),
+              }),
+            catch: (cause) =>
+              new ModelProviderError({
+                message: "embedding provider request failed",
+                cause,
+                transient: true,
+              }),
+          });
+          if (response.status === 429)
+            return yield* new RetryableModelError({
+              message: "embedding provider rate limited request",
+              retryAfterMs: retryAfterMs(response.headers),
             });
-            if (!response.ok) {
-              throw new ModelProviderError({
-                message: `embedding provider returned ${response.status}`,
-              });
-            }
-            return parseEmbeddingResponse(await response.json(), texts.length);
-          },
-          catch: (cause) =>
-            new EmbeddingBatchFailed({
-              message: cause instanceof Error ? cause.message : String(cause),
-              cause,
-            }),
-        }).pipe(Effect.retry(embeddingRetry));
+          if (!response.ok)
+            return yield* new ModelProviderError({
+              message: `embedding provider returned ${response.status}`,
+              transient: response.status >= 500,
+            });
+          return yield* Effect.tryPromise({
+            try: async () => parseEmbeddingResponse(await response.json(), texts.length),
+            catch: (cause) =>
+              cause instanceof ModelProviderError
+                ? cause
+                : new ModelProviderError({
+                    message: "embedding provider returned an unreadable response",
+                    cause,
+                    transient: true,
+                  }),
+          });
+        }).pipe(
+          Effect.retry(rateLimitRetry),
+          Effect.retry(transientRetry),
+          Effect.mapError(
+            (error) => new EmbeddingBatchFailed({ message: error.message, cause: error }),
+          ),
+        );
       },
     } satisfies EmbeddingsShape;
   }),

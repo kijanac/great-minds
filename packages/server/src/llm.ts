@@ -131,7 +131,7 @@ const rateLimitRetries = 6;
 const maxRateLimitBackoffMs = 60_000;
 const transientRetries = 2;
 
-const rateLimitRetry = {
+export const rateLimitRetry = {
   times: rateLimitRetries,
   while: (error: RetryableModelError | ModelProviderError) => error._tag === "RetryableModelError",
   schedule: Schedule.exponential("2 seconds").pipe(
@@ -149,7 +149,7 @@ const rateLimitRetry = {
   ),
 };
 
-const transientRetry = {
+export const transientRetry = {
   times: transientRetries,
   while: (error: RetryableModelError | ModelProviderError) =>
     error._tag === "ModelProviderError" && error.transient === true,
@@ -244,7 +244,7 @@ const usageFrom = (usage: typeof WireUsage.Type | null | undefined): LlmUsage | 
   return { promptTokens, completionTokens, totalTokens, cost };
 };
 
-const retryAfterMs = (headers: Headers) => {
+export const retryAfterMs = (headers: Headers) => {
   const seconds = Number.parseFloat(headers.get("retry-after") ?? "");
   return Number.isFinite(seconds) ? Math.max(0, seconds * 1000) : undefined;
 };
