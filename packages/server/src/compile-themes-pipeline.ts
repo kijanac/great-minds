@@ -13,7 +13,6 @@ import {
   type ValidatedTopic,
 } from "./compile-contract.ts";
 import { findLinks, withLinks } from "./compile-links.ts";
-import { slugifyRegistry } from "./compile-llm-core.ts";
 import {
   groupThemes,
   loadBlocks,
@@ -32,6 +31,23 @@ import type { ContentStorage } from "./storage.ts";
 import { defaultVaultConfigFile, readVaultConfig } from "./vault-config.ts";
 
 const PIVOTS_IN_FLIGHT = 120;
+
+const slugify = (title: string, seen: Set<string>) => {
+  const base =
+    title
+      .toLowerCase()
+      .replaceAll("'", "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "topic";
+  let slug = base;
+  let suffix = 2;
+  while (seen.has(slug)) {
+    slug = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  seen.add(slug);
+  return slug;
+};
 
 const tightFootnotes = (markdown: string) => markdown.replace(/ +(\[\^\d+\])/g, "$1");
 
@@ -180,11 +196,10 @@ export const makeThemesPipeline = (options: {
       );
       const validated = built.articles.map((article): ValidatedTopic => ({
         topicId: article.id,
-        slug: existingById.get(article.id)?.slug ?? slugifyRegistry(article.title, seen),
+        slug: existingById.get(article.id)?.slug ?? slugify(article.title, seen),
         title: article.title,
         description: article.description,
         subsumedIdeaIds: article.ideaIds,
-        linkTargets: [],
       }));
       yield* options.archiveTransitions(
         vaultId,

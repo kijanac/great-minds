@@ -43,7 +43,6 @@ export type AppConfigShape = {
   readonly compilePartitionMaxFactor: number;
   readonly compilePremergeJaccardThreshold: number;
   readonly compileDeriveRelatedLimit: number;
-  readonly compilePipeline: "registry" | "themes";
   readonly pipelineConcurrency: number;
   readonly goldensRandomSeed: Option.Option<number>;
   readonly goldensClock: Option.Option<Date>;
@@ -189,9 +188,6 @@ const appConfig = Config.all({
   ),
   compileDeriveRelatedLimit: positiveInt("COMPILE_DERIVE_RELATED_LIMIT").pipe(
     Config.withDefault(20),
-  ),
-  compilePipeline: Config.literals(["registry", "themes"] as const, "COMPILE_PIPELINE").pipe(
-    Config.withDefault("themes"),
   ),
   pipelineConcurrency: positiveInt("PIPELINE_CONCURRENCY").pipe(Config.withDefault(1)),
   goldensRandomSeed: Config.option(Config.schema(Schema.Int, "GOLDENS_RANDOM_SEED")),

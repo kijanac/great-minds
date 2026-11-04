@@ -3,15 +3,10 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 import {
-  articleResponseFormat,
-  assignmentsResponseFormat,
-  cleanupResponseFormat,
   codePointLength,
   extractResponseFormat,
   normalizePythonWhitespace,
-  registryResponseFormat,
-  synthesisResponseFormat,
-} from "../src/compile-llm-core.ts";
+} from "../src/compile-extract.ts";
 import { completionRequestBody, type LlmMessage } from "../src/llm.ts";
 
 type CassetteEntry = {
@@ -43,8 +38,22 @@ const expectRecordedPrompt = (
   });
 };
 
+const articleFormat = {
+  type: "json_schema",
+  json_schema: {
+    name: "article",
+    strict: true,
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: { body: { type: "string" } },
+      required: ["body"],
+    },
+  },
+} as const;
+
 describe("compile LLM request composition", () => {
-  it("sends every recorded compile prompt with a strict schema to capable hosts only", () => {
+  it("sends the recorded extract prompt with a strict schema to capable hosts only", () => {
     expectRecordedPrompt(1, {
       model: "deepseek/deepseek-v3.2",
       messages: [],
@@ -57,41 +66,6 @@ describe("compile LLM request composition", () => {
       }),
       requestProfile: "compile",
     });
-    expectRecordedPrompt(11, {
-      model: "deepseek/deepseek-v3.2",
-      messages: [],
-      temperature: 0.3,
-      responseFormat: synthesisResponseFormat,
-      requestProfile: "compile",
-    });
-    expectRecordedPrompt(53, {
-      model: "anthropic/claude-sonnet-4.6",
-      messages: [],
-      temperature: 0.2,
-      responseFormat: registryResponseFormat,
-      requestProfile: "compile",
-    });
-    expectRecordedPrompt(54, {
-      model: "anthropic/claude-sonnet-4.6",
-      messages: [],
-      temperature: 0.1,
-      responseFormat: assignmentsResponseFormat,
-      requestProfile: "compile",
-    });
-    expectRecordedPrompt(55, {
-      model: "qwen/qwen3.6-plus",
-      messages: [],
-      temperature: 0.3,
-      responseFormat: articleResponseFormat,
-      requestProfile: "compile",
-    });
-    expectRecordedPrompt(78, {
-      model: "anthropic/claude-sonnet-4.6",
-      messages: [],
-      temperature: 0.1,
-      responseFormat: cleanupResponseFormat,
-      requestProfile: "compile",
-    });
   });
 
   it("omits temperature for models whose hosts reject one", () => {
@@ -99,13 +73,13 @@ describe("compile LLM request composition", () => {
       completionRequestBody({
         model: "anthropic/claude-sonnet-5.5",
         messages: [],
-        responseFormat: cleanupResponseFormat,
+        responseFormat: articleFormat,
         requestProfile: "compile",
       }),
     ).toEqual({
       model: "anthropic/claude-sonnet-5.5",
       messages: [],
-      response_format: cleanupResponseFormat,
+      response_format: articleFormat,
       usage: { include: true },
       provider: { require_parameters: true },
     });
@@ -120,7 +94,7 @@ describe("compile reasoning effort", () => {
         messages: [],
         temperature: 0.3,
         reasoningEffort: "high",
-        responseFormat: articleResponseFormat,
+        responseFormat: articleFormat,
         requestProfile: "compile",
       }),
     ).toEqual({
@@ -128,7 +102,7 @@ describe("compile reasoning effort", () => {
       messages: [],
       temperature: 0.3,
       reasoning: { effort: "high" },
-      response_format: articleResponseFormat,
+      response_format: articleFormat,
       usage: { include: true },
       provider: { require_parameters: true },
     });

@@ -57,14 +57,9 @@ describe("server config defaults", () => {
     expect(overridden.renderTemperature).toEqual(Option.some(0.4));
   });
 
-  it("embeds four search batches at a time unless configured otherwise", async () => {
+  it("embeds one search batch at a time unless configured otherwise", async () => {
     expect((await loadConfig({})).compileEmbedConcurrency).toBe(1);
     expect((await loadConfig({ COMPILE_EMBED_CONCURRENCY: "2" })).compileEmbedConcurrency).toBe(2);
-  });
-
-  it("runs the themes Update pipeline unless the registry fallback is chosen", async () => {
-    expect((await loadConfig({})).compilePipeline).toBe("themes");
-    expect((await loadConfig({ COMPILE_PIPELINE: "registry" })).compilePipeline).toBe("registry");
   });
 
   it("asks the writer for high reasoning effort unless configured otherwise", async () => {
@@ -107,11 +102,7 @@ describe("default prompts", () => {
   it("keeps every prompt byte-exact", async () => {
     const directory = new URL("../src/default_prompts/", import.meta.url);
     const expected = {
-      "canonicalize_assign.md": "49d8130d26be11d16b146fa7f1e193e6a220640da3a71b7654a23fc85bc09d6a",
-      "canonicalize_registry.md":
-        "12cf15426368b0ad68f5dbc2e6c1b01e22a4deb95831cc8a07d302968333aafc",
       "check_link.md": "8e082d78c0b3651e83a2fb62ad0a4b9835c05c51566962f3579f7180b1f5b801",
-      "cleanup.md": "61d0b385327da35bf09858da3738afbaf65505d45a6cb10025a4891a98340195",
       "extract.md": "0d589c31e7c6413e4aaaea6f70b36d9c36a8a81aa2bfc024477779e4f3c62dda",
       "find_mentions.md": "4da0570d7ca379f3917bbdff2f5c600d5e159bc8f8355ae49b4a4381eb470b07",
       "judge_same_entry.md": "dae66ffc8fecb4e71f3eeed42ad8a3bf4ba1028f7b5c51425bb6bbe72f00ee3e",
@@ -121,10 +112,6 @@ describe("default prompts", () => {
       "propose_topics.md": "d906ea9a0c763f7747f56fc9dcb2e8524e85780e9279e4a5669344881d6c1e49",
       "query.md": "d02c29eb9d1367ef61e230741aee22feb3a2dea6564956ff2a433a34c876afee",
       "query_btw.md": "1415f3050b8c6b36867f2f0390281c775a3103991a6ad5a3e296fd7d42cdc138",
-      "render.md": "b5dea1a1d30f7b4574e8fbb80bc70ad839de6ccc455b31576b4a920a4a130ad7",
-      "synthesize.md": "9b122a4e2f11e9fb83428c321cb2cc70315105ca2660e350babc573bc72370bf",
-      "synthesize_decompose.md": "74301aece5c13aa01e94d14db1a24f66a2d6ff8458035c2e13e79e1f95195f3a",
-      "synthesize_revise.md": "c058afbc1c98fedcba67b65aed1b5b8a32b1615c607eef079ebb5876663cebcf",
       "write_article.md": "191ee1805c4e052125a8fc511e0ddba9d9b2f467611245073a65c3b467313db8",
     } as const;
     const names = (await readdir(directory)).filter((name) => name.endsWith(".md")).sort();

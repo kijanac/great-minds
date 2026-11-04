@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  backlinks,
   anchors,
+  backlinks,
   compileCacheEntries,
   Database,
   DatabaseLive,
@@ -29,12 +29,6 @@ import { Effect, Exit, Layer, Option, Redacted, Schema, Stream } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
-  canonicalizeAssignCacheKey,
-  canonicalizeRegistryCacheKey,
-  partitionCacheKey,
-  renderCacheKey,
-  synthesizeCacheKey,
-  topicContentHash,
   type ValidatedTopic,
 } from "../src/compile-contract.ts";
 import { CompilePhases, CompilePhasesLive } from "../src/compile-phases.ts";
@@ -126,7 +120,6 @@ const config: AppConfigShape = {
   compilePartitionMaxFactor: 1.5,
   compilePremergeJaccardThreshold: 0.8,
   compileDeriveRelatedLimit: 20,
-  compilePipeline: "registry",
   compileEmbedConcurrency: 4,
   pipelineConcurrency: 1,
   goldensRandomSeed: Option.none(),
@@ -337,132 +330,6 @@ const seedSourceAndIdeas = async () => {
 const defaultPrompt = async (name: string) =>
   (await readFile(new URL(`../src/default_prompts/${name}.md`, import.meta.url), "utf8")).trim();
 
-const combinedSynthesizePromptHash = async () =>
-  contentHash(
-    `synthesize=${promptContentHash(await defaultPrompt("synthesize"))}`,
-    `revise=${promptContentHash(await defaultPrompt("synthesize_revise"))}`,
-    `decompose=${promptContentHash(await defaultPrompt("synthesize_decompose"))}`,
-  );
-
-const seedCanonicalPath = async (options: {
-  readonly registryValue?: unknown;
-  readonly assignmentValue?: unknown;
-}) => {
-  const content = serializeFrontmatter({ source_id: id.source }, "# Source\n\nBody\n");
-  files.set("raw/docs/source.md", content);
-  await run(
-    Effect.gen(function* () {
-      const db = yield* Database;
-      yield* db
-        .transaction((tx) =>
-          seedLegacySources(tx, {
-            id: id.source,
-            vaultId: id.vault,
-            filePath: "raw/docs/source.md",
-            fileHash: fileContentHash(content),
-            bodyHash: bodyContentHash(parseFrontmatter(content).body),
-            sourceType: "document",
-            title: "Source",
-            precis: "Precis",
-          }),
-        )
-        .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(ideas)
-        .values({
-          ideaId: id.ideaA,
-          vaultId: id.vault,
-          documentId: id.source,
-          kind: "concept",
-          label: "Idea",
-          description: "Description",
-          embedding: [1, ...Array.from({ length: 1023 }, () => 0)],
-        }))
-        .pipe(Effect.orDie);
-    }),
-  );
-  const localTopic = {
-    localTopicId: id.topicA,
-    chunkIdx: 0,
-    slug: "local-topic",
-    title: "Canonical Topic",
-    description: "Canonical description",
-    subsumedIdeaIds: [id.ideaA],
-  } as const;
-  const synthPromptHash = await combinedSynthesizePromptHash();
-  const registryPromptHash = promptContentHash(await defaultPrompt("canonicalize_registry"));
-  const assignPromptHash = promptContentHash(await defaultPrompt("canonicalize_assign"));
-  const registryTopic = {
-    slug: "canonical-topic",
-    title: "Canonical Topic",
-    description: "Canonical description",
-    link_target_titles: [],
-  } as const;
-  const registrySignature = contentHash(
-    `${registryTopic.slug}|${registryTopic.title}|${registryTopic.description}`,
-  );
-  const rows: (typeof compileCacheEntries.$inferInsert)[] = [
-    {
-      vaultId: id.vault,
-      phase: "partition",
-      cacheKey: partitionCacheKey([id.ideaA], config.compilePartitionTargetTokens),
-      value: { chunks: [[id.ideaA]], k_initial: 1, total_tokens: 1 },
-    },
-    {
-      vaultId: id.vault,
-      phase: "synthesize",
-      cacheKey: synthesizeCacheKey({
-        ideaIds: [id.ideaA],
-        promptHash: synthPromptHash,
-        model: config.mapModel,
-      }),
-      value: {
-        local_topics: [
-          {
-            local_topic_id: localTopic.localTopicId,
-            chunk_idx: localTopic.chunkIdx,
-            slug: localTopic.slug,
-            title: localTopic.title,
-            description: localTopic.description,
-            subsumed_idea_ids: [...localTopic.subsumedIdeaIds],
-          },
-        ],
-      },
-    },
-    {
-      vaultId: id.vault,
-      phase: "canonicalize_registry",
-      cacheKey: canonicalizeRegistryCacheKey({
-        orderedTopics: [localTopic],
-        promptHash: registryPromptHash,
-        thematicHint: "",
-        model: config.reduceModel,
-      }),
-      value: options.registryValue ?? { topics: [registryTopic] },
-    },
-  ];
-  if (options.assignmentValue !== undefined) {
-    rows.push({
-      vaultId: id.vault,
-      phase: "canonicalize_assign",
-      cacheKey: canonicalizeAssignCacheKey({
-        batch: [localTopic],
-        registrySignature,
-        promptHash: assignPromptHash,
-        model: config.reduceModel,
-      }),
-      value: options.assignmentValue,
-    });
-  }
-  await run(
-    Effect.gen(function* () {
-      const db = yield* Database;
-      yield* db.query((d) => d.insert(compileCacheEntries).values(rows)).pipe(Effect.orDie);
-    }),
-  );
-  return { localTopic, registryTopic } as const;
-};
-
 const validated: readonly ValidatedTopic[] = [
   {
     topicId: id.topicA,
@@ -470,7 +337,6 @@ const validated: readonly ValidatedTopic[] = [
     title: "Alpha",
     description: "Alpha description",
     subsumedIdeaIds: [id.ideaA, id.ideaB],
-    linkTargets: ["beta"],
   },
   {
     topicId: id.topicB,
@@ -478,7 +344,6 @@ const validated: readonly ValidatedTopic[] = [
     title: "Beta",
     description: "Beta description",
     subsumedIdeaIds: [id.ideaB, id.ideaC],
-    linkTargets: ["alpha", "missing", "beta"],
   },
 ];
 
@@ -501,39 +366,6 @@ describe("M4.3a deterministic compile phases", () => {
       throw new Error("unexpected compile LLM call");
     };
     await seedBase();
-  });
-
-  it("constructs every compile-cache key with Python length framing", () => {
-    expect(partitionCacheKey([id.ideaB, id.ideaA], 100_000)).toBe(
-      contentHash(id.ideaA, id.ideaB, "target=100000"),
-    );
-    expect(synthesizeCacheKey({ ideaIds: [id.ideaB, id.ideaA], promptHash: "p", model: "m" })).toBe(
-      contentHash(id.ideaA, id.ideaB, "prompt=p", "model=m"),
-    );
-    const registry = canonicalizeRegistryCacheKey({
-      orderedTopics: [{ title: "T", description: "D", subsumedIdeaIds: [id.ideaA, id.ideaB] }],
-      promptHash: "p",
-      thematicHint: "hint",
-      model: "m",
-    });
-    expect(registry).toBe(
-      contentHash(contentHash("T", "D", "2"), "prompt=p", `hint=${contentHash("hint")}`, "model=m"),
-    );
-    expect(
-      canonicalizeAssignCacheKey({
-        batch: [{ localTopicId: id.topicA, title: "T", description: "D" }],
-        registrySignature: "registry",
-        promptHash: "p",
-        model: "m",
-      }),
-    ).toBe(
-      contentHash(
-        "registry=registry",
-        `${id.topicA}:${contentHash("T", "D")}`,
-        "prompt=p",
-        "model=m",
-      ),
-    );
   });
 
   const fullCard = (ideas: readonly unknown[]) => ({
@@ -1004,92 +836,6 @@ describe("M4.3a deterministic compile phases", () => {
     expect(events.every((event) => event.phase === "extract")).toBe(true);
   });
 
-  it("fails loudly on a malformed canonical registry cache row", async () => {
-    await seedCanonicalPath({ registryValue: { topics: "drifted" } });
-    await expect(
-      run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run))),
-    ).rejects.toThrow("canonicalize_registry cache row");
-  });
-
-  it.each([{ assign: [] }, { assign: { "not-a-uuid": "canonical-topic" } }])(
-    "fails loudly on malformed canonical assignment keys or shape: %j",
-    async (assignmentValue) => {
-      await seedCanonicalPath({ assignmentValue });
-      await expect(
-        run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run))),
-      ).rejects.toThrow("canonicalize_assign cache row");
-    },
-  );
-
-  it("fails loudly when the assignment prompt omits its unique subtopics placeholder", async () => {
-    await seedCanonicalPath({});
-    files.set("prompts/canonicalize_assign.md", "Registry:\n{registry_block}\nNo batch marker");
-    await expect(
-      run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run))),
-    ).rejects.toThrow("must contain exactly one {subtopics_block} placeholder");
-  });
-
-  it("rejects a tag suffix unless every character is a decimal digit", async () => {
-    const fixture = await seedCanonicalPath({
-      assignmentValue: { assign: { [id.topicA]: "canonical-topic" } },
-    });
-    await run(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(topics)
-          .values({
-            topicId: id.topicB,
-            vaultId: id.vault,
-            slug: "old-topic",
-            title: "Old Topic",
-            description: "Old description",
-          }))
-          .pipe(Effect.orDie);
-      }),
-    );
-    complete = async () => ({
-      text: JSON.stringify({
-        slug_renames: [{ canonical_tag: "c_1x", new_slug: "mutilated" }],
-        supersessions: [],
-      }),
-      finishReason: "stop",
-    });
-
-    const result = await run(
-      Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run)),
-    );
-    expect(result).toHaveLength(1);
-    expect(result[0]?.slug).toBe(fixture.registryTopic.slug);
-  });
-
-  it("fails loudly on a malformed cleanup entry", async () => {
-    await seedCanonicalPath({ assignmentValue: { assign: { [id.topicA]: "canonical-topic" } } });
-    await run(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(topics)
-          .values({
-            topicId: id.topicB,
-            vaultId: id.vault,
-            slug: "old-topic",
-            title: "Old Topic",
-            description: "Old description",
-          }))
-          .pipe(Effect.orDie);
-      }),
-    );
-    complete = async () => ({
-      text: JSON.stringify({ slug_renames: [null], supersessions: [] }),
-      finishReason: "stop",
-    });
-
-    await expect(
-      run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run))),
-    ).rejects.toThrow("validate_cleanup response does not match its contract");
-  });
-
   it("ingest indexes path-sorted metadata/body chunks and skips an unchanged ETag replay", async () => {
     const content =
       `---\nsource_id: ${id.source}\ntitle: Source title\nprecis: Source precis\nauthor: Author\n---\n# Heading\n\nFirst paragraph ^p0\n\nSecond paragraph ^p1\n`;
@@ -1519,10 +1265,7 @@ describe("M4.3a deterministic compile phases", () => {
       }),
     );
     expect(rows.membership).toHaveLength(4);
-    expect(rows.links).toEqual([
-      { sourceTopicId: id.topicA, targetTopicId: id.topicB },
-      { sourceTopicId: id.topicB, targetTopicId: id.topicA },
-    ]);
+    expect(rows.links).toEqual([]);
     expect(rows.related).toEqual([
       { topicId: id.topicA, relatedTopicId: id.topicB, sharedIdeas: 1, jaccard: 1 / 3 },
       { topicId: id.topicB, relatedTopicId: id.topicA, sharedIdeas: 1, jaccard: 1 / 3 },
@@ -1538,239 +1281,6 @@ describe("M4.3a deterministic compile phases", () => {
       }),
     );
     expect(afterDeletion).toEqual([]);
-  });
-
-  it("render repairs a missing file from cache, reuses it, and isolates an invalid-cache fallthrough", async () => {
-    await seedSourceAndIdeas();
-    const prompt = (
-      await readFile(new URL("../src/default_prompts/render.md", import.meta.url), "utf8")
-    ).trim();
-    const topic = validated[0]!;
-    await run(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(topics)
-          .values({
-            topicId: topic.topicId,
-            vaultId: id.vault,
-            slug: topic.slug,
-            title: topic.title,
-            description: topic.description,
-            compiledFromHash: "compiled",
-          }))
-          .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(compileCacheEntries)
-          .values({
-            vaultId: id.vault,
-            phase: "render",
-            cacheKey: renderCacheKey({
-              topic,
-              promptHash: promptContentHash(prompt),
-              model: DEFAULT_RENDER_MODEL,
-            }),
-            value: { body: "# Alpha\n\nCached body.", tags: ["Cached Tag", "cached-tag"] },
-          }))
-          .pipe(Effect.orDie);
-        const phases = yield* CompilePhases;
-        yield* phases.render(id.vault, id.run, [topic]);
-      }),
-    );
-    expect(files.get("wiki/alpha.md")).toContain("# Alpha\n\nCached body.");
-    const requestCount = embeddingRequests.length;
-    await run(Effect.flatMap(CompilePhases, (phases) => phases.render(id.vault, id.run, [topic])));
-    expect(embeddingRequests).toHaveLength(requestCount);
-
-    const invalid = { ...validated[1]!, topicId: id.topicC, slug: "invalid" };
-    await run(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(topics)
-          .values({
-            topicId: id.topicC,
-            vaultId: id.vault,
-            slug: invalid.slug,
-            title: invalid.title,
-            description: invalid.description,
-          }))
-          .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(compileCacheEntries)
-          .values({
-            vaultId: id.vault,
-            phase: "render",
-            cacheKey: renderCacheKey({
-              topic: invalid,
-              promptHash: promptContentHash(prompt),
-              model: DEFAULT_RENDER_MODEL,
-            }),
-            value: { body: 42, tags: [] },
-          }))
-          .pipe(Effect.orDie);
-      }),
-    );
-    await run(
-      Effect.flatMap(CompilePhases, (phases) => phases.render(id.vault, id.run, [invalid])),
-    );
-    expect(files.has("wiki/invalid.md")).toBe(false);
-    expect(logEvents).toContainEqual({
-      event: "topic_failed",
-      fields: expect.objectContaining({
-        topic_id: id.topicC,
-        topic_slug: "invalid",
-        error_type: "Error",
-      }),
-    });
-    let calls = 0;
-    complete = async () => {
-      calls += 1;
-      return {
-        text: JSON.stringify({ body: "# Beta\n\nRepaired.", tags: [" Beta Tag ", "beta-tag"] }),
-        finishReason: "stop",
-      };
-    };
-    const repair = Effect.flatMap(CompilePhases, (phases) =>
-      phases.render(id.vault, id.run, [invalid]),
-    );
-    await run(repair);
-    const first = files.get("wiki/invalid.md");
-    expect(first).toContain("# Beta\n\nRepaired.");
-    expect(parseFrontmatter(first!).frontmatter.tags).toEqual(["beta-tag"]);
-    files.delete("wiki/invalid.md");
-    await run(repair);
-    expect(files.get("wiki/invalid.md")).toBe(first);
-    expect(calls).toBe(1);
-  });
-
-  it("repairs render SQL and search projections after a lost write acknowledgment without another model call", async () => {
-    await seedSourceAndIdeas();
-    const topic = validated[0]!;
-    await run(
-      Effect.flatMap(Database, (db) =>
-        db.query((d) =>
-          d.insert(topics).values({
-            topicId: topic.topicId,
-            vaultId: id.vault,
-            slug: topic.slug,
-            title: topic.title,
-            description: topic.description,
-          }),
-        ),
-      ),
-    );
-    let modelCalls = 0;
-    complete = async () => {
-      modelCalls += 1;
-      return {
-        text: JSON.stringify({ body: "# Alpha\n\nRecovered article.", tags: ["recovered"] }),
-        finishReason: "stop",
-      };
-    };
-    const render = Effect.flatMap(CompilePhases, (phases) =>
-      phases.render(id.vault, id.run, [topic]),
-    );
-    failWritePath = "wiki/alpha.md";
-    try {
-      expect(Exit.isFailure(await run(Effect.exit(render)))).toBe(true);
-    } finally {
-      failWritePath = null;
-    }
-    const state = () =>
-      run(
-        Effect.gen(function* () {
-          const db = yield* Database;
-          return {
-            cache: yield* db.query((d) => d.select().from(compileCacheEntries)),
-            articles: yield* db.query((d) => d.select().from(wikiArticles)),
-            topics: yield* db.query((d) => d.select().from(topics)),
-            search: yield* db.query((d) => d.select().from(searchIndex)),
-          };
-        }),
-      );
-    const partial = await state();
-    expect(partial.cache).toHaveLength(1);
-    expect(files.get("wiki/alpha.md")).toContain("Recovered article.");
-    await run(render);
-    const repaired = await state();
-    expect(repaired.cache).toEqual(partial.cache);
-    expect(repaired.articles).toHaveLength(1);
-    expect(repaired.articles[0]).toMatchObject({
-      topicId: topic.topicId,
-      archived: false,
-      fileHash: fileContentHash(files.get("wiki/alpha.md")!),
-      bodyHash: bodyContentHash("# Alpha\n\nRecovered article.\n"),
-    });
-    expect(repaired.topics[0]).toMatchObject({
-      articleStatus: "rendered",
-      renderedFromHash: topicContentHash(topic),
-    });
-    expect(repaired.search.length).toBeGreaterThan(0);
-    expect(new Set(repaired.search.map((chunk) => chunk.path))).toEqual(new Set(["wiki/alpha.md"]));
-    const embeddings = embeddingRequests.length;
-    await run(render);
-    const replayed = await state();
-    expect(replayed.articles.map((article) => article.id)).toEqual(
-      repaired.articles.map((article) => article.id),
-    );
-    expect(replayed.search).toEqual(repaired.search);
-    expect(embeddingRequests).toHaveLength(embeddings);
-    expect(modelCalls).toBe(1);
-  });
-
-  it("stops rendering remaining topics once one article fails to materialize", async () => {
-    await seedSourceAndIdeas();
-    let modelCalls = 0;
-    complete = async () => {
-      modelCalls += 1;
-      return {
-        text: JSON.stringify({ body: "# Article\n\nBody.", tags: ["article"] }),
-        finishReason: "stop",
-      };
-    };
-    failWritePath = "wiki/alpha.md";
-    const render = Effect.flatMap(CompilePhases, (phases) =>
-      phases.render(id.vault, id.run, validated),
-    );
-    expect(Exit.isFailure(await run(Effect.exit(render)))).toBe(true);
-    expect(modelCalls).toBe(1);
-  });
-
-  it("writes compile LLM cost before publish and publish adds no rows", async () => {
-    await seedSourceAndIdeas();
-    const topic = validated[0]!;
-    complete = async () => ({
-      text: JSON.stringify({ body: "# Alpha\n\nRendered body.", tags: ["alpha"] }),
-      finishReason: "stop",
-      usage: { cost: 0.125 },
-    });
-    const counts = await run(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(topics)
-          .values({
-            topicId: topic.topicId,
-            vaultId: id.vault,
-            slug: topic.slug,
-            title: topic.title,
-            description: topic.description,
-            compiledFromHash: "compiled",
-          }))
-          .pipe(Effect.orDie);
-        const phases = yield* CompilePhases;
-        yield* phases.render(id.vault, id.run, [topic]);
-        const beforePublish = yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie);
-        yield* phases.publish(id.vault, id.run, "2026-07-13T12:00:00+00:00");
-        const afterPublish = yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie);
-        return { beforePublish, afterPublish };
-      }),
-    );
-    expect(counts.beforePublish).toHaveLength(1);
-    expect(counts.afterPublish).toHaveLength(1);
-    expect(counts.afterPublish[0]?.costUsd).toBe("0.125000");
-    expect(counts.afterPublish[0]?.userId).toBe(id.user);
   });
 
   it("archives rendered and unrendered topics with terminal supersession pointers", async () => {
@@ -1850,7 +1360,7 @@ describe("M4.3a deterministic compile phases", () => {
     );
   });
 
-  it("verify replaces prose backlinks and publish writes exact live indexes plus the local compile log", async () => {
+  it("publish writes exact live indexes plus the local compile log", async () => {
     await seedSourceAndIdeas();
     files.set(
       "wiki/alpha.md",
@@ -1900,16 +1410,16 @@ describe("M4.3a deterministic compile phases", () => {
             },
           ]))
           .pipe(Effect.orDie);
+        yield* db
+          .query((d) =>
+            d.insert(backlinks).values({ sourceArticleId: id.articleA, targetArticleId: id.articleB }),
+          )
+          .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
-        yield* phases.verify(id.vault, id.run);
         yield* phases.publish(id.vault, id.run, "2026-07-12T12:00:00+00:00");
         yield* phases.publish(id.vault, id.run, "2026-07-12T12:00:00+00:00");
       }),
     );
-    const edges = await run(
-      Effect.flatMap(Database, (db) => db.query((d) => d.select().from(backlinks)).pipe(Effect.orDie)),
-    );
-    expect(edges).toEqual([{ sourceArticleId: id.articleA, targetArticleId: id.articleB }]);
     expect(files.get("wiki/_index.md")).toBe(
       [
         "# Contents",
@@ -1932,266 +1442,5 @@ describe("M4.3a deterministic compile phases", () => {
     const log = await readFile(join(dataDir, ".compile", id.vault, "log.md"), "utf8");
     expect(log).toContain("- topics: 2 (rendered 2, archived 0, dirty 0)");
     expect(log.match(/## 2026-07-12T12:00:00\+00:00/g)).toHaveLength(1);
-  });
-
-  const seedGranularityIdeas = async (count: number) => {
-    files.set("raw/docs/source.md", "# Source\n\nBody\n");
-    const ideaIds = Array.from(
-      { length: count },
-      (_v, index) =>
-        uuid(`20000000-0000-4000-8000-0000000001${String(index).padStart(2, "0")}`),
-    );
-    await run(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        yield* db
-          .transaction((tx) =>
-            seedLegacySources(tx, {
-              id: id.source,
-              vaultId: id.vault,
-              filePath: "raw/docs/source.md",
-              fileHash: "file",
-              bodyHash: "body",
-              sourceType: "document",
-              title: "Source",
-              precis: "Precis",
-            }),
-          )
-          .pipe(Effect.orDie);
-        yield* db
-          .query((d) => d.insert(ideas).values(
-            ideaIds.map((ideaId, index) => ({
-              ideaId,
-              vaultId: id.vault,
-              documentId: id.source,
-              kind: "concept",
-              label: `Idea ${index}`,
-              description: `Description ${index}`,
-              embedding: [1, ...Array.from({ length: 1023 }, () => 0)],
-            })),
-          ))
-          .pipe(Effect.orDie);
-      }),
-    );
-    return ideaIds;
-  };
-
-  // The synthesize prompt tags ideas idea_1..idea_N; with one document the
-  // order matches the chunk order, which is not asserted — structure only.
-  const topicJson = (slug: string, tagStart: number, tagEnd: number) => ({
-    slug,
-    title: `Topic ${slug}`,
-    description: `About ${slug}.`,
-    subsumed_idea_ids: Array.from(
-      { length: tagEnd - tagStart + 1 },
-      (_v, index) => `idea_${tagStart + index}`,
-    ),
-  });
-
-  const scriptGranularity = (script: {
-    readonly synthesize: unknown;
-    readonly revise?: (call: number) => unknown;
-    readonly decompose?: unknown;
-  }) => {
-    const calls: string[] = [];
-    let reviseCalls = 0;
-    complete = async (input) => {
-      const content = input.messages
-        .map((message) =>
-          typeof message.content === "string"
-            ? message.content
-            : (message.content ?? []).map((part) => ("text" in part ? part.text : "")).join("\n"),
-        )
-        .join("\n");
-      const respond = (value: unknown) => ({ text: JSON.stringify(value), finishReason: "stop" });
-      if (content.includes("You are refining a list of thematic topics")) {
-        calls.push("revise");
-        reviseCalls += 1;
-        if (script.revise === undefined) throw new Error("unexpected revise call");
-        return respond(script.revise(reviseCalls));
-      }
-      if (content.includes("You are examining one proposed thematic topic")) {
-        calls.push("decompose");
-        if (script.decompose === undefined) throw new Error("unexpected decompose call");
-        return respond(script.decompose);
-      }
-      if (content.includes("You are proposing thematic topics")) {
-        calls.push("synthesize");
-        return respond(script.synthesize);
-      }
-      if (content.includes("designing the canonical table of contents")) {
-        calls.push("registry");
-        return respond({
-          topics: [
-            {
-              title: "Canonical Topic",
-              description: "Canonical description",
-              link_targets: [],
-            },
-          ],
-        });
-      }
-      if (content.includes("filing candidate sub-topics")) {
-        calls.push("assign");
-        const batchSize = (content.match(/^\d+\. .* :: /gmu) ?? []).length;
-        return respond({
-          assignments: Array.from({ length: batchSize }, (_v, index) => ({
-            n: index + 1,
-            slug: "canonical-topic",
-          })),
-        });
-      }
-      throw new Error(`unexpected compile LLM call: ${content.slice(0, 80)}`);
-    };
-    return calls;
-  };
-
-  const cachedSynthesizedTopics = async (ideaIds: readonly Uuid[]) => {
-    const cacheKey = synthesizeCacheKey({
-      ideaIds,
-      promptHash: await combinedSynthesizePromptHash(),
-      model: config.mapModel,
-    });
-    const rows = await run(
-      Effect.flatMap(Database, (db) =>
-        db
-          .query((d) => d
-            .select()
-            .from(compileCacheEntries)
-            .where(eq(compileCacheEntries.cacheKey, cacheKey)))
-          .pipe(Effect.orDie),
-      ),
-    );
-    expect(rows).toHaveLength(1);
-    const value = rows[0]?.value as { local_topics: { subsumed_idea_ids: string[] }[] };
-    return value.local_topics;
-  };
-
-  it("revises nested synthesize output and caches the accepted revision", async () => {
-    const ideaIds = await seedGranularityIdeas(10);
-    const calls = scriptGranularity({
-      synthesize: { topics: [topicJson("umbrella", 1, 10), topicJson("facet", 1, 8)] },
-      revise: () => ({ topics: [topicJson("facet", 1, 8), topicJson("remainder", 9, 10)] }),
-    });
-    await run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run)));
-    expect(calls.filter((name) => name === "revise")).toHaveLength(1);
-    const cached = await cachedSynthesizedTopics(ideaIds);
-    expect(cached.map((topic) => topic.subsumed_idea_ids.length).toSorted()).toEqual([2, 8]);
-    expect(new Set(cached.flatMap((topic) => topic.subsumed_idea_ids)).size).toBe(10);
-    expect(logEvents.map((entry) => entry.event)).not.toContain("synthesize_nesting_floor");
-  });
-
-  it("applies the mechanical floor when revision keeps nesting, and logs it", async () => {
-    const ideaIds = await seedGranularityIdeas(10);
-    const nested = { topics: [topicJson("umbrella", 1, 10), topicJson("facet", 1, 8)] };
-    const calls = scriptGranularity({ synthesize: nested, revise: () => nested });
-    await run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run)));
-    expect(calls.filter((name) => name === "revise")).toHaveLength(2);
-    const cached = await cachedSynthesizedTopics(ideaIds);
-    // Umbrella shrinks to its 2-idea residue; too small to drop because the
-    // residue ideas survive nowhere else.
-    expect(cached.map((topic) => topic.subsumed_idea_ids.length).toSorted()).toEqual([2, 8]);
-    expect(new Set(cached.flatMap((topic) => topic.subsumed_idea_ids)).size).toBe(10);
-    expect(logEvents.map((entry) => entry.event)).toContain("synthesize_nesting_floor");
-  });
-
-  it("decomposes a chunk-covering topic and caches the replacement", async () => {
-    const ideaIds = await seedGranularityIdeas(24);
-    const calls = scriptGranularity({
-      synthesize: { topics: [topicJson("everything", 1, 24)] },
-      decompose: { topics: [topicJson("first-half", 1, 12), topicJson("second-half", 13, 24)] },
-    });
-    await run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run)));
-    expect(calls).toContain("decompose");
-    const cached = await cachedSynthesizedTopics(ideaIds);
-    expect(cached.map((topic) => topic.subsumed_idea_ids.length)).toEqual([12, 12]);
-    expect(new Set(cached.flatMap((topic) => topic.subsumed_idea_ids)).size).toBe(24);
-  });
-
-  it("keeps the original topic when decomposition loses idea coverage", async () => {
-    const ideaIds = await seedGranularityIdeas(24);
-    const calls = scriptGranularity({
-      synthesize: { topics: [topicJson("everything", 1, 24)] },
-      decompose: { topics: [topicJson("partial", 1, 12)] },
-    });
-    await run(Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run)));
-    expect(calls).toContain("decompose");
-    const cached = await cachedSynthesizedTopics(ideaIds);
-    expect(cached.map((topic) => topic.subsumed_idea_ids.length)).toEqual([24]);
-    expect(logEvents.map((entry) => entry.event)).toContain("synthesize_decompose_rejected");
-  });
-
-  const seedPriorTopic = async (slug: string, memberIdeaIds: readonly Uuid[]) => {
-    await run(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        yield* db
-          .query((d) => d.insert(topics).values({
-            topicId: id.topicB,
-            vaultId: id.vault,
-            slug,
-            title: "Prior Topic",
-            description: "Prior description",
-            articleStatus: "rendered",
-          }))
-          .pipe(Effect.orDie);
-        yield* db
-          .query((d) => d.insert(topicMembership).values(
-            memberIdeaIds.map((ideaId) => ({ topicId: id.topicB, ideaId })),
-          ))
-          .pipe(Effect.orDie);
-      }),
-    );
-  };
-
-  // The granularity script has no cleanup branch — it throws on a cleanup
-  // call — so these tests also prove the mechanical paths skip the LLM.
-  it("carries a renamed topic's identity by composition without a cleanup call", async () => {
-    const ideaIds = await seedGranularityIdeas(6);
-    await seedPriorTopic("old-name", ideaIds);
-    scriptGranularity({ synthesize: { topics: [topicJson("everything", 1, 6)] } });
-
-    const validated = await run(
-      Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run)),
-    );
-
-    expect(validated).toHaveLength(1);
-    expect(validated[0]?.topicId).toBe(id.topicB);
-    expect(validated[0]?.slug).toBe("canonical-topic");
-    const rows = await run(
-      Effect.flatMap(Database, (db) =>
-        db
-          .query((d) => d.select().from(topics).where(eq(topics.topicId, id.topicB)))
-          .pipe(Effect.orDie),
-      ),
-    );
-    expect(rows[0]?.slug).toBe("canonical-topic");
-    expect(rows[0]?.articleStatus).toBe("rendered");
-    const resolved = logEvents.find((entry) => entry.event === "composition_identity_resolved");
-    expect(resolved?.fields).toMatchObject({ carried: 1, archived_mechanical: 0, residue: 0 });
-  });
-
-  it("archives an absorbed topic with a mechanical successor and no cleanup call", async () => {
-    const ideaIds = await seedGranularityIdeas(8);
-    await seedPriorTopic("absorbed", ideaIds.slice(0, 3));
-    scriptGranularity({ synthesize: { topics: [topicJson("everything", 1, 8)] } });
-
-    const validated = await run(
-      Effect.flatMap(CompilePhases, (phases) => phases.abstract(id.vault, id.run)),
-    );
-
-    expect(validated).toHaveLength(1);
-    expect(validated[0]?.topicId).not.toBe(id.topicB);
-    const rows = await run(
-      Effect.flatMap(Database, (db) =>
-        db
-          .query((d) => d.select().from(topics).where(eq(topics.topicId, id.topicB)))
-          .pipe(Effect.orDie),
-      ),
-    );
-    expect(rows[0]?.articleStatus).toBe("archived");
-    expect(rows[0]?.supersededBy).toBe(validated[0]?.topicId);
-    const resolved = logEvents.find((entry) => entry.event === "composition_identity_resolved");
-    expect(resolved?.fields).toMatchObject({ carried: 0, archived_mechanical: 1, residue: 0 });
   });
 });

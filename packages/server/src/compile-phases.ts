@@ -10,7 +10,6 @@ import {
   type TransactionClient,
   searchIndex,
   sourceDocuments,
-  topicLinks,
   topicMembership,
   topicRelated,
   topics,
@@ -32,7 +31,7 @@ import {
   type ArchiveTransition,
   type ValidatedTopic,
 } from "./compile-contract.ts";
-import { makeCompileLlmCore } from "./compile-llm-core.ts";
+import { makeCompileExtract } from "./compile-extract.ts";
 import { makeThemesPipeline } from "./compile-themes-pipeline.ts";
 import { AppConfig } from "./config.ts";
 import { bodyContentHash, contentHash, fileContentHash } from "./crypto.ts";
@@ -41,7 +40,6 @@ import { errorDetails } from "./error-details.ts";
 import { LanguageModel } from "./llm.ts";
 import { StructuredLogger } from "./logging.ts";
 import {
-  extractWikiLinkTargets,
   markdownParagraphs,
   openingSentence,
   parseFrontmatter,
@@ -502,7 +500,7 @@ export const CompilePhasesLive = Layer.effect(
         }
       });
 
-    const llmCore = makeCompileLlmCore({
+    const extract = makeCompileExtract({
       config,
       db,
       embeddings,
@@ -513,9 +511,6 @@ export const CompilePhasesLive = Layer.effect(
       sourceRegistry,
       randomBytes,
       clock,
-      archiveTransitions: applyArchiveTransitions,
-      materializeArticle: materializeCachedArticle,
-      rebuildWiki: (vaultId, runId) => rebuildSearchScope(vaultId, runId, "wiki"),
     });
     const themesPipeline = makeThemesPipeline({
       config,
@@ -529,7 +524,6 @@ export const CompilePhasesLive = Layer.effect(
       materializeArticle: materializeCachedArticle,
       rebuildWiki: (vaultId, runId) => rebuildSearchScope(vaultId, runId, "wiki"),
     });
-    const themes = config.compilePipeline === "themes";
 
     return {
       archiveTransitions: applyArchiveTransitions,
@@ -551,8 +545,8 @@ export const CompilePhasesLive = Layer.effect(
             }),
           );
         }),
-      extract: llmCore.extract,
-      abstract: themes ? themesPipeline.abstract : llmCore.abstract,
+      extract,
+      abstract: themesPipeline.abstract,
       derive: (vaultId, runId, validated) =>
         Effect.gen(function* () {
           if (validated.length === 0) {
@@ -634,25 +628,6 @@ export const CompilePhasesLive = Layer.effect(
               }
             }),
           );
-          yield* db.query((d) => d
-            .delete(topicLinks)
-            .where(
-              inArray(
-                topicLinks.sourceTopicId,
-                d.select({ id: topics.topicId }).from(topics).where(eq(topics.vaultId, vaultId)),
-              ),
-            ));
-          const slugToId = new Map(validated.map((topic) => [topic.slug, topic.topicId]));
-          const links = validated.flatMap((topic) =>
-            [...new Set(topic.linkTargets)].flatMap((slug) => {
-              const target = slugToId.get(slug);
-              return target === undefined || target === topic.topicId
-                ? []
-                : [{ sourceTopicId: topic.topicId, targetTopicId: target }];
-            }),
-          );
-          if (links.length > 0) yield* db.query((d) => d.insert(topicLinks).values(links));
-
           const ideaSets = validated.map((topic) => new Set(topic.subsumedIdeaIds));
           const topicsOfIdea = new Map<string, number[]>();
           ideaSets.forEach((set, index) => {
@@ -700,106 +675,16 @@ export const CompilePhasesLive = Layer.effect(
             }),
           );
         }),
-      render: themes ? themesPipeline.render : llmCore.render,
-      verify: (vaultId, runId) =>
-        Effect.gen(function* () {
-          if (themes)
-            return yield* pipeline.updateProgress(
-              runId,
-              "verify",
-              "completed",
-              progressSteps(VERIFY_STEP_LABELS, "check_links", {
-                completed: new Set(Object.keys(VERIFY_STEP_LABELS)),
-              }),
-            );
-          yield* pipeline.updateProgress(
-            runId,
-            "verify",
-            "progress",
-            progressSteps(VERIFY_STEP_LABELS, "check_links"),
-          );
-          const rendered = yield* db.query((d) => d
-            .select()
-            .from(topics)
-            .where(and(eq(topics.vaultId, vaultId), eq(topics.articleStatus, "rendered")))
-            .orderBy(asc(topics.title)));
-          if (rendered.length === 0) {
-            yield* pipeline.updateProgress(
-              runId,
-              "verify",
-              "completed",
-              progressSteps(VERIFY_STEP_LABELS, "check_links", {
-                completed: new Set(Object.keys(VERIFY_STEP_LABELS)),
-              }),
-            );
-            return;
-          }
-          yield* pipeline.updateProgress(
-            runId,
-            "verify",
-            "progress",
-            progressSteps(VERIFY_STEP_LABELS, "check_links", {
-              counts: { check_links: [0, rendered.length] },
-            }),
-          );
-          const articles = yield* db.query((d) => d
-            .select()
-            .from(wikiArticles)
-            .where(eq(wikiArticles.vaultId, vaultId))
-            .orderBy(asc(wikiArticles.filePath)));
-          const topicBySlug = new Map(rendered.map((topic) => [topic.slug, topic]));
-          const articleByTopic = new Map(articles.map((article) => [article.topicId, article]));
-          const sourceIds: Uuid[] = [];
-          const edges: { sourceArticleId: Uuid; targetArticleId: Uuid }[] = [];
-          let walked = 0;
-          for (const topic of rendered) {
-            const content = yield* Effect.result(
-              storage.readText(vaultOwner(vaultId), `wiki/${topic.slug}.md`),
-            );
-            if (content._tag === "Failure") continue;
-            const source = articleByTopic.get(topic.topicId);
-            if (source === undefined)
-              throw new Error(`Rendered topic ${topic.topicId} has no wiki article`);
-            sourceIds.push(source.id);
-            walked += 1;
-            for (const path of extractWikiLinkTargets(content.success)) {
-              const slug = path.slice(path.lastIndexOf("/") + 1, -3);
-              const target = topicBySlug.get(slug);
-              if (target === undefined || target.topicId === topic.topicId) continue;
-              const targetArticle = articleByTopic.get(target.topicId);
-              if (targetArticle === undefined) {
-                throw new Error(`Rendered topic ${target.topicId} has no wiki article`);
-              }
-              edges.push({
-                sourceArticleId: source.id,
-                targetArticleId: targetArticle.id,
-              });
-            }
-            yield* pipeline.updateProgress(
-              runId,
-              "verify",
-              "progress",
-              progressSteps(VERIFY_STEP_LABELS, "check_links", {
-                counts: { check_links: [walked, rendered.length] },
-              }),
-            );
-          }
-          if (sourceIds.length > 0) {
-            yield* db.query((d) => d
-              .delete(backlinks)
-              .where(inArray(backlinks.sourceArticleId, sourceIds)));
-          }
-          if (edges.length > 0) yield* db.query((d) => d.insert(backlinks).values(edges));
-          yield* pipeline.updateProgress(
-            runId,
-            "verify",
-            "completed",
-            progressSteps(VERIFY_STEP_LABELS, "check_links", {
-              completed: new Set(Object.keys(VERIFY_STEP_LABELS)),
-              counts: { check_links: [walked, rendered.length] },
-            }),
-          );
-        }),
+      render: themesPipeline.render,
+      verify: (_vaultId, runId) =>
+        pipeline.updateProgress(
+          runId,
+          "verify",
+          "completed",
+          progressSteps(VERIFY_STEP_LABELS, "check_links", {
+            completed: new Set(Object.keys(VERIFY_STEP_LABELS)),
+          }),
+        ),
       publish: (vaultId, runId, publishedAt) =>
         Effect.gen(function* () {
           yield* pipeline.updateProgress(

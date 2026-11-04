@@ -107,7 +107,6 @@ const config = (dataDir: string): AppConfigShape => ({
   compilePartitionMaxFactor: 1.5,
   compilePremergeJaccardThreshold: 0.8,
   compileDeriveRelatedLimit: 20,
-  compilePipeline: "registry",
   compileEmbedConcurrency: 1,
   pipelineConcurrency: 1,
   goldensRandomSeed: Option.none(),

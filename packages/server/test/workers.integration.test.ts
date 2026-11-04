@@ -26,7 +26,7 @@ import {
   CompileWorkflow,
   CompileWorkflowLive,
 } from "../src/compile-intents.ts";
-import { phaseFailure, RENDER_STEP_LABELS } from "../src/compile-contract.ts";
+import { phaseFailure, THEMES_RENDER_STEP_LABELS } from "../src/compile-contract.ts";
 import { CompilePhases, CompilePhasesLive } from "../src/compile-phases.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { ClockLive } from "../src/clock.ts";
@@ -154,7 +154,6 @@ const config: AppConfigShape = {
   compilePartitionMaxFactor: 1.5,
   compilePremergeJaccardThreshold: 0.8,
   compileDeriveRelatedLimit: 20,
-  compilePipeline: "registry",
   compileEmbedConcurrency: 1,
   pipelineConcurrency: 1,
   goldensRandomSeed: Option.none(),
@@ -366,7 +365,6 @@ const RenderFailurePhasesLive = Layer.effect(
             title: "Render failure",
             description: "Pins the last emitted render progress snapshot.",
             subsumedIdeaIds: [],
-            linkTargets: [],
           },
         ]),
       derive: () => Effect.void,
@@ -376,9 +374,9 @@ const RenderFailurePhasesLive = Layer.effect(
             runId,
             "render",
             "progress",
-            progressSteps(RENDER_STEP_LABELS, "write_articles", {
-              completed: new Set(["plan_articles"]),
-              counts: { plan_articles: [1, 1], write_articles: [0, 1] },
+            progressSteps(THEMES_RENDER_STEP_LABELS, "link_articles", {
+              completed: new Set(["write_articles"]),
+              counts: { write_articles: [1, 1], link_articles: [0, 1] },
             }),
           );
           return yield* Effect.die(new Error("forced render seam"));
@@ -1508,16 +1506,16 @@ describe("M4.2 durable workers", () => {
     });
     expect(rows[0]?.stages.at(-1)?.steps).toEqual([
       {
-        key: "plan_articles",
-        label: "Planning articles",
+        key: "write_articles",
+        label: "Writing articles",
         status: "completed",
         done: 1,
         total: 1,
         detail: "",
       },
       {
-        key: "write_articles",
-        label: "Writing articles",
+        key: "link_articles",
+        label: "Linking articles",
         status: "running",
         done: 0,
         total: 1,
