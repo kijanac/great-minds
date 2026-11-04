@@ -79,7 +79,7 @@
     {/if}
   {/snippet}
 
-  <div class="flex h-screen flex-col overflow-hidden">
+  <div class="flex h-dvh flex-col overflow-hidden">
     {#snippet detail()}
       {#if headerCount > 0}
         <span

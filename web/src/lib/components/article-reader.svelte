@@ -259,9 +259,8 @@
         />
       {:else if showHint}
         <OnboardingHint>
-          highlight text to ask beside the passage with
-          <span class="text-btw">btw</span
-          >{#if suggestionMode}{", or suggest a change"}{/if}
+          highlight text to ask with <span class="text-btw">btw</span
+          >{#if suggestionMode}{" or suggest a change"}{/if}
         </OnboardingHint>
       {/if}
     {/snippet}

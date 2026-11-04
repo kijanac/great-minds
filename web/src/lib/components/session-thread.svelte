@@ -251,8 +251,8 @@
 
 {#if showHint}
   <OnboardingHint>
-    highlight text to <span class="text-warm-dim">add to reply</span>, or ask
-    beside the passage with <span class="text-btw">btw</span>
+    highlight text to <span class="text-warm-dim">add to reply</span> or ask
+    with <span class="text-btw">btw</span>
   </OnboardingHint>
 {/if}
 

@@ -37,7 +37,7 @@
   }
 </script>
 
-<div class="flex h-screen flex-col overflow-hidden">
+<div class="flex h-dvh flex-col overflow-hidden">
   <header
     class="flex shrink-0 items-center justify-between gap-3 border-b border-ink-subtle px-4 pt-4 pb-3 md:px-6"
   >

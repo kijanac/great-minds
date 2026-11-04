@@ -11,7 +11,7 @@
 </script>
 
 <div
-  class="relative h-screen"
+  class="relative h-dvh"
   style:--shell-utility-inset={utility ? "3.5rem" : "2.5rem"}
 >
   {@render children()}

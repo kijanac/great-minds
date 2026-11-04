@@ -197,10 +197,8 @@
   {node.value ?? ""}
 {:else if node.type === "element" && tag === "a"}
   {#if footnoteContent && footnoteMode === "popover"}
-    {#if elementId}
-      <span id={elementId} class="sr-only" aria-hidden="true"></span>
-    {/if}
-    <Popover.Root>
+    {#if elementId}<span id={elementId} class="sr-only" aria-hidden="true"
+      ></span>{/if}<Popover.Root>
       <Popover.Trigger>
         {#snippet child({ props })}
           <a
@@ -221,8 +219,7 @@
             {@render childNodes()}
           </a>
         {/snippet}
-      </Popover.Trigger>
-      <Popover.Content
+      </Popover.Trigger><Popover.Content
         data-footnote-popover
         side="top"
         class="w-[min(22rem,calc(100vw-2rem))] border border-gold-dim bg-popover p-3 text-left font-serif text-[length:var(--text-caption)] leading-[1.65] text-warm-faint shadow-[0_8px_28px_rgba(0,0,0,0.35)]"
@@ -234,9 +231,8 @@
           footnoteMode="popover"
           {footnoteDefinitions}
         />
-      </Popover.Content>
-    </Popover.Root>
-  {:else}
+      </Popover.Content></Popover.Root
+    >{:else}
     <a
       {...attrs}
       {href}

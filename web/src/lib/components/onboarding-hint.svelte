@@ -15,6 +15,7 @@
 </script>
 
 <script lang="ts">
+  import X from "@lucide/svelte/icons/x";
   import type { Snippet } from "svelte";
 
   import { Badge } from "$lib/components/ui/badge";
@@ -24,9 +25,9 @@
 </script>
 
 <div
-  class="shrink-0 animate-[slide-up_0.28s_ease] border-t border-ink-subtle px-4 py-3 md:px-10"
+  class="shrink-0 animate-[slide-up_0.28s_ease] border-t border-ink-subtle pt-3 pr-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pl-[var(--shell-utility-inset)] md:pr-10"
 >
-  <div class="mx-auto flex max-w-[740px] items-center justify-between gap-4">
+  <div class="mx-auto flex max-w-[740px] items-center justify-between gap-2">
     <p
       class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint"
     >
@@ -40,11 +41,12 @@
     </p>
     <Button
       variant="ghost"
-      size="sm"
+      size="icon-sm"
       onclick={dismissOnboardingHint}
-      class="h-auto shrink-0 px-2 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
+      aria-label="dismiss tip"
+      class="shrink-0 text-warm-ghost hover:bg-transparent hover:text-warm-faint"
     >
-      dismiss
+      <X class="size-3.5" />
     </Button>
   </div>
 </div>

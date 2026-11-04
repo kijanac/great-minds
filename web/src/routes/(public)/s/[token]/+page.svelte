@@ -86,7 +86,7 @@
 </svelte:head>
 
 {#if query.isLoading}
-  <div class="flex min-h-screen items-center justify-center px-4">
+  <div class="flex min-h-dvh items-center justify-center px-4">
     <p
       class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
     >
@@ -95,7 +95,7 @@
   </div>
 {:else if query.isError || query.data?.status === "gone"}
   <div
-    class="flex min-h-screen flex-col items-center justify-center gap-2 px-4 text-center"
+    class="flex min-h-dvh flex-col items-center justify-center gap-2 px-4 text-center"
   >
     <p class="font-serif text-[length:var(--text-body)] text-warm-dim">
       This link is no longer available.

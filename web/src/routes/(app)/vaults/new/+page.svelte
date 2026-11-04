@@ -26,7 +26,7 @@
 </svelte:head>
 
 <div
-  class="flex min-h-screen items-start justify-center px-4 pt-16 pb-20 md:px-10"
+  class="flex min-h-dvh items-start justify-center px-4 pt-16 pb-20 md:px-10"
 >
   <div class="w-full max-w-[640px]">
     <h1

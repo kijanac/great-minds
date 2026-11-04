@@ -22,7 +22,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="relative flex h-screen overflow-hidden">
+<div class="relative flex h-dvh overflow-hidden">
   <div class="min-w-0 flex-1">
     {@render children()}
   </div>
@@ -37,7 +37,7 @@
     ></button>
     <aside
       aria-label="article preview"
-      class="fixed inset-y-0 right-0 z-[200] h-screen w-full border-l border-ink-subtle bg-ink-panel shadow-none md:w-[370px] md:shadow-[-24px_0_60px_rgba(80,60,30,0.12)] min-[1200px]:relative min-[1200px]:inset-auto min-[1200px]:z-auto min-[1200px]:shrink-0 dark:md:shadow-[-24px_0_60px_rgba(0,0,0,0.6)]"
+      class="fixed inset-y-0 right-0 z-[200] h-dvh w-full border-l border-ink-subtle bg-ink-panel shadow-none md:w-[370px] md:shadow-[-24px_0_60px_rgba(80,60,30,0.12)] min-[1200px]:relative min-[1200px]:inset-auto min-[1200px]:z-auto min-[1200px]:shrink-0 dark:md:shadow-[-24px_0_60px_rgba(0,0,0,0.6)]"
       in:fly={{ x: 16, duration: 280, easing: cubicOut }}
       out:fly={{ x: 16, duration: 180, easing: cubicOut }}
     >

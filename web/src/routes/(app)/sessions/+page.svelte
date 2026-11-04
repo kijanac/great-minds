@@ -29,7 +29,7 @@
   <title>Sessions | Great Minds</title>
 </svelte:head>
 
-<div class="flex h-screen flex-col overflow-hidden">
+<div class="flex h-dvh flex-col overflow-hidden">
   {#snippet filterInput()}
     <div class="flex w-full max-w-[300px] items-center gap-2">
       <Search size={14} class="shrink-0 text-muted-foreground" />

@@ -113,7 +113,7 @@
     {/if}
   {/snippet}
 
-  <div class="relative flex h-screen overflow-hidden">
+  <div class="relative flex h-dvh overflow-hidden">
     <div class="relative flex min-w-0 flex-1 flex-col overflow-hidden">
       {#if isActive}
         <div

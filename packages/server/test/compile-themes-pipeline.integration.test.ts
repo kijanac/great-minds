@@ -355,7 +355,7 @@ describe("the themes Update pipeline", () => {
     const beta = validated.find((topic) => topic.slug === "beta");
     expect(alpha?.subsumedIdeaIds).toHaveLength(5);
     const alphaFile = files.get("wiki/alpha.md") ?? "";
-    expect(alphaFile).toContain("Alpha grew beside [the Beta movement](wiki/beta.md) [^1].");
+    expect(alphaFile).toContain("Alpha grew beside [the Beta movement](wiki/beta.md)[^1].");
     expect(alphaFile).toMatch(
       /\[\^1\]: \[Alpha source \d+ \(1910\)\]\(raw\/alpha-\d+\.md#\^p\d+\) — "Alpha quote \d+"/,
     );

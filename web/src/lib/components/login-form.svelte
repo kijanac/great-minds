@@ -143,7 +143,7 @@
   }
 </script>
 
-<div class="flex h-screen items-center justify-center bg-ink">
+<div class="flex h-dvh items-center justify-center bg-ink">
   <div class="w-full max-w-sm space-y-8 px-6">
     <div class="text-center">
       <h1 class="font-serif text-title text-warm">Great Minds</h1>

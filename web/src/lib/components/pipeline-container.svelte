@@ -359,7 +359,7 @@
   <title>Pipeline | Great Minds</title>
 </svelte:head>
 
-<div class="flex h-screen flex-col overflow-hidden">
+<div class="flex h-dvh flex-col overflow-hidden">
   <header
     class="flex shrink-0 items-center gap-4 border-b border-ink-subtle px-4 pt-4 pb-3 md:px-6"
   >

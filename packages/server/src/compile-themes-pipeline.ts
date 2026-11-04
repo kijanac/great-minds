@@ -33,6 +33,8 @@ import { defaultVaultConfigFile, readVaultConfig } from "./vault-config.ts";
 
 const PIVOTS_IN_FLIGHT = 120;
 
+const tightFootnotes = (markdown: string) => markdown.replace(/ +(\[\^\d+\])/g, "$1");
+
 export const makeThemesPipeline = (options: {
   readonly config: AppConfigShape;
   readonly db: Database["Service"];
@@ -286,7 +288,9 @@ export const makeThemesPipeline = (options: {
         const topic = topicById.get(article.id);
         if (topic === undefined) continue;
         yield* options.materializeArticle(vaultId, runId, topic, {
-          body: withLinks(article.markdown, linked.linksOf.get(article.id) ?? [], hrefOf),
+          body: tightFootnotes(
+            withLinks(article.markdown, linked.linksOf.get(article.id) ?? [], hrefOf),
+          ),
           tags: article.tags,
         });
       }

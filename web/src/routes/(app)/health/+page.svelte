@@ -42,7 +42,7 @@
     {/if}
   {/snippet}
 
-  <div class="flex h-screen flex-col overflow-hidden">
+  <div class="flex h-dvh flex-col overflow-hidden">
     <PageHeader title="health" onHome={() => void goto("/")} />
 
     <div class="min-h-0 flex-1 overflow-y-auto">
