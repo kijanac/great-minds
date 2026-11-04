@@ -89,16 +89,49 @@
     ]),
   );
 
-  function jump(id: string, heading: number) {
+  const outlineTarget = (id: string, heading: number) => {
     const section = document.getElementById(id);
-    const target =
-      heading < 0
-        ? section
-        : section?.querySelectorAll<HTMLElement>(
-            "[data-answer] h2, [data-answer] h3",
-          )[heading];
-    target?.scrollIntoView({ block: "start", behavior: "smooth" });
+    return heading < 0
+      ? section
+      : section?.querySelectorAll<HTMLElement>(
+          "[data-answer] h2, [data-answer] h3",
+        )[heading];
+  };
+
+  function jump(id: string, heading: number) {
+    outlineTarget(id, heading)?.scrollIntoView({
+      block: "start",
+      behavior: "smooth",
+    });
   }
+
+  let activeOutline = $state(-1);
+  let spyFrame = 0;
+
+  function updateActiveOutline() {
+    if (!viewport) return;
+    const view = viewport.getBoundingClientRect();
+    const atBottom =
+      viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 2;
+    const line = atBottom ? view.bottom : view.top + 96;
+    let active = -1;
+    outline.forEach((entry, index) => {
+      const target = outlineTarget(entry.id, entry.heading);
+      if (target && target.getBoundingClientRect().top <= line) active = index;
+    });
+    activeOutline = active;
+  }
+
+  function spyOutline() {
+    cancelAnimationFrame(spyFrame);
+    spyFrame = requestAnimationFrame(updateActiveOutline);
+  }
+
+  $effect(() => {
+    void outline;
+    spyOutline();
+    return () => cancelAnimationFrame(spyFrame);
+  });
 
   const title = (query: string) =>
     query.length > 0 ? query[0]!.toUpperCase() + query.slice(1) : query;
@@ -120,6 +153,7 @@
 
   function handleScroll() {
     if (!viewport) return;
+    spyOutline();
     const bottom = viewport.scrollHeight - viewport.clientHeight;
     if (viewport.scrollTop < Math.min(previousScrollTop, bottom)) {
       following = false;
@@ -226,7 +260,8 @@
             <button
               type="button"
               onclick={() => jump(entry.id, entry.heading)}
-              class={`block w-full border-l py-1 pl-2.5 text-left hover:border-gold hover:text-warm [overflow-wrap:anywhere] ${entry.question ? "mt-3 border-ink-border text-warm-faint italic" : "border-ink-subtle text-warm-ghost"}`}
+              aria-current={index === activeOutline ? "location" : undefined}
+              class={`block w-full border-l py-1 pl-2.5 text-left transition-colors hover:border-gold hover:text-warm [overflow-wrap:anywhere] ${entry.question ? "mt-3 italic" : ""} ${index === activeOutline ? "border-gold text-warm" : entry.question ? "border-ink-border text-warm-faint" : "border-ink-subtle text-warm-ghost"}`}
               >{entry.label}</button
             >
           {/each}
