@@ -9,7 +9,9 @@
     type AnchorMiss,
   } from "$lib/anchor-marks";
   import { assignBlockRefIds, stripBlockRefMarkers } from "$lib/block-refs";
+  import AnswerCitations from "$lib/components/answer-citations.svelte";
   import BtwThread from "$lib/components/btw-thread.svelte";
+  import { citationsOf, numberCitations, type Citation } from "$lib/citations";
   import FootnoteNotes, {
     type MarginDot,
   } from "$lib/components/footnote-notes.svelte";
@@ -43,6 +45,7 @@
     readOnly = false,
     expandedThreads = null,
     onToggleThread,
+    onCitation,
   }: {
     text: string;
     documentTitle?: string | null;
@@ -66,6 +69,7 @@
     // DocThreads); otherwise AnswerBlock owns a local expansion map.
     expandedThreads?: Set<string> | null;
     onToggleThread?: (btwId: string) => void;
+    onCitation?: (citation: Citation) => void;
   } = $props();
 
   let root: HTMLDivElement | null = $state(null);
@@ -73,6 +77,7 @@
   const displayText = $derived(
     stripBlockRefs ? stripBlockRefMarkers(text) : text,
   );
+  const citations = $derived(onCitation ? citationsOf(displayText) : []);
   const split = $derived(
     streaming ? splitStreamingMarkdown(displayText) : null,
   );
@@ -368,7 +373,7 @@
     if (stripBlockRefs && resolveBlockRefs) {
       assignBlockRefIds(tree, text);
     }
-    return tree;
+    return onCitation ? numberCitations(tree, displayText) : tree;
   }
 
   function handleSelect(event: MouseEvent, offset: number): void {
@@ -414,78 +419,83 @@
 
 <svelte:window onkeyup={handleKeyboardSelection} />
 
-<FootnoteNotes
-  bind:root
-  roots={footnoteRoots}
-  idPrefix={`${exchangeId}-fn`}
-  {marginFootnotes}
-  {panelDocked}
-  resetKey={`${streaming}:${displayText}`}
-  {onLinkClick}
-  {marginDots}
-  class={leadingTitle
-    ? "select-text [&>h1:first-child]:mb-3 [&>h1:first-child]:text-[length:var(--text-title)]"
-    : "select-text"}
->
-  {#snippet children({
-    footnoteMode,
-    footnoteDefinitions,
-    activeFootnote,
-    pinnedFootnotes,
-    onFootnoteHover,
-    onFootnoteToggle,
-  })}
-    {#snippet blockNode(node: HastNode)}
-      <HastNodeView
-        {node}
-        {variant}
-        blockOffset={node.position?.start?.offset}
-        topLevel
-        onBlockMouseUp={handleSelect}
-        {onLinkClick}
-        {footnoteMode}
-        {footnoteDefinitions}
-        {activeFootnote}
-        {pinnedFootnotes}
-        {onFootnoteHover}
-        {onFootnoteToggle}
-      />
-    {/snippet}
-    {#if !leadingTitle}{@render header?.(true)}{/if}
-    {#if streaming}
-      {#each stableTree.children ?? [] as node, index (blockKey(node, index))}
-        {@render blockNode(node)}
-      {/each}
-      {#each tailTree.children ?? [] as node, index (blockKey(node, index))}
-        {@render blockNode(node)}
-      {/each}
-    {:else}
-      {#each fullTree.children ?? [] as node, index (blockKey(node, index))}
-        {@const offset = node.position?.start?.offset}
-        {@render blockNode(node)}
-        {#if index === 0 && leadingTitle}{@render header?.(false)}{/if}
-        {#if offset != null}
-          {#each bodyThreads.filter((btw) => btw.anchor.blockOffset === offset) as btw (btw.id)}
-            <BtwThread
-              {btw}
-              open={isOpen(btw.id)}
-              onOpenChange={() => toggleThread(btw.id)}
-              hideWhenClosed={!btw.draft}
-              {readOnly}
-              onReply={onBtwReply}
-              onRetry={onBtwRetry}
-              onDismiss={onBtwDismiss}
-              onOpenSession={onBtwOpenSession}
-            />
-          {/each}
-        {/if}
-      {/each}
-    {/if}
+<div class="relative">
+  <FootnoteNotes
+    bind:root
+    roots={footnoteRoots}
+    idPrefix={`${exchangeId}-fn`}
+    {marginFootnotes}
+    {panelDocked}
+    resetKey={`${streaming}:${displayText}`}
+    {onLinkClick}
+    {marginDots}
+    class={leadingTitle
+      ? "select-text [&>h1:first-child]:mb-3 [&>h1:first-child]:text-[length:var(--text-title)]"
+      : "select-text"}
+  >
+    {#snippet children({
+      footnoteMode,
+      footnoteDefinitions,
+      activeFootnote,
+      pinnedFootnotes,
+      onFootnoteHover,
+      onFootnoteToggle,
+    })}
+      {#snippet blockNode(node: HastNode)}
+        <HastNodeView
+          {node}
+          {variant}
+          blockOffset={node.position?.start?.offset}
+          topLevel
+          onBlockMouseUp={handleSelect}
+          {onLinkClick}
+          {footnoteMode}
+          {footnoteDefinitions}
+          {activeFootnote}
+          {pinnedFootnotes}
+          {onFootnoteHover}
+          {onFootnoteToggle}
+        />
+      {/snippet}
+      {#if !leadingTitle}{@render header?.(true)}{/if}
+      {#if streaming}
+        {#each stableTree.children ?? [] as node, index (blockKey(node, index))}
+          {@render blockNode(node)}
+        {/each}
+        {#each tailTree.children ?? [] as node, index (blockKey(node, index))}
+          {@render blockNode(node)}
+        {/each}
+      {:else}
+        {#each fullTree.children ?? [] as node, index (blockKey(node, index))}
+          {@const offset = node.position?.start?.offset}
+          {@render blockNode(node)}
+          {#if index === 0 && leadingTitle}{@render header?.(false)}{/if}
+          {#if offset != null}
+            {#each bodyThreads.filter((btw) => btw.anchor.blockOffset === offset) as btw (btw.id)}
+              <BtwThread
+                {btw}
+                open={isOpen(btw.id)}
+                onOpenChange={() => toggleThread(btw.id)}
+                hideWhenClosed={!btw.draft}
+                {readOnly}
+                onReply={onBtwReply}
+                onRetry={onBtwRetry}
+                onDismiss={onBtwDismiss}
+                onOpenSession={onBtwOpenSession}
+              />
+            {/each}
+          {/if}
+        {/each}
+      {/if}
 
-    {#if streaming}
-      <span
-        class="ml-px inline-block h-[13px] w-0.5 animate-[blink_1s_step-end_infinite] bg-gold align-middle"
-      ></span>
-    {/if}
-  {/snippet}
-</FootnoteNotes>
+      {#if streaming}
+        <span
+          class="ml-px inline-block h-[13px] w-0.5 animate-[blink_1s_step-end_infinite] bg-gold align-middle"
+        ></span>
+      {/if}
+    {/snippet}
+  </FootnoteNotes>
+  {#if onCitation && !streaming}
+    <AnswerCitations {root} {citations} {panelDocked} onOpen={onCitation} />
+  {/if}
+</div>

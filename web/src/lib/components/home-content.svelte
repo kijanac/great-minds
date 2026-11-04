@@ -116,64 +116,63 @@
   <div class="relative flex h-dvh overflow-hidden">
     <div class="relative flex min-w-0 flex-1 flex-col overflow-hidden">
       {#if isActive}
-        <div
-          class="shrink-0 border-b border-ink-subtle px-4 pt-[22px] pb-[18px] md:px-10"
+        <header
+          class="flex shrink-0 items-center gap-1.5 border-b border-ink-subtle bg-background/90 px-3 py-2 backdrop-blur-sm md:px-5"
           in:fade={{ duration: 150 }}
         >
-          <div
-            class="flex w-full items-center gap-3"
-            in:receive={{ key: "search-bar" }}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onclick={() => void goto("/")}
+            aria-label="home"
+            title="Home"
+            class="shrink-0 text-warm-ghost hover:bg-ink-raised hover:text-gold"
           >
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onclick={() => void goto("/")}
-              aria-label="home"
-              class="shrink-0 text-muted-foreground hover:bg-transparent hover:text-gold"
-            >
-              <Home size={14} />
-            </Button>
-            <div class="min-w-0 flex-1">
-              {#if !session.origin?.anchor}
-                <SearchBar bind:query phase={session.phase} onSubmit={submit} />
-              {/if}
-            </div>
-            {#if session.sessionId}
-              <ShareDialog subjectKind="session" subjectId={session.sessionId}>
-                {#snippet trigger({ props })}
-                  <Button
-                    {...props}
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="share session"
-                    title="Share session"
-                    class="shrink-0 text-muted-foreground hover:bg-transparent hover:text-gold"
-                  >
-                    <Share2 size={14} />
-                  </Button>
-                {/snippet}
-              </ShareDialog>
-            {/if}
-            <Button
-              variant="ghost"
-              disabled={session.sessionId === null ||
-                exportBusy ||
-                publication.pending}
-              title={exportBusy
-                ? "Available when the conversation finishes saving"
-                : "Export conversation"}
-              aria-label="Export conversation"
-              bind:ref={exportButton}
-              onclick={() => {
-                card.close();
-                publication.prepare();
-              }}
-              class="min-h-11 shrink-0 rounded-sm font-mono text-xs text-muted-foreground hover:bg-transparent hover:text-gold"
-            >
-              <Download size={14} /> Export
-            </Button>
-          </div>
-        </div>
+            <Home size={15} />
+          </Button>
+          <span
+            class="ml-1 min-w-0 flex-1 truncate font-mono text-[length:var(--text-chrome)] tracking-[0.12em] text-warm-ghost uppercase"
+          >
+            {currentVault
+              ? `${currentVault.name} · conversation`
+              : "conversation"}
+          </span>
+          {#if session.sessionId}
+            <ShareDialog subjectKind="session" subjectId={session.sessionId}>
+              {#snippet trigger({ props })}
+                <Button
+                  {...props}
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Share conversation"
+                  title="Share"
+                  class="shrink-0 text-warm-ghost hover:bg-ink-raised hover:text-gold"
+                >
+                  <Share2 size={15} />
+                </Button>
+              {/snippet}
+            </ShareDialog>
+          {/if}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            disabled={session.sessionId === null ||
+              exportBusy ||
+              publication.pending}
+            title={exportBusy
+              ? "Export is available when the conversation finishes saving"
+              : "Export"}
+            aria-label="Export conversation"
+            bind:ref={exportButton}
+            onclick={() => {
+              card.close();
+              publication.prepare();
+            }}
+            class="shrink-0 text-warm-ghost hover:bg-ink-raised hover:text-gold"
+          >
+            <Download size={15} />
+          </Button>
+        </header>
       {/if}
 
       <main class="relative min-h-0 flex-1 overflow-hidden">
@@ -259,7 +258,9 @@
                 vaultRole={vaultDetail.data?.role ?? null}
                 panelDocked={!!card.selectedCard}
                 onCardClick={card.toggle}
+                onOpenPath={card.openPath}
                 onLinkClick={card.onLinkClick}
+                {receive}
               />
             </div>
           {/if}

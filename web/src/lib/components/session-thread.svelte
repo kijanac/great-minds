@@ -3,8 +3,11 @@
   import type { MemberRole } from "@great-minds/domain";
   import { tick } from "svelte";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
+  import type { crossfade } from "svelte/transition";
 
   import AnswerBlock from "$lib/components/answer-block.svelte";
+  import AnswerSteps from "$lib/components/answer-steps.svelte";
+  import { outlineOf } from "$lib/citations";
   import FollowUpBar from "$lib/components/follow-up-bar.svelte";
   import OnboardingHint, {
     dismissOnboardingHint,
@@ -13,12 +16,9 @@
   import PromoteButton from "$lib/components/promote-button.svelte";
   import ReplyInterrupted from "$lib/components/reply-interrupted.svelte";
   import SelectionPopover from "$lib/components/selection-popover.svelte";
-  import ThinkingSection from "$lib/components/thinking-section.svelte";
   import SessionPassage from "$lib/components/session-passage.svelte";
   import ThreadSurface from "$lib/components/thread-surface.svelte";
-  import ThreadTurn from "$lib/components/thread-turn.svelte";
   import { Button } from "$lib/components/ui/button";
-  import { Separator } from "$lib/components/ui/separator";
   import type { Session } from "$lib/session.svelte";
   import { sessionOriginHref } from "$lib/session-origin";
   import { passageMark, revealPassage } from "$lib/passage-navigation";
@@ -31,15 +31,77 @@
     vaultRole = null,
     panelDocked = false,
     onCardClick,
+    onOpenPath,
     onLinkClick,
+    receive,
   }: {
     session: Session;
     activeCard: string | null;
     vaultRole?: MemberRole | null;
     panelDocked?: boolean;
     onCardClick: (source: SourceRef) => void;
+    onOpenPath: (path: string, chunk: number | null) => void;
     onLinkClick?: (event: MouseEvent) => void;
+    receive?: ReturnType<typeof crossfade>[1];
   } = $props();
+
+  const openCitation = (href: string, path: string) => {
+    const fragment = href.split("#", 2)[1] ?? "";
+    const match = /^\^p(\d+)$/.exec(decodeURIComponent(fragment));
+    onOpenPath(path, match ? Number(match[1]) : null);
+  };
+
+  const readMore = (exchange: Session["thread"][number]) => {
+    const seen = new Set<string>();
+    return exchange.thinking
+      .flatMap((block) => block.sources)
+      .filter((source) => {
+        if (
+          source.type !== "article" ||
+          source.pending ||
+          seen.has(source.label)
+        )
+          return false;
+        seen.add(source.label);
+        return true;
+      })
+      .slice(0, 3);
+  };
+
+  const outline = $derived(
+    session.thread.flatMap((exchange, index) => [
+      ...(index === 0
+        ? []
+        : [
+            {
+              id: `exchange-${exchange.id}`,
+              label: exchange.query,
+              question: true,
+              heading: -1,
+            },
+          ]),
+      ...outlineOf(exchange.answer).map((label, heading) => ({
+        id: `exchange-${exchange.id}`,
+        label,
+        question: false,
+        heading,
+      })),
+    ]),
+  );
+
+  function jump(id: string, heading: number) {
+    const section = document.getElementById(id);
+    const target =
+      heading < 0
+        ? section
+        : section?.querySelectorAll<HTMLElement>(
+            "[data-answer] h2, [data-answer] h3",
+          )[heading];
+    target?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+
+  const title = (query: string) =>
+    query.length > 0 ? query[0]!.toUpperCase() + query.slice(1) : query;
 
   const origin = $derived(session.origin);
   let viewport: HTMLDivElement | undefined = $state();
@@ -147,8 +209,30 @@
 >
   <div
     bind:this={content}
-    class="mx-auto max-w-[740px] px-4 pt-7 pb-5 md:px-10"
+    class="relative mx-auto max-w-[740px] px-4 pt-9 pb-8 md:px-10"
   >
+    {#if outline.length >= 3 && !origin?.anchor && !panelDocked}
+      <aside
+        class="absolute top-0 right-[calc(100%+1rem)] hidden h-full w-[190px] min-[1200px]:block"
+      >
+        <nav
+          aria-label="in this conversation"
+          class="sticky top-9 font-mono text-[length:var(--text-chrome)] leading-[1.5]"
+        >
+          <div class="mb-2.5 tracking-[0.14em] text-gold-muted uppercase">
+            In this conversation
+          </div>
+          {#each outline as entry, index (`${entry.id}:${entry.heading}:${index}`)}
+            <button
+              type="button"
+              onclick={() => jump(entry.id, entry.heading)}
+              class={`block w-full border-l py-1 pl-2.5 text-left hover:border-gold hover:text-warm [overflow-wrap:anywhere] ${entry.question ? "mt-3 border-ink-border text-warm-faint italic" : "border-ink-subtle text-warm-ghost"}`}
+              >{entry.label}</button
+            >
+          {/each}
+        </nav>
+      </aside>
+    {/if}
     {#if originHref && !origin?.anchor}
       <div class="mb-6">
         <a
@@ -174,76 +258,120 @@
 
     {#snippet conversation()}
       {#each session.thread as exchange, index (exchange.id)}
-        <div>
-          {#if index > 0}
-            <Separator class="my-8 bg-ink-subtle" />
+        {@const streaming =
+          exchange.status === "running" && session.phase !== "finalizing"}
+        <section id={`exchange-${exchange.id}`} class="scroll-mt-6">
+          {#if index === 0}
+            {#if receive}
+              <h1
+                in:receive={{ key: "search-bar" }}
+                class="mb-3 font-serif text-[length:var(--text-title)] leading-[1.3] text-warm whitespace-pre-wrap [overflow-wrap:anywhere]"
+              >
+                {title(exchange.query)}
+              </h1>
+            {:else}
+              <h1
+                class="mb-3 font-serif text-[length:var(--text-title)] leading-[1.3] text-warm whitespace-pre-wrap [overflow-wrap:anywhere]"
+              >
+                {title(exchange.query)}
+              </h1>
+            {/if}
+          {:else}
+            <h2
+              class="mt-14 mb-3 border-t border-ink-subtle pt-7 font-serif text-[length:var(--text-heading)] leading-[1.4] text-warm italic whitespace-pre-wrap [overflow-wrap:anywhere]"
+            >
+              {exchange.query}
+            </h2>
           {/if}
 
-          <ThreadTurn query={exchange.query}>
-            {#if index === 0 && origin?.anchor}
-              <SessionPassage
-                quote={origin.anchor}
-                context={origin.paragraph}
-                href={originHref}
-                sourceTitle={session.originTitle ?? undefined}
-              />
-            {/if}
+          {#if index === 0 && origin?.anchor}
+            <SessionPassage
+              quote={origin.anchor}
+              context={origin.paragraph}
+              href={originHref}
+              sourceTitle={session.originTitle ?? undefined}
+            />
+          {/if}
 
-            <div>
-              <ThinkingSection
-                blocks={exchange.thinking}
-                streaming={exchange.status === "running" &&
-                  session.phase !== "finalizing" &&
-                  !exchange.answer}
-                {onCardClick}
-                {activeCard}
-              />
-            </div>
+          <AnswerSteps
+            blocks={exchange.thinking}
+            {streaming}
+            onOpen={onCardClick}
+          />
 
-            {#if exchange.answer}
+          {#if exchange.answer}
+            <div data-answer>
               <AnswerBlock
                 text={exchange.answer}
                 exchangeId={exchange.id}
                 btws={exchange.btws}
-                streaming={exchange.status === "running" &&
-                  session.phase !== "finalizing"}
+                {streaming}
                 {panelDocked}
                 onSelection={session.handleSelection}
                 onBtwReply={session.replyBtw}
                 onBtwRetry={session.retryBtw}
                 onBtwDismiss={session.dismissBtw}
                 onBtwOpenSession={session.openBtwSession}
+                onCitation={(citation) =>
+                  openCitation(citation.href, citation.path)}
               />
-            {/if}
+            </div>
+          {/if}
 
-            {#if exchange.status === "stopped" || exchange.status === "failed"}
-              <ReplyInterrupted
-                partial={exchange.answer.length > 0}
-                stopped={exchange.status === "stopped"}
-                onRetry={exchange.status === "failed" &&
-                session.phase === "done" &&
-                index === session.thread.length - 1 &&
-                exchange.replyId
-                  ? () => session.retryExchange(exchange.id)
-                  : undefined}
-              />
-            {:else if exchange.status === "completed" && !exchange.answer}
-              <p class="text-[length:var(--text-small)] text-warm-faint">
-                The response completed without an answer.
-              </p>
-            {/if}
+          {#if exchange.status === "stopped" || exchange.status === "failed"}
+            <ReplyInterrupted
+              partial={exchange.answer.length > 0}
+              stopped={exchange.status === "stopped"}
+              onRetry={exchange.status === "failed" &&
+              session.phase === "done" &&
+              index === session.thread.length - 1 &&
+              exchange.replyId
+                ? () => session.retryExchange(exchange.id)
+                : undefined}
+            />
+          {:else if exchange.status === "completed" && !exchange.answer}
+            <p class="text-[length:var(--text-small)] text-warm-faint">
+              The response completed without an answer.
+            </p>
+          {/if}
 
-            {#if session.sessionId && exchange.answer && (exchange.status === "completed" || exchange.status === "stopped") && (vaultRole === "owner" || vaultRole === "editor")}
-              <div class="mt-4">
-                <PromoteButton
-                  sessionId={session.sessionId}
-                  exchangeId={exchange.id}
-                  role={vaultRole}
-                />
+          {#if exchange.answer && !streaming && (exchange.status === "completed" || exchange.status === "stopped")}
+            {@const more = readMore(exchange)}
+            {@const canPromote =
+              !!session.sessionId &&
+              (vaultRole === "owner" || vaultRole === "editor")}
+            {#if more.length > 0 || canPromote}
+              <div
+                class="mt-5 flex flex-wrap items-baseline justify-between gap-x-5 gap-y-2 border-t border-dashed border-ink-subtle pt-3"
+              >
+                {#if more.length > 0}
+                  <div
+                    class="font-serif text-[length:var(--text-small)] leading-[1.7]"
+                  >
+                    <span
+                      class="mr-2 font-mono text-[10px] tracking-[0.14em] text-gold-muted uppercase"
+                      >Read more</span
+                    >{#each more as source, position (source.label)}{#if position > 0}<span
+                          class="mx-1.5 text-ink-border">·</span
+                        >{/if}<button
+                        type="button"
+                        onclick={() => onCardClick(source)}
+                        class={`underline decoration-gold-dim underline-offset-[3px] hover:text-gold ${activeCard === source.label ? "text-gold" : "text-gold-muted"}`}
+                        >{source.title ?? source.label}</button
+                      >{/each}
+                  </div>
+                {/if}
+                {#if canPromote && session.sessionId && (vaultRole === "owner" || vaultRole === "editor")}
+                  <PromoteButton
+                    sessionId={session.sessionId}
+                    exchangeId={exchange.id}
+                    role={vaultRole}
+                  />
+                {/if}
               </div>
             {/if}
-          </ThreadTurn>
-        </div>
+          {/if}
+        </section>
       {/each}
     {/snippet}
   </div>

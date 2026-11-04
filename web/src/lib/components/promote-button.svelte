@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { SessionId, Uuid } from "@great-minds/domain";
+  import BookmarkPlus from "@lucide/svelte/icons/bookmark-plus";
 
   import { Button } from "$lib/components/ui/button";
   import { useExchangePromotion } from "$lib/hooks/use-sessions.svelte";
@@ -41,8 +42,9 @@
     size="sm"
     onclick={() => promotion.promote(sessionId, exchangeId)}
     disabled={promotion.pending}
-    class="h-auto px-0 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
+    class="h-auto gap-1.5 px-0 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-ghost hover:bg-transparent hover:text-gold"
   >
+    <BookmarkPlus size={13} />
     {role === "owner"
       ? promotion.pending
         ? "adding…"

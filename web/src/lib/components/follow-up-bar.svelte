@@ -92,11 +92,11 @@
         bind:value
         {disabled}
         rows={2}
-        aria-label="Continue the conversation"
+        aria-label="Ask a follow-up"
         class="field-sizing-content max-h-52 min-h-12 w-full min-w-0 flex-1 resize-none border-0 border-b border-b-gold-dim bg-transparent py-1 font-serif text-[length:var(--text-small)] leading-[1.7] text-warm-dim italic caret-gold outline-none transition-colors placeholder:text-warm-faint focus:border-b-gold disabled:opacity-50"
         placeholder={chips.length > 0
           ? "Add context or send selected passages…"
-          : "Continue the conversation…"}
+          : "Ask a follow-up…"}
         oninput={onValueChange}
         onkeydown={(event) => {
           if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {

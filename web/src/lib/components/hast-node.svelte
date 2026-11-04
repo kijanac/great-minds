@@ -162,6 +162,11 @@
       ? node.properties.href
       : undefined,
   );
+  const citation = $derived(
+    typeof node.properties?.dataCitation === "string"
+      ? node.properties.dataCitation
+      : null,
+  );
   const elementId = $derived(
     typeof node.properties?.id === "string" ? node.properties.id : null,
   );
@@ -258,7 +263,15 @@
       aria-expanded={footnoteId ? pinnedFootnote : undefined}
     >
       {@render childNodes()}
-    </a>
+    </a>{#if citation}<sup class="ml-px"
+        ><button
+          type="button"
+          data-citation-ref={citation}
+          aria-label={`source ${citation}`}
+          class="-mx-0.5 -my-1.5 cursor-pointer px-0.5 py-1.5 font-mono text-[10px] text-gold hover:text-gold-hover"
+          >{citation}</button
+        ></sup
+      >{/if}
   {/if}
 {:else if node.type === "element"}
   <svelte:element
