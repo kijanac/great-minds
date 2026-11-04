@@ -182,6 +182,27 @@ describe("provider adapters", () => {
     }).pipe(Effect.provide(TestClock.layer())));
   });
 
+  it("waits at least its own backoff when the provider asks for a shorter wait", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response("", { status: 429, headers: { "retry-after": "1" } }))
+      .mockResolvedValueOnce(new Response("", { status: 429, headers: { "retry-after": "1" } }))
+      .mockResolvedValueOnce(Response.json({ data: [{ index: 0, embedding: [1, 0] }] }));
+    vi.stubGlobal("fetch", fetch);
+    await runtime.runPromise(Effect.gen(function* () {
+      const embeddings = yield* EmbeddingsService;
+      const fiber = yield* Effect.forkChild(embeddings.embed(["alpha"]));
+      yield* TestClock.adjust(1_999);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      yield* TestClock.adjust(1);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      yield* TestClock.adjust(3_999);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      yield* TestClock.adjust(1);
+      expect(yield* Fiber.join(fiber)).toEqual([[1, 0]]);
+      expect(fetch).toHaveBeenCalledTimes(3);
+    }).pipe(Effect.provide(TestClock.layer())));
+  });
+
   it("names the provider's status, wait and reason when an embedding batch is refused", async () => {
     const fetch = vi.fn(async () =>
       new Response('{"error":{"message":"Rate limit exceeded: free-models-per-day"}}', {

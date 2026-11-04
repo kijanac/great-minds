@@ -173,7 +173,7 @@ const appConfig = Config.all({
   ),
   compileEnrichConcurrency: positiveInt("COMPILE_ENRICH_CONCURRENCY").pipe(Config.withDefault(20)),
   compileWriteConcurrency: positiveInt("COMPILE_WRITE_CONCURRENCY").pipe(Config.withDefault(3)),
-  compileEmbedConcurrency: positiveInt("COMPILE_EMBED_CONCURRENCY").pipe(Config.withDefault(4)),
+  compileEmbedConcurrency: positiveInt("COMPILE_EMBED_CONCURRENCY").pipe(Config.withDefault(1)),
   compilePartitionTargetTokens: positiveInt("COMPILE_PARTITION_TARGET_TOKENS").pipe(
     Config.withDefault(100_000),
   ),

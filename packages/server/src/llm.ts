@@ -141,9 +141,10 @@ export const rateLimitRetry = {
         duration,
       }: Schedule.Metadata<Duration.Duration, RetryableModelError | ModelProviderError>) =>
         Effect.succeed(
-          input._tag === "RetryableModelError" && input.retryAfterMs !== undefined
-            ? input.retryAfterMs
-            : Math.min(maxRateLimitBackoffMs, Duration.toMillis(duration)),
+          Math.max(
+            input._tag === "RetryableModelError" ? (input.retryAfterMs ?? 0) : 0,
+            Math.min(maxRateLimitBackoffMs, Duration.toMillis(duration)),
+          ),
         ),
     ),
   ),

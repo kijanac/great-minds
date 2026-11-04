@@ -58,7 +58,7 @@ describe("server config defaults", () => {
   });
 
   it("embeds four search batches at a time unless configured otherwise", async () => {
-    expect((await loadConfig({})).compileEmbedConcurrency).toBe(4);
+    expect((await loadConfig({})).compileEmbedConcurrency).toBe(1);
     expect((await loadConfig({ COMPILE_EMBED_CONCURRENCY: "2" })).compileEmbedConcurrency).toBe(2);
   });
 
