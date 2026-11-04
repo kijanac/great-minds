@@ -249,10 +249,20 @@ export const retryAfterMs = (headers: Headers) => {
   return Number.isFinite(seconds) ? Math.max(0, seconds * 1000) : undefined;
 };
 
-const responseDetail = (response: Response) =>
+export const responseDetail = (response: Response) =>
   Effect.tryPromise(() => response.text()).pipe(
-    Effect.map((text) => text.slice(0, 500)),
-    Effect.orElseSucceed(() => ""),
+    Effect.map((text) => {
+      const retryAfter = response.headers.get("retry-after");
+      const body = text.slice(0, 500);
+      return [
+        String(response.status),
+        retryAfter === null ? "" : `retry-after ${retryAfter}`,
+        body,
+      ]
+        .filter((part) => part !== "")
+        .join(": ");
+    }),
+    Effect.orElseSucceed(() => String(response.status)),
   );
 
 const streamRequestBody = (input: StreamChatInput) => ({
@@ -442,14 +452,14 @@ const makeLanguageModel = Effect.gen(function* () {
       });
       if (response.status === 429) {
         return yield* new RetryableModelError({
-          message: "model provider rate limited request",
+          message: `model provider rate limited request (${yield* responseDetail(response)})`,
           retryAfterMs: retryAfterMs(response.headers),
         });
       }
       if (!response.ok) {
         const detail = yield* responseDetail(response);
         return yield* new ModelProviderError({
-          message: `model provider returned ${response.status}: ${detail}`,
+          message: `model provider returned ${detail}`,
           transient: response.status >= 500,
         });
       }

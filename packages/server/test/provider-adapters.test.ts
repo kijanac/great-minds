@@ -182,6 +182,25 @@ describe("provider adapters", () => {
     }).pipe(Effect.provide(TestClock.layer())));
   });
 
+  it("names the provider's status, wait and reason when an embedding batch is refused", async () => {
+    const fetch = vi.fn(async () =>
+      new Response('{"error":{"message":"Rate limit exceeded: free-models-per-day"}}', {
+        status: 429,
+        headers: { "retry-after": "1" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const failure = await runtime.runPromise(Effect.gen(function* () {
+      const embeddings = yield* EmbeddingsService;
+      const fiber = yield* Effect.forkChild(Effect.flip(embeddings.embed(["alpha"])));
+      yield* TestClock.adjust("10 minutes");
+      return yield* Fiber.join(fiber);
+    }).pipe(Effect.provide(TestClock.layer())));
+    expect(failure.message).toBe(
+      'embedding provider rate limited request (429: retry-after 1: {"error":{"message":"Rate limit exceeded: free-models-per-day"}})',
+    );
+  });
+
   it("aborts a generation-cost body read when its Effect is interrupted", async () => {
     let ready!: () => void;
     const reading = new Promise<void>((resolve) => {

@@ -6,6 +6,7 @@ import { AppConfig, optionalRedactedValue } from "./config.ts";
 import {
   ModelProviderError,
   rateLimitRetry,
+  responseDetail,
   RetryableModelError,
   retryAfterMs,
   transientRetry,
@@ -163,12 +164,12 @@ export const EmbeddingsLive = Layer.effect(
           });
           if (response.status === 429)
             return yield* new RetryableModelError({
-              message: "embedding provider rate limited request",
+              message: `embedding provider rate limited request (${yield* responseDetail(response)})`,
               retryAfterMs: retryAfterMs(response.headers),
             });
           if (!response.ok)
             return yield* new ModelProviderError({
-              message: `embedding provider returned ${response.status}`,
+              message: `embedding provider returned ${yield* responseDetail(response)}`,
               transient: response.status >= 500,
             });
           return yield* Effect.tryPromise({
