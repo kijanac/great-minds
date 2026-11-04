@@ -86,6 +86,31 @@ export const markdownParagraphs = (content: string) => {
   return paragraphs;
 };
 
+const FOOTNOTE_DEFINITION_RE = /^\[\^([^\]\s]+)\]:[ \t]?(.*)$/;
+
+export const footnoteDefinitions = (content: string): ReadonlyMap<string, string> =>
+  new Map(
+    content.split("\n").flatMap((line) => {
+      const match = FOOTNOTE_DEFINITION_RE.exec(line);
+      return match === null ? [] : [[match[1] ?? "", (match[2] ?? "").trim()] as const];
+    }),
+  );
+
+export const withoutFootnoteDefinitions = (body: string) =>
+  body
+    .split("\n")
+    .filter((line) => !FOOTNOTE_DEFINITION_RE.test(line))
+    .join("\n")
+    .replace(/(\n\s*---\s*)+\s*$/, "\n");
+
+export const footnoteNotes = (text: string, definitions: ReadonlyMap<string, string>) =>
+  [...new Set([...text.matchAll(/\[\^([^\]\s]+)\](?!:)/g)].map((match) => match[1] ?? ""))]
+    .flatMap((label) => {
+      const definition = definitions.get(label);
+      return definition === undefined ? [] : [`[^${label}]: ${definition}`];
+    })
+    .join("\n");
+
 const OPENING_LIMIT = 240;
 
 const plainProse = (markdown: string) =>

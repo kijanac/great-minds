@@ -157,6 +157,7 @@ describe("provider adapters", () => {
     expect(result).toEqual([[0.6, 0.8], [0, 1]]);
     expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual({
       input: ["alpha", "beta"], model: "qwen/qwen3-embedding-8b", encoding_format: "base64",
+      provider: { order: ["deepinfra", "nebius"], allow_fallbacks: false },
     });
   }, 10_000);
 

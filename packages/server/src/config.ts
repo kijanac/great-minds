@@ -48,6 +48,7 @@ export type AppConfigShape = {
   readonly goldensRandomSeed: Option.Option<number>;
   readonly goldensClock: Option.Option<Date>;
   readonly embeddingModel: string;
+  readonly embeddingProviders: readonly string[];
   readonly corsOrigins: readonly string[];
   readonly publicWebUrl: URL;
   readonly typstBinary: string;
@@ -197,6 +198,15 @@ const appConfig = Config.all({
   goldensClock: Config.option(Config.schema(Schema.DateFromString, "GOLDENS_CLOCK")),
   embeddingModel: nonEmptyString("EMBEDDING_MODEL").pipe(
     Config.withDefault("qwen/qwen3-embedding-8b"),
+  ),
+  embeddingProviders: nonEmptyString("EMBEDDING_PROVIDERS").pipe(
+    Config.withDefault("deepinfra,nebius"),
+    Config.map((raw) =>
+      raw
+        .split(",")
+        .map((provider) => provider.trim())
+        .filter((provider) => provider.length > 0),
+    ),
   ),
   corsOrigins: nonEmptyString("CORS_ORIGINS").pipe(
     Config.withDefault("http://localhost:5173"),

@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 
 import { describe, expect, it } from "vitest";
 
-import { embeddingRequestBody, parseEmbeddingResponse } from "../src/embeddings.ts";
+import { embeddingRequestBody, parseEmbeddingResponse, sizedGroups } from "../src/embeddings.ts";
 import { ModelProviderError } from "../src/llm.ts";
 
 const base64Float32Le = (...values: readonly number[]) => {
@@ -18,6 +18,24 @@ describe("embedding provider protocol", () => {
     expect(JSON.stringify(embeddingRequestBody(["alpha", "beta"], "embedding/test"))).toBe(
       '{"input":["alpha","beta"],"model":"embedding/test","encoding_format":"base64"}',
     );
+  });
+
+  it("pins the configured providers in order with no fallback", () => {
+    expect(embeddingRequestBody(["alpha"], "embedding/test", ["deepinfra", "nebius"])).toEqual({
+      input: ["alpha"],
+      model: "embedding/test",
+      encoding_format: "base64",
+      provider: { order: ["deepinfra", "nebius"], allow_fallbacks: false },
+    });
+  });
+
+  it("splits requests by total size and keeps an oversized text on its own", () => {
+    expect(sizedGroups(["aaaa", "bbbb", "cc", "dddddddddd", "e"], 8)).toEqual([
+      ["aaaa", "bbbb"],
+      ["cc"],
+      ["dddddddddd"],
+      ["e"],
+    ]);
   });
 
   it("decodes little-endian float32 base64 vectors and preserves provider indices", () => {

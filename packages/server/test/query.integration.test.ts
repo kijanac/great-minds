@@ -185,6 +185,7 @@ const testConfig = (
   goldensRandomSeed: Option.none(),
   goldensClock: Option.none(),
   embeddingModel: "embedding/test-model",
+  embeddingProviders: [],
   corsOrigins: ["http://localhost:5173"],
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",

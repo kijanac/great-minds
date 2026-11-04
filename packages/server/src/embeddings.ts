@@ -126,33 +126,52 @@ export const parseEmbeddingResponse = (
   });
 };
 
-export const embeddingRequestBody = (texts: readonly string[], model: string) => ({
+const REQUEST_CHARS = 40_000;
+
+export const embeddingRequestBody = (
+  texts: readonly string[],
+  model: string,
+  providers: readonly string[] = [],
+) => ({
   input: [...texts],
   model,
   encoding_format: "base64" as const,
+  ...(providers.length === 0 ? {} : { provider: { order: [...providers], allow_fallbacks: false } }),
 });
+
+export const sizedGroups = (texts: readonly string[], limit = REQUEST_CHARS) => {
+  const groups: string[][] = [];
+  let size = 0;
+  for (const text of texts) {
+    const last = groups.at(-1);
+    if (last === undefined || (last.length > 0 && size + text.length > limit)) {
+      groups.push([text]);
+      size = text.length;
+    } else {
+      last.push(text);
+      size += text.length;
+    }
+  }
+  return groups;
+};
 
 export const EmbeddingsLive = Layer.effect(
   EmbeddingsService,
   Effect.map(AppConfig, (config) => {
     const apiKey = optionalRedactedValue(config.openRouterApiKey);
-    return {
-      embed: (texts) => {
-        if (apiKey === undefined) {
-          return Effect.fail(
-            new EmbeddingBatchFailed({ message: "OpenRouter API key is not configured" }),
-          );
-        }
-        return Effect.gen(function* () {
+    const embedGroup = (texts: readonly string[], key: string) =>
+      Effect.gen(function* () {
           const response = yield* Effect.tryPromise({
             try: (signal) =>
               fetch(`${config.openRouterApiUrl.replace(/\/$/, "")}/embeddings`, {
                 method: "POST",
                 headers: {
-                  authorization: `Bearer ${apiKey}`,
+                  authorization: `Bearer ${key}`,
                   "content-type": "application/json",
                 },
-                body: JSON.stringify(embeddingRequestBody(texts, config.embeddingModel)),
+                body: JSON.stringify(
+                  embeddingRequestBody(texts, config.embeddingModel, config.embeddingProviders),
+                ),
                 signal: AbortSignal.any([signal, AbortSignal.timeout(embeddingTimeoutMs)]),
               }),
             catch: (cause) =>
@@ -190,7 +209,13 @@ export const EmbeddingsLive = Layer.effect(
             (error) => new EmbeddingBatchFailed({ message: error.message, cause: error }),
           ),
         );
-      },
+    return {
+      embed: (texts) =>
+        apiKey === undefined
+          ? Effect.fail(new EmbeddingBatchFailed({ message: "OpenRouter API key is not configured" }))
+          : Effect.forEach(sizedGroups(texts), (group) => embedGroup(group, apiKey)).pipe(
+              Effect.map((groups) => groups.flat()),
+            ),
     } satisfies EmbeddingsShape;
   }),
 );

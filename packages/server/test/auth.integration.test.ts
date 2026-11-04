@@ -99,6 +99,7 @@ const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   goldensRandomSeed: Option.none(),
   goldensClock: Option.none(),
   embeddingModel: "qwen/qwen3-embedding-8b",
+  embeddingProviders: [],
   corsOrigins: ["http://localhost:5173"],
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",

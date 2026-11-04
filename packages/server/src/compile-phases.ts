@@ -45,6 +45,7 @@ import {
   markdownParagraphs,
   openingSentence,
   parseFrontmatter,
+  withoutFootnoteDefinitions,
   serializeFrontmatter,
 } from "./markdown.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
@@ -85,7 +86,10 @@ type SearchChunk = {
   readonly contentHash: string;
 };
 
-const chunkDocument = (parsed: ReturnType<typeof parseFrontmatter>): readonly SearchChunk[] => {
+const chunkDocument = (
+  parsed: ReturnType<typeof parseFrontmatter>,
+  kind: SearchDocument["kind"],
+): readonly SearchChunk[] => {
   const result: SearchChunk[] = [];
   const metadata = metadataText(parsed.frontmatter);
   if (metadata !== undefined) {
@@ -96,7 +100,8 @@ const chunkDocument = (parsed: ReturnType<typeof parseFrontmatter>): readonly Se
       contentHash: contentHash("chunk", metadata),
     });
   }
-  for (const paragraph of markdownParagraphs(parsed.body)) {
+  const body = kind === "wiki" ? withoutFootnoteDefinitions(parsed.body) : parsed.body;
+  for (const paragraph of markdownParagraphs(body)) {
     const body =
       paragraph.heading.length === 0 ? paragraph.body : `${paragraph.heading}\n\n${paragraph.body}`;
     result.push({
@@ -246,7 +251,7 @@ export const CompilePhasesLive = Layer.effect(
           for (const [index, file] of stale.entries()) {
             const parsed = markdown[index];
             if (parsed === undefined) continue;
-            const chunks = chunkDocument(parsed);
+            const chunks = chunkDocument(parsed, file.kind);
             documents.push({
               file,
               indexes: new Set(chunks.map((chunk) => chunk.chunkIndex)),

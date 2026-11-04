@@ -41,6 +41,7 @@ import { StructuredLogger } from "./logging.ts";
 import { ParallelSearchService, type ParallelSearchResult } from "./parallel.ts";
 import { loadPrompt } from "./prompts.ts";
 import { ContentStorage, userOwner, vaultOwner } from "./storage.ts";
+import { withFootnoteNotes } from "./wiki-footnotes.ts";
 
 type QueryServiceShape = {
   readonly prepareExecution: (
@@ -815,7 +816,11 @@ export const QueryServiceLive = Layer.effect(
 
     const searchContentTool = (context: QueryExecutionState, query: string) =>
       Effect.gen(function* () {
-        const results = yield* searchRows(context.vaultId, query);
+        const results = yield* withFootnoteNotes(
+          storage,
+          context.vaultId,
+          yield* searchRows(context.vaultId, query),
+        );
         const source = yield* sourceEvent(context, { name: "search_content", args: { query } });
         if (results.length === 0) {
           return { content: `No results found for: ${query}`, source } satisfies ToolResult;
@@ -834,7 +839,11 @@ export const QueryServiceLive = Layer.effect(
 
     const searchInDocumentTool = (context: QueryExecutionState, path: string, query: string) =>
       Effect.gen(function* () {
-        const results = yield* searchRows(context.vaultId, query, path);
+        const results = yield* withFootnoteNotes(
+          storage,
+          context.vaultId,
+          yield* searchRows(context.vaultId, query, path),
+        );
         const source = yield* sourceEvent(context, {
           name: "search_in_document",
           args: { path, query },
@@ -870,23 +879,28 @@ export const QueryServiceLive = Layer.effect(
           [start, end] = [end, start];
         }
         end = Math.min(end, start + maxRangeChunks - 1);
-        const chunks = yield* db.query((d) =>
-          d
-            .select({
-              chunkIndex: searchIndex.chunkIndex,
-              heading: searchIndex.heading,
-              body: searchIndex.body,
-            })
-            .from(searchIndex)
-            .where(
-              and(
-                eq(searchIndex.vaultId, context.vaultId),
-                eq(searchIndex.path, path),
-                gte(searchIndex.chunkIndex, Math.max(0, start)),
-                lte(searchIndex.chunkIndex, end),
-              ),
-            )
-            .orderBy(asc(searchIndex.chunkIndex)),
+        const chunks = yield* withFootnoteNotes(
+          storage,
+          context.vaultId,
+          yield* db.query((d) =>
+            d
+              .select({
+                path: searchIndex.path,
+                chunkIndex: searchIndex.chunkIndex,
+                heading: searchIndex.heading,
+                body: searchIndex.body,
+              })
+              .from(searchIndex)
+              .where(
+                and(
+                  eq(searchIndex.vaultId, context.vaultId),
+                  eq(searchIndex.path, path),
+                  gte(searchIndex.chunkIndex, Math.max(0, start)),
+                  lte(searchIndex.chunkIndex, end),
+                ),
+              )
+              .orderBy(asc(searchIndex.chunkIndex)),
+          ),
         );
         if (chunks.length === 0) {
           return yield* new ToolMiss({

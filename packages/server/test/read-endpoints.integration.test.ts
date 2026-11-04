@@ -209,6 +209,7 @@ const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   goldensRandomSeed: Option.none(),
   goldensClock: Option.none(),
   embeddingModel: "qwen/qwen3-embedding-8b",
+  embeddingProviders: [],
   corsOrigins: ["http://localhost:5173"],
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",
@@ -1605,6 +1606,57 @@ describe("read-only HTTP integration", () => {
       `/vaults/${id.vaultAlpha}/chunks?${cappedQuery.toString()}`,
     );
     expect(unauthenticated.status).toBe(401);
+  });
+
+  it("returns each wiki paragraph with the footnotes it cites, read from the article file", async () => {
+    const { aliceToken } = currentFixture();
+    await writeVaultFile(
+      id.vaultAlpha,
+      "wiki/alpha-practice.md",
+      [
+        "---",
+        "title: alpha Practice",
+        "---",
+        "# Alpha Practice",
+        "",
+        "Alpha grew[^1].",
+        "",
+        "Then it spread[^2][^1].",
+        "",
+        "---",
+        "",
+        '[^1]: [Source A](raw/books/capital.md#^p2) — "grew"',
+        '[^2]: [Source B](raw/books/capital.md) — "spread"',
+        "",
+      ].join("\n"),
+    );
+    await runDb(
+      Effect.flatMap(Database, (db) =>
+        db.query((d) =>
+          d.insert(searchIndex).values(
+            ["Alpha grew[^1].", "Then it spread[^2][^1]."].map((body, chunkIndex) => ({
+              vaultId: id.vaultAlpha,
+              path: "wiki/alpha-practice.md",
+              chunkIndex,
+              heading: "Alpha Practice",
+              body,
+              contentHash: `alpha-${chunkIndex}`,
+              tsv: sql`to_tsvector('english', ${body})`,
+            })),
+          ),
+        ),
+      ),
+    );
+    const response = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/chunks?path=wiki%2Falpha-practice.md&start=0&end=5`,
+      aliceToken,
+    );
+    expect(response.status).toBe(200);
+    expect(asArray(response.body).map((chunk) => asRecord(chunk).body)).toEqual([
+      'Alpha grew[^1].\n\n[^1]: [Source A](raw/books/capital.md#^p2) — "grew"',
+      'Then it spread[^2][^1].\n\n[^2]: [Source B](raw/books/capital.md) — "spread"\n[^1]: [Source A](raw/books/capital.md#^p2) — "grew"',
+    ]);
   });
 
   it("reads live wiki links with archived exclusions, 404s non-wiki paths, and enforces authz", async () => {

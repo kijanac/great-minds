@@ -86,6 +86,7 @@ const config: AppConfigShape = {
   goldensRandomSeed: Option.none(),
   goldensClock: Option.none(),
   embeddingModel: "test",
+  embeddingProviders: [],
   corsOrigins: [],
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",

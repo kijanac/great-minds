@@ -26,6 +26,7 @@ import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { Context, Data, Effect, Layer } from "effect";
 
 import { ContentStorage, vaultOwner } from "./storage.ts";
+import { withFootnoteNotes } from "./wiki-footnotes.ts";
 import { readSourceDocument, wikiOverview, wikiSlug } from "./document-metadata.ts";
 import { VaultAccessService } from "./vaults.ts";
 
@@ -292,7 +293,8 @@ export const DocumentsServiceLive = Layer.effect(
             ),
           )
           .orderBy(asc(searchIndex.chunkIndex)));
-        return rows.map((row) => ({
+        const noted = yield* withFootnoteNotes(storage, vaultId, rows);
+        return noted.map((row) => ({
           path: row.path,
           chunk_index: row.chunkIndex,
           heading: row.heading,
