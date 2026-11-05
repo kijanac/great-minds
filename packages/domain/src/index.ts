@@ -553,6 +553,16 @@ export const PipelineWarning = Schema.Struct({
 });
 export type PipelineWarning = typeof PipelineWarning.Type;
 
+export const RunStage = Schema.Struct({
+  key: Schema.String,
+  label: Schema.String,
+  title: Schema.String,
+  status: Schema.Literals(["pending", "running", "completed", "failed", "skipped"] as const),
+  steps: Schema.Array(PipelineProgressStep),
+  warnings: Schema.Array(PipelineWarning),
+});
+export type RunStage = typeof RunStage.Type;
+
 export const JobResponse = Schema.Struct({
   id: Uuid,
   vault_id: Uuid,
@@ -603,7 +613,9 @@ export const JobProgressSnapshot = Schema.Struct({
   phase_status: Schema.String,
   stages: Schema.Array(PipelineStage),
   warnings: Schema.Array(PipelineWarning),
+  track: Schema.Array(RunStage),
   error: Schema.optionalKey(Schema.String),
+  created_at: IsoDateTime,
   updated_at: Schema.NullOr(IsoDateTime),
   completed_at: Schema.NullOr(IsoDateTime),
 });

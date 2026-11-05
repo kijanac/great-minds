@@ -172,13 +172,13 @@ export const makeThemesPipeline = (options: {
       });
       yield* warn(
         runId,
-        "abstract",
+        "propose_topics",
         proposed.failedDocuments,
         "documents could not be read for topics",
       );
       yield* warn(
         runId,
-        "abstract",
+        "build_articles",
         grouped.failedJudgments + built.failedQuestions,
         "grouping questions failed",
       );
@@ -346,11 +346,11 @@ export const makeThemesPipeline = (options: {
       if (pageEdges.length > 0) yield* db.query((d) => d.insert(backlinks).values(pageEdges));
       yield* warn(
         runId,
-        "render",
+        "write_articles",
         written.failedArticles,
         `of ${validated.length} articles could not be written`,
       );
-      yield* warn(runId, "render", linked.failedQuestions, "link questions failed");
+      yield* warn(runId, "link_articles", linked.failedQuestions, "link questions failed");
       yield* options.rebuildWiki(vaultId, runId);
       yield* steps.finish;
     });

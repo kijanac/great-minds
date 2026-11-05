@@ -28,7 +28,7 @@
   } from "$lib/api/jobs";
   import { fetchArticlesByRun } from "$lib/api/wiki";
   import { auth } from "$lib/auth.svelte";
-  import PipelineStageRow from "$lib/components/pipeline-stage-row.svelte";
+  import RunProgress from "$lib/components/run-progress.svelte";
   import {
     Alert,
     AlertDescription,
@@ -90,8 +90,9 @@
     () => jobId,
     () => jobVaultId,
   );
-  const stages = $derived(progress.stages);
-  const firstErrored = $derived(stages.find((stage) => stage.errored));
+  const firstErrored = $derived(
+    progress.track.find((stage) => stage.status === "failed"),
+  );
   const receivedFileCount = $derived(
     fileBatch?.files.filter((file) => file.status !== "pending").length ?? 0,
   );
@@ -121,16 +122,6 @@
     queryFn: () => fetchArticlesByRun(jobId!, 8, jobVaultId!),
     enabled: progress.overallDone && !!jobVaultId && !!jobId,
   }));
-
-  $effect(() => {
-    const activeStage = stages.find((stage) => stage.active)?.stage;
-    if (!activeStage) return;
-    void tick().then(() => {
-      document
-        .querySelector("[data-active-stage]")
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
-  });
 
   $effect(() => {
     const done = progress.overallDone && !progress.overallError;
@@ -527,7 +518,7 @@
                 {progress.trigger === "url" &&
                 progress.backendPhase === "source_ingest"
                   ? "retry URL"
-                  : firstErrored?.stage === "uploading"
+                  : firstErrored?.key === "upload"
                     ? "compile saved files"
                     : "run again"}
               </Button>
@@ -576,19 +567,13 @@
         </div>
       {/if}
 
-      {#if !noJobFound}
-        {#each stages as stage, index (stage.stage)}
-          <div
-            in:fly={{
-              x: -8,
-              duration: 250,
-              delay: stage.complete ? 0 : Math.min(index * 50, 300),
-              easing: cubicOut,
-            }}
-          >
-            <PipelineStageRow {stage} />
-          </div>
-        {/each}
+      {#if !noJobFound && progress.track.length > 0}
+        <RunProgress
+          track={progress.track}
+          running={progress.running}
+          startedAt={progress.startedAt}
+          completedAt={progress.completedAt}
+        />
       {/if}
 
       {#if !noJobFound && progress.overallDone && !progress.overallError && showCompletion}

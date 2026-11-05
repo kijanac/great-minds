@@ -16,6 +16,8 @@ const snapshot = (job_status: string, phase: string, phase_status: string) =>
     phase_status,
     stages: [],
     warnings: [],
+    track: [],
+    created_at: "2026-11-04T17:25:44.000Z",
     updated_at: null,
     completed_at: null,
   })}\n\n`;

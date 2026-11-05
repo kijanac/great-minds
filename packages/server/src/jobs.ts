@@ -21,6 +21,7 @@ import { jobResponse } from "./job-response.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { PipelineRunsService } from "./pipeline-runs.ts";
 import { pollingSse } from "./polling-sse.ts";
+import { runTrack } from "./run-track.ts";
 import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
 import { UrlIngestWorkflow } from "./url-ingest-workflow.ts";
 import { VaultAccessService } from "./vaults.ts";
@@ -37,7 +38,9 @@ const progressSnapshot = (row: typeof pipelineRuns.$inferSelect): JobProgressSna
   phase_status: row.phaseStatus,
   stages: row.stages,
   warnings: row.warnings,
+  track: runTrack(row),
   ...(row.error ? { error: row.error } : {}),
+  created_at: row.createdAt,
   updated_at: row.updatedAt,
   completed_at: row.completedAt,
 });
