@@ -22,6 +22,7 @@ const run = (overrides: Partial<Row>): Row => ({
   phaseStatus: "",
   stages: [],
   warnings: [],
+  outcome: null,
   error: null,
   ingestTaskId: null,
   compileIntentId: null,

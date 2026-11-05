@@ -67,6 +67,9 @@ export function useJobSSE(
     get track() {
       return snapshot?.track ?? [];
     },
+    get outcome() {
+      return snapshot?.outcome ?? null;
+    },
     get running() {
       return snapshot !== null && !terminal;
     },

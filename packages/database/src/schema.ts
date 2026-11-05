@@ -4,6 +4,7 @@ import type {
   JobResponse,
   PipelineStage,
   PipelineWarning,
+  RunOutcome,
   ReplySnapshot,
   SessionId,
   Uuid,
@@ -311,6 +312,7 @@ export const pipelineRuns = pgTable(
       .$type<readonly PipelineWarning[]>()
       .default(sql`'[]'::jsonb`)
       .notNull(),
+    outcome: jsonb("outcome").$type<RunOutcome>(),
     error: text("error"),
     ingestTaskId: uuidColumn("ingest_task_id"),
     compileIntentId: uuidColumn("compile_intent_id"),
@@ -1046,6 +1048,9 @@ export const wikiArticles = pgTable(
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
     renderRunId: uuidColumn("render_run_id"),
+    addedRunId: uuidColumn("added_run_id"),
+    changedRunId: uuidColumn("changed_run_id"),
+    archivedRunId: uuidColumn("archived_run_id"),
     archived: boolean("archived").default(false).notNull(),
     tags: text("tags")
       .array()

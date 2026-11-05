@@ -1330,7 +1330,7 @@ describe("M4.3a deterministic compile phases", () => {
           }))
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
-        yield* phases.archiveTransitions(id.vault, [
+        yield* phases.archiveTransitions(id.vault, id.run, [
           { topicId: id.topicA, slug: "alpha", supersededBy: id.topicB },
           { topicId: id.topicC, slug: "no-file", supersededBy: null },
         ]);

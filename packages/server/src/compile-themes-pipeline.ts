@@ -61,6 +61,7 @@ export const makeThemesPipeline = (options: {
   readonly storage: ContentStorage["Service"];
   readonly archiveTransitions: (
     vaultId: Uuid,
+    runId: Uuid,
     transitions: readonly ArchiveTransition[],
   ) => Effect.Effect<void, unknown>;
   readonly materializeArticle: (
@@ -203,6 +204,7 @@ export const makeThemesPipeline = (options: {
       }));
       yield* options.archiveTransitions(
         vaultId,
+        runId,
         existing
           .filter((topic) => !kept.has(topic.topicId) && topic.status !== "archived")
           .map((topic) => ({ topicId: topic.topicId, slug: topic.slug, supersededBy: null })),

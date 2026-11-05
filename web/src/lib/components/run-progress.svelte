@@ -182,10 +182,10 @@
 
 {#if startedAt}
   <p class="mt-7 font-mono text-[length:var(--text-chrome)] text-warm-ghost">
-    Started at {clock(startedAt)} · {running
-      ? `running for ${span(now - startedAt.getTime())}`
+    {running
+      ? `Started at ${clock(startedAt)} · running for ${span(now - startedAt.getTime())}`
       : completedAt
-        ? `took ${span(completedAt.getTime() - startedAt.getTime())}`
-        : ""}
+        ? `Took ${span(completedAt.getTime() - startedAt.getTime())}`
+        : `Started at ${clock(startedAt)}`}
   </p>
 {/if}

@@ -3,9 +3,11 @@ import { resolve } from "node:path";
 
 import {
   backlinks,
+  compileCacheEntries,
   Database,
   ideas,
   inUuidArray,
+  pipelineRuns,
   type DatabaseInfraError,
   type TransactionClient,
   searchIndex,
@@ -115,6 +117,7 @@ const chunkDocument = (
 type CompilePhasesShape = {
   readonly archiveTransitions: (
     vaultId: Uuid,
+    runId: Uuid,
     transitions: readonly ArchiveTransition[],
   ) => Effect.Effect<void, unknown>;
   readonly ingest: (vaultId: Uuid, runId: Uuid) => Effect.Effect<void, unknown>;
@@ -403,12 +406,20 @@ export const CompilePhasesLive = Layer.effect(
         const path = `wiki/${topic.slug}.md`;
         const precis = openingSentence(output.body) || topic.description;
         const previousRows = yield* db.query((d) => d
-          .select({ filePath: wikiArticles.filePath })
+          .select({
+            filePath: wikiArticles.filePath,
+            bodyHash: wikiArticles.bodyHash,
+            archived: wikiArticles.archived,
+          })
           .from(wikiArticles)
           .where(
             and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.topicId, topic.topicId)),
           ));
-        const previousPath = previousRows[0]?.filePath;
+        const previous = previousRows[0];
+        const previousPath = previous?.filePath;
+        const bodyHash = bodyContentHash(output.body);
+        const added = previous === undefined || previous.archived;
+        const changed = !added && previous.bodyHash !== bodyHash;
         const content = serializeFrontmatter(
           {
             topic_id: topic.topicId,
@@ -427,11 +438,12 @@ export const CompilePhasesLive = Layer.effect(
             topicId: topic.topicId,
             filePath: path,
             fileHash: fileContentHash(content),
-            bodyHash: bodyContentHash(output.body),
+            bodyHash,
             title: topic.title,
             precis,
             tags,
             renderRunId: runId,
+            addedRunId: runId,
             archived: false,
           })
           .onConflictDoUpdate({
@@ -439,11 +451,13 @@ export const CompilePhasesLive = Layer.effect(
             set: {
               filePath: path,
               fileHash: fileContentHash(content),
-              bodyHash: bodyContentHash(output.body),
+              bodyHash,
               title: topic.title,
               precis,
               tags,
               renderRunId: runId,
+              ...(added ? { addedRunId: runId, archivedRunId: null } : {}),
+              ...(changed ? { changedRunId: runId } : {}),
               archived: false,
               updatedAt: sql`now()`,
             },
@@ -462,7 +476,11 @@ export const CompilePhasesLive = Layer.effect(
           .where(eq(topics.topicId, topic.topicId)));
       });
 
-    const applyArchiveTransitions = (vaultId: Uuid, transitions: readonly ArchiveTransition[]) =>
+    const applyArchiveTransitions = (
+      vaultId: Uuid,
+      runId: Uuid,
+      transitions: readonly ArchiveTransition[],
+    ) =>
       Effect.gen(function* () {
         for (const transition of transitions) {
           yield* db.query((d) => d
@@ -493,11 +511,84 @@ export const CompilePhasesLive = Layer.effect(
           yield* storage.deletePath(vaultOwner(vaultId), wikiPath);
           yield* db.query((d) => d
             .update(wikiArticles)
-            .set({ filePath: archivePath, archived: true, updatedAt: sql`now()` })
+            .set({
+              filePath: archivePath,
+              archived: true,
+              archivedRunId: runId,
+              updatedAt: sql`now()`,
+            })
             .where(
               and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.topicId, transition.topicId)),
             ));
         }
+      });
+
+    const recordOutcome = (vaultId: Uuid, runId: Uuid) =>
+      Effect.gen(function* () {
+        const [run] = yield* db.query((d) =>
+          d
+            .select({ createdAt: pipelineRuns.createdAt })
+            .from(pipelineRuns)
+            .where(eq(pipelineRuns.id, runId)),
+        );
+        if (run === undefined) return;
+        const articles = yield* db.query((d) =>
+          d
+            .select({
+              title: wikiArticles.title,
+              filePath: wikiArticles.filePath,
+              archived: wikiArticles.archived,
+              addedRunId: wikiArticles.addedRunId,
+              changedRunId: wikiArticles.changedRunId,
+              archivedRunId: wikiArticles.archivedRunId,
+            })
+            .from(wikiArticles)
+            .where(
+              and(
+                eq(wikiArticles.vaultId, vaultId),
+                sql`${wikiArticles.filePath} <> 'wiki/_index.md'`,
+              ),
+            )
+            .orderBy(asc(sql`lower(${wikiArticles.title})`)),
+        );
+        const [sources] = yield* db.query((d) =>
+          d
+            .select({ count: sql<number>`count(*)::int` })
+            .from(compileCacheEntries)
+            .where(
+              and(
+                eq(compileCacheEntries.vaultId, vaultId),
+                eq(compileCacheEntries.phase, "extract"),
+                sql`${compileCacheEntries.createdAt} >= ${run.createdAt}`,
+              ),
+            ),
+        );
+        const entry = (article: (typeof articles)[number]) => ({
+          title: article.title,
+          file_path: article.filePath,
+        });
+        const live = articles.filter((article) => !article.archived);
+        const added = live.filter((article) => article.addedRunId === runId);
+        const changed = live.filter(
+          (article) => article.addedRunId !== runId && article.changedRunId === runId,
+        );
+        const removed = articles.filter(
+          (article) => article.archived && article.archivedRunId === runId,
+        );
+        yield* db.query((d) =>
+          d
+            .update(pipelineRuns)
+            .set({
+              outcome: {
+                sources: sources?.count ?? 0,
+                added: added.map(entry),
+                changed: changed.map(entry),
+                removed: removed.map(entry),
+                unchanged: live.length - added.length - changed.length,
+              },
+            })
+            .where(eq(pipelineRuns.id, runId)),
+        );
       });
 
     const extract = makeCompileExtract({
@@ -821,6 +912,7 @@ export const CompilePhasesLive = Layer.effect(
               Effect.orDie,
             );
           }
+          yield* recordOutcome(vaultId, runId);
           yield* pipeline.updateProgress(
             runId,
             "publish",

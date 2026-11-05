@@ -553,6 +553,21 @@ export const PipelineWarning = Schema.Struct({
 });
 export type PipelineWarning = typeof PipelineWarning.Type;
 
+export const OutcomeArticle = Schema.Struct({
+  title: Schema.String,
+  file_path: Schema.String,
+});
+export type OutcomeArticle = typeof OutcomeArticle.Type;
+
+export const RunOutcome = Schema.Struct({
+  sources: Schema.Number,
+  added: Schema.Array(OutcomeArticle),
+  changed: Schema.Array(OutcomeArticle),
+  removed: Schema.Array(OutcomeArticle),
+  unchanged: Schema.Number,
+});
+export type RunOutcome = typeof RunOutcome.Type;
+
 export const RunStage = Schema.Struct({
   key: Schema.String,
   label: Schema.String,
@@ -614,6 +629,7 @@ export const JobProgressSnapshot = Schema.Struct({
   stages: Schema.Array(PipelineStage),
   warnings: Schema.Array(PipelineWarning),
   track: Schema.Array(RunStage),
+  outcome: Schema.NullOr(RunOutcome),
   error: Schema.optionalKey(Schema.String),
   created_at: IsoDateTime,
   updated_at: Schema.NullOr(IsoDateTime),

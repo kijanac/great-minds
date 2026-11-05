@@ -1,4 +1,4 @@
-import type { Uuid, WikiArticleOverview, WikiArticlePage } from "@great-minds/domain";
+import type { WikiArticleOverview, WikiArticlePage } from "@great-minds/domain";
 
 import { api, run } from "./app";
 import { selectedVault } from "./selected-vault";
@@ -29,17 +29,4 @@ export async function fetchAllWikiArticles(): Promise<WikiArticleOverview[]> {
     all.push(...page.items);
     if (page.items.length === 0 || all.length >= page.pagination.total) return all;
   }
-}
-
-export function fetchArticlesByRun(
-  runId: Uuid,
-  limit: number = 8,
-  vaultId?: Uuid,
-): Promise<WikiArticlePage> {
-  return run(
-    api.wiki.listWikiArticles({
-      params: { vault_id: selectedVault(vaultId) },
-      query: { run: runId, limit, offset: 0 },
-    }),
-  );
 }

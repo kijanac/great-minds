@@ -39,6 +39,7 @@ const progressSnapshot = (row: typeof pipelineRuns.$inferSelect): JobProgressSna
   stages: row.stages,
   warnings: row.warnings,
   track: runTrack(row),
+  outcome: row.outcome,
   ...(row.error ? { error: row.error } : {}),
   created_at: row.createdAt,
   updated_at: row.updatedAt,

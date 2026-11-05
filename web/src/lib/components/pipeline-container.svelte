@@ -3,7 +3,7 @@
   import { page } from "$app/state";
   import type { Uuid } from "@great-minds/domain";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
-  import { createQuery, useQueryClient } from "@tanstack/svelte-query";
+  import { useQueryClient } from "@tanstack/svelte-query";
   import { onDestroy, tick } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { SvelteSet } from "svelte/reactivity";
@@ -26,8 +26,8 @@
     retryUrlJob,
     startUrlJob,
   } from "$lib/api/jobs";
-  import { fetchArticlesByRun } from "$lib/api/wiki";
   import { auth } from "$lib/auth.svelte";
+  import RunOutcome from "$lib/components/run-outcome.svelte";
   import RunProgress from "$lib/components/run-progress.svelte";
   import {
     Alert,
@@ -58,7 +58,6 @@
   let resolvedRouteId = $state<Uuid | null>(null);
   let availableFiles = $state<readonly HashedFile[]>([]);
   let resolverStarted = $state(false);
-  let showCompletion = $state(false);
   let actionError = $state<string | null>(null);
   let componentActive = true;
   let navigationEpoch = 0;
@@ -116,23 +115,6 @@
     const epoch = navigationEpoch;
     return () => componentActive && navigationEpoch === epoch && predicate();
   }
-
-  const result = createQuery(() => ({
-    queryKey: ["vault", jobVaultId, "compile-result", jobId],
-    queryFn: () => fetchArticlesByRun(jobId!, 8, jobVaultId!),
-    enabled: progress.overallDone && !!jobVaultId && !!jobId,
-  }));
-
-  $effect(() => {
-    const done = progress.overallDone && !progress.overallError;
-    const timeout = window.setTimeout(
-      () => {
-        showCompletion = done;
-      },
-      done ? 300 : 0,
-    );
-    return () => window.clearTimeout(timeout);
-  });
 
   $effect(() => {
     const id = routeJobId;
@@ -567,6 +549,23 @@
         </div>
       {/if}
 
+      {#if !noJobFound && progress.overallDone && !progress.overallError}
+        <div in:fly={{ y: 8, duration: 300, easing: cubicOut }}>
+          <RunOutcome
+            outcome={progress.outcome}
+            onOpen={(filePath) => void goto(`/doc/${filePath}`)}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onclick={() => void goto("/library")}
+            class="mt-1 mb-10 rounded-sm border-gold-dim font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold uppercase hover:bg-gold/10"
+          >
+            Browse the library
+          </Button>
+        </div>
+      {/if}
+
       {#if !noJobFound && progress.track.length > 0}
         <RunProgress
           track={progress.track}
@@ -574,68 +573,6 @@
           startedAt={progress.startedAt}
           completedAt={progress.completedAt}
         />
-      {/if}
-
-      {#if !noJobFound && progress.overallDone && !progress.overallError && showCompletion}
-        <div
-          class="mt-10 rounded-sm border border-gold-dim bg-ink-raised p-6"
-          in:fly={{ y: 8, duration: 300, easing: cubicOut }}
-        >
-          <p
-            class="mb-1 font-serif text-[length:var(--text-body)] text-warm-dim"
-          >
-            Knowledge base updated
-          </p>
-          {#if progress.warned}
-            <p
-              class="mb-3 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-red-400/90"
-            >
-              Some parts were left out; the steps above list them.
-            </p>
-          {/if}
-          {#if result.data}
-            <p
-              class="mb-5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-            >
-              {result.data.pagination.total === 0
-                ? "Already up to date — nothing changed"
-                : `${result.data.pagination.total} ${result.data.pagination.total === 1 ? "article" : "articles"} written`}
-            </p>
-            {#if result.data.items.length > 0}
-              <ul class="mb-6 space-y-1.5">
-                {#each result.data.items as article (article.slug)}
-                  <li>
-                    <button
-                      type="button"
-                      onclick={() => void goto(`/doc/${article.file_path}`)}
-                      class="text-left font-serif text-[length:var(--text-small)] text-gold-dim transition-colors hover:text-gold"
-                    >
-                      {article.title}
-                    </button>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          {/if}
-          <div class="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              size="xs"
-              onclick={() => void goto("/library")}
-              class="h-auto rounded-sm px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover"
-            >
-              browse the library
-            </Button>
-            <Button
-              variant="ghost"
-              size="xs"
-              onclick={() => void goto("/")}
-              class="h-auto rounded-sm px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
-            >
-              back to home
-            </Button>
-          </div>
-        </div>
       {/if}
     </main>
   </div>

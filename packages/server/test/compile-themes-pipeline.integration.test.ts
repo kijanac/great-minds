@@ -247,9 +247,22 @@ const compile = (runId: Uuid) =>
       yield* phases.derive(id.vault, runId, validated);
       yield* phases.render(id.vault, runId, validated);
       yield* phases.verify(id.vault, runId);
+      yield* phases.publish(id.vault, runId, "2026-11-05T12:00:00+00:00");
       return validated;
     }),
   );
+
+const outcomeOf = (runId: Uuid) =>
+  run(
+    Effect.flatMap(Database, (db) =>
+      db.query((d) =>
+        d
+          .select({ outcome: pipelineRuns.outcome })
+          .from(pipelineRuns)
+          .where(eq(pipelineRuns.id, runId)),
+      ),
+    ),
+  ).then((found) => found[0]?.outcome ?? null);
 
 const rows = () =>
   run(
@@ -389,6 +402,7 @@ describe("the themes Update pipeline", () => {
       "derive",
       "render",
       "verify",
+      "publish",
     ]);
     const stepsOf = (phase: string) =>
       Object.fromEntries(
@@ -407,6 +421,14 @@ describe("the themes Update pipeline", () => {
       link_articles: ["completed", expect.any(Number), expect.any(Number)],
     });
     expect(stored?.warnings).toEqual([]);
+    const outcome = await outcomeOf(id.run);
+    expect(outcome?.added.map((article) => article.file_path).toSorted()).toEqual([
+      "wiki/alpha.md",
+      "wiki/beta.md",
+    ]);
+    expect(outcome?.changed).toEqual([]);
+    expect(outcome?.removed.map((article) => article.title)).toEqual(["Old topic"]);
+    expect(outcome?.unchanged).toBe(0);
     const checks = calls.filter((call) => contentOf(call).startsWith("A wiki article links"));
     expect(checks.map((call) => [call.model, call.temperature])).toEqual([
       ["anthropic/claude-sonnet-5.5", undefined],
@@ -434,5 +456,12 @@ describe("the themes Update pipeline", () => {
     expect(again).toEqual(first);
     expect(files.get("wiki/alpha.md")).toBe(before.get("wiki/alpha.md"));
     expect(files.get("wiki/beta.md")).toBe(before.get("wiki/beta.md"));
+    expect(await outcomeOf(id.rerun)).toEqual({
+      sources: 0,
+      added: [],
+      changed: [],
+      removed: [],
+      unchanged: 2,
+    });
   });
 });
