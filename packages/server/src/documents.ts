@@ -359,8 +359,6 @@ export const DocumentsServiceLive = Layer.effect(
           )
           .orderBy(asc(sql`lower(${incomingArticle.title})`)));
 
-        // Idea-overlap relatedness from the derive phase; require at least two
-        // shared ideas so a single incidental overlap never surfaces.
         const relatedArticle = alias(wikiArticles, "related_article");
         const related = yield* db.query((d) => d
           .select({
@@ -374,7 +372,7 @@ export const DocumentsServiceLive = Layer.effect(
           .where(
             and(
               eq(topicRelated.topicId, source.topicId),
-              gte(topicRelated.sharedIdeas, 2),
+              gte(topicRelated.sharedDocuments, 2),
               eq(relatedArticle.vaultId, vaultId),
               eq(relatedArticle.archived, false),
             ),

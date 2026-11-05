@@ -589,7 +589,7 @@ export const CompilePhasesLive = Layer.effect(
               counts: { find_related: [0, validated.length] },
             }),
           );
-          yield* db.transaction((tx) =>
+          const documentOfIdea = yield* db.transaction((tx) =>
             Effect.gen(function* () {
               const requested = [...new Set(validated.flatMap((topic) => topic.subsumedIdeaIds))];
               const sources =
@@ -616,7 +616,7 @@ export const CompilePhasesLive = Layer.effect(
                 sources.length === 0
                   ? []
                   : yield* tx
-                      .select({ id: ideas.ideaId })
+                      .select({ id: ideas.ideaId, documentId: ideas.documentId })
                       .from(ideas)
                       .where(
                         and(
@@ -647,25 +647,29 @@ export const CompilePhasesLive = Layer.effect(
                   ),
                 );
               }
+              return new Map(live.map((idea) => [idea.id, idea.documentId]));
             }),
           );
-          const ideaSets = validated.map((topic) => new Set(topic.subsumedIdeaIds));
-          const topicsOfIdea = new Map<string, number[]>();
-          ideaSets.forEach((set, index) => {
-            for (const ideaId of set) append(topicsOfIdea, ideaId, index);
+          const documentSets = validated.map(
+            (topic) =>
+              new Set(topic.subsumedIdeaIds.flatMap((ideaId) => documentOfIdea.get(ideaId) ?? [])),
+          );
+          const topicsOfDocument = new Map<string, number[]>();
+          documentSets.forEach((set, index) => {
+            for (const documentId of set) append(topicsOfDocument, documentId, index);
           });
           const relatedRows = validated.flatMap((topic, index) => {
             const shared = new Map<number, number>();
-            for (const ideaId of ideaSets[index] ?? [])
-              for (const other of topicsOfIdea.get(ideaId) ?? [])
+            for (const documentId of documentSets[index] ?? [])
+              for (const other of topicsOfDocument.get(documentId) ?? [])
                 if (other !== index) shared.set(other, (shared.get(other) ?? 0) + 1);
-            const size = ideaSets[index]?.size ?? 0;
+            const size = documentSets[index]?.size ?? 0;
             return [...shared]
               .map(([other, count]) => ({
                 topicId: topic.topicId,
                 relatedTopicId: validated[other]?.topicId ?? topic.topicId,
-                sharedIdeas: count,
-                jaccard: count / (size + (ideaSets[other]?.size ?? 0) - count),
+                sharedDocuments: count,
+                jaccard: count / (size + (documentSets[other]?.size ?? 0) - count),
               }))
               .toSorted(
                 (left, right) =>

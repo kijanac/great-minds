@@ -1016,7 +1016,7 @@ export const topicRelated = pgTable(
   {
     topicId: uuidColumn("topic_id").notNull(),
     relatedTopicId: uuidColumn("related_topic_id").notNull(),
-    sharedIdeas: integer("shared_ideas").notNull(),
+    sharedDocuments: integer("shared_documents").notNull(),
     jaccard: doublePrecision("jaccard").notNull(),
   },
   (table) => [

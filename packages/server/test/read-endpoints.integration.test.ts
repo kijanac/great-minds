@@ -660,12 +660,12 @@ const seedFixtures = async (): Promise<Fixture> => {
       yield* db
         .query((d) =>
           d.insert(topicRelated).values([
-            { topicId: id.topicAlpha, relatedTopicId: id.topicBeta, sharedIdeas: 3, jaccard: 0.5 },
-            { topicId: id.topicAlpha, relatedTopicId: id.topicGamma, sharedIdeas: 1, jaccard: 0.4 },
+            { topicId: id.topicAlpha, relatedTopicId: id.topicBeta, sharedDocuments: 3, jaccard: 0.5 },
+            { topicId: id.topicAlpha, relatedTopicId: id.topicGamma, sharedDocuments: 1, jaccard: 0.4 },
             {
               topicId: id.topicAlpha,
               relatedTopicId: id.topicArchived,
-              sharedIdeas: 4,
+              sharedDocuments: 4,
               jaccard: 0.9,
             },
           ]),

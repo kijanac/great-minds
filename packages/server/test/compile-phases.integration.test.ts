@@ -1233,7 +1233,7 @@ describe("M4.3a deterministic compile phases", () => {
     expect(sources[0]?.filePath).toBe(originalPath);
   });
 
-  it("derive replaces the topic graph without restoring removed source memberships", async () => {
+  it("derive relates articles by the source documents they share and drops removed source memberships", async () => {
     await seedSourceAndIdeas();
     await run(
       Effect.gen(function* () {
@@ -1267,8 +1267,8 @@ describe("M4.3a deterministic compile phases", () => {
     expect(rows.membership).toHaveLength(4);
     expect(rows.links).toEqual([]);
     expect(rows.related).toEqual([
-      { topicId: id.topicA, relatedTopicId: id.topicB, sharedIdeas: 1, jaccard: 1 / 3 },
-      { topicId: id.topicB, relatedTopicId: id.topicA, sharedIdeas: 1, jaccard: 1 / 3 },
+      { topicId: id.topicA, relatedTopicId: id.topicB, sharedDocuments: 1, jaccard: 1 },
+      { topicId: id.topicB, relatedTopicId: id.topicA, sharedDocuments: 1, jaccard: 1 },
     ]);
     const afterDeletion = await run(
       Effect.gen(function* () {
