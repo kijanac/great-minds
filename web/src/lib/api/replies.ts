@@ -1,15 +1,13 @@
 import {
-  ReplySnapshot,
-  isReplyPending,
+  type ReplySnapshot,
   type CreateReplyRequest,
   type CreateReplyResponse,
   type Uuid,
 } from "@great-minds/domain";
-import { Stream } from "effect";
 
 import { api, run, stream } from "./app";
 import { selectedVault } from "./selected-vault";
-import { followSnapshots } from "@great-minds/client";
+import { followReply } from "@great-minds/client";
 
 export type CreateReplyPayload = CreateReplyRequest;
 export type { CreateReplyResponse, ReplySnapshot };
@@ -44,14 +42,5 @@ export function stopReply(replyId: Uuid, signal?: AbortSignal): Promise<void> {
 }
 
 export function streamReply(replyId: Uuid, signal?: AbortSignal): AsyncIterable<ReplySnapshot> {
-  return stream(
-    followSnapshots(
-      Stream.unwrap(
-        api.replies.streamReply({ params: { vault_id: selectedVault(), reply_id: replyId } }),
-      ),
-      ReplySnapshot,
-      (snapshot) => !isReplyPending(snapshot.status),
-    ),
-    signal,
-  );
+  return stream(followReply(api, selectedVault(), replyId), signal);
 }

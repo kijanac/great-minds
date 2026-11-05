@@ -155,7 +155,8 @@ export const makeApi = (options: ApiOptions) => {
   const fork = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof services>>) =>
     runtime.runFork(effect);
 
-  return { api, http, externalHttp, run, fork, stream };
+  return { api, http, externalHttp, context, run, fork, stream };
 };
 
 export type Api = ReturnType<typeof makeApi>["api"];
+export type ApiContext = ReturnType<typeof makeApi>["context"];

@@ -1,5 +1,6 @@
 export { AuthClient, AuthMiddlewareClientLive, makeAuthenticate } from "./auth-middleware.ts";
 export { domainErrorDetail, errorMessage } from "./errors.ts";
+export { allVaults, followJob, followReply, jobFinished } from "./operations.ts";
 export { nextPageOffset } from "./pagination.ts";
 export {
   ApiError,
@@ -7,6 +8,7 @@ export {
   makeApi,
   withApiErrors,
   type Api,
+  type ApiContext,
   type ApiOptions,
   type RequestFailure,
   type RunOptions,

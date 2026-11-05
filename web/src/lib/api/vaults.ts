@@ -12,7 +12,7 @@ import {
 import { Effect, Schema } from "effect";
 
 import { api, run } from "./app";
-import { decodeInput } from "@great-minds/client";
+import { allVaults, decodeInput } from "@great-minds/client";
 
 export type { VaultConfig, VaultConfigUpdate, VaultDetail };
 export type Membership = MemberWithEmail;
@@ -26,17 +26,7 @@ const firstPage = { limit: 50, offset: 0 } as const;
 
 export function fetchVaults(signal?: AbortSignal): Promise<readonly VaultOverview[]> {
   return run(
-    Effect.gen(function* () {
-      const first = yield* api.vaults.listVaults({ query: firstPage });
-      const items = [...first.items];
-      for (let offset = items.length; offset < first.pagination.total;) {
-        const page = yield* api.vaults.listVaults({ query: { limit: firstPage.limit, offset } });
-        if (page.items.length === 0) break;
-        items.push(...page.items);
-        offset += page.items.length;
-      }
-      return items;
-    }),
+    allVaults(api).pipe(Effect.map((vaults) => vaults.items)),
     { signal },
   );
 }

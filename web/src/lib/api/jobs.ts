@@ -1,17 +1,16 @@
 import {
-  JobProgressSnapshot,
+  type JobProgressSnapshot,
   type JobPage,
   type JobResponse,
   type PipelineRunFilter,
   type Uuid,
 } from "@great-minds/domain";
-import { Stream } from "effect";
 
 import { newUuid } from "../ids";
 
 import { api, run, stream } from "./app";
 import { selectedVault } from "./selected-vault";
-import { followSnapshots } from "@great-minds/client";
+import { followJob as followJobSnapshots } from "@great-minds/client";
 
 export type { JobProgressSnapshot, JobResponse };
 
@@ -59,22 +58,10 @@ export function cancelJob(runId: Uuid, vaultId?: Uuid): Promise<void> {
   );
 }
 
-const terminalSnapshot = (snapshot: JobProgressSnapshot) =>
-  (snapshot.job_status !== "pending" && snapshot.job_status !== "running") ||
-  snapshot.phase_status === "failed" ||
-  (snapshot.phase === "publish" && snapshot.phase_status === "completed");
-
 export function followJob(
   jobId: Uuid,
   vaultId: Uuid,
   signal?: AbortSignal,
 ): AsyncIterable<JobProgressSnapshot> {
-  return stream(
-    followSnapshots(
-      Stream.unwrap(api.jobs.streamJob({ params: { vault_id: vaultId, job_id: jobId } })),
-      JobProgressSnapshot,
-      terminalSnapshot,
-    ),
-    signal,
-  );
+  return stream(followJobSnapshots(api, vaultId, jobId), signal);
 }
