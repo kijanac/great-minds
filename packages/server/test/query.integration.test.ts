@@ -1057,6 +1057,9 @@ describe("query stream", () => {
       "completed",
     );
     expect(String(language.streamCalls[0].messages[0].content)).toContain("This is a BTW");
+    expect(String(language.streamCalls[0].messages[0].content)).toContain(
+      "Today's date is 2026-07-10 (UTC).",
+    );
     const next = await runReply({
       question: "Take this further",
       session: { kind: "existing", id: accepted.session_id },

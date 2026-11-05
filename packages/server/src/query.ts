@@ -22,6 +22,7 @@ import {
 import { and, asc, desc, eq, gte, ilike, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import { Cause, Context, Data, Effect, Layer, Option, Schema, Stream } from "effect";
 
+import { ClockService } from "./clock.ts";
 import { AppConfig } from "./config.ts";
 import { defaultVaultConfigFile, readVaultConfig, type VaultConfigFile } from "./vault-config.ts";
 import { promptContentHash } from "./crypto.ts";
@@ -433,6 +434,7 @@ export const QueryServiceLive = Layer.effect(
     const costs = yield* CostLookupService;
     const parallel = yield* ParallelSearchService;
     const appConfig = yield* AppConfig;
+    const clock = yield* ClockService;
 
     const documentForPath = (vaultId: Uuid, path: string) =>
       Effect.gen(function* () {
@@ -521,7 +523,9 @@ export const QueryServiceLive = Layer.effect(
           ],
           { concurrency: "unbounded" },
         );
+        const today = (yield* clock.now).toISOString().slice(0, 10);
         let prompt = retrievalCore.replace("{identity}", identity);
+        prompt += `\n\nToday's date is ${today} (UTC).`;
         prompt += "\n\n" + queryPrompt;
         if (webSearchEnabled) {
           prompt += "\n\n" + webSearchGuidance;
