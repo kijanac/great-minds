@@ -1,22 +1,31 @@
 <script lang="ts">
   import type { OutcomeArticle, RunOutcome } from "@great-minds/domain";
   import { createQuery } from "@tanstack/svelte-query";
+  import type { Snippet } from "svelte";
 
   import { fetchWikiArticles } from "$lib/api/wiki";
 
   let {
     outcome,
     onOpen,
+    stopped = null,
+    actions,
   }: {
     outcome: RunOutcome | null;
     onOpen: (filePath: string) => void;
+    stopped?: {
+      readonly kind: "failed" | "cancelled";
+      readonly stage: string | null;
+    } | null;
+    actions?: Snippet;
   } = $props();
 
   const LIMIT = 5;
   let expanded = $state<Record<string, boolean>>({});
 
   const firstBuild = $derived(
-    outcome !== null &&
+    stopped === null &&
+      outcome !== null &&
       outcome.unchanged === 0 &&
       outcome.changed.length === 0 &&
       outcome.added.length > 0,
@@ -37,6 +46,12 @@
     `${count.toLocaleString("en-US")} ${word}${count === 1 ? "" : "s"}`;
 
   const title = $derived.by(() => {
+    if (stopped !== null)
+      return stopped.kind === "cancelled"
+        ? "Update cancelled"
+        : stopped.stage === null
+          ? "Update stopped"
+          : `Update stopped while ${stopped.stage.toLowerCase()}`;
     if (outcome === null) return "Update finished";
     if (firstBuild)
       return `Your library has ${plural(outcome.added.length, "article")}`;
@@ -103,7 +118,8 @@
 >
   {title}
 </h1>
-{#if outcome && !firstBuild && !nothing && outcome.sources > 0}
+{@render actions?.()}
+{#if !stopped && outcome && !firstBuild && !nothing && outcome.sources > 0}
   <p
     class="-mt-4 mb-7 font-serif text-[length:var(--text-body)] leading-[1.7] text-warm-faint"
   >

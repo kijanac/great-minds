@@ -1,6 +1,12 @@
-import { compileIntents, Database, pipelineRuns } from "@great-minds/database";
+import {
+  compileCacheEntries,
+  compileIntents,
+  Database,
+  pipelineRuns,
+  wikiArticles,
+} from "@great-minds/database";
 import type { PipelineProgressStep, PipelineWarning, Uuid } from "@great-minds/domain";
-import { and, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
 type PipelineRunsServiceShape = {
@@ -18,6 +24,7 @@ type PipelineRunsServiceShape = {
   readonly failPreservingProgress: (runId: Uuid, error: string) => Effect.Effect<void>;
   readonly fail: (runId: Uuid, error: string) => Effect.Effect<void>;
   readonly recoverZombies: (olderThan: Date) => Effect.Effect<number>;
+  readonly recordOutcome: (runId: Uuid) => Effect.Effect<void>;
 };
 
 export class PipelineRunsService extends Context.Service<
@@ -65,6 +72,74 @@ export const PipelineRunsServiceLive = Layer.effect(
         WHERE anchor.id = ${runId}
       )
     )`;
+    const recordOutcome = (runId: Uuid) =>
+      Effect.gen(function* () {
+        const [run] = yield* db.query((d) =>
+          d
+            .select({ vaultId: pipelineRuns.vaultId, createdAt: pipelineRuns.createdAt })
+            .from(pipelineRuns)
+            .where(eq(pipelineRuns.id, runId)),
+        );
+        if (run === undefined) return;
+        const articles = yield* db.query((d) =>
+          d
+            .select({
+              title: wikiArticles.title,
+              filePath: wikiArticles.filePath,
+              archived: wikiArticles.archived,
+              addedRunId: wikiArticles.addedRunId,
+              changedRunId: wikiArticles.changedRunId,
+              archivedRunId: wikiArticles.archivedRunId,
+            })
+            .from(wikiArticles)
+            .where(
+              and(
+                eq(wikiArticles.vaultId, run.vaultId),
+                sql`${wikiArticles.filePath} <> 'wiki/_index.md'`,
+              ),
+            )
+            .orderBy(asc(sql`lower(${wikiArticles.title})`)),
+        );
+        const [sources] = yield* db.query((d) =>
+          d
+            .select({ count: sql<number>`count(*)::int` })
+            .from(compileCacheEntries)
+            .where(
+              and(
+                eq(compileCacheEntries.vaultId, run.vaultId),
+                eq(compileCacheEntries.phase, "extract"),
+                sql`${compileCacheEntries.createdAt} >= ${run.createdAt}`,
+              ),
+            ),
+        );
+        const entry = (article: (typeof articles)[number]) => ({
+          title: article.title,
+          file_path: article.filePath,
+        });
+        const live = articles.filter((article) => !article.archived);
+        const added = live.filter((article) => article.addedRunId === runId);
+        const changed = live.filter(
+          (article) => article.addedRunId !== runId && article.changedRunId === runId,
+        );
+        const removed = articles.filter(
+          (article) => article.archived && article.archivedRunId === runId,
+        );
+        yield* db.query((d) =>
+          d
+            .update(pipelineRuns)
+            .set({
+              outcome: {
+                sources: sources?.count ?? 0,
+                added: added.map(entry),
+                changed: changed.map(entry),
+                removed: removed.map(entry),
+                unchanged: live.length - added.length - changed.length,
+              },
+            })
+            .where(eq(pipelineRuns.id, runId)),
+        );
+      });
+
     const updateProgress: PipelineRunsServiceShape["updateProgress"] = (
       runId,
       phase,
@@ -123,7 +198,7 @@ export const PipelineRunsServiceLive = Layer.effect(
           .where(
             and(eq(pipelineRuns.id, runId), inArray(pipelineRuns.status, ["pending", "running"])),
           ))
-          .pipe(Effect.asVoid),
+          .pipe(Effect.andThen(recordOutcome(runId))),
       cancelCompileIntent: (intentId) =>
         db
           .transaction((tx) =>
@@ -150,9 +225,16 @@ export const PipelineRunsServiceLive = Layer.effect(
                   satisfiedAt: sql`coalesce(${compileIntents.satisfiedAt}, now())`,
                 })
                 .where(eq(compileIntents.id, intentId));
+              return yield* tx
+                .select({ id: pipelineRuns.id })
+                .from(pipelineRuns)
+                .where(eq(pipelineRuns.compileIntentId, intentId));
             }),
           )
-          .pipe(Effect.asVoid),
+          .pipe(
+            Effect.flatMap((runs) => Effect.forEach(runs, (run) => recordOutcome(run.id))),
+            Effect.asVoid,
+          ),
       updateProgress,
       recordWarning: (runId, warning) =>
         db.query((d) => d
@@ -182,7 +264,7 @@ export const PipelineRunsServiceLive = Layer.effect(
           .where(
             and(runOrCompileGroup(runId), inArray(pipelineRuns.status, ["pending", "running"])),
           ))
-          .pipe(Effect.asVoid),
+          .pipe(Effect.andThen(recordOutcome(runId))),
       fail: (runId, error) => updateProgress(runId, "source_ingest", "failed", [], error),
       recoverZombies: (olderThan) =>
         Effect.gen(function* () {
@@ -257,8 +339,10 @@ export const PipelineRunsServiceLive = Layer.effect(
               ),
             )
             .returning({ id: pipelineRuns.id }));
+          yield* Effect.forEach(rows, (row) => recordOutcome(row.id));
           return rows.length;
         }),
+      recordOutcome,
     } satisfies PipelineRunsServiceShape;
   }),
 );

@@ -180,12 +180,10 @@
   </div>
 {/if}
 
-{#if startedAt}
+{#if startedAt && (running || completedAt)}
   <p class="mt-7 font-mono text-[length:var(--text-chrome)] text-warm-ghost">
     {running
       ? `Started at ${clock(startedAt)} · running for ${span(now - startedAt.getTime())}`
-      : completedAt
-        ? `Took ${span(completedAt.getTime() - startedAt.getTime())}`
-        : `Started at ${clock(startedAt)}`}
+      : `Took ${span((completedAt ?? startedAt).getTime() - startedAt.getTime())}`}
   </p>
 {/if}

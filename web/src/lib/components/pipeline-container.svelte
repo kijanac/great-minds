@@ -29,11 +29,7 @@
   import { auth } from "$lib/auth.svelte";
   import RunOutcome from "$lib/components/run-outcome.svelte";
   import RunProgress from "$lib/components/run-progress.svelte";
-  import {
-    Alert,
-    AlertDescription,
-    AlertTitle,
-  } from "$lib/components/ui/alert";
+  import { Alert, AlertDescription } from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
   import { useJobSSE } from "$lib/hooks/use-job-sse.svelte";
   import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
@@ -439,113 +435,125 @@
         </div>
       {/if}
 
-      {#if progress.overallError || resolveError}
-        <Alert
-          variant="destructive"
-          class="mb-10 rounded-sm border-red-400/25 bg-red-400/5 p-5"
+      {#snippet browseLibrary()}
+        <Button
+          variant="ghost"
+          size="xs"
+          onclick={() => void goto("/library")}
+          class="h-auto rounded-sm px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost uppercase hover:bg-transparent hover:text-warm-faint"
         >
-          <AlertTitle
-            class="mb-3 font-serif text-[length:var(--text-body)] text-warm-dim"
-          >
-            Something went wrong during {fileBatch?.status === "uploading"
-              ? "uploading"
-              : firstErrored
-                ? firstErrored.label.toLowerCase()
-                : "processing"}.
-          </AlertTitle>
-          <AlertDescription
-            class="mb-4 font-mono text-[length:var(--text-chrome)] text-red-400/90"
-          >
-            <p>{progress.overallError ?? resolveError}</p>
-            {#if uploadFailures.length > 0}
-              <ul class="mt-3 space-y-1 text-warm-faint">
-                {#each uploadFailures as failure}
-                  <li class="[overflow-wrap:anywhere]">
-                    <span class="text-warm-dim">{failure.name}</span>: {failure.error}
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          </AlertDescription>
-          <div class="flex flex-wrap items-center gap-4">
+          Browse the library
+        </Button>
+      {/snippet}
+
+      {#if progress.overallError || resolveError}
+        {#snippet failedActions()}
+          <div class="mb-8 flex flex-wrap items-center gap-3">
             {#if canManage && fileBatch?.status === "uploading"}
               {#if availableFiles.length > 0}
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   size="xs"
                   onclick={() => {
                     if (fileBatch)
                       void runBatchUpload(fileBatch, availableFiles);
                   }}
-                  class="h-auto rounded-sm px-3 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover"
+                  class="h-auto rounded-sm border-gold-dim px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold uppercase hover:bg-gold/10"
                 >
-                  retry upload
+                  Retry upload
                 </Button>
               {/if}
               <Button
-                variant="ghost"
+                variant="outline"
                 size="xs"
                 onclick={reselectFiles}
-                class="h-auto rounded-sm px-3 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover"
+                class="h-auto rounded-sm border-gold-dim px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold uppercase hover:bg-gold/10"
               >
-                reselect files
+                Reselect files
               </Button>
             {:else if canManage && !resolveError}
               <Button
-                variant="ghost"
+                variant="outline"
                 size="xs"
                 onclick={() => void retry()}
-                class="h-auto rounded-sm px-3 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover"
+                class="h-auto rounded-sm border-gold-dim px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold uppercase hover:bg-gold/10"
               >
                 {progress.trigger === "url" &&
                 progress.backendPhase === "source_ingest"
-                  ? "retry URL"
+                  ? "Retry URL"
                   : firstErrored?.key === "upload"
-                    ? "compile saved files"
-                    : "run again"}
+                    ? "Compile saved files"
+                    : "Run again"}
               </Button>
             {/if}
-            <Button
-              variant="ghost"
-              size="xs"
-              onclick={() => void goto("/")}
-              class="h-auto rounded-sm px-3 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
-            >
-              back to home
-            </Button>
+            {@render browseLibrary()}
           </div>
-        </Alert>
+        {/snippet}
+        <div class="mb-10">
+          {#if fileBatch?.status === "uploading" || resolveError}
+            <h1
+              class="mt-1 mb-6 font-serif text-[length:var(--text-title)] leading-[1.25] text-warm"
+            >
+              {resolveError ? "Couldn’t load this run" : "Upload stopped"}
+            </h1>
+            {@render failedActions()}
+          {:else}
+            <RunOutcome
+              outcome={progress.outcome}
+              onOpen={(filePath) => void goto(`/doc/${filePath}`)}
+              stopped={{ kind: "failed", stage: firstErrored?.title ?? null }}
+              actions={failedActions}
+            />
+          {/if}
+          {#if uploadFailures.length > 0}
+            <ul
+              class="mb-6 space-y-1 font-mono text-[length:var(--text-chrome)] text-warm-faint"
+            >
+              {#each uploadFailures as failure}
+                <li class="[overflow-wrap:anywhere]">
+                  <span class="text-warm-dim">{failure.name}</span>: {failure.error}
+                </li>
+              {/each}
+            </ul>
+          {/if}
+          <details>
+            <summary
+              class="cursor-pointer font-mono text-[length:var(--text-chrome)] text-warm-ghost hover:text-warm-faint"
+            >
+              Details
+            </summary>
+            <p
+              class="mt-2 font-mono text-[length:var(--text-chrome)] text-red-400/90 [overflow-wrap:anywhere]"
+            >
+              {progress.overallError ?? resolveError}
+            </p>
+          </details>
+        </div>
       {/if}
 
       {#if progress.overallCancelled}
-        <div
-          class="mb-10 rounded-sm border border-ink-border bg-ink-raised p-5"
-        >
-          <p
-            class="mb-4 font-serif text-[length:var(--text-body)] text-warm-dim"
-          >
-            Update cancelled
-          </p>
-          <div class="flex items-center gap-4">
+        {#snippet cancelledActions()}
+          <div class="mb-8 flex flex-wrap items-center gap-3">
             {#if canManage}
               <Button
-                variant="ghost"
+                variant="outline"
                 size="xs"
                 onclick={() => void retry()}
-                class="h-auto rounded-sm px-3 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover"
+                class="h-auto rounded-sm border-gold-dim px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold uppercase hover:bg-gold/10"
               >
-                run again
+                Run again
               </Button>
             {/if}
-            <Button
-              variant="ghost"
-              size="xs"
-              onclick={() => void goto("/")}
-              class="h-auto rounded-sm px-3 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
-            >
-              back to home
-            </Button>
+            {@render browseLibrary()}
           </div>
+        {/snippet}
+        <div class="mb-10">
+          <RunOutcome
+            outcome={progress.outcome}
+            onOpen={(filePath) => void goto(`/doc/${filePath}`)}
+            stopped={{ kind: "cancelled", stage: null }}
+            actions={cancelledActions}
+          />
         </div>
       {/if}
 
@@ -571,7 +579,7 @@
           track={progress.track}
           running={progress.running}
           startedAt={progress.startedAt}
-          completedAt={progress.completedAt}
+          completedAt={progress.overallDone ? progress.completedAt : null}
         />
       {/if}
     </main>

@@ -29,7 +29,7 @@ import { PgClientLive } from "../src/db.ts";
 import { EmbeddingsService } from "../src/embeddings.ts";
 import { LanguageModel, type CompleteInput, type ModelCompletion } from "../src/llm.ts";
 import { StructuredLogger } from "../src/logging.ts";
-import { PipelineRunsServiceLive } from "../src/pipeline-runs.ts";
+import { PipelineRunsService, PipelineRunsServiceLive } from "../src/pipeline-runs.ts";
 import { RandomBytesLive } from "../src/random.ts";
 import { SourceDocumentsServiceLive } from "../src/source-documents.ts";
 import { ContentStorage } from "../src/storage.ts";
@@ -194,9 +194,9 @@ const EmbeddingsLive = Layer.succeed(EmbeddingsService, {
       embedded.push(...texts);
     }).pipe(
       Effect.as(
-      texts.map((text) =>
-        Array.from({ length: 1024 }, (_unused, index) => (index === axis(text) ? 1 : 0)),
-      ),
+        texts.map((text) =>
+          Array.from({ length: 1024 }, (_unused, index) => (index === axis(text) ? 1 : 0)),
+        ),
       ),
     ),
 });
@@ -225,8 +225,9 @@ const TestLive = CompilePhasesLive.pipe(
   Layer.provideMerge(LoggerLive),
   Layer.provideMerge(BaseLive),
 );
-const run = <A>(effect: Effect.Effect<A, unknown, Database | CompilePhases>) =>
-  Effect.runPromise(effect.pipe(Effect.provide(TestLive)));
+const run = <A>(
+  effect: Effect.Effect<A, unknown, Database | CompilePhases | PipelineRunsService>,
+) => Effect.runPromise(effect.pipe(Effect.provide(TestLive)));
 
 const compile = (runId: Uuid) =>
   run(
@@ -442,6 +443,35 @@ describe("the themes Update pipeline", () => {
     expect(
       writes.every((call) => call.reasoningEffort === "high" && call.temperature === 0.3),
     ).toBe(true);
+  });
+
+  it("a run that fails after writing still records the articles it changed", async () => {
+    await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db.query((d) =>
+          d.insert(pipelineRuns).values({
+            id: id.run,
+            vaultId: id.vault,
+            trigger: "manual",
+            status: "running",
+            currentPhase: "",
+            phaseStatus: "",
+          }),
+        );
+        const phases = yield* CompilePhases;
+        const validated = yield* phases.abstract(id.vault, id.run);
+        yield* phases.derive(id.vault, id.run, validated);
+        yield* phases.render(id.vault, id.run, validated);
+        yield* (yield* PipelineRunsService).failPreservingProgress(id.run, "search failed");
+      }),
+    );
+    const outcome = await outcomeOf(id.run);
+    expect(outcome?.added.map((article) => article.file_path).toSorted()).toEqual([
+      "wiki/alpha.md",
+      "wiki/beta.md",
+    ]);
+    expect(outcome?.removed.map((article) => article.title)).toEqual(["Old topic"]);
   });
 
   it("asks nothing again and keeps the same articles when nothing changed", async () => {

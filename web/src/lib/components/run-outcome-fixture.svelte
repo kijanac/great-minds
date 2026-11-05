@@ -7,8 +7,16 @@
   let {
     outcome,
     onOpen,
-  }: { outcome: RunOutcome; onOpen: (filePath: string) => void } = $props();
+    stopped = null,
+  }: {
+    outcome: RunOutcome | null;
+    onOpen: (filePath: string) => void;
+    stopped?: {
+      readonly kind: "failed" | "cancelled";
+      readonly stage: string | null;
+    } | null;
+  } = $props();
   setQueryClientContext(new QueryClient());
 </script>
 
-<RunOutcomeView {outcome} {onOpen} />
+<RunOutcomeView {outcome} {onOpen} {stopped} />

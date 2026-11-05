@@ -3,11 +3,9 @@ import { resolve } from "node:path";
 
 import {
   backlinks,
-  compileCacheEntries,
   Database,
   ideas,
   inUuidArray,
-  pipelineRuns,
   type DatabaseInfraError,
   type TransactionClient,
   searchIndex,
@@ -523,74 +521,6 @@ export const CompilePhasesLive = Layer.effect(
         }
       });
 
-    const recordOutcome = (vaultId: Uuid, runId: Uuid) =>
-      Effect.gen(function* () {
-        const [run] = yield* db.query((d) =>
-          d
-            .select({ createdAt: pipelineRuns.createdAt })
-            .from(pipelineRuns)
-            .where(eq(pipelineRuns.id, runId)),
-        );
-        if (run === undefined) return;
-        const articles = yield* db.query((d) =>
-          d
-            .select({
-              title: wikiArticles.title,
-              filePath: wikiArticles.filePath,
-              archived: wikiArticles.archived,
-              addedRunId: wikiArticles.addedRunId,
-              changedRunId: wikiArticles.changedRunId,
-              archivedRunId: wikiArticles.archivedRunId,
-            })
-            .from(wikiArticles)
-            .where(
-              and(
-                eq(wikiArticles.vaultId, vaultId),
-                sql`${wikiArticles.filePath} <> 'wiki/_index.md'`,
-              ),
-            )
-            .orderBy(asc(sql`lower(${wikiArticles.title})`)),
-        );
-        const [sources] = yield* db.query((d) =>
-          d
-            .select({ count: sql<number>`count(*)::int` })
-            .from(compileCacheEntries)
-            .where(
-              and(
-                eq(compileCacheEntries.vaultId, vaultId),
-                eq(compileCacheEntries.phase, "extract"),
-                sql`${compileCacheEntries.createdAt} >= ${run.createdAt}`,
-              ),
-            ),
-        );
-        const entry = (article: (typeof articles)[number]) => ({
-          title: article.title,
-          file_path: article.filePath,
-        });
-        const live = articles.filter((article) => !article.archived);
-        const added = live.filter((article) => article.addedRunId === runId);
-        const changed = live.filter(
-          (article) => article.addedRunId !== runId && article.changedRunId === runId,
-        );
-        const removed = articles.filter(
-          (article) => article.archived && article.archivedRunId === runId,
-        );
-        yield* db.query((d) =>
-          d
-            .update(pipelineRuns)
-            .set({
-              outcome: {
-                sources: sources?.count ?? 0,
-                added: added.map(entry),
-                changed: changed.map(entry),
-                removed: removed.map(entry),
-                unchanged: live.length - added.length - changed.length,
-              },
-            })
-            .where(eq(pipelineRuns.id, runId)),
-        );
-      });
-
     const extract = makeCompileExtract({
       config,
       db,
@@ -912,7 +842,7 @@ export const CompilePhasesLive = Layer.effect(
               Effect.orDie,
             );
           }
-          yield* recordOutcome(vaultId, runId);
+          yield* pipeline.recordOutcome(runId);
           yield* pipeline.updateProgress(
             runId,
             "publish",
