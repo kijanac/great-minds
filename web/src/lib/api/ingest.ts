@@ -10,8 +10,8 @@ import { HttpBody, HttpClientRequest } from "effect/unstable/http";
 import { newUuid } from "../ids";
 
 import { api, externalHttp, http, run } from "./app";
-import { errorMessage } from "./errors";
-import { withApiErrors } from "./runtime";
+import { errorMessage } from "@great-minds/client";
+import { withApiErrors } from "@great-minds/client";
 import { selectedVault } from "./selected-vault";
 
 export type { FileIngestBatch, UserSuggestionResult };

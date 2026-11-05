@@ -12,7 +12,7 @@
   } from "@tanstack/svelte-query";
 
   import { api, run } from "$lib/api/app";
-  import { errorMessage } from "$lib/api/errors";
+  import { errorMessage } from "@great-minds/client";
   import { registerPasskey } from "$lib/api/passkeys";
   import { Alert, AlertDescription } from "$lib/components/ui/alert";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";

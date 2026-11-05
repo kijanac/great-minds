@@ -3,8 +3,8 @@ import { createInfiniteQuery, createMutation, useQueryClient } from "@tanstack/s
 
 import { api, run } from "$lib/api/app";
 import type { PersonalDocumentResponse } from "$lib/api/doc";
-import { errorMessage } from "$lib/api/errors";
-import { nextPageOffset } from "$lib/api/pagination";
+import { errorMessage } from "@great-minds/client";
+import { nextPageOffset } from "@great-minds/client";
 import { renameReference } from "$lib/api/references";
 import { personalDocumentKey } from "$lib/hooks/use-document.svelte";
 

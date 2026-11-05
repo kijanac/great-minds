@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { requestCode } from "./auth";
 import { streamReply } from "./replies";
-import { ApiError } from "./runtime";
+import { ApiError } from "@great-minds/client";
 
 const id = Uuid.make("00000000-0000-4000-8000-000000000001");
 const fetchRequest = vi.fn<typeof fetch>();

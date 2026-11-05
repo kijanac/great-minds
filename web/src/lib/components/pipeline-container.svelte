@@ -9,7 +9,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import { fly } from "svelte/transition";
 
-  import { errorMessage } from "$lib/api/errors";
+  import { errorMessage } from "@great-minds/client";
   import {
     continueFileIngest,
     getFileIngestBatch,

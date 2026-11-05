@@ -3,9 +3,9 @@ import { Effect, Fiber, Layer, Schema, Semaphore, Stream } from "effect";
 import { HttpClientRequest } from "effect/unstable/http";
 import { describe, expect, it } from "vitest";
 
-import { ApiError, makeApi } from "./runtime";
-import { followSnapshots } from "./sse";
-import { TokenStore, type StoredTokens } from "./token-store";
+import { ApiError, makeApi } from "../src/runtime.ts";
+import { followSnapshots } from "../src/sse.ts";
+import { TokenStore, type StoredTokens } from "../src/token-store.ts";
 
 const vaultId = Uuid.make("018f6a2e-0000-7000-8000-000000000001", {
   disableChecks: true,

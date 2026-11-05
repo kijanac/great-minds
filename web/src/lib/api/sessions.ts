@@ -14,7 +14,7 @@ import {
 
 import { api, run } from "./app";
 import { selectedVault } from "./selected-vault";
-import { withApiErrors } from "./runtime";
+import { withApiErrors } from "@great-minds/client";
 
 export type { OriginScope, SessionEvent, SessionOrigin };
 export type SessionSummary = SessionOverview;

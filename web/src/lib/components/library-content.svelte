@@ -6,7 +6,7 @@
   import ReadingRoomShelf from "$lib/components/reading-room-shelf.svelte";
   import VaultLibraryShelf from "$lib/components/vault-library-shelf.svelte";
   import type { ReferenceOverview } from "$lib/api/references";
-  import { errorMessage } from "$lib/api/errors";
+  import { errorMessage } from "@great-minds/client";
   import {
     LIBRARY_READING_ROOM,
     LIBRARY_SOURCES,

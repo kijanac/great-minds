@@ -11,7 +11,7 @@ import { newUuid } from "../ids";
 
 import { api, run, stream } from "./app";
 import { selectedVault } from "./selected-vault";
-import { followSnapshots } from "./sse";
+import { followSnapshots } from "@great-minds/client";
 
 export type { JobProgressSnapshot, JobResponse };
 

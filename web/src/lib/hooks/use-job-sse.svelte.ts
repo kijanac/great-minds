@@ -1,7 +1,7 @@
 import type { JobProgressSnapshot, Uuid } from "@great-minds/domain";
 import { useQueryClient } from "@tanstack/svelte-query";
 
-import { errorMessage } from "$lib/api/errors";
+import { errorMessage } from "@great-minds/client";
 import { followJob } from "$lib/api/jobs";
 import { activeVault } from "$lib/hooks/use-vault.svelte";
 

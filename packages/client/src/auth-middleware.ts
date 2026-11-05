@@ -6,7 +6,7 @@ import type * as HttpClientResponse from "effect/unstable/http/HttpClientRespons
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 
-import { TokenStore, type StoredTokens } from "./token-store";
+import { TokenStore, type StoredTokens } from "./token-store.ts";
 
 type Send = (
   request: HttpClientRequest.HttpClientRequest,
@@ -17,7 +17,9 @@ type Authenticate = (options: {
   readonly next: Send;
 }) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>;
 
-export class AuthClient extends Context.Service<AuthClient, Authenticate>()("web/AuthClient") {}
+export class AuthClient extends Context.Service<AuthClient, Authenticate>()(
+  "@great-minds/client/AuthClient",
+) {}
 
 const withBearer = (request: HttpClientRequest.HttpClientRequest, token: string | null) =>
   token === null ? request : request.pipe(HttpClientRequest.bearerToken(token));

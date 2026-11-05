@@ -12,7 +12,7 @@ import {
 import { Effect, Schema } from "effect";
 
 import { api, run } from "./app";
-import { decodeInput } from "./runtime";
+import { decodeInput } from "@great-minds/client";
 
 export type { VaultConfig, VaultConfigUpdate, VaultDetail };
 export type Membership = MemberWithEmail;

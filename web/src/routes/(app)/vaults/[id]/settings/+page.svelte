@@ -5,7 +5,7 @@
   import { createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { Option, Schema } from "effect";
 
-  import { errorMessage } from "$lib/api/errors";
+  import { errorMessage } from "@great-minds/client";
   import {
     assignableRoles,
     deleteVault,

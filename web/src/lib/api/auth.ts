@@ -1,9 +1,9 @@
+import { decodeInput, TokenStore } from "@great-minds/client";
 import { Email, type TokenPair } from "@great-minds/domain";
 import { Effect } from "effect";
 
 import { api, run } from "./app";
-import { TokenStore } from "./token-store";
-import { decodeInput } from "./runtime";
+
 const storeSession = (tokens: TokenPair) =>
   Effect.flatMap(TokenStore, (store) => store.exclusive(store.write(tokens)));
 

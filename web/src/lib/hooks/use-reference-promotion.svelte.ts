@@ -1,7 +1,7 @@
 import type { Uuid } from "@great-minds/domain";
 import { createMutation, useQueryClient } from "@tanstack/svelte-query";
 
-import { errorMessage } from "$lib/api/errors";
+import { errorMessage } from "@great-minds/client";
 import { promoteReference } from "$lib/api/references";
 import { invalidateSourceLists } from "$lib/hooks/use-library.svelte";
 

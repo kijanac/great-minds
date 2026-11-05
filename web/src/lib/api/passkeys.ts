@@ -3,7 +3,7 @@ import type { RegistrationResponseJSON } from "@simplewebauthn/browser";
 import { Effect } from "effect";
 
 import { api, run } from "./app";
-import { decodeInput } from "./runtime";
+import { decodeInput } from "@great-minds/client";
 
 export function registerPasskey(
   name: string,

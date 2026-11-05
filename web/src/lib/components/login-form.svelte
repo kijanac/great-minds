@@ -14,7 +14,7 @@
     loginWithTokenPair,
     requestCode,
   } from "$lib/api/auth";
-  import { domainErrorDetail } from "$lib/api/errors";
+  import { domainErrorDetail } from "@great-minds/client";
   import { Alert, AlertDescription } from "$lib/components/ui/alert";
   import { Label } from "$lib/components/ui/label";
 

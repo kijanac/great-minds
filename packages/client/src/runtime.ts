@@ -5,9 +5,9 @@ import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 
-import { AuthClient, AuthMiddlewareClientLive, makeAuthenticate } from "./auth-middleware";
-import type { StreamFailure } from "./sse";
-import { TokenStore } from "./token-store";
+import { AuthClient, AuthMiddlewareClientLive, makeAuthenticate } from "./auth-middleware.ts";
+import type { StreamFailure } from "./sse.ts";
+import { TokenStore } from "./token-store.ts";
 
 export class ApiError extends Data.TaggedError("ApiError")<{
   readonly message: string;

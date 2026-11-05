@@ -6,7 +6,7 @@
   import Pencil from "@lucide/svelte/icons/pencil";
 
   import { articleMeta, type Article, type DocumentScope } from "$lib/api/doc";
-  import { errorMessage } from "$lib/api/errors";
+  import { errorMessage } from "@great-minds/client";
   import ReferencePromoteAction from "$lib/components/reference-promote-action.svelte";
   import ShareDialog from "$lib/components/share-dialog.svelte";
   import * as Collapsible from "$lib/components/ui/collapsible";

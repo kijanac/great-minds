@@ -10,8 +10,8 @@ import {
 } from "@tanstack/svelte-query";
 import { untrack } from "svelte";
 
-import { errorMessage } from "$lib/api/errors";
-import { nextPageOffset } from "$lib/api/pagination";
+import { errorMessage } from "@great-minds/client";
+import { nextPageOffset } from "@great-minds/client";
 import {
   deleteSourceDocument,
   fetchSourceDocuments,

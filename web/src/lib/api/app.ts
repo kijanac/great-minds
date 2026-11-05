@@ -1,5 +1,5 @@
 import { API_BASE } from "./base-url";
-import { makeApi } from "./runtime";
+import { makeApi } from "@great-minds/client";
 import { TokenStoreLive } from "./token-store";
 
 export const { api, http, externalHttp, run, fork, stream } = makeApi({

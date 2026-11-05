@@ -1,0 +1,20 @@
+{
+  "name": "@great-minds/client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@great-minds/domain": "workspace:*",
+    "effect": "4.0.0-rc.112"
+  }
+}

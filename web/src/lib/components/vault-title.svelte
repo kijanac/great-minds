@@ -4,7 +4,7 @@
   import X from "@lucide/svelte/icons/x";
   import { tick } from "svelte";
 
-  import { errorMessage } from "$lib/api/errors";
+  import { errorMessage } from "@great-minds/client";
   import { Button } from "$lib/components/ui/button";
 
   let {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { UserSuggestionResult } from "$lib/api/ingest";
-  import { errorMessage } from "$lib/api/errors";
+  import { errorMessage } from "@great-minds/client";
   import { Button } from "$lib/components/ui/button";
   import { Label } from "$lib/components/ui/label";
   import { Textarea } from "$lib/components/ui/textarea";

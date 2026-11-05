@@ -8,14 +8,14 @@
     useQueryClient,
   } from "@tanstack/svelte-query";
 
-  import { errorMessage } from "$lib/api/errors";
+  import { errorMessage } from "@great-minds/client";
   import {
     createProposal,
     listProposals,
     reviewProposal,
     type ProposalStatus,
   } from "$lib/api/proposals";
-  import { nextPageOffset } from "$lib/api/pagination";
+  import { nextPageOffset } from "@great-minds/client";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import * as Select from "$lib/components/ui/select";

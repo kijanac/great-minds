@@ -2,7 +2,7 @@ import type { PublicationPaper, SessionId } from "@great-minds/domain";
 import { Data, Effect, Fiber } from "effect";
 
 import { fork } from "$lib/api/app";
-import { errorMessage } from "$lib/api/errors";
+import { errorMessage } from "@great-minds/client";
 import { prepareSessionExport, readSessionMarkdown } from "$lib/api/sessions";
 import { auth } from "$lib/auth.svelte";
 import { activeVault } from "$lib/hooks/use-vault.svelte";

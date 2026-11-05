@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { MemberWithEmail, Uuid } from "@great-minds/domain";
 
-  import { errorMessage } from "$lib/api/errors";
+  import { errorMessage } from "@great-minds/client";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
   import { Button } from "$lib/components/ui/button";
   import * as Select from "$lib/components/ui/select";

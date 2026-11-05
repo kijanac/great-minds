@@ -6,8 +6,8 @@ import {
   useQueryClient,
 } from "@tanstack/svelte-query";
 
-import { nextPageOffset } from "$lib/api/pagination";
-import { errorMessage } from "$lib/api/errors";
+import { nextPageOffset } from "@great-minds/client";
+import { errorMessage } from "@great-minds/client";
 import { listSessions, promoteExchange } from "$lib/api/sessions";
 import { invalidateSourceLists } from "$lib/hooks/use-library.svelte";
 import { activeVault } from "$lib/hooks/use-vault.svelte";

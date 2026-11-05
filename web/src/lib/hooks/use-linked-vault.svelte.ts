@@ -1,7 +1,7 @@
 import { Uuid } from "@great-minds/domain";
 import { Option, Schema } from "effect";
 
-import { errorMessage } from "$lib/api/errors";
+import { errorMessage } from "@great-minds/client";
 import { activeVault, switchVault, useVaults } from "$lib/hooks/use-vault.svelte";
 
 const decodeVaultId = Schema.decodeUnknownOption(Uuid);

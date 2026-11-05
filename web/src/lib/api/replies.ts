@@ -9,7 +9,7 @@ import { Stream } from "effect";
 
 import { api, run, stream } from "./app";
 import { selectedVault } from "./selected-vault";
-import { followSnapshots } from "./sse";
+import { followSnapshots } from "@great-minds/client";
 
 export type CreateReplyPayload = CreateReplyRequest;
 export type { CreateReplyResponse, ReplySnapshot };
