@@ -4,13 +4,13 @@ import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as PgClient from "@effect/sql-pg/PgClient";
 import { DatabaseLive, logMigrationResult, migrateDatabase } from "@great-minds/database";
 import { Email, Uuid } from "@great-minds/domain";
-import { Cause, Console, Data, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Config, Console, Data, Effect, Exit, Layer, Option, type Redacted } from "effect";
 import { Argument, CliError, Command, Flag } from "effect/unstable/cli";
 
 import { makeAppLayers } from "./app-layer.ts";
 import { AuthService, AuthServiceLive } from "./auth.ts";
 import { ClockLive } from "./clock.ts";
-import { AppConfig, AppConfigLive, type AppConfigShape } from "./config.ts";
+import { AppConfig, AppConfigLive } from "./config.ts";
 import { PgClientLive } from "./db.ts";
 import { errorDetails } from "./error-details.ts";
 import { StructuredLoggerLive } from "./logging.ts";
@@ -34,15 +34,15 @@ class UserNotFound extends Data.TaggedError("UserNotFound")<{ readonly email: st
 const logEvent = (body: Record<string, unknown>) =>
   Effect.sync(() => console.log(JSON.stringify(body)));
 
-const migrate = (config: AppConfigShape) =>
+const migrate = (databaseUrl: Redacted.Redacted<string>) =>
   migrateDatabase.pipe(
-    Effect.provide(DatabaseLive.pipe(Layer.provide(PgClient.layer({ url: config.databaseUrl })))),
+    Effect.provide(DatabaseLive.pipe(Layer.provide(PgClient.layer({ url: databaseUrl })))),
     Effect.tap((result) => Effect.sync(() => logMigrationResult(result))),
   );
 
 const serve = Effect.gen(function* () {
   const config = yield* AppConfig;
-  yield* migrate(config);
+  yield* migrate(config.databaseUrl);
   yield* ensureStorageReady(config);
   yield* logEvent({ event: "storage_ready", backend: config.storageBackend });
   const layers = makeAppLayers({ config: Layer.succeed(AppConfig, config) });
@@ -98,8 +98,8 @@ const serveCommand = Command.make("serve", {}, () => serve).pipe(
 );
 
 const migrateCommand = Command.make("migrate", {}, () =>
-  Effect.flatMap(AppConfig, migrate).pipe(Effect.provide(AppConfigLive)),
-).pipe(Command.withDescription("Apply database migrations and exit"));
+  Effect.flatMap(Config.redacted("DATABASE_URL"), migrate),
+).pipe(Command.withDescription("Apply database migrations and exit (needs only DATABASE_URL)"));
 
 const usersCreateCommand = Command.make("create", { email: emailFlag }, ({ email }) =>
   Effect.gen(function* () {
