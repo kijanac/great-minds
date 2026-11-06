@@ -18,7 +18,7 @@ import {
 } from "@great-minds/domain";
 import type { ApiKey, ApiKeyWithSecret, AuthContext, TokenPair } from "@great-minds/domain";
 import { and, asc, desc, eq, gt, isNull, lt, sql, type SQL } from "drizzle-orm";
-import { Context, Effect, Layer, Result, Schema } from "effect";
+import { Context, Effect, Layer, Option, Result, Schema } from "effect";
 
 import { backgroundLoop } from "./background-loop.ts";
 import { ClockService } from "./clock.ts";
@@ -41,10 +41,8 @@ type AuthServiceShape = {
   readonly issueTokenPair: (userId: Uuid) => Effect.Effect<TokenPair, Unauthorized>;
   readonly authenticateBearer: (token: string) => Effect.Effect<AuthContext, Unauthorized>;
   readonly createApiKey: (userId: Uuid, label: string) => Effect.Effect<ApiKeyWithSecret>;
-  readonly createUserKey: (
-    email: Email,
-    label: string,
-  ) => Effect.Effect<ApiKeyWithSecret, Unauthorized>;
+  readonly ensureUser: (email: Email) => Effect.Effect<Uuid, Unauthorized>;
+  readonly findUser: (email: Email) => Effect.Effect<Option.Option<Uuid>>;
   readonly listApiKeys: (userId: Uuid) => Effect.Effect<readonly ApiKey[]>;
   readonly revokeApiKey: (userId: Uuid, keyId: Uuid) => Effect.Effect<void, NotFound>;
   readonly purgeSignInCodesOnce: () => Effect.Effect<number>;
@@ -251,7 +249,7 @@ export const AuthServiceLive = Layer.effect(
         };
       });
 
-    const createUserKey = (emailInput: Email, label: string) =>
+    const ensureUser = (emailInput: Email) =>
       Effect.gen(function* () {
         const email = normalizeEmail(emailInput);
         const userId = yield* db.transaction((tx) =>
@@ -262,8 +260,19 @@ export const AuthServiceLive = Layer.effect(
           }),
         );
         yield* vaultsService.ensureDefaultForUser(userId, email);
-        return yield* createApiKey(userId, label);
+        return userId;
       });
+
+    const findUser = (emailInput: Email) =>
+      db
+        .query((d) =>
+          d
+            .select({ id: users.id })
+            .from(users)
+            .where(and(eq(users.email, normalizeEmail(emailInput)), isNull(users.deletedAt)))
+            .limit(1),
+        )
+        .pipe(Effect.map((rows) => Option.fromNullishOr(rows[0]?.id)));
 
     const issueTokenPair = (userId: Uuid) =>
       Effect.gen(function* () {
@@ -461,7 +470,8 @@ export const AuthServiceLive = Layer.effect(
           return yield* new Unauthorized({ detail: "Invalid credentials" });
         }),
       createApiKey,
-      createUserKey,
+      ensureUser,
+      findUser,
       listApiKeys: (userId) =>
         db
           .query((d) =>

@@ -991,7 +991,9 @@ describe("auth HTTP integration", () => {
     currentState().mailer.settings.configured = false;
     const email = Schema.decodeUnknownSync(Email)("Headless@Example.com");
     const key = await runDb(
-      Effect.flatMap(AuthService, (auth) => auth.createUserKey(email, "server")),
+      Effect.flatMap(AuthService, (auth) =>
+        Effect.flatMap(auth.ensureUser(email), (userId) => auth.createApiKey(userId, "server")),
+      ),
     );
     expect(currentState().mailer.sent).toHaveLength(0);
     const vaults = await api("GET", "/vaults", undefined, key.raw_key);
@@ -1007,7 +1009,7 @@ describe("auth HTTP integration", () => {
       ),
     );
     const refused = await runDb(
-      Effect.flip(Effect.flatMap(AuthService, (auth) => auth.createUserKey(email, "again"))),
+      Effect.flip(Effect.flatMap(AuthService, (auth) => auth.ensureUser(email))),
     );
     expect(refused._tag).toBe("Unauthorized");
   });

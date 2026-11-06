@@ -15,8 +15,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "generate": "drizzle-kit generate --config ../../drizzle.config.ts",
-    "migrate": "node --experimental-strip-types src/migrate-cli.ts"
+    "generate": "drizzle-kit generate --config ../../drizzle.config.ts"
   },
   "dependencies": {
     "@effect/sql-pg": "4.0.0-rc.112",
