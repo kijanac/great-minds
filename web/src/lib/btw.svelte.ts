@@ -123,6 +123,7 @@ export class Btw implements ThreadLike {
     this.#patchTurn(previous.id, {
       thinking: [],
       answer: "",
+        citations: [],
       status: "running",
       version: null,
       error: null,
@@ -154,6 +155,7 @@ export class Btw implements ThreadLike {
       query: question,
       thinking: [],
       answer: "",
+        citations: [],
       btws: [],
       status: "running",
       version: null,
