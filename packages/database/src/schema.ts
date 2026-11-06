@@ -10,6 +10,7 @@ import type {
   Uuid,
 } from "@great-minds/domain";
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   check,
@@ -36,6 +37,16 @@ import {
 const timestamptz = (name: string) => timestamp(name, { withTimezone: true });
 const uuidColumn = (name: string) => uuid(name).$type<Uuid>();
 const sessionIdColumn = (name: string) => text(name).$type<SessionId>();
+
+const references = (
+  column: AnyPgColumn,
+  target: AnyPgColumn,
+  name: string,
+  onDelete?: "cascade" | "set null",
+) => {
+  const key = foreignKey({ columns: [column], foreignColumns: [target], name });
+  return onDelete === undefined ? key : key.onDelete(onDelete);
+};
 
 export const tsvector = customType<{ data: string; driverData: string }>({
   dataType() {
@@ -110,11 +121,7 @@ export const apiKeys = pgTable(
     createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.userId],
-      foreignColumns: [users.id],
-      name: "api_keys_user_id_fkey",
-    }).onDelete("cascade"),
+    references(table.userId, users.id, "api_keys_user_id_fkey", "cascade"),
     uniqueIndex("ix_api_keys_key_hash").on(table.keyHash),
   ],
 );
@@ -130,11 +137,7 @@ export const refreshTokens = pgTable(
     createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.userId],
-      foreignColumns: [users.id],
-      name: "refresh_tokens_user_id_fkey",
-    }).onDelete("cascade"),
+    references(table.userId, users.id, "refresh_tokens_user_id_fkey", "cascade"),
     uniqueIndex("ix_refresh_tokens_token_hash").on(table.tokenHash),
   ],
 );
@@ -156,11 +159,7 @@ export const webauthnCredentials = pgTable(
     lastUsedAt: timestamptz("last_used_at"),
   },
   (table) => [
-    foreignKey({
-      columns: [table.userId],
-      foreignColumns: [users.id],
-      name: "webauthn_credentials_user_id_fkey",
-    }).onDelete("cascade"),
+    references(table.userId, users.id, "webauthn_credentials_user_id_fkey", "cascade"),
     unique("uq_webauthn_credentials_credential_id").on(table.credentialId),
   ],
 );
@@ -174,11 +173,7 @@ export const webauthnChallenges = pgTable(
     expiresAt: timestamptz("expires_at").notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.userId],
-      foreignColumns: [users.id],
-      name: "webauthn_challenges_user_id_fkey",
-    }).onDelete("cascade"),
+    references(table.userId, users.id, "webauthn_challenges_user_id_fkey", "cascade"),
     check("ck_webauthn_challenges_kind", sql`${table.kind} in ('registration', 'authentication')`),
   ],
 );
@@ -193,11 +188,7 @@ export const vaults = pgTable(
     deletedAt: timestamptz("deleted_at"),
   },
   (table) => [
-    foreignKey({
-      columns: [table.ownerId],
-      foreignColumns: [users.id],
-      name: "vaults_owner_id_fkey",
-    }).onDelete("cascade"),
+    references(table.ownerId, users.id, "vaults_owner_id_fkey", "cascade"),
     index("ix_vaults_owner_id").on(table.ownerId),
     index("ix_vaults_deleted_at")
       .on(table.deletedAt)
@@ -216,11 +207,7 @@ export const compileCacheEntries = pgTable(
     createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "compile_cache_entries_vault_id_fkey",
-    }).onDelete("cascade"),
+    references(table.vaultId, vaults.id, "compile_cache_entries_vault_id_fkey", "cascade"),
     unique("compile_cache_entries_vault_id_phase_cache_key_key").on(
       table.vaultId,
       table.phase,
@@ -249,16 +236,8 @@ export const llmCostEvents = pgTable(
     generationId: text("generation_id"),
   },
   (table) => [
-    foreignKey({
-      columns: [table.userId],
-      foreignColumns: [users.id],
-      name: "llm_cost_events_user_id_fkey",
-    }).onDelete("set null"),
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "llm_cost_events_vault_id_fkey",
-    }).onDelete("cascade"),
+    references(table.userId, users.id, "llm_cost_events_user_id_fkey", "set null"),
+    references(table.vaultId, vaults.id, "llm_cost_events_vault_id_fkey", "cascade"),
     uniqueIndex("uq_llm_cost_events_query_correlation")
       .on(table.eventType, table.correlationId)
       .where(sql`${table.eventType} = 'query.stream' AND ${table.correlationId} IS NOT NULL`),
@@ -281,16 +260,8 @@ export const vaultMemberships = pgTable(
     createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "vault_memberships_vault_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.userId],
-      foreignColumns: [users.id],
-      name: "vault_memberships_user_id_fkey",
-    }).onDelete("cascade"),
+    references(table.vaultId, vaults.id, "vault_memberships_vault_id_fkey", "cascade"),
+    references(table.userId, users.id, "vault_memberships_user_id_fkey", "cascade"),
     unique("vault_memberships_vault_id_user_id_key").on(table.vaultId, table.userId),
   ],
 );
@@ -324,11 +295,7 @@ export const pipelineRuns = pgTable(
     completedAt: timestamptz("completed_at"),
   },
   (table) => [
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "pipeline_runs_vault_id_fkey",
-    }).onDelete("cascade"),
+    references(table.vaultId, vaults.id, "pipeline_runs_vault_id_fkey", "cascade"),
     index("ix_pipeline_runs_vault_id").on(table.vaultId),
     index("ix_pipeline_runs_compile_intent_id").on(table.compileIntentId),
   ],
@@ -348,16 +315,8 @@ export const fileIngestBatches = pgTable(
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.id],
-      foreignColumns: [pipelineRuns.id],
-      name: "file_ingest_batches_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.createdBy],
-      foreignColumns: [users.id],
-      name: "file_ingest_batches_created_by_fkey",
-    }).onDelete("cascade"),
+    references(table.id, pipelineRuns.id, "file_ingest_batches_id_fkey", "cascade"),
+    references(table.createdBy, users.id, "file_ingest_batches_created_by_fkey", "cascade"),
     index("ix_file_ingest_batches_status_expires_at").on(table.status, table.expiresAt),
   ],
 );
@@ -381,16 +340,12 @@ export const fileIngestFiles = pgTable(
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.batchId],
-      foreignColumns: [fileIngestBatches.id],
-      name: "file_ingest_files_batch_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.sourceIncarnationId],
-      foreignColumns: [sourceIncarnations.id],
-      name: "file_ingest_files_source_incarnation_id_fkey",
-    }),
+    references(table.batchId, fileIngestBatches.id, "file_ingest_files_batch_id_fkey", "cascade"),
+    references(
+      table.sourceIncarnationId,
+      sourceIncarnations.id,
+      "file_ingest_files_source_incarnation_id_fkey",
+    ),
     primaryKey({ columns: [table.batchId, table.hash] }),
     unique("uq_file_ingest_files_batch_position").on(table.batchId, table.position),
     check("ck_file_ingest_files_position_nonnegative", sql`${table.position} >= 0`),
@@ -414,21 +369,13 @@ export const urlIngestRequests = pgTable(
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.id],
-      foreignColumns: [pipelineRuns.id],
-      name: "url_ingest_requests_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.createdBy],
-      foreignColumns: [users.id],
-      name: "url_ingest_requests_created_by_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.sourceIncarnationId],
-      foreignColumns: [sourceIncarnations.id],
-      name: "url_ingest_requests_source_incarnation_id_fkey",
-    }),
+    references(table.id, pipelineRuns.id, "url_ingest_requests_id_fkey", "cascade"),
+    references(table.createdBy, users.id, "url_ingest_requests_created_by_fkey", "cascade"),
+    references(
+      table.sourceIncarnationId,
+      sourceIncarnations.id,
+      "url_ingest_requests_source_incarnation_id_fkey",
+    ),
     index("ix_url_ingest_requests_pending")
       .on(table.createdAt)
       .where(sql`${table.dispatchedAt} IS NULL`),
@@ -447,16 +394,13 @@ export const compileIntents = pgTable(
     satisfiedAt: timestamptz("satisfied_at"),
   },
   (table) => [
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "compile_intents_vault_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.pipelineRunId],
-      foreignColumns: [pipelineRuns.id],
-      name: "compile_intents_pipeline_run_id_fkey",
-    }).onDelete("set null"),
+    references(table.vaultId, vaults.id, "compile_intents_vault_id_fkey", "cascade"),
+    references(
+      table.pipelineRunId,
+      pipelineRuns.id,
+      "compile_intents_pipeline_run_id_fkey",
+      "set null",
+    ),
     uniqueIndex("ix_compile_intents_one_pending")
       .on(table.vaultId)
       .where(sql`${table.dispatchedAt} IS NULL`),
@@ -482,11 +426,7 @@ export const searchIndex = pgTable(
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "search_index_vault_id_fkey",
-    }).onDelete("cascade"),
+    references(table.vaultId, vaults.id, "search_index_vault_id_fkey", "cascade"),
     unique("search_index_vault_id_path_chunk_index_key").on(
       table.vaultId,
       table.path,
@@ -516,16 +456,8 @@ export const sessions = pgTable(
     idempotencyKey: text("idempotency_key"),
   },
   (table) => [
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "sessions_vault_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.userId],
-      foreignColumns: [users.id],
-      name: "sessions_user_id_fkey",
-    }).onDelete("cascade"),
+    references(table.vaultId, vaults.id, "sessions_vault_id_fkey", "cascade"),
+    references(table.userId, users.id, "sessions_user_id_fkey", "cascade"),
     primaryKey({ columns: [table.id, table.vaultId] }),
     unique("uq_sessions_vault_idempotency").on(table.vaultId, table.idempotencyKey),
     index("ix_sessions_updated_at").on(table.updatedAt),
@@ -579,16 +511,8 @@ export const replies = pgTable(
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "replies_vault_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.userId],
-      foreignColumns: [users.id],
-      name: "replies_user_id_fkey",
-    }).onDelete("cascade"),
+    references(table.vaultId, vaults.id, "replies_vault_id_fkey", "cascade"),
+    references(table.userId, users.id, "replies_user_id_fkey", "cascade"),
     foreignKey({
       columns: [table.sessionId, table.vaultId],
       foreignColumns: [sessions.id, sessions.vaultId],
@@ -641,11 +565,7 @@ export const sourceIncarnations = pgTable(
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "source_incarnations_vault_id_fkey",
-    }).onDelete("cascade"),
+    references(table.vaultId, vaults.id, "source_incarnations_vault_id_fkey", "cascade"),
     unique("source_incarnations_identity").on(table.id, table.sourceId, table.vaultId),
     uniqueIndex("source_incarnations_active_source")
       .on(table.sourceId)
@@ -703,11 +623,7 @@ export const sourceDocuments = pgTable(
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "source_documents_vault_id_fkey",
-    }).onDelete("cascade"),
+    references(table.vaultId, vaults.id, "source_documents_vault_id_fkey", "cascade"),
     foreignKey({
       columns: [table.incarnationId, table.id, table.vaultId],
       foreignColumns: [
@@ -745,11 +661,7 @@ export const userDocuments = pgTable(
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.userId],
-      foreignColumns: [users.id],
-      name: "user_documents_user_id_fkey",
-    }).onDelete("cascade"),
+    references(table.userId, users.id, "user_documents_user_id_fkey", "cascade"),
     unique("user_documents_user_id_file_path_key").on(table.userId, table.filePath),
     index("ix_user_documents_user_id").on(table.userId),
   ],
@@ -769,11 +681,7 @@ export const shares = pgTable(
     revokedAt: timestamptz("revoked_at"),
   },
   (table) => [
-    foreignKey({
-      columns: [table.createdBy],
-      foreignColumns: [users.id],
-      name: "shares_created_by_fkey",
-    }).onDelete("cascade"),
+    references(table.createdBy, users.id, "shares_created_by_fkey", "cascade"),
     uniqueIndex("ix_shares_token").on(table.token),
   ],
 );
@@ -797,21 +705,13 @@ export const sourceProposals = pgTable(
     outcome: proposalOutcome("outcome"),
   },
   (table) => [
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "source_proposals_vault_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.userId],
-      foreignColumns: [users.id],
-      name: "source_proposals_user_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.sourceIncarnationId],
-      foreignColumns: [sourceIncarnations.id],
-      name: "source_proposals_source_incarnation_id_fkey",
-    }),
+    references(table.vaultId, vaults.id, "source_proposals_vault_id_fkey", "cascade"),
+    references(table.userId, users.id, "source_proposals_user_id_fkey", "cascade"),
+    references(
+      table.sourceIncarnationId,
+      sourceIncarnations.id,
+      "source_proposals_source_incarnation_id_fkey",
+    ),
     index("ix_source_proposals_source_id").on(table.sourceId),
     index("ix_source_proposals_vault_id").on(table.vaultId),
     index("source_proposals_unfinished_review")
@@ -842,16 +742,8 @@ export const ideas = pgTable(
     createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "ideas_vault_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.documentId],
-      foreignColumns: [sourceDocuments.id],
-      name: "ideas_document_id_fkey",
-    }).onDelete("cascade"),
+    references(table.vaultId, vaults.id, "ideas_vault_id_fkey", "cascade"),
+    references(table.documentId, sourceDocuments.id, "ideas_document_id_fkey", "cascade"),
     index("ix_ideas_vault_id").on(table.vaultId),
     index("ix_ideas_document_id").on(table.documentId),
   ],
@@ -874,16 +766,8 @@ export const topicProposals = pgTable(
     createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "topic_proposals_vault_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.documentId],
-      foreignColumns: [sourceDocuments.id],
-      name: "topic_proposals_document_id_fkey",
-    }).onDelete("cascade"),
+    references(table.vaultId, vaults.id, "topic_proposals_vault_id_fkey", "cascade"),
+    references(table.documentId, sourceDocuments.id, "topic_proposals_document_id_fkey", "cascade"),
     unique("topic_proposals_document_answer_position_key").on(
       table.documentId,
       table.askKey,
@@ -903,16 +787,8 @@ export const topicCandidates = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.lowerId, table.higherId] }),
-    foreignKey({
-      columns: [table.lowerId],
-      foreignColumns: [topicProposals.id],
-      name: "topic_candidates_lower_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.higherId],
-      foreignColumns: [topicProposals.id],
-      name: "topic_candidates_higher_id_fkey",
-    }).onDelete("cascade"),
+    references(table.lowerId, topicProposals.id, "topic_candidates_lower_id_fkey", "cascade"),
+    references(table.higherId, topicProposals.id, "topic_candidates_higher_id_fkey", "cascade"),
     check("topic_candidates_ordered", sql`${table.lowerId} < ${table.higherId}`),
     index("ix_topic_candidates_vault_id").on(table.vaultId),
     index("ix_topic_candidates_higher_id").on(table.higherId),
@@ -929,11 +805,7 @@ export const anchors = pgTable(
     chunkIndex: integer("chunk_index"),
   },
   (table) => [
-    foreignKey({
-      columns: [table.ideaId],
-      foreignColumns: [ideas.ideaId],
-      name: "anchors_idea_id_fkey",
-    }).onDelete("cascade"),
+    references(table.ideaId, ideas.ideaId, "anchors_idea_id_fkey", "cascade"),
     primaryKey({ columns: [table.ideaId, table.position] }),
   ],
 );
@@ -955,11 +827,7 @@ export const topics = pgTable(
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "topics_vault_id_fkey",
-    }).onDelete("cascade"),
+    references(table.vaultId, vaults.id, "topics_vault_id_fkey", "cascade"),
     check(
       "ck_topics_article_status",
       sql`${table.articleStatus} in ('no_article', 'rendered', 'needs_revision', 'archived')`,
@@ -976,16 +844,8 @@ export const topicMembership = pgTable(
     ideaId: uuidColumn("idea_id").notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.topicId],
-      foreignColumns: [topics.topicId],
-      name: "topic_membership_topic_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.ideaId],
-      foreignColumns: [ideas.ideaId],
-      name: "topic_membership_idea_id_fkey",
-    }).onDelete("cascade"),
+    references(table.topicId, topics.topicId, "topic_membership_topic_id_fkey", "cascade"),
+    references(table.ideaId, ideas.ideaId, "topic_membership_idea_id_fkey", "cascade"),
     primaryKey({ columns: [table.topicId, table.ideaId] }),
   ],
 );
@@ -997,16 +857,8 @@ export const topicLinks = pgTable(
     targetTopicId: uuidColumn("target_topic_id").notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.sourceTopicId],
-      foreignColumns: [topics.topicId],
-      name: "topic_links_source_topic_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.targetTopicId],
-      foreignColumns: [topics.topicId],
-      name: "topic_links_target_topic_id_fkey",
-    }).onDelete("cascade"),
+    references(table.sourceTopicId, topics.topicId, "topic_links_source_topic_id_fkey", "cascade"),
+    references(table.targetTopicId, topics.topicId, "topic_links_target_topic_id_fkey", "cascade"),
     primaryKey({ columns: [table.sourceTopicId, table.targetTopicId] }),
   ],
 );
@@ -1020,16 +872,13 @@ export const topicRelated = pgTable(
     jaccard: doublePrecision("jaccard").notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.topicId],
-      foreignColumns: [topics.topicId],
-      name: "topic_related_topic_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.relatedTopicId],
-      foreignColumns: [topics.topicId],
-      name: "topic_related_related_topic_id_fkey",
-    }).onDelete("cascade"),
+    references(table.topicId, topics.topicId, "topic_related_topic_id_fkey", "cascade"),
+    references(
+      table.relatedTopicId,
+      topics.topicId,
+      "topic_related_related_topic_id_fkey",
+      "cascade",
+    ),
     primaryKey({ columns: [table.topicId, table.relatedTopicId] }),
   ],
 );
@@ -1058,21 +907,14 @@ export const wikiArticles = pgTable(
       .notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.vaultId],
-      foreignColumns: [vaults.id],
-      name: "wiki_articles_vault_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.topicId],
-      foreignColumns: [topics.topicId],
-      name: "wiki_articles_topic_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.renderRunId],
-      foreignColumns: [pipelineRuns.id],
-      name: "fk_wiki_articles_render_run_id_pipeline_runs",
-    }).onDelete("set null"),
+    references(table.vaultId, vaults.id, "wiki_articles_vault_id_fkey", "cascade"),
+    references(table.topicId, topics.topicId, "wiki_articles_topic_id_fkey", "cascade"),
+    references(
+      table.renderRunId,
+      pipelineRuns.id,
+      "fk_wiki_articles_render_run_id_pipeline_runs",
+      "set null",
+    ),
     unique("wiki_articles_topic_id_key").on(table.topicId),
     index("ix_wiki_articles_vault_id").on(table.vaultId),
     index("ix_wiki_articles_render_run_id")
@@ -1088,16 +930,18 @@ export const backlinks = pgTable(
     targetArticleId: uuidColumn("target_article_id").notNull(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.sourceArticleId],
-      foreignColumns: [wikiArticles.id],
-      name: "backlinks_source_article_id_fkey",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.targetArticleId],
-      foreignColumns: [wikiArticles.id],
-      name: "backlinks_target_article_id_fkey",
-    }).onDelete("cascade"),
+    references(
+      table.sourceArticleId,
+      wikiArticles.id,
+      "backlinks_source_article_id_fkey",
+      "cascade",
+    ),
+    references(
+      table.targetArticleId,
+      wikiArticles.id,
+      "backlinks_target_article_id_fkey",
+      "cascade",
+    ),
     primaryKey({ columns: [table.sourceArticleId, table.targetArticleId] }),
   ],
 );
