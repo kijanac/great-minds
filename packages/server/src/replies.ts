@@ -294,7 +294,7 @@ export const RepliesServiceLive = Layer.effect(
     const settlement = yield* ReplySettlement;
     const storage = yield* ContentStorage;
     const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
-    const pollIntervalMs = Option.isSome(config.goldensClock) ? 1 : 100;
+    const pollIntervalMs = 100;
 
     const readReply = (vaultId: Uuid, replyId: Uuid) =>
       db

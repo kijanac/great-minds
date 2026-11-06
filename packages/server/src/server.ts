@@ -10,6 +10,7 @@ import {
   ServiceUnavailable,
   Validation,
   type DomainError,
+  type Uuid,
 } from "@great-minds/domain";
 import ipaddr from "ipaddr.js";
 import { Cause, Context, Effect, Layer, ManagedRuntime, Option, Redacted, Stream } from "effect";
@@ -67,6 +68,15 @@ type StartedServer = {
 };
 
 const MountedGreatMindsApi = GreatMindsApi.prefix("/v1");
+
+const asUser = <I, S, A, E, R>(
+  service: Context.Key<I, S>,
+  run: (service: S, userId: Uuid) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const current = yield* CurrentAuth;
+    return yield* run(yield* service, current.user_id);
+  });
 
 const jsonResponse = (status: number, body: unknown) =>
   HttpServerResponse.json(body, { status }).pipe(Effect.orDie);
@@ -267,46 +277,20 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
       }),
     )
     .handle("listPasskeys", () =>
-      Effect.gen(function* () {
-        const passkeys = yield* PasskeysService;
-        const current = yield* CurrentAuth;
-        return yield* passkeys.list(current.user_id);
-      }),
+      asUser(PasskeysService, (passkeys, userId) => passkeys.list(userId)),
     )
     .handle("deletePasskey", ({ params }) =>
-      Effect.gen(function* () {
-        const passkeys = yield* PasskeysService;
-        const current = yield* CurrentAuth;
-        yield* passkeys.delete(current.user_id, params.id);
-      }),
+      asUser(PasskeysService, (passkeys, userId) => passkeys.delete(userId, params.id)),
     )
     .handle("createApiKey", ({ payload }) =>
-      Effect.gen(function* () {
-        const auth = yield* AuthService;
-        const current = yield* CurrentAuth;
-        return yield* auth.createApiKey(current.user_id, payload.label);
-      }),
+      asUser(AuthService, (auth, userId) => auth.createApiKey(userId, payload.label)),
     )
-    .handle("listApiKeys", () =>
-      Effect.gen(function* () {
-        const auth = yield* AuthService;
-        const current = yield* CurrentAuth;
-        return yield* auth.listApiKeys(current.user_id);
-      }),
-    )
+    .handle("listApiKeys", () => asUser(AuthService, (auth, userId) => auth.listApiKeys(userId)))
     .handle("deleteApiKey", ({ params }) =>
-      Effect.gen(function* () {
-        const auth = yield* AuthService;
-        const current = yield* CurrentAuth;
-        yield* auth.revokeApiKey(current.user_id, params.key_id);
-      }),
+      asUser(AuthService, (auth, userId) => auth.revokeApiKey(userId, params.key_id)),
     )
     .handle("deleteMe", () =>
-      Effect.gen(function* () {
-        const vaultsService = yield* VaultsService;
-        const current = yield* CurrentAuth;
-        yield* vaultsService.deleteAccount(current.user_id);
-      }),
+      asUser(VaultsService, (vaultsService, userId) => vaultsService.deleteAccount(userId)),
     ),
 );
 
@@ -322,234 +306,153 @@ const RefsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "refs", (han
       }),
     )
     .handle("listReferences", ({ query }) =>
-      Effect.gen(function* () {
-        const documents = yield* UserDocumentsService;
-        const current = yield* CurrentAuth;
-        return yield* documents.list(current.user_id, query);
-      }),
+      asUser(UserDocumentsService, (documents, userId) => documents.list(userId, query)),
     )
     .handle("resolveReference", ({ query }) =>
-      Effect.gen(function* () {
-        const documents = yield* UserDocumentsService;
-        const current = yield* CurrentAuth;
-        return yield* documents.read(current.user_id, query.path);
-      }),
+      asUser(UserDocumentsService, (documents, userId) => documents.read(userId, query.path)),
     )
     .handle("deleteReference", ({ params }) =>
-      Effect.gen(function* () {
-        const documents = yield* UserDocumentsService;
-        const current = yield* CurrentAuth;
-        yield* documents.delete(current.user_id, params.reference_id);
-      }),
+      asUser(UserDocumentsService, (documents, userId) =>
+        documents.delete(userId, params.reference_id),
+      ),
     )
     .handle("updateReference", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const documents = yield* UserDocumentsService;
-        const current = yield* CurrentAuth;
-        return yield* documents.update(current.user_id, params.reference_id, payload);
-      }),
+      asUser(UserDocumentsService, (documents, userId) =>
+        documents.update(userId, params.reference_id, payload),
+      ),
     ),
 );
 
 const VaultHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "vaults", (handlers) =>
   handlers
     .handle("listVaults", ({ query }) =>
-      Effect.gen(function* () {
-        const vaultsService = yield* VaultsService;
-        const current = yield* CurrentAuth;
-        return yield* vaultsService.listVaults(current.user_id, query);
-      }),
+      asUser(VaultsService, (vaultsService, userId) => vaultsService.listVaults(userId, query)),
     )
     .handle("createVault", ({ payload }) =>
-      Effect.gen(function* () {
-        const vaultsService = yield* VaultsService;
-        const current = yield* CurrentAuth;
-        return yield* vaultsService.createVault(current.user_id, payload);
-      }),
+      asUser(VaultsService, (vaultsService, userId) => vaultsService.createVault(userId, payload)),
     )
     .handle("draftVaultHint", ({ payload }) =>
-      Effect.gen(function* () {
-        const query = yield* QueryService;
-        const current = yield* CurrentAuth;
-        return yield* query.draftHint(current.user_id, payload.description);
-      }),
+      asUser(QueryService, (query, userId) => query.draftHint(userId, payload.description)),
     )
     .handle("getVault", ({ params }) =>
-      Effect.gen(function* () {
-        const vaultsService = yield* VaultsService;
-        const current = yield* CurrentAuth;
-        return yield* vaultsService.getVaultDetail(current.user_id, params.vault_id);
-      }),
+      asUser(VaultsService, (vaultsService, userId) =>
+        vaultsService.getVaultDetail(userId, params.vault_id),
+      ),
     )
     .handle("renameVault", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const vaultsService = yield* VaultsService;
-        const current = yield* CurrentAuth;
-        yield* vaultsService.renameVault(current.user_id, params.vault_id, payload);
-      }),
+      asUser(VaultsService, (vaultsService, userId) =>
+        vaultsService.renameVault(userId, params.vault_id, payload),
+      ),
     )
     .handle("getVaultConfig", ({ params }) =>
-      Effect.gen(function* () {
-        const vaultsService = yield* VaultsService;
-        const current = yield* CurrentAuth;
-        return yield* vaultsService.getVaultConfig(current.user_id, params.vault_id);
-      }),
+      asUser(VaultsService, (vaultsService, userId) =>
+        vaultsService.getVaultConfig(userId, params.vault_id),
+      ),
     )
     .handle("updateVaultConfig", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const vaultsService = yield* VaultsService;
-        const current = yield* CurrentAuth;
-        return yield* vaultsService.updateVaultConfig(current.user_id, params.vault_id, payload);
-      }),
+      asUser(VaultsService, (vaultsService, userId) =>
+        vaultsService.updateVaultConfig(userId, params.vault_id, payload),
+      ),
     )
     .handle("listVaultMembers", ({ params, query }) =>
-      Effect.gen(function* () {
-        const vaultsService = yield* VaultsService;
-        const current = yield* CurrentAuth;
-        return yield* vaultsService.listMembers(current.user_id, params.vault_id, query);
-      }),
+      asUser(VaultsService, (vaultsService, userId) =>
+        vaultsService.listMembers(userId, params.vault_id, query),
+      ),
     )
     .handle("inviteVaultMember", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const vaultsService = yield* VaultsService;
-        const current = yield* CurrentAuth;
-        return yield* vaultsService.inviteMember(current.user_id, params.vault_id, payload);
-      }),
+      asUser(VaultsService, (vaultsService, userId) =>
+        vaultsService.inviteMember(userId, params.vault_id, payload),
+      ),
     )
     .handle("updateVaultMember", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const vaultsService = yield* VaultsService;
-        const current = yield* CurrentAuth;
-        return yield* vaultsService.updateMemberRole(
-          current.user_id,
+      asUser(VaultsService, (vaultsService, userId) =>
+        vaultsService.updateMemberRole(
+          userId,
           params.vault_id,
           params.member_user_id,
           payload.role,
-        );
-      }),
+        ),
+      ),
     )
     .handle("removeVaultMember", ({ params }) =>
-      Effect.gen(function* () {
-        const vaultsService = yield* VaultsService;
-        const current = yield* CurrentAuth;
-        yield* vaultsService.removeMember(current.user_id, params.vault_id, params.member_user_id);
-      }),
+      asUser(VaultsService, (vaultsService, userId) =>
+        vaultsService.removeMember(userId, params.vault_id, params.member_user_id),
+      ),
     )
     .handle("transferVaultOwnership", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const vaultsService = yield* VaultsService;
-        const current = yield* CurrentAuth;
-        yield* vaultsService.transferOwnership(current.user_id, params.vault_id, payload);
-      }),
+      asUser(VaultsService, (vaultsService, userId) =>
+        vaultsService.transferOwnership(userId, params.vault_id, payload),
+      ),
     )
     .handle("deleteVault", ({ params }) =>
-      Effect.gen(function* () {
-        const vaultsService = yield* VaultsService;
-        const current = yield* CurrentAuth;
-        yield* vaultsService.deleteVault(current.user_id, params.vault_id);
-      }),
+      asUser(VaultsService, (vaultsService, userId) =>
+        vaultsService.deleteVault(userId, params.vault_id),
+      ),
     ),
 );
 
 const WikiHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "wiki", (handlers) =>
   handlers
     .handle("listWikiArticles", ({ params, query }) =>
-      Effect.gen(function* () {
-        const wiki = yield* WikiService;
-        const current = yield* CurrentAuth;
-        return yield* wiki.listArticles(current.user_id, params.vault_id, query);
-      }),
+      asUser(WikiService, (wiki, userId) => wiki.listArticles(userId, params.vault_id, query)),
     )
     .handle("listRecentWikiArticles", ({ params, query }) =>
-      Effect.gen(function* () {
-        const wiki = yield* WikiService;
-        const current = yield* CurrentAuth;
-        return yield* wiki.listRecent(current.user_id, params.vault_id, query);
-      }),
+      asUser(WikiService, (wiki, userId) => wiki.listRecent(userId, params.vault_id, query)),
     ),
 );
 
 const SourcesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "sources", (handlers) =>
   handlers
     .handle("listSources", ({ params, query }) =>
-      Effect.gen(function* () {
-        const sources = yield* SourcesService;
-        const current = yield* CurrentAuth;
-        return yield* sources.listSources(current.user_id, params.vault_id, query);
-      }),
+      asUser(SourcesService, (sources, userId) =>
+        sources.listSources(userId, params.vault_id, query),
+      ),
     )
     .handle("readSource", ({ params }) =>
-      Effect.gen(function* () {
-        const documents = yield* DocumentsService;
-        const current = yield* CurrentAuth;
-        return yield* documents.readSource(current.user_id, params.vault_id, params.source_id);
-      }),
+      asUser(DocumentsService, (documents, userId) =>
+        documents.readSource(userId, params.vault_id, params.source_id),
+      ),
     )
     .handle("deleteSource", ({ params }) =>
-      Effect.gen(function* () {
-        const sources = yield* SourcesService;
-        const current = yield* CurrentAuth;
-        yield* sources.deleteSource(current.user_id, params.vault_id, params.source_id);
-      }),
+      asUser(SourcesService, (sources, userId) =>
+        sources.deleteSource(userId, params.vault_id, params.source_id),
+      ),
     )
     .handle("requestSourceDeletion", ({ params }) =>
-      Effect.gen(function* () {
-        const sources = yield* SourcesService;
-        const current = yield* CurrentAuth;
-        return yield* sources.requestSourceDeletion(
-          current.user_id,
-          params.vault_id,
-          params.source_id,
-        );
-      }),
+      asUser(SourcesService, (sources, userId) =>
+        sources.requestSourceDeletion(userId, params.vault_id, params.source_id),
+      ),
     ),
 );
 
 const ProposalsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "proposals", (handlers) =>
   handlers
     .handle("listProposals", ({ params, query }) =>
-      Effect.gen(function* () {
-        const proposals = yield* ProposalsService;
-        const current = yield* CurrentAuth;
-        return yield* proposals.list(current.user_id, params.vault_id, query);
-      }),
+      asUser(ProposalsService, (proposals, userId) =>
+        proposals.list(userId, params.vault_id, query),
+      ),
     )
     .handle("createProposal", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const proposals = yield* ProposalsService;
-        const current = yield* CurrentAuth;
-        return yield* proposals.create(current.user_id, params.vault_id, payload);
-      }),
+      asUser(ProposalsService, (proposals, userId) =>
+        proposals.create(userId, params.vault_id, payload),
+      ),
     )
     .handle("getProposal", ({ params }) =>
-      Effect.gen(function* () {
-        const proposals = yield* ProposalsService;
-        const current = yield* CurrentAuth;
-        return yield* proposals.get(current.user_id, params.vault_id, params.proposal_id);
-      }),
+      asUser(ProposalsService, (proposals, userId) =>
+        proposals.get(userId, params.vault_id, params.proposal_id),
+      ),
     )
     .handle("reviewProposal", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const proposals = yield* ProposalsService;
-        const current = yield* CurrentAuth;
-        return yield* proposals.review(
-          current.user_id,
-          params.vault_id,
-          params.proposal_id,
-          payload,
-        );
-      }),
+      asUser(ProposalsService, (proposals, userId) =>
+        proposals.review(userId, params.vault_id, params.proposal_id, payload),
+      ),
     ),
 );
 
 const IngestHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "ingest", (handlers) =>
   handlers
     .handle("ingestRaw", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const ingest = yield* IngestService;
-        const current = yield* CurrentAuth;
-        return yield* ingest.ingestRaw(current.user_id, params.vault_id, payload);
-      }),
+      asUser(IngestService, (ingest, userId) => ingest.ingestRaw(userId, params.vault_id, payload)),
     )
     .handle("promoteReference", ({ params, payload }) =>
       Effect.gen(function* () {
@@ -560,11 +463,9 @@ const IngestHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "ingest", 
       }),
     )
     .handle("ingestUserSuggestion", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const ingest = yield* IngestService;
-        const current = yield* CurrentAuth;
-        return yield* ingest.ingestUserSuggestion(current.user_id, params.vault_id, payload);
-      }),
+      asUser(IngestService, (ingest, userId) =>
+        ingest.ingestUserSuggestion(userId, params.vault_id, payload),
+      ),
     )
     .handle("checkFileIngestDupes", ({ params, payload }) =>
       Effect.gen(function* () {
@@ -579,56 +480,28 @@ const IngestHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "ingest", 
       }),
     )
     .handle("createFileIngest", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const batches = yield* FileIngestBatches;
-        const current = yield* CurrentAuth;
-        return yield* batches.create(
-          current.user_id,
-          params.vault_id,
-          payload.batch_id,
-          payload.files,
-        );
-      }),
+      asUser(FileIngestBatches, (batches, userId) =>
+        batches.create(userId, params.vault_id, payload.batch_id, payload.files),
+      ),
     )
     .handle("getFileIngest", ({ params }) =>
-      Effect.gen(function* () {
-        const batches = yield* FileIngestBatches;
-        const current = yield* CurrentAuth;
-        return yield* batches.get(current.user_id, params.batch_id);
-      }),
+      asUser(FileIngestBatches, (batches, userId) => batches.get(userId, params.batch_id)),
     )
     .handle("resumeFileIngest", ({ params }) =>
-      Effect.gen(function* () {
-        const batches = yield* FileIngestBatches;
-        const current = yield* CurrentAuth;
-        return yield* batches.resume(current.user_id, params.batch_id);
-      }),
+      asUser(FileIngestBatches, (batches, userId) => batches.resume(userId, params.batch_id)),
     )
     .handle("uploadFileIngestFile", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const batches = yield* FileIngestBatches;
-        const current = yield* CurrentAuth;
-        yield* batches.upload(
-          current.user_id,
-          params.batch_id,
-          params.hash,
-          uploadedFileContent(payload),
-        );
-      }),
+      asUser(FileIngestBatches, (batches, userId) =>
+        batches.upload(userId, params.batch_id, params.hash, uploadedFileContent(payload)),
+      ),
     )
     .handle("acknowledgeFileIngestUpload", ({ params }) =>
-      Effect.gen(function* () {
-        const batches = yield* FileIngestBatches;
-        const current = yield* CurrentAuth;
-        yield* batches.acknowledge(current.user_id, params.batch_id, params.hash);
-      }),
+      asUser(FileIngestBatches, (batches, userId) =>
+        batches.acknowledge(userId, params.batch_id, params.hash),
+      ),
     )
     .handle("commitFileIngest", ({ params }) =>
-      Effect.gen(function* () {
-        const batches = yield* FileIngestBatches;
-        const current = yield* CurrentAuth;
-        return yield* batches.commit(current.user_id, params.batch_id);
-      }),
+      asUser(FileIngestBatches, (batches, userId) => batches.commit(userId, params.batch_id)),
     ),
 );
 
@@ -647,37 +520,18 @@ const JobsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "jobs", (han
       }),
     )
     .handle("retryUrlJob", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const urlIngest = yield* UrlIngestService;
-        const current = yield* CurrentAuth;
-        return yield* urlIngest.retry(
-          current.user_id,
-          params.vault_id,
-          params.job_id,
-          payload.job_id,
-        );
-      }),
+      asUser(UrlIngestService, (urlIngest, userId) =>
+        urlIngest.retry(userId, params.vault_id, params.job_id, payload.job_id),
+      ),
     )
     .handle("listJobs", ({ params, query }) =>
-      Effect.gen(function* () {
-        const jobs = yield* JobsService;
-        const current = yield* CurrentAuth;
-        return yield* jobs.list(current.user_id, params.vault_id, query);
-      }),
+      asUser(JobsService, (jobs, userId) => jobs.list(userId, params.vault_id, query)),
     )
     .handle("getJob", ({ params }) =>
-      Effect.gen(function* () {
-        const jobs = yield* JobsService;
-        const current = yield* CurrentAuth;
-        return yield* jobs.get(current.user_id, params.vault_id, params.job_id);
-      }),
+      asUser(JobsService, (jobs, userId) => jobs.get(userId, params.vault_id, params.job_id)),
     )
     .handle("streamJob", ({ params }) =>
-      Effect.gen(function* () {
-        const jobs = yield* JobsService;
-        const current = yield* CurrentAuth;
-        return yield* jobs.stream(current.user_id, params.vault_id, params.job_id);
-      }),
+      asUser(JobsService, (jobs, userId) => jobs.stream(userId, params.vault_id, params.job_id)),
     ),
 );
 
@@ -699,11 +553,9 @@ const CompileHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "compile"
       }),
     )
     .handle("cancelCompile", ({ params }) =>
-      Effect.gen(function* () {
-        const jobs = yield* JobsService;
-        const current = yield* CurrentAuth;
-        yield* jobs.cancelCompile(current.user_id, params.vault_id, params.run_id);
-      }),
+      asUser(JobsService, (jobs, userId) =>
+        jobs.cancelCompile(userId, params.vault_id, params.run_id),
+      ),
     ),
 );
 
@@ -720,146 +572,90 @@ const LintHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "lint", (han
 const CostsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "costs", (handlers) =>
   handlers
     .handle("getUserCosts", ({ query }) =>
-      Effect.gen(function* () {
-        const costs = yield* CostsService;
-        const current = yield* CurrentAuth;
-        return yield* costs.forUser(current.user_id, query);
-      }),
+      asUser(CostsService, (costs, userId) => costs.forUser(userId, query)),
     )
     .handle("getVaultCosts", ({ params, query }) =>
-      Effect.gen(function* () {
-        const costs = yield* CostsService;
-        const current = yield* CurrentAuth;
-        return yield* costs.forVault(current.user_id, params.vault_id, query);
-      }),
+      asUser(CostsService, (costs, userId) => costs.forVault(userId, params.vault_id, query)),
     ),
 );
 
 const DocumentsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "documents", (handlers) =>
   handlers
     .handle("resolveDocument", ({ params, query }) =>
-      Effect.gen(function* () {
-        const documents = yield* DocumentsService;
-        const current = yield* CurrentAuth;
-        return yield* documents.readDocument(current.user_id, params.vault_id, query.path);
-      }),
+      asUser(DocumentsService, (documents, userId) =>
+        documents.readDocument(userId, params.vault_id, query.path),
+      ),
     )
     .handle("readChunks", ({ params, query }) =>
-      Effect.gen(function* () {
-        const documents = yield* DocumentsService;
-        const current = yield* CurrentAuth;
-        return yield* documents.readChunks(current.user_id, params.vault_id, query);
-      }),
+      asUser(DocumentsService, (documents, userId) =>
+        documents.readChunks(userId, params.vault_id, query),
+      ),
     )
     .handle("readLinks", ({ params, query }) =>
-      Effect.gen(function* () {
-        const documents = yield* DocumentsService;
-        const current = yield* CurrentAuth;
-        return yield* documents.readLinks(current.user_id, params.vault_id, query);
-      }),
+      asUser(DocumentsService, (documents, userId) =>
+        documents.readLinks(userId, params.vault_id, query),
+      ),
     ),
 );
 
 const SessionsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "sessions", (handlers) =>
   handlers
     .handle("continueAsSession", ({ params }) =>
-      Effect.gen(function* () {
-        const sessions = yield* SessionsService;
-        const current = yield* CurrentAuth;
-        return yield* sessions.continueAsSession(
-          current.user_id,
-          params.vault_id,
-          params.session_id,
-        );
-      }),
+      asUser(SessionsService, (sessions, userId) =>
+        sessions.continueAsSession(userId, params.vault_id, params.session_id),
+      ),
     )
     .handle("promoteSessionExchange", ({ params }) =>
-      Effect.gen(function* () {
-        const sessions = yield* SessionsService;
-        const current = yield* CurrentAuth;
-        return yield* sessions.promoteExchange(
-          current.user_id,
-          params.vault_id,
-          params.session_id,
-          params.exchange_id,
-        );
-      }),
+      asUser(SessionsService, (sessions, userId) =>
+        sessions.promoteExchange(userId, params.vault_id, params.session_id, params.exchange_id),
+      ),
     )
     .handle("listSessions", ({ params, query }) =>
-      Effect.gen(function* () {
-        const sessions = yield* SessionsService;
-        const current = yield* CurrentAuth;
-        return yield* sessions.listSessions(current.user_id, params.vault_id, query);
-      }),
+      asUser(SessionsService, (sessions, userId) =>
+        sessions.listSessions(userId, params.vault_id, query),
+      ),
     )
     .handle("listSessionsByOrigin", ({ params, query }) =>
-      Effect.gen(function* () {
-        const sessions = yield* SessionsService;
-        const current = yield* CurrentAuth;
-        return yield* sessions.listSessionsByOrigin(
-          current.user_id,
-          params.vault_id,
-          query.doc_path,
-        );
-      }),
+      asUser(SessionsService, (sessions, userId) =>
+        sessions.listSessionsByOrigin(userId, params.vault_id, query.doc_path),
+      ),
     )
     .handle("readSession", ({ params }) =>
-      Effect.gen(function* () {
-        const sessions = yield* SessionsService;
-        const current = yield* CurrentAuth;
-        return yield* sessions.readSession(current.user_id, params.vault_id, params.session_id);
-      }),
+      asUser(SessionsService, (sessions, userId) =>
+        sessions.readSession(userId, params.vault_id, params.session_id),
+      ),
     )
     .handle("readSessionMarkdown", ({ params }) =>
-      Effect.gen(function* () {
-        const exports = yield* SessionExportsService;
-        const current = yield* CurrentAuth;
-        return yield* exports.readMarkdown(current.user_id, params.vault_id, params.session_id);
-      }),
+      asUser(SessionExportsService, (exports, userId) =>
+        exports.readMarkdown(userId, params.vault_id, params.session_id),
+      ),
     )
     .handle("prepareSessionExport", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const exports = yield* SessionExportsService;
-        const current = yield* CurrentAuth;
-        return yield* exports.prepare(current.user_id, params.vault_id, params.session_id, payload);
-      }),
+      asUser(SessionExportsService, (exports, userId) =>
+        exports.prepare(userId, params.vault_id, params.session_id, payload),
+      ),
     ),
 );
 
 const RepliesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "replies", (handlers) =>
   handlers
     .handle("createReply", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const replies = yield* RepliesService;
-        const current = yield* CurrentAuth;
-        return yield* replies.create(current.user_id, params.vault_id, payload);
-      }),
+      asUser(RepliesService, (replies, userId) => replies.create(userId, params.vault_id, payload)),
     )
     .handle("retryReply", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const replies = yield* RepliesService;
-        const current = yield* CurrentAuth;
-        return yield* replies.retry(
-          current.user_id,
-          params.vault_id,
-          params.reply_id,
-          payload.reply_id,
-        );
-      }),
+      asUser(RepliesService, (replies, userId) =>
+        replies.retry(userId, params.vault_id, params.reply_id, payload.reply_id),
+      ),
     )
     .handle("stopReply", ({ params }) =>
-      Effect.gen(function* () {
-        const replies = yield* RepliesService;
-        const current = yield* CurrentAuth;
-        yield* replies.stop(current.user_id, params.vault_id, params.reply_id);
-      }),
+      asUser(RepliesService, (replies, userId) =>
+        replies.stop(userId, params.vault_id, params.reply_id),
+      ),
     )
     .handle("streamReply", ({ params }) =>
-      Effect.gen(function* () {
-        const replies = yield* RepliesService;
-        const current = yield* CurrentAuth;
-        return yield* replies.stream(current.user_id, params.vault_id, params.reply_id);
-      }),
+      asUser(RepliesService, (replies, userId) =>
+        replies.stream(userId, params.vault_id, params.reply_id),
+      ),
     ),
 );
 
@@ -877,19 +673,9 @@ const SharesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "shares", 
         return yield* shares.create(current.user_id, payload);
       }),
     )
-    .handle("listShares", () =>
-      Effect.gen(function* () {
-        const shares = yield* SharesService;
-        const current = yield* CurrentAuth;
-        return yield* shares.listMine(current.user_id);
-      }),
-    )
+    .handle("listShares", () => asUser(SharesService, (shares, userId) => shares.listMine(userId)))
     .handle("deleteShare", ({ params }) =>
-      Effect.gen(function* () {
-        const shares = yield* SharesService;
-        const current = yield* CurrentAuth;
-        yield* shares.revoke(current.user_id, params.share_id);
-      }),
+      asUser(SharesService, (shares, userId) => shares.revoke(userId, params.share_id)),
     ),
 );
 

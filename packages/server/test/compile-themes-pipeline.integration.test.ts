@@ -86,21 +86,13 @@ const config: AppConfigShape = {
   reduceModel: "anthropic/claude-sonnet-5.5",
   renderModel: "z-ai/glm-5.3",
   extractTemperature: Option.some(0.2),
-  mapTemperature: Option.some(0.3),
-  reduceTemperature: Option.none(),
   renderTemperature: Option.some(0.3),
   renderReasoningEffort: Option.some("high"),
   compileEnrichConcurrency: 2,
   compileWriteConcurrency: 2,
-  compilePartitionTargetTokens: 100_000,
-  compilePartitionMinFactor: 0.3,
-  compilePartitionMaxFactor: 1.5,
-  compilePremergeJaccardThreshold: 0.8,
   compileDeriveRelatedLimit: 20,
   compileEmbedConcurrency: 1,
   pipelineConcurrency: 1,
-  goldensRandomSeed: Option.none(),
-  goldensClock: Option.none(),
   embeddingModel: "qwen/qwen3-embedding-8b",
   embeddingProviders: [],
   corsOrigins: [],
@@ -248,7 +240,7 @@ const compile = (runId: Uuid) =>
       yield* phases.derive(id.vault, runId, validated);
       yield* phases.render(id.vault, runId, validated);
       yield* phases.verify(id.vault, runId);
-      yield* phases.publish(id.vault, runId, "2026-11-05T12:00:00+00:00");
+      yield* phases.publish(id.vault, runId);
       return validated;
     }),
   );

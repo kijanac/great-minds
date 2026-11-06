@@ -41,10 +41,6 @@ import { ContentStorage, StagedStorage, userOwner, vaultOwner } from "./storage.
 import { readVaultConfig, VAULT_CONFIG_PATH } from "./vault-config.ts";
 import { liveArticleConditions } from "./wiki-articles.ts";
 
-type CountRow = {
-  readonly count: number;
-};
-
 type DbMemberRole = typeof vaultMemberships.$inferSelect.role;
 
 type VaultScope = {
@@ -222,14 +218,6 @@ const memberResponse = (row: {
 const ownerOnly = () => new Forbidden({ detail: "Only vault owners can perform this action" });
 
 const vaultBeingDeleted = () => new Forbidden({ detail: "This vault is being deleted" });
-
-const oneCount = (rows: readonly CountRow[]) => {
-  const row = rows[0];
-  if (row === undefined) {
-    throw new Error("count query returned no rows");
-  }
-  return row.count;
-};
 
 const lockOwnedVault = (tx: TransactionClient, userId: Uuid, vaultId: Uuid) =>
   Effect.gen(function* () {
@@ -523,12 +511,12 @@ export const VaultsServiceLive = Layer.effect(
         Effect.gen(function* () {
           const membershipCounts = yield* db.query((d) =>
             d
-              .select({ count: sql<number>`count(*)::int` })
+              .select({ total: sql<number>`count(*)::int` })
               .from(vaultMemberships)
               .innerJoin(vaults, eq(vaults.id, vaultMemberships.vaultId))
               .where(and(eq(vaultMemberships.userId, userId), isNull(vaults.deletedAt))),
           );
-          if (oneCount(membershipCounts) > 0) {
+          if (oneTotal(membershipCounts) > 0) {
             return;
           }
           yield* createVault(userId, { name: `${email}'s vault` });

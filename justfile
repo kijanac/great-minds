@@ -24,7 +24,7 @@ lint-web:
 
 # Lint TypeScript packages with oxlint
 lint-packages:
-    pnpm exec oxlint packages/domain/src packages/database/src packages/server/src packages/server/scripts packages/server/test packages/goldens/src packages/goldens/test
+    pnpm exec oxlint packages/domain/src packages/database/src packages/server/src packages/server/scripts packages/server/test
 
 # Test the custom oxlint boundary rules
 test-lint-plugin:
@@ -51,15 +51,6 @@ test-web:
 test-packages:
     pnpm test:history-settlement --all
 
-# Record compile goldens through live OpenRouter (explicitly opt-in)
-goldens-record:
-    GOLDENS_RECORD=1 pnpm --filter @great-minds/goldens record
-
-# Replay compile goldens through the TypeScript backend
-goldens-check:
-    pnpm --filter @great-minds/goldens test
-    pnpm --filter @great-minds/goldens check
-
 # ---------------------------------------------------------------------------
 # Compound checks
 # ---------------------------------------------------------------------------
@@ -70,8 +61,8 @@ ci: lint-web format-web types-web test-web lint-packages test-lint-plugin types-
 # Run full CI checks, including hermetic TypeScript package integration
 ci-full: ci test-packages
 
-# Pre-push review: full CI gate plus goldens replay
-review: ci-full goldens-check
+# Pre-push review: full CI gate
+review: ci-full
     @echo ""
     @echo "Review: PASSED"
 

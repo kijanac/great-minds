@@ -1,17 +1,11 @@
-import {
-  compileIntents,
-  Database,
-  fileIngestBatches,
-  fileIngestFiles,
-  pipelineRuns,
-  sourceDocuments,
-} from "@great-minds/database";
+import { Database, fileIngestBatches, fileIngestFiles, sourceDocuments } from "@great-minds/database";
 import { Conflict, FileFingerprint, Uuid } from "@great-minds/domain";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { Cause, Effect, Exit, Schema } from "effect";
 import * as Activity from "effect/unstable/workflow/Activity";
 import * as Workflow from "effect/unstable/workflow/Workflow";
 
+import { queueCompile, linkRunToIntent } from "./compile-intents.ts";
 import { stagedFileToMarkdown } from "./conversion.ts";
 import { fileContentHash, rawFileHash } from "./crypto.ts";
 import { causeDetails, formatError } from "./error-details.ts";
@@ -316,32 +310,8 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
           yield* db
             .transaction((tx) =>
               Effect.gen(function* () {
-                const intents = yield* tx
-                  .insert(compileIntents)
-                  .values({ vaultId, pipelineRunId: runId })
-                  .onConflictDoUpdate({
-                    target: compileIntents.vaultId,
-                    targetWhere: sql`${compileIntents.dispatchedAt} IS NULL`,
-                    set: { vaultId: sql`compile_intents.vault_id` },
-                  })
-                  .returning({
-                    id: compileIntents.id,
-                    pipelineRunId: compileIntents.pipelineRunId,
-                  });
-                const intent = intents[0];
-                if (intent === undefined) {
-                  throw new Error("compile intent upsert returned no row");
-                }
-                if (intent.pipelineRunId === null) {
-                  yield* tx
-                    .update(compileIntents)
-                    .set({ pipelineRunId: runId })
-                    .where(eq(compileIntents.id, intent.id));
-                }
-                yield* tx
-                  .update(pipelineRuns)
-                  .set({ compileIntentId: intent.id, updatedAt: sql`now()` })
-                  .where(eq(pipelineRuns.id, runId));
+                const intent = yield* queueCompile(tx, vaultId, runId);
+                yield* linkRunToIntent(tx, runId, intent.id);
               }),
             );
           yield* pipeline.updateProgress(

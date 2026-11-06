@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  compileIntents,
   Database,
   sourceIncarnations,
   sourceProposals,
@@ -27,6 +26,7 @@ import { Cause, Context, Effect, Layer, Result } from "effect";
 import { stringify as stringifyYaml } from "yaml";
 
 import { backgroundLoop } from "./background-loop.ts";
+import { queueCompile } from "./compile-intents.ts";
 import { StructuredLogger } from "./logging.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { identifySourceMarkdown } from "./source-identity.ts";
@@ -248,15 +248,7 @@ export const ProposalsServiceLive = Layer.effect(
       });
 
     const ensureCompileIntent = (vaultId: Uuid) =>
-      db.query((d) => d
-        .insert(compileIntents)
-        .values({ vaultId })
-        .onConflictDoUpdate({
-          target: compileIntents.vaultId,
-          targetWhere: sql`${compileIntents.dispatchedAt} IS NULL`,
-          set: { vaultId: sql`compile_intents.vault_id` },
-        })
-        .returning({ id: compileIntents.id }));
+      db.transaction((tx) => queueCompile(tx, vaultId));
 
     const claimDecision = (tx: TransactionClient, proposalId: Uuid, status: DbDecision) =>
       Effect.gen(function* () {

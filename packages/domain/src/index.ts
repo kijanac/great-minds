@@ -1149,6 +1149,8 @@ export const DocumentPathQuery = Schema.Struct({
 });
 export type DocumentPathQuery = typeof DocumentPathQuery.Type;
 
+export const VaultIdParams = Schema.Struct({ vault_id: Uuid });
+
 export const SourceIdParams = Schema.Struct({
   vault_id: Uuid,
   source_id: Uuid,
@@ -1604,45 +1606,35 @@ const VaultsApiGroup = HttpApiGroup.make("vaults").add(
     error: [BadRequestResponse, ServiceUnavailableResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("getVault", "/vaults/:vault_id", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     success: VaultDetail,
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.patch("renameVault", "/vaults/:vault_id", {
-    params: { vault_id: Uuid },
+    params: VaultIdParams,
     payload: VaultRename,
     success: HttpApiSchema.NoContent,
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("getVaultConfig", "/vaults/:vault_id/config", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     success: VaultConfig,
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.patch("updateVaultConfig", "/vaults/:vault_id/config", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     payload: VaultConfigUpdate,
     success: VaultConfig,
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("listVaultMembers", "/vaults/:vault_id/members", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     query: PageParamsQuery,
     success: MemberPage,
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("inviteVaultMember", "/vaults/:vault_id/members", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     payload: MembershipInvite,
     success: CreatedMember,
     error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
@@ -1665,17 +1657,13 @@ const VaultsApiGroup = HttpApiGroup.make("vaults").add(
     error: MembershipChangeErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("transferVaultOwnership", "/vaults/:vault_id/transfer-ownership", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     payload: OwnershipTransfer,
     success: HttpApiSchema.NoContent,
     error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.delete("deleteVault", "/vaults/:vault_id", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     success: HttpApiSchema.NoContent,
     error: ForbiddenNotFoundValidationErrors,
   }).middleware(AuthMiddleware),
@@ -1683,17 +1671,13 @@ const VaultsApiGroup = HttpApiGroup.make("vaults").add(
 
 const WikiApiGroup = HttpApiGroup.make("wiki").add(
   HttpApiEndpoint.get("listWikiArticles", "/vaults/:vault_id/wiki", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     query: WikiListQuery,
     success: WikiArticlePage,
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("listRecentWikiArticles", "/vaults/:vault_id/wiki/recent", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     query: PageParamsQuery,
     success: WikiArticlePage,
     error: ForbiddenValidationErrors,
@@ -1702,9 +1686,7 @@ const WikiApiGroup = HttpApiGroup.make("wiki").add(
 
 const SourcesApiGroup = HttpApiGroup.make("sources").add(
   HttpApiEndpoint.get("listSources", "/vaults/:vault_id/raw/sources", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     query: SourceListQuery,
     success: SourceDocumentPage,
     error: ForbiddenValidationErrors,
@@ -1738,17 +1720,13 @@ const SourcesApiGroup = HttpApiGroup.make("sources").add(
 
 const ProposalsApiGroup = HttpApiGroup.make("proposals").add(
   HttpApiEndpoint.get("listProposals", "/vaults/:vault_id/proposals", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     query: ProposalListQuery,
     success: ProposalPage,
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("createProposal", "/vaults/:vault_id/proposals", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     payload: ProposalCreate,
     success: CreatedProposal,
     error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
@@ -1774,17 +1752,13 @@ const ProposalsApiGroup = HttpApiGroup.make("proposals").add(
 
 const IngestApiGroup = HttpApiGroup.make("ingest").add(
   HttpApiEndpoint.post("ingestRaw", "/vaults/:vault_id/ingest", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     payload: RawSource,
     success: CreatedIngestedDocument,
     error: [ForbiddenResponse, ConflictResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("promoteReference", "/vaults/:vault_id/ingest/reference", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     payload: ReferencePromote,
     success: CreatedIngestedDocument,
     error: [
@@ -1796,25 +1770,19 @@ const IngestApiGroup = HttpApiGroup.make("ingest").add(
     ] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("ingestUserSuggestion", "/vaults/:vault_id/ingest/user-suggestion", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     payload: UserSuggestion,
     success: CreatedUserSuggestionResult,
     error: [BadRequestResponse, ForbiddenResponse, ConflictResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("checkFileIngestDupes", "/vaults/:vault_id/file-ingests/check-dupes", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     payload: CheckDupesRequest,
     success: CheckDupesResponse,
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("createFileIngest", "/vaults/:vault_id/file-ingests", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     payload: FileIngestBatchCreate,
     success: CreatedFileIngestBatch,
     error: [BadRequestResponse, ForbiddenResponse, ConflictResponse, ValidationResponse] as const,
@@ -1865,9 +1833,7 @@ const IngestApiGroup = HttpApiGroup.make("ingest").add(
 
 const JobsApiGroup = HttpApiGroup.make("jobs").add(
   HttpApiEndpoint.post("startUrlJob", "/vaults/:vault_id/jobs/url", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     payload: URLSource,
     success: CreatedJobResponse,
     error: [BadRequestResponse, ForbiddenResponse, ValidationResponse] as const,
@@ -1879,7 +1845,7 @@ const JobsApiGroup = HttpApiGroup.make("jobs").add(
     error: [BadRequestResponse, ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("listJobs", "/vaults/:vault_id/jobs", {
-    params: { vault_id: Uuid },
+    params: VaultIdParams,
     query: JobListQuery,
     success: JobPage,
     error: ForbiddenValidationErrors,
@@ -1899,7 +1865,7 @@ const JobsApiGroup = HttpApiGroup.make("jobs").add(
 const CompileApiGroup = HttpApiGroup.make("compile")
   .add(
     HttpApiEndpoint.post("requestCompile", "/vaults/:vault_id/compile", {
-      params: { vault_id: Uuid },
+      params: VaultIdParams,
       payload: CompileRequest,
       success: AcceptedJobResponse,
       error: [ForbiddenResponse, ServiceUnavailableResponse, ValidationResponse] as const,
@@ -1915,7 +1881,7 @@ const CompileApiGroup = HttpApiGroup.make("compile")
 
 const LintApiGroup = HttpApiGroup.make("lint").add(
   HttpApiEndpoint.get("getLint", "/vaults/:vault_id/lint", {
-    params: { vault_id: Uuid },
+    params: VaultIdParams,
     success: LintReport,
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
@@ -1931,7 +1897,7 @@ const CostsApiGroup = HttpApiGroup.make("costs")
   )
   .add(
     HttpApiEndpoint.get("getVaultCosts", "/vaults/:vault_id/costs", {
-      params: { vault_id: Uuid },
+      params: VaultIdParams,
       query: CostQuery,
       success: CostAggregate,
       error: ForbiddenValidationErrors,
@@ -1940,23 +1906,19 @@ const CostsApiGroup = HttpApiGroup.make("costs")
 
 const DocumentsApiGroup = HttpApiGroup.make("documents").add(
   HttpApiEndpoint.get("resolveDocument", "/vaults/:vault_id/doc", {
-    params: { vault_id: Uuid },
+    params: VaultIdParams,
     query: DocumentPathQuery,
     success: DocResponse,
     error: DocumentErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("readChunks", "/vaults/:vault_id/chunks", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     query: ChunkRangeQuery,
     success: Schema.Array(Chunk),
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("readLinks", "/vaults/:vault_id/links", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     query: LinkQuery,
     success: LinkedArticles,
     error: ForbiddenNotFoundValidationErrors,
@@ -1990,17 +1952,13 @@ const SessionsApiGroup = HttpApiGroup.make("sessions").add(
     },
   ).middleware(AuthMiddleware),
   HttpApiEndpoint.get("listSessions", "/vaults/:vault_id/sessions", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     query: PageParamsQuery,
     success: SessionPage,
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("listSessionsByOrigin", "/vaults/:vault_id/sessions/by-origin", {
-    params: {
-      vault_id: Uuid,
-    },
+    params: VaultIdParams,
     query: OriginSessionsQuery,
     success: Schema.Array(OriginSessionDetail),
     error: [...ForbiddenNotFoundValidationErrors, ServiceUnavailableResponse],
@@ -2032,9 +1990,7 @@ const SessionsApiGroup = HttpApiGroup.make("sessions").add(
 const RepliesApiGroup = HttpApiGroup.make("replies")
   .add(
     HttpApiEndpoint.post("createReply", "/vaults/:vault_id/replies", {
-      params: {
-        vault_id: Uuid,
-      },
+      params: VaultIdParams,
       payload: CreateReplyRequest,
       success: AcceptedReplyResponse,
       error: CreateReplyErrors,

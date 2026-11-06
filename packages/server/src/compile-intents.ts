@@ -1,4 +1,10 @@
-import { compileIntents, Database, pipelineRuns, vaults } from "@great-minds/database";
+import {
+  compileIntents,
+  Database,
+  pipelineRuns,
+  vaults,
+  type TransactionClient,
+} from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, isNotNull, isNull, notExists, or, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
@@ -22,6 +28,32 @@ import { CompilePhases } from "./compile-phases.ts";
 import { StructuredLogger } from "./logging.ts";
 import { PipelineRunsService } from "./pipeline-runs.ts";
 import { workflowExecutionId } from "./workflow-engine.ts";
+
+export const queueCompile = (tx: TransactionClient, vaultId: Uuid, runId?: Uuid) =>
+  Effect.gen(function* () {
+    const [intent] = yield* tx
+      .insert(compileIntents)
+      .values({ vaultId, pipelineRunId: runId })
+      .onConflictDoUpdate({
+        target: compileIntents.vaultId,
+        targetWhere: sql`${compileIntents.dispatchedAt} IS NULL`,
+        set: { vaultId: sql`compile_intents.vault_id` },
+      })
+      .returning({ id: compileIntents.id, pipelineRunId: compileIntents.pipelineRunId });
+    if (intent === undefined) throw new Error("compile intent upsert returned no row");
+    if (runId !== undefined && intent.pipelineRunId === null)
+      yield* tx
+        .update(compileIntents)
+        .set({ pipelineRunId: runId })
+        .where(eq(compileIntents.id, intent.id));
+    return { id: intent.id, runId: intent.pipelineRunId ?? runId };
+  });
+
+export const linkRunToIntent = (tx: TransactionClient, runId: Uuid, intentId: Uuid) =>
+  tx
+    .update(pipelineRuns)
+    .set({ compileIntentId: intentId, updatedAt: sql`now()` })
+    .where(eq(pipelineRuns.id, runId));
 
 export const CompileWorkflow = Workflow.make("CompileTask", {
   payload: {
@@ -50,9 +82,7 @@ const causeFailure = (
   return phaseFailure(phase, Cause.pretty(cause));
 };
 
-export const CompileWorkflowLive = Layer.unwrap(
-  Effect.map(ClockService, (clock) =>
-    CompileWorkflow.toLayer((payload) => {
+export const CompileWorkflowLive = CompileWorkflow.toLayer((payload) => {
   const runPhase = <Success extends Schema.Top, R>(
     phase: CompilePhase,
     success: Success,
@@ -134,19 +164,10 @@ export const CompileWorkflowLive = Layer.unwrap(
     yield* runPhase("derive", Schema.Void, service.derive(vaultId, runId, validated));
     yield* runPhase("render", Schema.Void, service.render(vaultId, runId, validated));
     yield* runPhase("verify", Schema.Void, service.verify(vaultId, runId));
-    const publishedAt = yield* Activity.make({
-      name: "compile-publish-timestamp",
-      success: Schema.String,
-      execute: Effect.map(clock.now, (now) =>
-        now.toISOString().replace(/\.\d{3}Z$/, "+00:00"),
-      ),
-    });
-    yield* runPhase("publish", Schema.Void, service.publish(vaultId, runId, publishedAt));
+    yield* runPhase("publish", Schema.Void, service.publish(vaultId, runId));
   });
   return phases;
-    }),
-  ),
-);
+});
 
 export const cancelCompileWorkflow = (intentId: Uuid) =>
   Effect.gen(function* () {

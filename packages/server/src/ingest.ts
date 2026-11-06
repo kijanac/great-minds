@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
 
-import { compileIntents, Database, pipelineRuns } from "@great-minds/database";
+import { Database } from "@great-minds/database";
 import {
   BadRequest,
   Conflict,
@@ -16,8 +16,8 @@ import {
   type UserSuggestionResult,
   Uuid,
 } from "@great-minds/domain";
-import { eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
+import { linkRunToIntent, queueCompile } from "./compile-intents.ts";
 import { AppConfig } from "./config.ts";
 import { htmlToMarkdown, markdownWithTitle } from "./conversion.ts";
 import { errorDetails } from "./error-details.ts";
@@ -162,34 +162,13 @@ export const IngestServiceLive = Layer.effect(
     const clock = yield* ClockService;
 
     const ensureCompileIntent = (vaultId: Uuid, pipelineRunId?: Uuid | null) =>
-      Effect.gen(function* () {
-        const rows = yield* db.query((d) => d
-          .insert(compileIntents)
-          .values({ vaultId, pipelineRunId: pipelineRunId ?? undefined })
-          .onConflictDoUpdate({
-            target: compileIntents.vaultId,
-            targetWhere: sql`${compileIntents.dispatchedAt} IS NULL`,
-            set: { vaultId: sql`compile_intents.vault_id` },
-          })
-          .returning({ id: compileIntents.id, pipelineRunId: compileIntents.pipelineRunId }));
-        const intent = rows[0];
-        if (intent === undefined) {
-          throw new Error("compile intent upsert returned no row");
-        }
-        if (pipelineRunId !== undefined && pipelineRunId !== null) {
-          if (intent.pipelineRunId === null) {
-            yield* db.query((d) => d
-              .update(compileIntents)
-              .set({ pipelineRunId })
-              .where(eq(compileIntents.id, intent.id)));
-          }
-          yield* db.query((d) => d
-            .update(pipelineRuns)
-            .set({ compileIntentId: intent.id, updatedAt: sql`now()` })
-            .where(eq(pipelineRuns.id, pipelineRunId)));
-        }
-        return intent.id;
-      });
+      db.transaction((tx) =>
+        Effect.gen(function* () {
+          const runId = pipelineRunId ?? undefined;
+          const intent = yield* queueCompile(tx, vaultId, runId);
+          if (runId !== undefined) yield* linkRunToIntent(tx, runId, intent.id);
+        }),
+      );
 
     const publishSource = (
       source: SourceAdmission,
