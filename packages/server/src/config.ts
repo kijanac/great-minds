@@ -131,48 +131,34 @@ const namedProvider = (name: string) =>
     ).pipe(Config.withDefault<ProviderKind>("openai")),
   }).pipe(Config.map((settings): Provider => ({ name, ...settings })));
 
+const configError = (message: string) =>
+  new Config.ConfigError(new Schema.SchemaError(new SchemaIssue.InvalidValue({ message })));
+
 const providerNames = commaList("PROVIDERS", "").pipe(
   Config.mapOrFail((names) =>
     Effect.forEach(names, (name) =>
-      name === "openrouter"
-        ? Effect.fail(
-            new Config.ConfigError(
-              new Schema.SchemaError(
-                new SchemaIssue.InvalidValue({
-                  message:
-                    "PROVIDERS must not name openrouter; it is configured by OPENROUTER_API_URL and OPENROUTER_API_KEY",
-                }),
-              ),
-            ),
-          )
-        : Schema.decodeUnknownEffect(providerName)(name).pipe(
-            Effect.mapError((error) => new Config.ConfigError(error)),
-          ),
+      Schema.decodeUnknownEffect(providerName)(name).pipe(
+        Effect.mapError((error) => new Config.ConfigError(error)),
+      ),
     ),
   ),
 );
 
-const PRICE_ENTRY = /^(.+)=([0-9.]+)\/([0-9.]+)$/;
+const PRICE_ENTRY = /^(.+)=(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)$/;
 
 const modelPrices = commaList("MODEL_PRICES", "").pipe(
   Config.mapOrFail((entries) =>
     Effect.forEach(entries, (entry) => {
       const match = PRICE_ENTRY.exec(entry);
-      const input = Number(match?.[2]);
-      const output = Number(match?.[3]);
-      return match === null || !Number.isFinite(input) || !Number.isFinite(output)
+      return match === null
         ? Effect.fail(
-            new Config.ConfigError(
-              new Schema.SchemaError(
-                new SchemaIssue.InvalidValue({
-                  message: `MODEL_PRICES entry "${entry}" must look like provider:model=input/output (USD per million tokens)`,
-                }),
-              ),
+            configError(
+              `MODEL_PRICES entry "${entry}" must look like provider:model=input/output (USD per million tokens)`,
             ),
           )
         : Effect.succeed([
             match[1]!.trim(),
-            { inputPerMillion: input, outputPerMillion: output },
+            { inputPerMillion: Number(match[2]), outputPerMillion: Number(match[3]) },
           ] as const);
     }),
   ),
@@ -247,24 +233,10 @@ const appConfig = Config.all({
 }).pipe(
   Config.mapOrFail((config) => {
     if (config.webauthnOrigins.length === 0) {
-      return Effect.fail(
-        new Config.ConfigError(
-          new Schema.SchemaError(
-            new SchemaIssue.InvalidValue({
-              message: "WEBAUTHN_ORIGINS must contain at least one origin",
-            }),
-          ),
-        ),
-      );
+      return Effect.fail(configError("WEBAUTHN_ORIGINS must contain at least one origin"));
     }
     if (config.publicWebUrl.protocol !== "http:" && config.publicWebUrl.protocol !== "https:") {
-      return Effect.fail(
-        new Config.ConfigError(
-          new Schema.SchemaError(
-            new SchemaIssue.InvalidValue({ message: "PUBLIC_WEB_URL must use HTTP or HTTPS" }),
-          ),
-        ),
-      );
+      return Effect.fail(configError("PUBLIC_WEB_URL must use HTTP or HTTPS"));
     }
     if (config.storageBackend === "local") {
       return Effect.succeed(config);
@@ -278,13 +250,8 @@ const appConfig = Config.all({
       return Effect.succeed(config);
     }
     return Effect.fail(
-      new Config.ConfigError(
-        new Schema.SchemaError(
-          new SchemaIssue.InvalidValue({
-            message:
-              "STORAGE_BACKEND=r2 requires R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET_NAME",
-          }),
-        ),
+      configError(
+        "STORAGE_BACKEND=r2 requires R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET_NAME",
       ),
     );
   }),
@@ -297,9 +264,6 @@ export type ResolvedModel = {
   readonly model: string;
   readonly price: ModelPrice | undefined;
 };
-
-const configError = (message: string) =>
-  new Config.ConfigError(new Schema.SchemaError(new SchemaIssue.InvalidValue({ message })));
 
 export const resolveModel = (config: AppConfigShape, spec: string): ResolvedModel => {
   const match = MODEL_PROVIDER.exec(spec);
