@@ -34,6 +34,7 @@ import { Cause, Context, Effect, Layer, Schema } from "effect";
 import { parseDocument } from "yaml";
 
 import { backgroundLoop } from "./background-loop.ts";
+import { AppConfig } from "./config.ts";
 import { StructuredLogger } from "./logging.ts";
 import { Mailer } from "./mailer.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
@@ -323,6 +324,7 @@ export const VaultsServiceLive = Layer.effect(
     const stagedStorage = yield* StagedStorage;
     const mailer = yield* Mailer;
     const logger = yield* StructuredLogger;
+    const config = yield* AppConfig;
 
     const getVaultRow = (vaultId: Uuid) =>
       Effect.gen(function* () {
@@ -730,7 +732,7 @@ export const VaultsServiceLive = Layer.effect(
               body:
                 `${inviterEmail} invited you to the project "${vault.name}" ` +
                 `on Great Minds as ${role}.\n\n` +
-                "Sign in at https://greatmind.dev to access it.",
+                `Sign in at ${config.publicWebUrl.origin} to access it.`,
             })
             .pipe(
               Effect.catchCause((cause) =>

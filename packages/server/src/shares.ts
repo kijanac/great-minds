@@ -11,7 +11,7 @@ import {
   SessionId,
   type Uuid,
 } from "@great-minds/domain";
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 
 import { ClockService } from "./clock.ts";
@@ -179,6 +179,7 @@ export const SharesServiceLive = Layer.effect(
                     eq(shares.subjectKind, input.subject_kind),
                     eq(shares.subjectId, input.subject_id),
                     isNull(shares.revokedAt),
+                    or(isNull(shares.expiresAt), gt(shares.expiresAt, now)),
                   ),
                 )
                 .limit(1),

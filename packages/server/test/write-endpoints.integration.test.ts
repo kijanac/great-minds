@@ -895,6 +895,9 @@ describe("M3.1 write endpoint integration", () => {
     expect(invited.status).toBe(201);
     expect(invited.body).toMatchObject({ email: "new@example.com", role: "viewer" });
     expect(currentState().mailer.sent).toHaveLength(1);
+    expect(currentState().mailer.sent[0]?.body).toContain(
+      "Sign in at http://localhost:5173 to access it.",
+    );
 
     const existingInvite = await api("POST", `/vaults/${id.vault}/members`, aliceToken, {
       email: "bob@example.com",
