@@ -193,10 +193,14 @@ describe("gm ask", () => {
       if (request.path === `/v1/vaults/${vaultId}/replies/${replyId}/stream`)
         return events([
           reply("running", "", [source("search", "liquidationism", null)]),
-          reply("completed", "Liquidationism was a tendency.", [
-            source("search", "liquidationism", null),
-            source("article", "wiki/liquidationism.md", "Liquidationism"),
-          ]),
+          reply(
+            "completed",
+            "Liquidationism was a tendency ([Liquidationism](wiki/liquidationism.md)).",
+            [
+              source("search", "liquidationism", null),
+              source("article", "wiki/liquidationism.md", "Liquidationism"),
+            ],
+          ),
         ]);
       return json(404, {});
     };
@@ -216,7 +220,7 @@ describe("gm ask", () => {
     });
     expect(notes[0]).toBe('  searching for "liquidationism"');
     expect(lines).toEqual([
-      "Liquidationism was a tendency.",
+      "Liquidationism was a tendency ([Liquidationism](wiki/liquidationism.md)).",
       "",
       "Sources:",
       "  [1] Liquidationism  wiki/liquidationism.md",

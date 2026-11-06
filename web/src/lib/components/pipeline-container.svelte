@@ -33,7 +33,7 @@
   import { Button } from "$lib/components/ui/button";
   import { useJobSSE } from "$lib/hooks/use-job-sse.svelte";
   import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
-  import { newUuid } from "$lib/ids";
+  import { newUuid } from "@great-minds/client";
 
   interface FileUploadState {
     uploadFiles?: readonly HashedFile[];

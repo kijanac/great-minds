@@ -10,7 +10,7 @@ import type {
 import { createReply, retryReply, stopReply, type CreateReplyPayload } from "$lib/api/replies";
 import { Btw } from "$lib/btw.svelte";
 import type { Exchange, Phase, SelectionInfo } from "$lib/types";
-import { newUuid } from "$lib/ids";
+import { newUuid, replyRequest } from "@great-minds/client";
 import { LIVE_UPDATES_UNAVAILABLE, tailReply } from "$lib/reply-tail";
 import { replayExchanges } from "$lib/session-events";
 import { isAbortError } from "$lib/utils";
@@ -162,25 +162,23 @@ export class Session {
     const exchangeId = newUuid();
     this.#idempotencyKey ??= newUuid();
 
-    const payload: CreateReplyPayload = {
-      reply_id: newUuid(),
-      exchange_id: exchangeId,
+    const payload: CreateReplyPayload = replyRequest({
       question,
+      exchangeId,
+      originScope: "vault",
       ...(this.sessionId === null && this.origin?.kind === "document"
-        ? { origin_path: this.origin.doc_path }
+        ? { originPath: this.origin.doc_path }
         : {}),
-      origin_scope: "vault",
-      session:
+      conversation:
         this.sessionId !== null
           ? { kind: "existing", id: this.sessionId }
           : {
               kind: "new",
-              conversation_kind: "session",
-              idempotency_key: this.#idempotencyKey,
-              origin_scope: "vault",
+              conversationKind: "session",
+              idempotencyKey: this.#idempotencyKey,
               ...(this.origin ? { origin: this.origin } : {}),
             },
-    };
+    });
     return { exchangeId, payload };
   };
 

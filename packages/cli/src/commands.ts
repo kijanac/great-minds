@@ -1,6 +1,18 @@
 import { hostname } from "node:os";
 
-import { allVaults, decodeInput, followJob, followReply, errorMessage } from "@great-minds/client";
+import {
+  allVaults,
+  citationsOf,
+  decodeInput,
+  errorMessage,
+  followJob,
+  followReply,
+  newUuid,
+  outcomeHeadline,
+  plural,
+  replyRequest,
+  stoppedHeadline,
+} from "@great-minds/client";
 import {
   Email,
   SessionId,
@@ -19,9 +31,7 @@ export class CommandFailed extends Data.TaggedError("CommandFailed")<{
   readonly message: string;
 }> {}
 
-const newUuid = () => Uuid.make(crypto.randomUUID(), { disableChecks: true });
 const isUuid = Schema.is(Uuid);
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 const printJson = (value: unknown) => JSON.stringify(value, null, 2);
 
 const connect = Effect.gen(function* () {
@@ -188,21 +198,19 @@ export const ask = (input: {
     const created = yield* connection.use(
       connection.api.replies.createReply({
         params: { vault_id: vaultId },
-        payload: {
+        payload: replyRequest({
           question: input.question,
-          reply_id: newUuid(),
-          exchange_id: newUuid(),
-          origin_scope: "vault",
-          session: Option.match(existing, {
+          exchangeId: newUuid(),
+          originScope: "vault",
+          conversation: Option.match(existing, {
             onNone: () => ({
               kind: "new" as const,
-              idempotency_key: newUuid(),
-              conversation_kind: "session" as const,
-              origin_scope: "vault" as const,
+              conversationKind: "session" as const,
+              idempotencyKey: newUuid(),
             }),
             onSome: (id) => ({ kind: "existing" as const, id }),
           }),
-        },
+        }),
       }),
     );
     const shown = new Set<string>();
@@ -233,14 +241,12 @@ export const ask = (input: {
       });
     if (!input.json) {
       yield* output.line(reply.answer.trim());
-      const read = reply.sources.filter(
-        (source) => source.type === "raw" || source.type === "article",
-      );
-      if (read.length > 0) {
+      const cited = citationsOf(reply.answer);
+      if (cited.length > 0) {
         yield* output.line("");
         yield* output.line("Sources:");
-        for (const [index, source] of read.entries())
-          yield* output.line(`  [${index + 1}] ${source.title ?? source.label}  ${source.label}`);
+        for (const citation of cited)
+          yield* output.line(`  [${citation.n}] ${citation.label}  ${citation.path}`);
       }
     }
     yield* output.note(
@@ -249,12 +255,7 @@ export const ask = (input: {
   });
 
 const outcomeLines = (outcome: RunOutcome) => {
-  const parts = [
-    outcome.added.length > 0 ? plural(outcome.added.length, "new article") : "",
-    outcome.changed.length > 0 ? `${outcome.changed.length} updated` : "",
-    outcome.removed.length > 0 ? `${outcome.removed.length} removed` : "",
-  ].filter((part) => part !== "");
-  const lines = [parts.length === 0 ? "Nothing changed." : `${parts.join(", ")}.`];
+  const lines = [`${outcomeHeadline(outcome)}.`];
   if (outcome.sources > 0) lines.push(`From ${plural(outcome.sources, "new or edited source")}.`);
   const group = (label: string, entries: readonly string[]) =>
     entries.length === 0 ? [] : ["", `${label}:`, ...entries.map((entry) => `  ${entry}`)];
@@ -308,11 +309,11 @@ const followRun = (connection: Connection, vaultId: Uuid, jobId: Uuid, json: boo
     const run: JobProgressSnapshot = last.value;
     if (json) yield* output.line(printJson(run));
     if (run.job_status === "cancelled")
-      return yield* new CommandFailed({ message: "Update cancelled" });
+      return yield* new CommandFailed({ message: stoppedHeadline("cancelled", null) });
     if (run.job_status === "failed" || run.phase_status === "failed") {
       const stopped = run.track.find((stage) => stage.status === "failed");
       return yield* new CommandFailed({
-        message: `Update stopped${stopped === undefined ? "" : ` while ${stopped.title.toLowerCase()}`}${run.error === undefined ? "" : `: ${run.error}`}`,
+        message: `${stoppedHeadline("failed", stopped?.title ?? null)}${run.error === undefined ? "" : `: ${run.error}`}`,
       });
     }
     if (!json)

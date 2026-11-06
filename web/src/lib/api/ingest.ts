@@ -7,7 +7,7 @@ import {
 import { Effect } from "effect";
 import { HttpBody, HttpClientRequest } from "effect/unstable/http";
 
-import { newUuid } from "../ids";
+import { newUuid } from "@great-minds/client";
 
 import { api, externalHttp, http, run } from "./app";
 import { errorMessage } from "@great-minds/client";

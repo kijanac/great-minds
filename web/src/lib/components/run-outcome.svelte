@@ -1,5 +1,12 @@
 <script lang="ts">
   import type { RemovedArticle, RunOutcome } from "@great-minds/domain";
+  import {
+    changedNothing,
+    isFirstBuild,
+    outcomeHeadline,
+    plural,
+    stoppedHeadline,
+  } from "@great-minds/client";
   import { createQuery } from "@tanstack/svelte-query";
   import type { Snippet } from "svelte";
 
@@ -24,46 +31,19 @@
   let expanded = $state<Record<string, boolean>>({});
 
   const firstBuild = $derived(
-    stopped === null &&
-      outcome !== null &&
-      outcome.unchanged === 0 &&
-      outcome.changed.length === 0 &&
-      outcome.added.length > 0,
+    stopped === null && outcome !== null && isFirstBuild(outcome),
   );
-  const nothing = $derived(
-    outcome !== null &&
-      outcome.added.length === 0 &&
-      outcome.changed.length === 0 &&
-      outcome.removed.length === 0,
-  );
+  const nothing = $derived(outcome !== null && changedNothing(outcome));
   const startHere = createQuery(() => ({
     queryKey: ["run-outcome-start-here"],
     queryFn: () => fetchWikiArticles({ sort: "linked", limit: 3 }),
     enabled: firstBuild,
   }));
 
-  const plural = (count: number, word: string) =>
-    `${count.toLocaleString("en-US")} ${word}${count === 1 ? "" : "s"}`;
-
   const title = $derived.by(() => {
-    if (stopped !== null)
-      return stopped.kind === "cancelled"
-        ? "Update cancelled"
-        : stopped.stage === null
-          ? "Update stopped"
-          : `Update stopped while ${stopped.stage.toLowerCase()}`;
+    if (stopped !== null) return stoppedHeadline(stopped.kind, stopped.stage);
     if (outcome === null) return "Update finished";
-    if (firstBuild)
-      return `Your library has ${plural(outcome.added.length, "article")}`;
-    if (nothing) return "Nothing changed";
-    const parts = [
-      outcome.added.length > 0
-        ? plural(outcome.added.length, "new article")
-        : "",
-      outcome.changed.length > 0 ? `${outcome.changed.length} updated` : "",
-      outcome.removed.length > 0 ? `${outcome.removed.length} removed` : "",
-    ].filter((part) => part !== "");
-    return parts.join(", ");
+    return outcomeHeadline(outcome);
   });
 </script>
 

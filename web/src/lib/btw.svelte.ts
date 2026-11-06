@@ -10,7 +10,7 @@ import type {
 import { createReply, retryReply, type CreateReplyPayload } from "$lib/api/replies";
 import { selectedVault } from "$lib/api/selected-vault";
 import { continueAsSession } from "$lib/api/sessions";
-import { newUuid } from "$lib/ids";
+import { newUuid, replyRequest } from "@great-minds/client";
 import { queryClient } from "$lib/query-client";
 import { LIVE_UPDATES_UNAVAILABLE, tailReply } from "$lib/reply-tail";
 import { replayExchanges } from "$lib/session-events";
@@ -159,21 +159,14 @@ export class Btw implements ThreadLike {
       version: null,
     };
     const scope = this.origin.kind === "document" ? this.origin.origin_scope : "vault";
-    const payload: CreateReplyPayload = {
-      reply_id: newUuid(),
-      exchange_id: turn.id,
+    const payload: CreateReplyPayload = replyRequest({
       question,
-      origin_scope: scope,
-      session: this.conversation
+      exchangeId: turn.id,
+      originScope: scope,
+      conversation: this.conversation
         ? { kind: "existing", id: this.conversation.id }
-        : {
-            kind: "new",
-            conversation_kind: "btw",
-            idempotency_key: this.id,
-            origin_scope: scope,
-            origin: this.origin,
-          },
-    };
+        : { kind: "new", conversationKind: "btw", idempotencyKey: this.id, origin: this.origin },
+    });
     this.#attempt = { kind: "create", payload };
     this.exchanges = [...this.exchanges, turn];
     void this.#runReply(turn);

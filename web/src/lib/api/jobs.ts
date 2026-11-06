@@ -6,7 +6,7 @@ import {
   type Uuid,
 } from "@great-minds/domain";
 
-import { newUuid } from "../ids";
+import { newUuid } from "@great-minds/client";
 
 import { api, run, stream } from "./app";
 import { selectedVault } from "./selected-vault";
