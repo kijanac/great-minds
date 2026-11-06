@@ -1,6 +1,8 @@
 import { flushSync, mount, unmount } from "svelte";
 import { expect, it, vi } from "vitest";
 
+import { citationsOf } from "@great-minds/domain";
+
 import type { Citation } from "$lib/citations";
 import AnswerBlock from "./answer-block.svelte";
 
@@ -29,6 +31,9 @@ it("on a phone, a citation number opens a source card and each answer lists its 
     target,
     props: {
       text: "Lenin wrote [to Martov](raw/docs/a.md#^p4) and [the article](wiki/rsdlp.md).",
+      citations: citationsOf(
+        "Lenin wrote [to Martov](raw/docs/a.md#^p4) and [the article](wiki/rsdlp.md).",
+      ),
       exchangeId: "00000000-0000-4000-8000-000000000001" as never,
       btws: [],
       streaming: false,

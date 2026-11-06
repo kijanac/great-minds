@@ -17,6 +17,7 @@ const thread = (overrides: Partial<ThreadLike> = {}): ThreadLike => ({
       replyId: Uuid.make("00000000-0000-4000-8000-000000000002"),
       query: "Question",
       answer: "",
+      citations: [],
       thinking: [],
       btws: [],
       status: "completed",

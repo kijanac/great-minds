@@ -1,10 +1,10 @@
 import type { HastNode } from "$lib/markdown-plugins";
-import { citationPath, citationsOf } from "@great-minds/client";
+import { citationPath, type Citation } from "@great-minds/domain";
 
-export { citationsOf, type Citation } from "@great-minds/client";
+export type { Citation };
 
-export function numberCitations(tree: HastNode, markdown: string): HastNode {
-  const numbers = new Map(citationsOf(markdown).map((citation) => [citation.path, citation.n]));
+export function numberCitations(tree: HastNode, citations: readonly Citation[]): HastNode {
+  const numbers = new Map(citations.map((citation) => [citation.path, citation.n]));
   const walk = (node: HastNode): void => {
     const href = node.properties?.href;
     if (

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { NodeServices } from "@effect/platform-node";
-import { Uuid } from "@great-minds/domain";
+import { citationsOf, Uuid } from "@great-minds/domain";
 import {
   Cause,
   ConfigProvider,
@@ -347,6 +347,7 @@ describe("gm ask", () => {
     session_id: "session-1",
     status,
     answer,
+    citations: citationsOf(answer),
     sources,
     error: null,
     version: 1,

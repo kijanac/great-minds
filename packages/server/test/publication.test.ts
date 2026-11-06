@@ -26,6 +26,7 @@ const exchange = (
   error: null,
   query: `Question ${index}`,
   answer,
+  citations: [],
   thinking: [],
   ts: new Date("2026-01-01"),
 });

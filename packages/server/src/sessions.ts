@@ -1,6 +1,7 @@
 import { Database, replies, sessions, userDocuments } from "@great-minds/database";
 import {
   BadRequest,
+  citationsOf,
   composeAnchoredQuestion,
   Conflict,
   Forbidden,
@@ -316,6 +317,7 @@ const makeSessions = Effect.gen(function* () {
                 ...saved,
                 version: active.version,
                 answer: active.answer,
+                citations: citationsOf(active.answer),
                 thinking: active.sources.length === 0 ? [] : [{ sources: active.sources }],
               }
             : event,
@@ -332,6 +334,7 @@ const makeSessions = Effect.gen(function* () {
           error: null,
           query: request.attempt.question,
           answer: "",
+          citations: [],
           thinking: [],
           ts: new Date(request.attempt.accepted_at),
         };
