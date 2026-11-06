@@ -49,6 +49,7 @@ const prompt = (name: string) =>
 const settings = {
   model: "deepseek/deepseek-v3.2",
   temperature: 0,
+  reasoningEffort: undefined,
   proposePrompt: await prompt("propose_topics"),
   judgePrompt: await prompt("judge_same_topic"),
   concurrency: 4,

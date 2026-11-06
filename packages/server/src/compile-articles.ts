@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 import { Effect, Schema, Semaphore } from "effect";
 
 import type { AskRunner, Progress } from "./compile-asks.ts";
+import type { ReasoningEffort } from "./config.ts";
 import { append } from "./collections.ts";
 import { type Blocks, pivotGroups, responseFormat, type Theme } from "./compile-themes.ts";
 import { contentHash } from "./crypto.ts";
@@ -34,6 +35,7 @@ const PairRows = Schema.Struct({
 export type ArticleSettings = {
   readonly model: string;
   readonly temperature: number | undefined;
+  readonly reasoningEffort: ReasoningEffort | undefined;
   readonly mergePrompt: string;
   readonly placePrompt: string;
   readonly concurrency: number;
@@ -164,6 +166,7 @@ export const buildArticles = (
             },
           ],
           temperature: settings.temperature,
+          reasoningEffort: settings.reasoningEffort,
           responseFormat: responseFormat("topic_relation", SameEntryAnswer),
           answer: SameEntryAnswer,
         })
@@ -288,6 +291,7 @@ export const buildArticles = (
                   },
                 ],
                 temperature: settings.temperature,
+                reasoningEffort: settings.reasoningEffort,
                 responseFormat: responseFormat("theme_attach", PlacementAnswer),
                 answer: PlacementAnswer,
               })

@@ -397,6 +397,7 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
                       { role: "user", content: renderedTemplate.replace("{doc_content}", body) },
                     ],
                     temperature: config.extractTemperature,
+                    reasoningEffort: Option.getOrUndefined(config.extractReasoningEffort),
                     responseFormat,
                     schema: ExtractResponse,
                     logFields: { document_id: document.id, path: document.filePath },

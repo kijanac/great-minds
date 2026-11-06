@@ -1203,6 +1203,7 @@ export const QueryServiceLive = Layer.effect(
         const completion = yield* languageModel.complete({
           model: appConfig.extractModel,
           temperature: Option.getOrUndefined(appConfig.extractTemperature),
+          reasoningEffort: Option.getOrUndefined(appConfig.extractReasoningEffort),
           responseFormat: "json_object",
           messages: [
             { role: "system", content: webFactExtractionPrompt },
@@ -1332,6 +1333,7 @@ export const QueryServiceLive = Layer.effect(
             messages: context.messages,
             tools: context.tools,
             temperature: Option.getOrUndefined(appConfig.queryTemperature),
+            reasoningEffort: Option.getOrUndefined(appConfig.queryReasoningEffort),
           })
           .pipe(
             Stream.runForEach((part) => {
@@ -1753,6 +1755,7 @@ export const QueryServiceLive = Layer.effect(
             .complete({
               model: appConfig.queryModel,
               temperature: Option.getOrUndefined(appConfig.queryTemperature),
+              reasoningEffort: Option.getOrUndefined(appConfig.queryReasoningEffort),
               messages: [
                 { role: "system", content: draftHintSystem },
                 { role: "user", content: trimmed },
