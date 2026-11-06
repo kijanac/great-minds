@@ -16,8 +16,6 @@ const PLACE_NEAREST_THEMES = 20;
 const SAMPLE_MEMBERS = 5;
 const SAMPLE_IDEAS = 2;
 const MERGE_NEAREST = 3;
-const GROUP_SAMPLE_TOPICS = 12;
-const GROUP_SAMPLE_SHOWN = 8;
 
 export const SameEntryAnswer = Schema.Struct({
   relation: Schema.Literals(["same", "related", "unrelated"] as const),
@@ -32,15 +30,6 @@ export const PlacementAnswer = Schema.Struct({
 const PairRows = Schema.Struct({
   rows: Schema.Array(Schema.Struct({ a: Uuid, b: Uuid })),
 });
-
-const IdRows = Schema.Struct({
-  rows: Schema.Array(Schema.Struct({ id: Uuid })),
-});
-
-type Pair = { readonly left: Uuid; readonly right: Uuid };
-
-const pairKey = (left: Uuid, right: Uuid) =>
-  left < right ? `${left}|${right}` : `${right}|${left}`;
 
 export type ArticleSettings = {
   readonly model: string;
@@ -188,21 +177,11 @@ export const buildArticles = (
           ),
         );
     const sampleOf = new Map(big.map((theme) => [theme.id, sampleBlock(theme)]));
-    const sameThemes = new Map<string, Pair & { readonly same: boolean }>();
-    const themesSame = (left: Uuid, right: Uuid) => {
-      const key = pairKey(left, right);
-      const known = sameThemes.get(key);
-      if (known !== undefined) return Effect.succeed(known.same);
-      const [first, second] = byOrder(left, right) < 0 ? [left, right] : [right, left];
-      return sameEntry(sampleOf.get(first) ?? "", sampleOf.get(second) ?? "").pipe(
-        Effect.tap((same) => Effect.sync(() => sameThemes.set(key, { left, right, same }))),
-      );
-    };
     const judgeMerge = (pivot: Uuid, open: readonly Uuid[]) =>
       Effect.forEach(
         open,
         (candidate) =>
-          themesSame(pivot, candidate).pipe(
+          sameEntry(sampleOf.get(pivot) ?? "", sampleOf.get(candidate) ?? "").pipe(
             Effect.map((same): readonly Uuid[] => (same ? [candidate] : [])),
           ),
         { concurrency: "unbounded" },
@@ -216,10 +195,6 @@ export const buildArticles = (
       settings.pivotsInFlight,
       report,
     );
-    yield* Effect.forEach(candidates.rows, ({ a, b }) => themesSame(a, b), {
-      concurrency: "unbounded",
-      discard: true,
-    });
     let placedCount = big.length;
 
     const parent = new Map<Uuid, Uuid>();
@@ -250,91 +225,8 @@ export const buildArticles = (
         (left, right) =>
           right.documentIds.length - left.documentIds.length || byOrder(left.id, right.id),
       )[0];
-    const groupBlock = (members: readonly Theme[]) =>
-      Effect.gen(function* () {
-        const lead = headOf(members);
-        if (lead === undefined) return "";
-        const topics = members.flatMap((theme) => theme.members);
-        const nearestCentre = yield* db
-          .query((d) =>
-            d.execute(sql`
-              with m as (
-                select id, embedding from ${topicProposals} where id = any(${sql.param(topics)}::uuid[])
-              ),
-              c as (select avg(embedding) as centre from m)
-              select m.id from m, c
-              order by m.embedding <=> c.centre, m.id
-              limit ${GROUP_SAMPLE_TOPICS}`),
-          )
-          .pipe(Effect.flatMap(Schema.decodeUnknownEffect(IdRows)), Effect.orDie);
-        return describe(
-          lead,
-          nearestCentre.rows.map((row) => row.id),
-          GROUP_SAMPLE_SHOWN,
-        );
-      });
-    let groups = new Map<Uuid, Theme[]>();
+    const groups = new Map<Uuid, Theme[]>();
     for (const theme of big) append(groups, find(theme.id), theme);
-    while (true) {
-      const groupOfTheme = new Map<Uuid, Uuid>();
-      for (const [root, members] of groups)
-        for (const theme of members) groupOfTheme.set(theme.id, root);
-      const links = new Map<string, Pair & { readonly count: number }>();
-      for (const answer of sameThemes.values()) {
-        if (!answer.same) continue;
-        const left = groupOfTheme.get(answer.left);
-        const right = groupOfTheme.get(answer.right);
-        if (left === undefined || right === undefined || left === right) continue;
-        const link = pairKey(left, right);
-        links.set(link, { left, right, count: (links.get(link)?.count ?? 0) + 1 });
-      }
-      if (links.size === 0) break;
-      const leadOrder = (root: Uuid) => headOf(groups.get(root) ?? [])?.id ?? root;
-      const blocks = new Map<Uuid, string>();
-      const blockOf = (root: Uuid) =>
-        Effect.gen(function* () {
-          const known = blocks.get(root);
-          if (known !== undefined) return known;
-          const block = yield* groupBlock(groups.get(root) ?? []);
-          blocks.set(root, block);
-          return block;
-        });
-      const sameGroups = new Set<string>();
-      yield* Effect.forEach(
-        links,
-        ([link, { left, right }]) =>
-          Effect.gen(function* () {
-            const [first, second] =
-              byOrder(leadOrder(left), leadOrder(right)) < 0 ? [left, right] : [right, left];
-            if (yield* sameEntry(yield* blockOf(first), yield* blockOf(second)))
-              sameGroups.add(link);
-          }),
-        { concurrency: "unbounded", discard: true },
-      );
-      const groupNeighbours = new Map<Uuid, Uuid[]>();
-      for (const [, { left, right }] of [...links].toSorted(
-        ([leftKey, leftLink], [rightKey, rightLink]) =>
-          rightLink.count - leftLink.count || (leftKey < rightKey ? -1 : 1),
-      )) {
-        append(groupNeighbours, left, right);
-        append(groupNeighbours, right, left);
-      }
-      const leaders = yield* pivotGroups(
-        [...groups.keys()].toSorted((left, right) => byOrder(leadOrder(left), leadOrder(right))),
-        groupNeighbours,
-        (pivot, open) =>
-          Effect.succeed(open.filter((other) => sameGroups.has(pairKey(pivot, other)))),
-        settings.pivotsInFlight,
-        () => Effect.void,
-      );
-      const next = new Map<Uuid, Theme[]>();
-      for (const [root, members] of groups) {
-        const leader = leaders.get(root) ?? root;
-        next.set(leader, [...(next.get(leader) ?? []), ...members]);
-      }
-      if (next.size === groups.size) break;
-      groups = next;
-    }
     const articleOfTheme = new Map<Uuid, Uuid>();
     const heads = new Map<Uuid, Theme>();
     for (const members of groups.values()) {
