@@ -126,6 +126,35 @@ export const apiKeys = pgTable(
   ],
 );
 
+export const cliLogins = pgTable(
+  "cli_logins",
+  {
+    id: uuidColumn("id").primaryKey(),
+    deviceCodeHash: varchar("device_code_hash", { length: 64 }).notNull(),
+    userCode: varchar("user_code", { length: 8 }).notNull(),
+    computer: text("computer").notNull(),
+    status: text("status").notNull(),
+    userId: uuidColumn("user_id"),
+    clientAddress: text("client_address"),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+    expiresAt: timestamptz("expires_at").notNull(),
+  },
+  (table) => [
+    references(table.userId, users.id, "cli_logins_user_id_fkey", "cascade"),
+    uniqueIndex("ix_cli_logins_device_code_hash").on(table.deviceCodeHash),
+    uniqueIndex("ix_cli_logins_pending_user_code")
+      .on(table.userCode)
+      .where(sql`${table.status} = 'pending'`),
+    index("ix_cli_logins_client_address_created_at")
+      .on(table.clientAddress, table.createdAt)
+      .where(sql`${table.clientAddress} IS NOT NULL`),
+    check(
+      "ck_cli_logins_status",
+      sql`${table.status} in ('pending', 'approved', 'denied', 'claimed')`,
+    ),
+  ],
+);
+
 export const refreshTokens = pgTable(
   "refresh_tokens",
   {
