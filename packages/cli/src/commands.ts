@@ -20,7 +20,6 @@ import {
 import {
   isUuid,
   uploadKind,
-  type Email,
   type JobProgressSnapshot,
   type ReplySource,
   type RunOutcome,
@@ -34,6 +33,8 @@ import { connect, type Connection } from "./connection.ts";
 import { Credentials } from "./credentials.ts";
 import {
   KeyNotRevoked,
+  LoginCancelled,
+  LoginExpired,
   NothingToAdd,
   UploadsIncomplete,
   ReplyNotCompleted,
@@ -116,11 +117,20 @@ const lastSnapshot = <A, E, R>(snapshots: Stream.Stream<A, E, R>, what: "answer"
     ),
   );
 
-export const login = <E, R>(input: {
-  readonly email: Email;
-  readonly url: Option.Option<string>;
-  readonly readCode: Effect.Effect<string, E, R>;
-}) =>
+const awaitApproval = (connection: Connection, deviceCode: string, intervalSeconds: number) =>
+  Effect.gen(function* () {
+    while (true) {
+      yield* Effect.sleep(`${intervalSeconds} seconds`);
+      const result = yield* connection.use(
+        connection.api.auth.pollCliLogin({ payload: { device_code: deviceCode } }),
+      );
+      if (result.status === "approved") return result;
+      if (result.status === "denied") return yield* new LoginCancelled();
+      if (result.status === "expired") return yield* new LoginExpired();
+    }
+  });
+
+export const login = (input: { readonly url: Option.Option<string> }) =>
   Effect.gen(function* () {
     const credentials = yield* Credentials;
     const saved = yield* credentials.load.pipe(
@@ -128,15 +138,15 @@ export const login = <E, R>(input: {
     );
     const apiUrl = yield* credentials.apiUrl(input.url, saved);
     const anonymous = yield* connect(apiUrl, null);
-    yield* anonymous.use(anonymous.api.auth.requestCode({ payload: { email: input.email } }));
-    yield* Console.error(`A sign-in code was sent to ${input.email}.`);
-    const code = yield* input.readCode;
-    const tokens = yield* anonymous.use(
-      anonymous.api.auth.verifyCode({ payload: { email: input.email, code: code.trim() } }),
+    const started = yield* anonymous.use(
+      anonymous.api.auth.startCliLogin({ payload: { computer: hostname() } }),
     );
-    const session = yield* connect(apiUrl, tokens.access_token);
-    const label = `gm CLI (${hostname()})`;
-    const key = yield* session.use(session.api.auth.createApiKey({ payload: { label } }));
+    yield* Console.error(
+      `To sign in, open:\n  ${started.verification_url_complete}\nand check it shows this code: ${started.user_code}\n\nWaiting for approval…`,
+    );
+    const approved = yield* awaitApproval(anonymous, started.device_code, started.interval_seconds);
+    const key = approved.api_key;
+    const session = yield* connect(apiUrl, key.raw_key);
     const sameServer = Option.filter(saved, (found) => found.api_url === apiUrl);
     yield* credentials
       .save({
@@ -148,7 +158,9 @@ export const login = <E, R>(input: {
         ),
       })
       .pipe(Effect.onError(() => revokeKey(session, key.id)));
-    yield* Console.log(`Signed in as ${input.email}. Saved key "${label}" to ${credentials.path}.`);
+    yield* Console.log(
+      `Signed in as ${approved.email}. Saved key "${key.label}" to ${credentials.path}.`,
+    );
     if (credentials.keyFromEnvironment)
       yield* Console.error(
         "GM_API_KEY is set and takes precedence over this key until you unset it.",

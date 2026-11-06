@@ -74,6 +74,18 @@ export class KeyNotRevoked extends Data.TaggedError("KeyNotRevoked")<{
   }
 }
 
+export class LoginCancelled extends Data.TaggedError("LoginCancelled")<{}> {
+  override get message() {
+    return "sign-in was cancelled in the browser";
+  }
+}
+
+export class LoginExpired extends Data.TaggedError("LoginExpired")<{}> {
+  override get message() {
+    return "the sign-in code expired before it was approved; run gm login again";
+  }
+}
+
 export class StreamEnded extends Data.TaggedError("StreamEnded")<{
   readonly what: "answer" | "run";
 }> {
