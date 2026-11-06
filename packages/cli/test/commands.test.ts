@@ -1,4 +1,6 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -638,5 +640,119 @@ describe("the gm command", { timeout: 30_000 }, () => {
     const failed = gm(["runs"]);
     expect(failed.status).toBe(1);
     expect(failed.stderr.trim()).toBe("gm: not signed in: run gm login, or set GM_API_KEY");
+  });
+});
+
+describe("gm mcp", { timeout: 30_000 }, () => {
+  it("serves the vault's tools over stdio, with typed results and the API's error detail", async () => {
+    const server = createServer((request, response) => {
+      const url = new URL(request.url ?? "", "http://localhost");
+      const send = (status: number, body: unknown) => {
+        response.writeHead(status, { "content-type": "application/json" });
+        response.end(JSON.stringify(body));
+      };
+      if (url.pathname === `/v1/vaults/${vaultId}`)
+        return send(200, {
+          id: vaultId,
+          name: "One",
+          owner_id: vaultId,
+          created_at: now,
+          role: "owner",
+          member_count: 1,
+          article_count: 0,
+        });
+      if (url.pathname === `/v1/vaults/${vaultId}/search`)
+        return send(200, [
+          {
+            path: "wiki/nep.md",
+            chunk_index: 0,
+            heading: "",
+            text: url.searchParams.get("q"),
+            score: 1,
+          },
+        ]);
+      return send(404, { _tag: "NotFound", detail: "No such document" });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    const child = spawn(
+      process.execPath,
+      [new URL("../src/main.ts", import.meta.url).pathname, "mcp"],
+      {
+        env: {
+          ...process.env,
+          GM_CONFIG_DIR: directory,
+          GM_API_KEY: "gm_test",
+          GM_API_URL: `http://localhost:${port}/v1`,
+          GM_VAULT: vaultId,
+        },
+        stdio: ["pipe", "pipe", "ignore"],
+      },
+    );
+    const replies = new Map<number, Record<string, unknown>>();
+    let buffered = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      buffered += chunk;
+      const lines = buffered.split("\n");
+      buffered = lines.pop() ?? "";
+      for (const line of lines) {
+        const message = JSON.parse(line);
+        if (typeof message.id === "number") replies.set(message.id, message);
+      }
+    });
+    const send = (message: unknown) => child.stdin.write(`${JSON.stringify(message)}\n`);
+    const reply = async (id: number) => {
+      for (let wait = 0; wait < 200 && !replies.has(id); wait += 1)
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      return replies.get(id)?.result as Record<string, unknown>;
+    };
+    try {
+      send({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "t", version: "0" },
+        },
+      });
+      await reply(1);
+      send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+      const tools = (await reply(2)).tools as readonly { name: string; outputSchema?: unknown }[];
+      expect(tools.map((tool) => tool.name)).toEqual([
+        "search_vault",
+        "read_document",
+        "list_articles",
+        "list_sessions",
+        "read_session",
+        "ask",
+      ]);
+      expect(tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);
+      send({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "search_vault", arguments: { query: "the NEP" } },
+      });
+      expect((await reply(3)).structuredContent).toEqual({
+        hits: [{ path: "wiki/nep.md", chunk_index: 0, heading: "", text: "the NEP", score: 1 }],
+      });
+      send({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: { name: "read_document", arguments: { path: "wiki/missing.md" } },
+      });
+      expect(await reply(4)).toMatchObject({
+        isError: true,
+        content: [{ type: "text", text: "No such document" }],
+      });
+    } finally {
+      child.kill();
+      server.close();
+    }
   });
 });

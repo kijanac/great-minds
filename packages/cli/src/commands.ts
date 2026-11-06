@@ -88,7 +88,7 @@ const chooseVault = (connection: Connection, wanted: Option.Option<string>) =>
       : new VaultNameAmbiguous({ vault: wanted.value, count: others.length + 1 });
   });
 
-const vaultConnection = (flag: Option.Option<string>) =>
+export const vaultConnection = (flag: Option.Option<string>) =>
   Effect.gen(function* () {
     const { connection, signedIn } = yield* signedInConnection;
     const vaultId = yield* chooseVault(

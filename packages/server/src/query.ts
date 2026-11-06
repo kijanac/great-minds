@@ -13,6 +13,7 @@ import {
   FileFingerprint,
   ServiceUnavailable,
   type DraftHintResponse,
+  type SearchHit,
   type OriginScope,
   type QueryRequest,
   type QuerySourceData,
@@ -65,6 +66,12 @@ type QueryServiceShape = {
     userId: Uuid,
     description: string,
   ) => Effect.Effect<DraftHintResponse, BadRequest | ServiceUnavailable>;
+  readonly search: (
+    userId: Uuid,
+    vaultId: Uuid,
+    query: string,
+    path: string | undefined,
+  ) => Effect.Effect<readonly SearchHit[], EmbeddingBatchFailed>;
 };
 
 export class QueryService extends Context.Service<QueryService, QueryServiceShape>()(
@@ -693,7 +700,11 @@ export const QueryServiceLive = Layer.effect(
         };
       });
 
-    const searchRows = (context: QueryExecutionState, query: string, path?: string) =>
+    const searchRows = (
+      context: Pick<QueryExecutionState, "vaultId" | "userId" | "correlationId">,
+      query: string,
+      path?: string,
+    ) =>
       Effect.gen(function* () {
         const vaultId = context.vaultId;
         if (query.trim().length === 0) {
@@ -1748,6 +1759,25 @@ export const QueryServiceLive = Layer.effect(
                 }),
           ),
         ),
+      search: (userId, vaultId, query, path) =>
+        Effect.gen(function* () {
+          const rows = yield* withFootnoteNotes(
+            storage,
+            vaultId,
+            yield* searchRows(
+              { vaultId, userId, correlationId: `search-${randomUUID()}` },
+              query,
+              path,
+            ),
+          );
+          return rows.map((row): SearchHit => ({
+            path: row.path,
+            chunk_index: row.chunkIndex,
+            heading: row.heading,
+            text: row.body,
+            score: row.score,
+          }));
+        }),
       draftHint: (_userId, description) =>
         Effect.gen(function* () {
           const missingKey = missingModelKey(appConfig, appConfig.queryModel);

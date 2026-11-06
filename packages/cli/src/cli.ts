@@ -16,6 +16,7 @@ import {
   update,
   useVault,
 } from "./commands.ts";
+import { serveMcp } from "./mcp.ts";
 
 const vaultFlag = Flag.string("vault").pipe(
   Flag.withDescription("Vault name or id (default: gm vault use, GM_VAULT, or your only vault)"),
@@ -177,6 +178,12 @@ const apiCommand = Command.make(
   callApi,
 ).pipe(Command.withDescription("Call any API endpoint with your key and print the response"));
 
+const mcpCommand = Command.make("mcp", { vault: vaultFlag }, serveMcp).pipe(
+  Command.withDescription(
+    "Serve this vault to an AI assistant over MCP (stdio): search, read, list and ask",
+  ),
+);
+
 const gm = Command.make("gm").pipe(
   Command.withDescription("Great Minds from the command line"),
   Command.withSubcommands([
@@ -193,6 +200,7 @@ const gm = Command.make("gm").pipe(
     sessionCommand,
     readCommand,
     apiCommand,
+    mcpCommand,
   ]),
 );
 

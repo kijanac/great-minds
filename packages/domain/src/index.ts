@@ -1260,6 +1260,21 @@ export const ChunkRangeQuery = Schema.Struct({
 });
 export type ChunkRangeQuery = typeof ChunkRangeQuery.Type;
 
+export const SearchQuery = Schema.Struct({
+  q: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(2000))),
+  path: Schema.optionalKey(Schema.String),
+});
+export type SearchQuery = typeof SearchQuery.Type;
+
+export const SearchHit = Schema.Struct({
+  path: Schema.String,
+  chunk_index: Schema.Number,
+  heading: Schema.String,
+  text: Schema.String,
+  score: Schema.Number,
+});
+export type SearchHit = typeof SearchHit.Type;
+
 export const Chunk = Schema.Struct({
   path: Schema.String,
   chunk_index: Schema.Number,
@@ -2034,6 +2049,12 @@ const DocumentsApiGroup = HttpApiGroup.make("documents").add(
     success: DocResponse,
     error: DocumentErrors,
   }).middleware(AuthMiddleware),
+  HttpApiEndpoint.get("searchVault", "/vaults/:vault_id/search", {
+    params: VaultIdParams,
+    query: SearchQuery,
+    success: Schema.Array(SearchHit),
+    error: [ForbiddenResponse, ServiceUnavailableResponse, ValidationResponse] as const,
+  }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("readChunks", "/vaults/:vault_id/chunks", {
     params: VaultIdParams,
     query: ChunkRangeQuery,
@@ -2281,6 +2302,7 @@ export const endpointPermissions: { readonly [Name in EndpointName]: Permission 
   getVaultCosts: "read",
   resolveDocument: "read",
   readChunks: "read",
+  searchVault: "read",
   readLinks: "read",
   listSessions: "read",
   listSessionsByOrigin: "read",
