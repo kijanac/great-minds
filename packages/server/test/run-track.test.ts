@@ -43,7 +43,7 @@ const summary = (row: Row) =>
   ]);
 
 describe("run track", () => {
-  it("folds an Update's pipeline phases into five reader stages with live counts", () => {
+  it("folds an Update's pipeline phases into six reader stages with live counts", () => {
     const row = run({
       currentPhase: "render",
       stages: [
@@ -84,16 +84,17 @@ describe("run track", () => {
       ],
     });
     expect(summary(row)).toEqual([
-      ["reading", "completed", "completed,completed,completed"],
+      ["search", "completed", "completed"],
+      ["reading", "completed", "completed,completed"],
       ["topics", "completed", "completed"],
       ["articles", "completed", "completed,completed,completed"],
       ["writing", "running", "running"],
       ["linking", "pending", "pending,pending,pending,pending,pending"],
     ]);
     const track = runTrack(row);
-    expect(track[3]?.steps[0]).toMatchObject({ label: "Writing articles", done: 212, total: 428 });
-    expect(track[0]?.warnings.map((warning) => warning.count)).toEqual([22]);
-    expect(track[4]?.warnings.map((warning) => warning.count)).toEqual([3]);
+    expect(track[4]?.steps[0]).toMatchObject({ label: "Writing articles", done: 212, total: 428 });
+    expect(track[1]?.warnings.map((warning) => warning.count)).toEqual([22]);
+    expect(track[5]?.warnings.map((warning) => warning.count)).toEqual([3]);
   });
 
   it("marks where a failed run stopped and leaves later stages unstarted", () => {
@@ -110,6 +111,7 @@ describe("run track", () => {
       ],
     });
     expect(summary(row).map(([key, status]) => [key, status])).toEqual([
+      ["search", "completed"],
       ["reading", "failed"],
       ["topics", "pending"],
       ["articles", "pending"],
@@ -135,6 +137,7 @@ describe("run track", () => {
     });
     expect(summary(row).map(([key, status]) => [key, status])).toEqual([
       ["upload", "running"],
+      ["search", "pending"],
       ["reading", "pending"],
       ["topics", "pending"],
       ["articles", "pending"],

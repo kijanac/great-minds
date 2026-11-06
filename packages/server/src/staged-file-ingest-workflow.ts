@@ -17,9 +17,9 @@ import { SourceDocumentsService } from "./source-documents.ts";
 import { StagedStorage } from "./storage.ts";
 
 export const STAGED_FILE_INGEST_STEP_LABELS = {
-  prepare_sources: "Preparing uploaded sources",
-  read_files: "Reading uploaded files",
-  index_documents: "Indexing documents",
+  prepare_sources: "Uploading files",
+  read_files: "Preparing documents",
+  index_documents: "Adding to the library",
 } as const;
 
 const StagedFile = Schema.Struct({

@@ -24,7 +24,6 @@
     id: Uuid;
     file: File;
     path: string;
-    ext: string;
   }
 
   interface CheckingFile extends FileBase {
@@ -83,6 +82,7 @@
   let checkingVault = $state(false);
   let creatingBatch = $state(false);
   let importError = $state<string | null>(null);
+  let showInVault = $state(false);
   let zone: HTMLDivElement;
   let componentActive = true;
   let navigationEpoch = 0;
@@ -116,18 +116,33 @@
   const unsupportedCount = $derived(
     files.filter((file) => file.status === "unsupported").length,
   );
-  const totalSize = $derived(
-    files.reduce((total, file) => total + file.file.size, 0),
+  const selectedSize = $derived(
+    selectedFiles.reduce((total, file) => total + file.file.size, 0),
   );
+  const sharedFolder = $derived(commonFolder(files.map((file) => file.path)));
+  const shownFiles = $derived(
+    showInVault
+      ? files
+      : files.filter((file) => file.status !== "duplicate-in-vault"),
+  );
+
+  function commonFolder(paths: readonly string[]): string {
+    const folders = paths.map((path) => path.split("/").slice(0, -1));
+    const [first, ...rest] = folders;
+    if (first === undefined) return "";
+    let depth = 0;
+    while (
+      depth < first.length &&
+      rest.every((folder) => folder[depth] === first[depth])
+    )
+      depth += 1;
+    return depth === 0 ? "" : `${first.slice(0, depth).join("/")}/`;
+  }
 
   function formatSize(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
-
-  function extOf(name: string): string {
-    return name.includes(".") ? `.${name.split(".").pop()?.toLowerCase()}` : "";
   }
 
   function supportsUpload(file: File): boolean {
@@ -204,8 +219,7 @@
 
   function initialIngestable(dropped: DroppedFile[]): IngestableFile[] {
     return dropped.map(({ file, path }) => {
-      const ext = extOf(file.name);
-      const base = { id: newUuid(), file, path, ext };
+      const base = { id: newUuid(), file, path };
       return supportsUpload(file)
         ? { ...base, status: "checking", selected: true }
         : { ...base, status: "unsupported", selected: false };
@@ -217,6 +231,7 @@
     files = [];
     checkingVault = false;
     importError = null;
+    showInVault = false;
     hashRunId += 1;
     url = "";
   }
@@ -393,16 +408,6 @@
     );
   }
 
-  function deselectDuplicates() {
-    files = files.map((file) => {
-      if (file.status === "checking") return { ...file, selected: true };
-      if (isHashedFile(file)) {
-        return { ...file, selected: file.status === "unique" };
-      }
-      return file;
-    });
-  }
-
   async function confirm() {
     const uploadFiles: HashedFile[] = selectedFiles.map((item) => ({
       file: item.file,
@@ -434,45 +439,20 @@
     else expanded = true;
   }
 
-  function statusIndicator(status: IngestableFile["status"]) {
+  function statusLabel(status: IngestableFile["status"]): string {
     switch (status) {
       case "checking":
-        return {
-          glyph: "◌",
-          label: "checking…",
-          className:
-            "text-gold-dim animate-[pulse-fade_1.6s_ease-in-out_infinite]",
-        };
+        return "checking…";
       case "unique":
-        return {
-          glyph: "◉",
-          label: "unique",
-          className: "text-warm-dim",
-        };
+        return "";
       case "duplicate-in-batch":
-        return {
-          glyph: "◯",
-          label: "duplicate in batch",
-          className: "text-warm-faint",
-        };
+        return "repeated";
       case "duplicate-in-vault":
-        return {
-          glyph: "⊘",
-          label: "already in vault",
-          className: "text-warm-faint",
-        };
+        return "already in vault";
       case "unsupported":
-        return {
-          glyph: "⚠",
-          label: "unsupported format",
-          className: "text-warm-faint",
-        };
+        return "can't be read";
       case "error":
-        return {
-          glyph: "✗",
-          label: "error",
-          className: "text-warm-faint",
-        };
+        return "error";
     }
   }
 </script>
@@ -554,25 +534,22 @@
           <div
             class="flex min-w-0 flex-1 items-center gap-x-4 overflow-hidden px-4 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] whitespace-nowrap text-warm-ghost"
           >
-            <span>{selectedCount} / {files.length} ready</span>
-            <span>{formatSize(totalSize)}</span>
-            {#if checkingCount > 0}
-              <span class="text-gold-dim">{checkingCount} hashing</span>
-            {:else if checkingVault}
-              <span class="text-gold-dim">checking vault</span>
+            <span class="text-warm-dim">{selectedCount} new</span>
+            {#if dupVaultCount > 0}
+              <span>· {dupVaultCount} already in vault</span>
             {/if}
             {#if dupBatchCount > 0}
-              <span class="text-warm-faint">{dupBatchCount} dup in batch</span>
-            {/if}
-            {#if dupVaultCount > 0}
-              <span class="text-warm-faint"
-                >{dupVaultCount} already in vault</span
-              >
+              <span>· {dupBatchCount} repeated</span>
             {/if}
             {#if unsupportedCount > 0}
-              <span class="text-warm-faint">{unsupportedCount} unsupported</span
-              >
+              <span>· {unsupportedCount} can't be read</span>
             {/if}
+            {#if checkingCount > 0}
+              <span class="text-gold-dim">· {checkingCount} checking</span>
+            {:else if checkingVault}
+              <span class="text-gold-dim">· checking vault</span>
+            {/if}
+            <span class="ml-auto">{formatSize(selectedSize)} to upload</span>
           </div>
         {:else}
           <Input
@@ -612,12 +589,11 @@
       transition:slide={{ duration: 240, easing: cubicOut }}
     >
       <ul class="h-[320px] divide-y divide-ink-subtle overflow-y-auto">
-        {#each files as item (item.id)}
-          {@const indicator = statusIndicator(item.status)}
-          {@const unavailable =
-            item.status === "unsupported" || item.status === "error"}
+        {#each shownFiles as item (item.id)}
+          {@const label = statusLabel(item.status)}
+          {@const name = item.path.slice(sharedFolder.length)}
           <li
-            class={`flex items-center gap-3 px-3 py-1.5 transition-opacity ${unavailable ? "opacity-60" : ""}`}
+            class={`flex items-center gap-3 px-3 py-1.5 transition-opacity ${isSelectableFile(item) ? "" : "opacity-60"}`}
           >
             <input
               type="checkbox"
@@ -626,16 +602,16 @@
               onchange={() => toggleSelected(item.id)}
               aria-label={isSelectableFile(item)
                 ? item.selected
-                  ? `Exclude ${item.path}`
-                  : `Include ${item.path}`
-                : `${item.path} cannot be included: ${indicator.label}`}
+                  ? `Exclude ${name}`
+                  : `Include ${name}`
+                : `${name}: ${label}`}
               class="h-4 w-4 shrink-0 accent-gold disabled:cursor-not-allowed"
             />
             <span
               class="min-w-0 flex-1 truncate font-serif text-[length:var(--text-small)] text-warm-dim"
               title={item.path}
             >
-              {item.path}
+              {name}
             </span>
             <span
               class="w-16 shrink-0 text-right font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
@@ -643,21 +619,32 @@
               {formatSize(item.file.size)}
             </span>
             <span
-              class="w-14 shrink-0 truncate font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-              title={item.ext || "no ext"}
+              class={`w-32 shrink-0 truncate font-mono text-[length:var(--text-chrome)] tracking-[0.06em] ${item.status === "checking" ? "animate-[pulse-fade_1.6s_ease-in-out_infinite] text-gold-dim" : "text-gold-muted"}`}
+              title={item.status === "error" ? item.error : label}
             >
-              {item.ext || "—"}
-            </span>
-            <span
-              class={`flex w-44 shrink-0 items-center gap-1.5 truncate font-mono text-[length:var(--text-chrome)] tracking-[0.06em] ${indicator.className}`}
-              title={item.status === "error" ? item.error : indicator.label}
-            >
-              <span class="shrink-0">{indicator.glyph}</span>
-              <span class="truncate">{indicator.label}</span>
+              {label}
             </span>
           </li>
         {/each}
       </ul>
+
+      {#if dupVaultCount > 0}
+        <div
+          class="flex items-center gap-3 border-t border-ink-subtle px-3 py-2 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
+        >
+          <span
+            >{dupVaultCount} file{dupVaultCount === 1 ? "" : "s"} already in the vault
+            {dupVaultCount === 1 ? "is" : "are"} left out.</span
+          >
+          <button
+            type="button"
+            onclick={() => (showInVault = !showInVault)}
+            class="text-gold-muted underline decoration-gold-dim underline-offset-[3px] hover:text-gold"
+          >
+            {showInVault ? "hide" : "show"}
+          </button>
+        </div>
+      {/if}
 
       <div class="border-t border-ink-subtle px-5 py-5">
         {#if importError}
@@ -668,38 +655,26 @@
             {importError}
           </p>
         {/if}
-        <div class="flex flex-wrap items-center justify-center gap-2">
+        <div class="flex flex-wrap items-center justify-center gap-4">
           <Button
-            variant="ghost"
-            size="xs"
             onclick={() => void confirm()}
             disabled={selectedCount === 0 ||
               checkingCount > 0 ||
               checkingVault ||
               creatingBatch}
-            class="h-auto rounded-sm px-3 py-0.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-transparent hover:text-gold-hover disabled:cursor-not-allowed disabled:text-warm-ghost"
+            class="h-auto rounded-sm bg-gold px-4 py-2 font-mono text-[length:var(--text-chrome)] font-medium tracking-[0.1em] text-primary-foreground hover:bg-gold-hover disabled:bg-interactive-ghost disabled:text-muted-foreground disabled:opacity-100"
           >
             {creatingBatch
-              ? "starting upload…"
-              : `ingest ${selectedCount} file${selectedCount !== 1 ? "s" : ""}`}
+              ? "Starting…"
+              : `Add ${selectedCount} document${selectedCount === 1 ? "" : "s"}`}
           </Button>
-          {#if dupBatchCount > 0 || dupVaultCount > 0}
-            <Button
-              variant="ghost"
-              size="xs"
-              onclick={deselectDuplicates}
-              class="h-auto rounded-sm px-3 py-0.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
-            >
-              deselect duplicates
-            </Button>
-          {/if}
           <Button
             variant="ghost"
             size="xs"
             onclick={handleBrowse}
             class="h-auto rounded-sm px-3 py-0.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-warm-ghost hover:bg-transparent hover:text-warm-faint"
           >
-            replace
+            Choose other files
           </Button>
         </div>
       </div>
