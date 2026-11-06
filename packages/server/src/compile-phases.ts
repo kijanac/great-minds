@@ -1,5 +1,3 @@
-import { appendFile, mkdir, readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 
 import {
   backlinks,
@@ -135,11 +133,7 @@ type CompilePhasesShape = {
     validated: readonly ValidatedTopic[],
   ) => Effect.Effect<void, unknown>;
   readonly verify: (vaultId: Uuid, runId: Uuid) => Effect.Effect<void, unknown>;
-  readonly publish: (
-    vaultId: Uuid,
-    runId: Uuid,
-    publishedAt: string,
-  ) => Effect.Effect<void, unknown>;
+  readonly publish: (vaultId: Uuid, runId: Uuid) => Effect.Effect<void, unknown>;
 };
 
 export class CompilePhases extends Context.Service<CompilePhases, CompilePhasesShape>()(
@@ -710,7 +704,7 @@ export const CompilePhasesLive = Layer.effect(
             completed: new Set(Object.keys(VERIFY_STEP_LABELS)),
           }),
         ),
-      publish: (vaultId, runId, publishedAt) =>
+      publish: (vaultId, runId) =>
         Effect.gen(function* () {
           yield* pipeline.updateProgress(
             runId,
@@ -806,46 +800,6 @@ export const CompilePhasesLive = Layer.effect(
               counts: { publish_wiki: [2, 2] },
             }),
           );
-          const counts = yield* db.query((d) => d
-            .select({
-              total: sql<number>`count(*)::int`,
-              rendered: sql<number>`count(*) filter (where ${topics.articleStatus} = 'rendered')::int`,
-              archived: sql<number>`count(*) filter (where ${topics.articleStatus} = 'archived')::int`,
-              dirty: sql<number>`count(*) filter (where ${topics.articleStatus} != 'archived' and ${topics.compiledFromHash} is not null and (${topics.renderedFromHash} is null or ${topics.renderedFromHash} != ${topics.compiledFromHash}))::int`,
-            })
-            .from(topics)
-            .where(eq(topics.vaultId, vaultId)));
-          const chunkCounts = yield* db.query((d) => d
-            .select({
-              raw: sql<number>`count(*) filter (where ${searchIndex.path} like 'raw/%')::int`,
-              wiki: sql<number>`count(*) filter (where ${searchIndex.path} like 'wiki/%')::int`,
-            })
-            .from(searchIndex)
-            .where(eq(searchIndex.vaultId, vaultId)));
-          const count = counts[0];
-          const chunks = chunkCounts[0];
-          if (count === undefined || chunks === undefined)
-            throw new Error("Publish counts returned no row");
-          const logPath = resolve(config.dataDir, ".compile", vaultId, "log.md");
-          yield* Effect.tryPromise(() => mkdir(resolve(logPath, ".."), { recursive: true })).pipe(
-            Effect.orDie,
-          );
-          const logBlock = [
-            `## ${publishedAt}`,
-            `- topics: ${count.total} (rendered ${count.rendered}, archived ${count.archived}, dirty ${count.dirty})`,
-            `- raw docs: ${documents.length}`,
-            `- chunks: ${chunks.raw} raw + ${chunks.wiki} wiki`,
-            "",
-            "",
-          ].join("\n");
-          const existingLog = yield* Effect.result(
-            Effect.tryPromise({ try: () => readFile(logPath, "utf8"), catch: (error) => error }),
-          );
-          if (existingLog._tag === "Failure" || !existingLog.success.includes(logBlock)) {
-            yield* Effect.tryPromise(() => appendFile(logPath, logBlock, "utf8")).pipe(
-              Effect.orDie,
-            );
-          }
           yield* pipeline.recordOutcome(runId);
           yield* pipeline.updateProgress(
             runId,

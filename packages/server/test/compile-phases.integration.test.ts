@@ -1414,8 +1414,8 @@ describe("M4.3a deterministic compile phases", () => {
           )
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
-        yield* phases.publish(id.vault, id.run, "2026-07-12T12:00:00+00:00");
-        yield* phases.publish(id.vault, id.run, "2026-07-12T12:00:00+00:00");
+        yield* phases.publish(id.vault, id.run);
+        yield* phases.publish(id.vault, id.run);
       }),
     );
     expect(files.get("wiki/_index.md")).toBe(
@@ -1437,8 +1437,5 @@ describe("M4.3a deterministic compile phases", () => {
       ].join("\n"),
     );
     expect(files.get("raw/_index.md")).toContain("[raw/docs/source.md](raw/docs/source.md)");
-    const log = await readFile(join(dataDir, ".compile", id.vault, "log.md"), "utf8");
-    expect(log).toContain("- topics: 2 (rendered 2, archived 0, dirty 0)");
-    expect(log.match(/## 2026-07-12T12:00:00\+00:00/g)).toHaveLength(1);
   });
 });

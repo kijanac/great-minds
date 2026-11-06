@@ -55,7 +55,6 @@ const walkBlocks = (content: string): readonly Block[] => {
 };
 
 const FRONTMATTER_RE = /^---\n(.+?)\n---\n/s;
-const WIKI_LINK_RE = /\[([^\]]*)\]\((wiki\/[^)]+\.md)\)/g;
 
 const decodeFrontmatterRecord = Schema.decodeUnknownOption(
   Schema.Record(Schema.String, Schema.Unknown),
@@ -138,19 +137,6 @@ export const openingSentence = (body: string) => {
 
 const shortened = (text: string) =>
   `${text.slice(0, OPENING_LIMIT).replace(/\s+\S*$/, "").replace(/[,;:—–-]$/, "")}…`;
-
-export const extractWikiLinkTargets = (content: string) => {
-  const paths: string[] = [];
-  const seen = new Set<string>();
-  for (const match of content.matchAll(WIKI_LINK_RE)) {
-    const path = match[2];
-    if (path !== undefined && !seen.has(path)) {
-      seen.add(path);
-      paths.push(path);
-    }
-  }
-  return paths;
-};
 
 const stringifyRuamelFrontmatter = (frontmatter: Record<string, unknown>) => {
   const yaml = stringifyYaml(frontmatter, {

@@ -50,9 +50,7 @@ const causeFailure = (
   return phaseFailure(phase, Cause.pretty(cause));
 };
 
-export const CompileWorkflowLive = Layer.unwrap(
-  Effect.map(ClockService, (clock) =>
-    CompileWorkflow.toLayer((payload) => {
+export const CompileWorkflowLive = CompileWorkflow.toLayer((payload) => {
   const runPhase = <Success extends Schema.Top, R>(
     phase: CompilePhase,
     success: Success,
@@ -134,19 +132,10 @@ export const CompileWorkflowLive = Layer.unwrap(
     yield* runPhase("derive", Schema.Void, service.derive(vaultId, runId, validated));
     yield* runPhase("render", Schema.Void, service.render(vaultId, runId, validated));
     yield* runPhase("verify", Schema.Void, service.verify(vaultId, runId));
-    const publishedAt = yield* Activity.make({
-      name: "compile-publish-timestamp",
-      success: Schema.String,
-      execute: Effect.map(clock.now, (now) =>
-        now.toISOString().replace(/\.\d{3}Z$/, "+00:00"),
-      ),
-    });
-    yield* runPhase("publish", Schema.Void, service.publish(vaultId, runId, publishedAt));
+    yield* runPhase("publish", Schema.Void, service.publish(vaultId, runId));
   });
   return phases;
-    }),
-  ),
-);
+});
 
 export const cancelCompileWorkflow = (intentId: Uuid) =>
   Effect.gen(function* () {

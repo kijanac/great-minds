@@ -246,7 +246,7 @@ const compile = (runId: Uuid) =>
       yield* phases.derive(id.vault, runId, validated);
       yield* phases.render(id.vault, runId, validated);
       yield* phases.verify(id.vault, runId);
-      yield* phases.publish(id.vault, runId, "2026-11-05T12:00:00+00:00");
+      yield* phases.publish(id.vault, runId);
       return validated;
     }),
   );
