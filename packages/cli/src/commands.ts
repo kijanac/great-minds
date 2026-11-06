@@ -1,9 +1,14 @@
 import { hostname } from "node:os";
+import { basename, join } from "node:path";
 
 import {
   allVaults,
   citationsOf,
   errorMessage,
+  fingerprint,
+  manifestOf,
+  uploadTarget,
+  type UploadFile,
   followJob,
   followReply,
   newUuid,
@@ -14,6 +19,7 @@ import {
 } from "@great-minds/client";
 import {
   isUuid,
+  uploadKind,
   type Email,
   type JobProgressSnapshot,
   type ReplySource,
@@ -22,12 +28,14 @@ import {
   type Uuid,
   type Vault,
 } from "@great-minds/domain";
-import { Console, Effect, Option, Stream } from "effect";
+import { Console, Effect, FileSystem, Option, Stream } from "effect";
 
 import { connect, type Connection } from "./connection.ts";
 import { Credentials } from "./credentials.ts";
 import {
   KeyNotRevoked,
+  NothingToAdd,
+  UploadsIncomplete,
   ReplyNotCompleted,
   RunStopped,
   StreamEnded,
@@ -403,4 +411,91 @@ export const listRuns = (input: {
       yield* Console.error(
         `(${page.items.length} of ${page.pagination.total}; --limit up to 200 shows more)`,
       );
+  });
+
+const UPLOAD_CONCURRENCY = 4;
+
+const isHidden = (path: string) => path.split(/[\\/]/).some((part) => part.startsWith("."));
+
+const filesUnder = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const info = yield* fs.stat(path);
+    if (info.type !== "Directory") return [path];
+    const entries = yield* fs.readDirectory(path, { recursive: true });
+    const files = yield* Effect.forEach(
+      entries.filter((entry) => !isHidden(entry)).map((entry) => join(path, entry)),
+      (entry) => Effect.map(fs.stat(entry), (stat) => (stat.type === "File" ? [entry] : [])),
+    );
+    return files.flat().sort();
+  });
+
+const readUpload = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const bytes = yield* fs.readFile(path);
+    const content = new Blob([new Uint8Array(bytes)]);
+    const hash = yield* Effect.promise(() => fingerprint(content));
+    return { path, name: basename(path), content, hash, mimetype: "" };
+  });
+
+export const add = (input: {
+  readonly paths: readonly string[];
+  readonly vault: Option.Option<string>;
+  readonly json: boolean;
+}) =>
+  Effect.gen(function* () {
+    const found = (yield* Effect.forEach(input.paths, filesUnder)).flat();
+    const supported = found.filter((path) => uploadKind(basename(path), "") !== null);
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const read = yield* Effect.forEach(supported, readUpload, { concurrency: UPLOAD_CONCURRENCY });
+    const { existing } = yield* connection.use(
+      connection.api.ingest.checkFileIngestDupes({
+        params: { vault_id: vaultId },
+        payload: { client_hashes: [...new Set(read.map((file) => file.hash))] },
+      }),
+    );
+    const known = new Set<string>(existing);
+    const files: (UploadFile & { readonly path: string })[] = [];
+    for (const file of read) {
+      if (known.has(file.hash)) continue;
+      known.add(file.hash);
+      files.push(file);
+    }
+    const skipped = found.length - files.length;
+    if (files.length === 0) return yield* new NothingToAdd({ skipped: found.length });
+    if (skipped > 0)
+      yield* Console.error(
+        `Skipping ${plural(skipped, "file")}: already in the vault, repeated or unsupported.`,
+      );
+    const batch = yield* connection.use(
+      connection.api.ingest.createFileIngest({
+        params: { vault_id: vaultId },
+        payload: { batch_id: newUuid(), files: manifestOf(files) },
+      }),
+    );
+    const byHash = new Map(files.map((file) => [file.hash, file]));
+    const failed = yield* Effect.forEach(
+      batch.targets,
+      (target) => {
+        const file = byHash.get(target.hash);
+        if (file === undefined) return Effect.succeed([]);
+        return uploadTarget(connection, batch, target, file).pipe(
+          Effect.andThen(Console.error(`  uploaded ${file.path}`)),
+          Effect.as([]),
+          Effect.catch((error) => Effect.succeed([`${file.path}: ${errorMessage(error)}`])),
+        );
+      },
+      { concurrency: UPLOAD_CONCURRENCY },
+    );
+    const failures = failed.flat();
+    if (failures.length > 0)
+      return yield* new UploadsIncomplete({ failed: failures, total: files.length });
+    const job = yield* connection.use(
+      connection.api.ingest.commitFileIngest({ params: { batch_id: batch.id } }),
+    );
+    yield* Console.error(
+      `Added ${plural(files.length, "file")}; run ${job.id} (gm run ${job.id} to follow it again)`,
+    );
+    yield* followRun(connection, vaultId, job.id, input.json);
   });

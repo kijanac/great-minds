@@ -1,6 +1,6 @@
 <script lang="ts">
   import { beforeNavigate, goto } from "$app/navigation";
-  import type { Uuid } from "@great-minds/domain";
+  import { uploadKind, type Uuid } from "@great-minds/domain";
   import { Effect } from "effect";
   import { onMount } from "svelte";
   import { cubicOut } from "svelte/easing";
@@ -18,24 +18,6 @@
   import { newUuid } from "@great-minds/client";
   import type { DroppedFile } from "$lib/types";
 
-  const SUPPORTED_UPLOAD_EXTS = new Set([
-    ".md",
-    ".markdown",
-    ".txt",
-    ".text",
-    ".csv",
-    ".json",
-    ".xml",
-    ".html",
-    ".htm",
-    ".pdf",
-    ".docx",
-    ".pptx",
-    ".xlsx",
-    ".odt",
-    ".odp",
-    ".ods",
-  ]);
   const HASH_CONCURRENCY = 4;
 
   interface FileBase {
@@ -148,12 +130,8 @@
     return name.includes(".") ? `.${name.split(".").pop()?.toLowerCase()}` : "";
   }
 
-  function supportsUpload(file: File, ext: string): boolean {
-    return (
-      ext === "" ||
-      SUPPORTED_UPLOAD_EXTS.has(ext) ||
-      file.type.toLowerCase().includes("text/html")
-    );
+  function supportsUpload(file: File): boolean {
+    return uploadKind(file.name, file.type) !== null;
   }
 
   async function filesFromDrop(
@@ -228,7 +206,7 @@
     return dropped.map(({ file, path }) => {
       const ext = extOf(file.name);
       const base = { id: newUuid(), file, path, ext };
-      return supportsUpload(file, ext)
+      return supportsUpload(file)
         ? { ...base, status: "checking", selected: true }
         : { ...base, status: "unsupported", selected: false };
     });

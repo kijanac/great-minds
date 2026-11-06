@@ -1,5 +1,6 @@
 import { Defuddle } from "defuddle/node";
 import { JSDOM } from "jsdom";
+import { uploadKind } from "@great-minds/domain";
 import { parseOfficeAsync } from "officeparser";
 
 const compactMarkdown = (markdown: string) =>
@@ -38,26 +39,21 @@ export const markdownWithTitle = (title: string | null, markdown: string) =>
     ? compactMarkdown(`# ${title}\n\n${markdown}`)
     : markdown;
 
-const TEXT_EXTENSIONS = new Set([".md", ".txt", ".text", ".markdown", ".csv", ".json", ".xml"]);
-const HTML_EXTENSIONS = new Set([".html", ".htm"]);
-const BINARY_EXTENSIONS = new Set([".docx", ".pptx", ".xlsx", ".odt", ".odp", ".ods", ".pdf"]);
-
 export const stagedFileToMarkdown = async (
   rawBytes: Uint8Array,
   filename: string,
   mimetype: string,
 ) => {
-  const suffixAt = filename.lastIndexOf(".");
-  const extension = suffixAt < 0 ? ".txt" : filename.slice(suffixAt).toLowerCase();
-  if (TEXT_EXTENSIONS.has(extension)) {
+  const kind = uploadKind(filename, mimetype);
+  if (kind === "text") {
     return new TextDecoder("utf-8", { fatal: true }).decode(rawBytes);
   }
-  if (HTML_EXTENSIONS.has(extension) || mimetype.toLowerCase().includes("text/html")) {
+  if (kind === "html") {
     const html = new TextDecoder("utf-8", { fatal: true }).decode(rawBytes);
     const converted = await htmlToMarkdown(html, "https://uploaded.local/");
     return markdownWithTitle(converted.title, converted.markdown);
   }
-  if (BINARY_EXTENSIONS.has(extension)) {
+  if (kind === "office") {
     return parseOfficeAsync(Buffer.from(rawBytes), {
       newlineDelimiter: "\n",
       ignoreNotes: false,
@@ -65,5 +61,5 @@ export const stagedFileToMarkdown = async (
       outputErrorToConsole: false,
     });
   }
-  throw new Error(`Unsupported staged upload conversion extension: ${extension}`);
+  throw new Error(`Unsupported staged upload: ${filename}`);
 };

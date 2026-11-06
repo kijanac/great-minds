@@ -1,14 +1,19 @@
 import {
-  FileFingerprint,
+  type FileFingerprint,
   type FileIngestBatch,
   type Uuid,
   type UserSuggestionResult,
 } from "@great-minds/domain";
 import { Effect } from "effect";
-import { errorMessage, newUuid, withApiErrors } from "@great-minds/client";
-import { HttpBody, HttpClientRequest } from "effect/unstable/http";
+import {
+  errorMessage,
+  fingerprint,
+  manifestOf,
+  newUuid,
+  uploadTarget,
+} from "@great-minds/client";
 
-import { api, externalHttp, http, run } from "./app";
+import { api, connection, run } from "./app";
 import { selectedVault } from "./selected-vault";
 
 export type { FileIngestBatch, UserSuggestionResult };
@@ -32,18 +37,7 @@ export interface FileIngestProgress {
   failures?: UploadFailure[];
 }
 
-export async function sha256Hex(bytes: ArrayBuffer): Promise<FileFingerprint> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return FileFingerprint.make(
-    Array.from(new Uint8Array(digest))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join(""),
-  );
-}
-
-export async function hashFile(file: File): Promise<FileFingerprint> {
-  return sha256Hex(await file.arrayBuffer());
-}
+export const hashFile = (file: File): Promise<FileFingerprint> => fingerprint(file);
 
 export function checkDupes(
   clientHashes: readonly FileFingerprint[],
@@ -76,13 +70,12 @@ export const hashFiles = (files: readonly File[]): Promise<readonly HashedFile[]
     ),
   );
 
-const manifestFor = (hashedFiles: readonly HashedFile[]) =>
-  hashedFiles.map(({ file, hash }) => ({
-    name: file.name,
-    size: file.size,
-    hash,
-    mimetype: file.type,
-  }));
+const uploadFileOf = ({ file, hash }: HashedFile) => ({
+  name: file.name,
+  content: file,
+  hash,
+  mimetype: file.type,
+});
 
 export function createFileIngestBatch(
   hashedFiles: readonly HashedFile[],
@@ -91,7 +84,7 @@ export function createFileIngestBatch(
   return run(
     api.ingest.createFileIngest({
       params: { vault_id: selectedVault() },
-      payload: { batch_id: batchId, files: manifestFor(hashedFiles) },
+      payload: { batch_id: batchId, files: manifestOf(hashedFiles.map(uploadFileOf)) },
     }),
   );
 }
@@ -107,31 +100,6 @@ export function getFileIngestBatch(batchId: Uuid): Promise<FileIngestBatch | nul
 export function resumeFileIngestBatch(batchId: Uuid): Promise<FileIngestBatch> {
   return run(api.ingest.resumeFileIngest({ params: { batch_id: batchId } }));
 }
-
-const uploadViaApi = (batchId: Uuid, file: File, hash: FileFingerprint) => {
-  const formData = new FormData();
-  formData.append("file", file);
-  return http
-    .execute(
-      HttpClientRequest.post(`/file-ingests/${batchId}/files/${hash}`).pipe(
-        HttpClientRequest.bodyFormData(formData),
-      ),
-    )
-    .pipe(withApiErrors);
-};
-
-const uploadViaPresignedUrl = (url: string, file: File) =>
-  externalHttp
-    .execute(
-      HttpClientRequest.put(url).pipe(
-        HttpClientRequest.setBody(
-          HttpBody.raw(file, { contentType: file.type || "application/octet-stream" }),
-        ),
-      ),
-    )
-    .pipe(withApiErrors);
-
-const isSuccessStatus = (status: number) => status >= 200 && status < 300;
 
 type UploadResult = { ok: true; hash: FileFingerprint } | { ok: false; failure: UploadFailure };
 
@@ -149,24 +117,8 @@ const uploadOne =
         },
       });
     }
-    return Effect.gen(function* () {
-      const response =
-        target.transport === "presigned"
-          ? yield* uploadViaPresignedUrl(target.url, file)
-          : yield* uploadViaApi(batch.id, file, target.hash);
-      if (!isSuccessStatus(response.status)) {
-        return {
-          ok: false,
-          failure: { name: manifestFile.name, error: `Upload returned ${response.status}` },
-        } satisfies UploadResult;
-      }
-      yield* withApiErrors(
-        api.ingest.acknowledgeFileIngestUpload({
-          params: { batch_id: batch.id, hash: target.hash },
-        }),
-      );
-      return { ok: true, hash: target.hash } satisfies UploadResult;
-    }).pipe(
+    return uploadTarget(connection, batch, target, uploadFileOf({ file, hash: target.hash })).pipe(
+      Effect.as<UploadResult>({ ok: true, hash: target.hash }),
       Effect.catch((error) =>
         Effect.succeed<UploadResult>({
           ok: false,

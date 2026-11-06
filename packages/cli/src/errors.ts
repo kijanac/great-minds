@@ -93,6 +93,25 @@ export class ReplyNotCompleted extends Data.TaggedError("ReplyNotCompleted")<{
   }
 }
 
+export class NothingToAdd extends Data.TaggedError("NothingToAdd")<{
+  readonly skipped: number;
+}> {
+  override get message() {
+    return this.skipped === 0
+      ? "no files found"
+      : `nothing new to add (${this.skipped} skipped: already in the vault, repeated or unsupported)`;
+  }
+}
+
+export class UploadsIncomplete extends Data.TaggedError("UploadsIncomplete")<{
+  readonly failed: readonly string[];
+  readonly total: number;
+}> {
+  override get message() {
+    return `${this.failed.length} of ${this.total} files did not upload: ${this.failed.join("; ")}`;
+  }
+}
+
 export class RunStopped extends Data.TaggedError("RunStopped")<{
   readonly headline: string;
   readonly error: string | null;

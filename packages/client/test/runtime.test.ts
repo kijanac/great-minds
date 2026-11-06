@@ -1,4 +1,4 @@
-import { Forbidden, SessionId, Unauthorized, Uuid } from "@great-minds/domain";
+import { FileFingerprint, Forbidden, SessionId, Unauthorized, Uuid } from "@great-minds/domain";
 import { Effect, Fiber, Layer, Schema, Semaphore, Stream } from "effect";
 import { HttpClientRequest } from "effect/unstable/http";
 import { describe, expect, it } from "vitest";
@@ -71,6 +71,18 @@ function fetchResponding(respond: (request: RecordedRequest) => Response | Promi
   return { fetchImpl, requests };
 }
 
+const fingerprint = FileFingerprint.make("a".repeat(64));
+const upload = (api: ReturnType<typeof makeApi>["api"]) => {
+  const form = new FormData();
+  form.append("file", new Blob(["upload"]), "note.md");
+  return api.ingest.uploadFileIngestFile({
+    params: { batch_id: vaultId, hash: fingerprint },
+    payload: form,
+  });
+};
+const isUpload = (url: string) => url.includes("/file-ingests/");
+const noContent = () => new Response(null, { status: 204 });
+
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), {
     status,
@@ -141,17 +153,18 @@ describe("makeApi", () => {
       if (request.url.startsWith("https://uploads.test/")) return new Response(null);
       if (request.headers.get("authorization") !== "Bearer access-2") return unauthorized();
       if (request.url.endsWith("/stream")) return sseResponse(['data: {"n":1}\n\n']);
+      if (isUpload(request.url)) return noContent();
       return json(200, vaultDetail);
     };
     const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
-    const { api, http, externalHttp, run, stream } = makeApi({
+    const { api, externalHttp, run, stream } = makeApi({
       baseUrl,
       fetch: fetchImpl,
       tokens: tokens.layer,
     });
 
     await run(api.vaults.getVault({ params: { vault_id: vaultId } }));
-    await run(http.get(`/vaults/${vaultId}`));
+    await run(upload(api));
     await collect(
       stream(
         Stream.unwrap(
@@ -224,24 +237,25 @@ describe("makeApi", () => {
     expect(tokens.state).toEqual({ access: "access-2", refresh: "refresh-2" });
   });
 
-  it("shares one refresh across concurrent generated-client and raw-client 401s", async () => {
+  it("shares one refresh across concurrent JSON and upload requests that get 401", async () => {
     let refreshes = 0;
     const { fetchImpl } = fetchResponding((request) => {
       if (request.url.endsWith("/auth/refresh")) {
         refreshes += 1;
         return json(200, tokenPair("2"));
       }
-      return request.authorization === "Bearer access-2" ? json(200, vaultDetail) : unauthorized();
+      if (request.authorization !== "Bearer access-2") return unauthorized();
+      return isUpload(request.url) ? noContent() : json(200, vaultDetail);
     });
     const tokens = memoryTokens({ access: "access-1", refresh: "refresh-1" });
-    const { api, http, run } = makeApi({
+    const { api, run } = makeApi({
       baseUrl,
       fetch: fetchImpl,
       tokens: tokens.layer,
     });
     const getVault = () => run(api.vaults.getVault({ params: { vault_id: vaultId } }));
 
-    await Promise.all([getVault(), getVault(), run(http.get(`/vaults/${vaultId}`))]);
+    await Promise.all([getVault(), getVault(), run(upload(api))]);
 
     expect(refreshes).toBe(1);
   });

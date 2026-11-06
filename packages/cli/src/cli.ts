@@ -3,6 +3,7 @@ import { Effect, Redacted } from "effect";
 import { Argument, Command, Flag, Prompt } from "effect/unstable/cli";
 
 import {
+  add,
   ask,
   followExistingRun,
   listRuns,
@@ -81,6 +82,23 @@ const askCommand = Command.make(
   ),
 );
 
+const addCommand = Command.make(
+  "add",
+  {
+    paths: Argument.path("path", { mustExist: true }).pipe(
+      Argument.withDescription("Files or folders to add (folders are read recursively)"),
+      Argument.atLeast(1),
+    ),
+    vault: vaultFlag,
+    json: jsonFlag,
+  },
+  add,
+).pipe(
+  Command.withDescription(
+    "Upload documents, skipping ones already in the vault, and follow the run they start",
+  ),
+);
+
 const updateCommand = Command.make("update", { vault: vaultFlag, json: jsonFlag }, update).pipe(
   Command.withDescription("Start an Update and follow it to the end"),
 );
@@ -123,6 +141,7 @@ const gm = Command.make("gm").pipe(
     vaultsCommand,
     vaultCommand,
     askCommand,
+    addCommand,
     updateCommand,
     runsCommand,
     runCommand,
