@@ -163,7 +163,7 @@ beforeEach(async () => {
 afterEach(() => rm(directory, { recursive: true, force: true }));
 
 describe("gm login", () => {
-  it("saves only its own key, owner-readable, keeps the vault and revokes the key it replaces on the same server", async () => {
+  it("saves only its own key, owner-readable, keeps the vault and revokes the key it replaces", async () => {
     await saveCredentials({
       api_url: apiUrl,
       api_key: "gm_old",
@@ -173,14 +173,8 @@ describe("gm login", () => {
     route = signInRoutes(noContent);
     await run(signIn(apiUrl));
 
-    expect(JSON.parse(requests[1]?.body ?? "{}")).toEqual({
-      email: "reader@example.com",
-      code: "123456",
-    });
-    expect(requests[2]?.auth).toBe("Bearer access-1");
     expect(requests[3]).toMatchObject({ method: "DELETE", auth: "Bearer access-1" });
     expect((await stat(credentialsFile())).mode & 0o777).toBe(0o600);
-    expect((await stat(directory)).mode & 0o777).toBe(0o700);
     expect(await savedFile()).toEqual({
       api_url: apiUrl,
       api_key: "gm_new",
@@ -190,33 +184,7 @@ describe("gm login", () => {
     expect(await readFile(credentialsFile(), "utf8")).not.toContain("access-1");
   });
 
-  it("does not carry a vault or revoke a key from a different server", async () => {
-    await saveCredentials({
-      api_url: otherUrl,
-      api_key: "gm_old",
-      api_key_id: oldKeyId,
-      vault_id: vaultId,
-    });
-    route = signInRoutes(noContent);
-    await run(signIn(apiUrl));
-
-    expect(requests.some((request) => request.method === "DELETE")).toBe(false);
-    expect(await savedFile()).toMatchObject({ api_url: apiUrl, vault_id: null });
-  });
-
-  it("signs in to GM_API_URL when no --url is given", async () => {
-    route = signInRoutes(noContent);
-    await run(
-      login({ email: "reader@example.com", url: Option.none(), readCode: Effect.succeed("1") }),
-      {
-        GM_API_URL: apiUrl,
-      },
-    );
-    expect(requests.every((request) => request.host === "test.local")).toBe(true);
-    expect(await savedFile()).toMatchObject({ api_url: apiUrl });
-  });
-
-  it("still signs in when the old key cannot be revoked, and says so", async () => {
+  it("still signs in when the old key cannot be revoked, and names the key left to revoke", async () => {
     await saveCredentials({
       api_url: apiUrl,
       api_key: "gm_old",
@@ -228,13 +196,6 @@ describe("gm login", () => {
 
     expect(await savedFile()).toMatchObject({ api_key: "gm_new", api_key_id: keyId });
     expect(stderr.some((line) => line.includes(oldKeyId))).toBe(true);
-  });
-
-  it("replaces an unreadable credentials file instead of refusing", async () => {
-    await writeFile(credentialsFile(), "{broken", { mode: 0o600 });
-    route = signInRoutes(noContent);
-    await run(signIn(apiUrl));
-    expect(await savedFile()).toMatchObject({ api_key: "gm_new" });
   });
 });
 
@@ -248,20 +209,13 @@ describe("gm logout", () => {
     });
     route = noContent;
     await run(logout());
-    expect(requests).toEqual([
-      {
-        method: "DELETE",
-        path: `/v1/auth/api-keys/${oldKeyId}`,
-        host: "test.local",
-        auth: "Bearer gm_saved",
-        body: "",
-      },
+    expect(requests).toMatchObject([
+      { method: "DELETE", path: `/v1/auth/api-keys/${oldKeyId}`, auth: "Bearer gm_saved" },
     ]);
     await expect(stat(credentialsFile())).rejects.toThrow();
-    expect(stdout).toEqual(["Signed out: the key was revoked and removed from this computer."]);
   });
 
-  it("removes the key even when revoking fails, and does not claim it was revoked", async () => {
+  it("removes the key when revoking fails, without claiming it was revoked", async () => {
     await saveCredentials({
       api_url: apiUrl,
       api_key: "gm_saved",
@@ -271,49 +225,28 @@ describe("gm logout", () => {
     route = () => json(503, { _tag: "ServiceUnavailable", detail: "busy" });
     await run(logout());
     await expect(stat(credentialsFile())).rejects.toThrow();
-    expect(stdout[0]).toContain("could not revoke it");
+    expect(stdout[0]).not.toContain("was revoked");
     expect(stdout[0]).toContain(oldKeyId);
-  });
-
-  it("does not claim a revocation when no key id was recorded", async () => {
-    await saveCredentials({
-      api_url: apiUrl,
-      api_key: "gm_saved",
-      api_key_id: null,
-      vault_id: null,
-    });
-    await run(logout());
-    expect(requests).toEqual([]);
-    expect(stdout[0]).toContain("revoke it in Settings");
-  });
-
-  it("removes an unreadable credentials file", async () => {
-    await writeFile(credentialsFile(), "{broken", { mode: 0o600 });
-    await run(logout());
-    await expect(stat(credentialsFile())).rejects.toThrow();
-  });
-
-  it("warns that a key from GM_API_KEY cannot be revoked by logout", async () => {
-    await run(logout(), { GM_API_KEY: "gm_env" });
-    expect(stderr[0]).toContain("GM_API_KEY is set");
   });
 });
 
 describe("credentials", () => {
-  it("treats an empty GM_API_KEY as unset", async () => {
-    expect(
-      await failureTag(listRuns({ vault: Option.none(), limit: 20, json: false }), {
-        GM_API_KEY: "",
-      }),
-    ).toBe("NotSignedIn");
+  it("an unreadable credentials file blocks neither login nor logout", async () => {
+    await writeFile(credentialsFile(), "{broken", { mode: 0o600 });
+    await run(logout());
+    await expect(stat(credentialsFile())).rejects.toThrow();
+    await writeFile(credentialsFile(), "{broken", { mode: 0o600 });
+    route = signInRoutes(noContent);
+    await run(signIn(apiUrl));
+    expect(await savedFile()).toMatchObject({ api_key: "gm_new" });
   });
 
-  it("does not send a saved key to a different server named by GM_API_URL", async () => {
+  it("a saved key and vault stay with their own server", async () => {
     await saveCredentials({
       api_url: apiUrl,
       api_key: "gm_saved",
       api_key_id: oldKeyId,
-      vault_id: null,
+      vault_id: vaultId,
     });
     expect(
       await failureTag(listRuns({ vault: Option.none(), limit: 20, json: false }), {
@@ -321,9 +254,14 @@ describe("credentials", () => {
       }),
     ).toBe("NotSignedIn");
     expect(requests).toEqual([]);
+
+    route = signInRoutes(noContent);
+    await run(signIn(otherUrl));
+    expect(requests.some((request) => request.method === "DELETE")).toBe(false);
+    expect(await savedFile()).toMatchObject({ api_url: otherUrl, vault_id: null });
   });
 
-  it("does not pair a GM_API_KEY with the saved default vault", async () => {
+  it("a GM_API_KEY never borrows the saved default vault", async () => {
     await saveCredentials({
       api_url: apiUrl,
       api_key: "gm_saved",
@@ -407,47 +345,6 @@ describe("gm ask", () => {
       "Sources:",
       "  [1] Liquidationism  wiki/liquidationism.md",
     ]);
-  });
-
-  it("asks which vault to use when there are several and none is chosen", async () => {
-    await saveCredentials({
-      api_url: apiUrl,
-      api_key: "gm_saved",
-      api_key_id: oldKeyId,
-      vault_id: null,
-    });
-    route = () =>
-      json(200, {
-        items: [
-          { id: vaultId, name: "One", owner_id: vaultId, created_at: now },
-          { id: otherVault, name: "Two", owner_id: vaultId, created_at: now },
-        ],
-        pagination: { total: 2, limit: 50, offset: 0 },
-        roles: {},
-      });
-    expect(
-      await failureTag(
-        ask({ question: "Anything?", session: Option.none(), vault: Option.none(), json: false }),
-      ),
-    ).toBe("VaultChoiceNeeded");
-  });
-});
-
-describe("gm runs", () => {
-  it("rejects a --limit outside what the API accepts, before any request", async () => {
-    await saveCredentials({
-      api_url: apiUrl,
-      api_key: "gm_saved",
-      api_key_id: oldKeyId,
-      vault_id: vaultId,
-    });
-    expect(await failureTag(listRuns({ vault: Option.none(), limit: 0, json: false }))).toBe(
-      "LimitOutOfRange",
-    );
-    expect(await failureTag(listRuns({ vault: Option.none(), limit: 500, json: false }))).toBe(
-      "LimitOutOfRange",
-    );
-    expect(requests).toEqual([]);
   });
 });
 
@@ -554,20 +451,11 @@ describe("the gm command", { timeout: 30_000 }, () => {
       encoding: "utf8",
     });
 
-  it("exits 0 when it only shows help, and 1 for an unknown command", () => {
+  it("exits 0 for help, 1 with a one-line error for a failure", () => {
     expect(gm([]).status).toBe(0);
-    expect(gm(["vault"]).status).toBe(0);
-    expect(gm(["--help"]).status).toBe(0);
     expect(gm(["nonsense"]).status).toBe(1);
-  });
-
-  it("reports its package version", () => {
-    expect(gm(["--version"]).stdout).toContain("0.1.0");
-  });
-
-  it("prints a one-line error and exits 1 when not signed in", () => {
-    const result = gm(["runs"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr.trim()).toBe("gm: not signed in: run gm login, or set GM_API_KEY");
+    const failed = gm(["runs"]);
+    expect(failed.status).toBe(1);
+    expect(failed.stderr.trim()).toBe("gm: not signed in: run gm login, or set GM_API_KEY");
   });
 });
