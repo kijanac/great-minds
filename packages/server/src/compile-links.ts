@@ -23,6 +23,8 @@ const Check = Schema.Struct({ verdict: Schema.Literals(["yes", "no"] as const) }
 export type LinkSettings = {
   readonly pickModel: string;
   readonly checkModel: string;
+  readonly pickTemperature: number | undefined;
+  readonly checkTemperature: number | undefined;
   readonly mentionPrompt: string;
   readonly pickPrompt: string;
   readonly checkPrompt: string;
@@ -152,7 +154,7 @@ export const findLinks = (
               messages: [
                 { role: "user", content: settings.mentionPrompt.replace("{prose}", () => prose) },
               ],
-              temperature: 0,
+              temperature: settings.pickTemperature,
               responseFormat: responseFormat("article_mentions", MentionList),
               answer: MentionList,
             })
@@ -289,7 +291,7 @@ export const findLinks = (
                     .replace("{candidates}", () => listing),
                 },
               ],
-              temperature: 0,
+              temperature: settings.pickTemperature,
               responseFormat: responseFormat("link_pick", Pick),
               answer: Pick,
             }),
@@ -302,6 +304,7 @@ export const findLinks = (
             runner.ask({
               kind: "check_link",
               model: settings.checkModel,
+              temperature: settings.checkTemperature,
               messages: [
                 {
                   role: "user",

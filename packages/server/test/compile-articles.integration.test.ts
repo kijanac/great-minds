@@ -71,6 +71,7 @@ const prompt = (name: string) =>
   );
 const settings = {
   model: "deepseek/deepseek-v3.2",
+  temperature: 0,
   mergePrompt: await prompt("judge_same_entry"),
   placePrompt: await prompt("place_in_article"),
   concurrency: 4,

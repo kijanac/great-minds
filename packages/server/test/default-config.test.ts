@@ -60,6 +60,35 @@ describe("server config defaults", () => {
     expect((await loadConfig({ COMPILE_EMBED_CONCURRENCY: "2" })).compileEmbedConcurrency).toBe(2);
   });
 
+  it("gives every model role a temperature that can be turned off", async () => {
+    const defaults = await loadConfig({});
+    expect([
+      defaults.queryTemperature,
+      defaults.extractTemperature,
+      defaults.mapTemperature,
+      defaults.reduceTemperature,
+      defaults.renderTemperature,
+    ]).toEqual([
+      Option.some(0.3),
+      Option.some(0.2),
+      Option.some(0),
+      Option.none(),
+      Option.some(0.3),
+    ]);
+    const off = await loadConfig({
+      QUERY_TEMPERATURE: "none",
+      EXTRACT_TEMPERATURE: "none",
+      MAP_TEMPERATURE: "none",
+      RENDER_TEMPERATURE: "none",
+    });
+    expect([
+      off.queryTemperature,
+      off.extractTemperature,
+      off.mapTemperature,
+      off.renderTemperature,
+    ]).toEqual([Option.none(), Option.none(), Option.none(), Option.none()]);
+  });
+
   it("refuses a model whose provider is not listed or whose price is missing", async () => {
     const moonshot = {
       PROVIDERS: "moonshot",

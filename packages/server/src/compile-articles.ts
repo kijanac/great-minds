@@ -33,6 +33,7 @@ const PairRows = Schema.Struct({
 
 export type ArticleSettings = {
   readonly model: string;
+  readonly temperature: number | undefined;
   readonly mergePrompt: string;
   readonly placePrompt: string;
   readonly concurrency: number;
@@ -162,7 +163,7 @@ export const buildArticles = (
                 .replace("{topic_b}", () => blockB),
             },
           ],
-          temperature: 0,
+          temperature: settings.temperature,
           responseFormat: responseFormat("topic_relation", SameEntryAnswer),
           answer: SameEntryAnswer,
         })
@@ -286,7 +287,7 @@ export const buildArticles = (
                       .replace("{topic_b}", () => articleBlock(article)),
                   },
                 ],
-                temperature: 0,
+                temperature: settings.temperature,
                 responseFormat: responseFormat("theme_attach", PlacementAnswer),
                 answer: PlacementAnswer,
               })

@@ -90,7 +90,7 @@ export type StreamChatInput = {
   readonly model: string;
   readonly messages: readonly LlmMessage[];
   readonly tools: readonly LlmToolDefinition[];
-  readonly temperature: number;
+  readonly temperature?: number;
 };
 
 export type CompleteInput = {

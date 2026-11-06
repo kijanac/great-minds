@@ -139,6 +139,7 @@ export const makeThemesPipeline = (options: {
       const steps = stepper(runId, "abstract", THEMES_ABSTRACT_STEP_LABELS);
       const themeSettings = {
         model: config.mapModel,
+        temperature: Option.getOrUndefined(config.mapTemperature),
         proposePrompt: yield* prompt("propose_topics"),
         judgePrompt: yield* prompt("judge_same_topic"),
         concurrency: config.compileEnrichConcurrency,
@@ -165,6 +166,7 @@ export const makeThemesPipeline = (options: {
       yield* steps.start("build_articles");
       const built = yield* buildArticles({ db, runner }, blocks, grouped.themes, {
         model: config.mapModel,
+        temperature: Option.getOrUndefined(config.mapTemperature),
         mergePrompt: yield* prompt("judge_same_entry"),
         placePrompt: yield* prompt("place_in_article"),
         concurrency: config.compileEnrichConcurrency,
@@ -295,6 +297,8 @@ export const makeThemesPipeline = (options: {
         {
           pickModel: config.mapModel,
           checkModel: config.reduceModel,
+          pickTemperature: Option.getOrUndefined(config.mapTemperature),
+          checkTemperature: Option.getOrUndefined(config.reduceTemperature),
           mentionPrompt: yield* prompt("find_mentions"),
           pickPrompt: yield* prompt("pick_link_target"),
           checkPrompt: yield* prompt("check_link"),

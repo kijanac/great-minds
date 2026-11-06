@@ -43,7 +43,10 @@ export type AppConfigShape = {
   readonly mapModel: string;
   readonly reduceModel: string;
   readonly renderModel: string;
+  readonly queryTemperature: Option.Option<number>;
   readonly extractTemperature: Option.Option<number>;
+  readonly mapTemperature: Option.Option<number>;
+  readonly reduceTemperature: Option.Option<number>;
   readonly renderTemperature: Option.Option<number>;
   readonly renderReasoningEffort: Option.Option<ReasoningEffort>;
   readonly compileEnrichConcurrency: number;
@@ -201,7 +204,10 @@ const appConfig = Config.all({
     Config.withDefault("anthropic/claude-sonnet-5.5"),
   ),
   renderModel: nonEmptyString("RENDER_MODEL").pipe(Config.withDefault(DEFAULT_RENDER_MODEL)),
+  queryTemperature: samplingTemperature("QUERY_TEMPERATURE", Option.some(0.3)),
   extractTemperature: samplingTemperature("EXTRACT_TEMPERATURE", Option.some(0.2)),
+  mapTemperature: samplingTemperature("MAP_TEMPERATURE", Option.some(0)),
+  reduceTemperature: samplingTemperature("REDUCE_TEMPERATURE", Option.none()),
   renderTemperature: samplingTemperature("RENDER_TEMPERATURE", Option.some(0.3)),
   renderReasoningEffort: Config.literals(
     ["none", "low", "high", "max"] as const,
