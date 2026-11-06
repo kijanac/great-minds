@@ -13,6 +13,7 @@ import {
 import {
   type AssignableMemberRole,
   BadRequest,
+  CurrentAuth,
   Email,
   Forbidden,
   type MemberPage,
@@ -30,7 +31,7 @@ import {
   type VaultRename,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, notExists, sql } from "drizzle-orm";
-import { Cause, Context, Effect, Layer, Schema } from "effect";
+import { Cause, Context, Effect, Layer, Option, Schema } from "effect";
 import { parseDocument } from "yaml";
 
 import { backgroundLoop } from "./background-loop.ts";
@@ -71,7 +72,7 @@ type VaultsServiceShape = {
       readonly thematic_hint?: string;
       readonly kinds?: readonly string[];
     },
-  ) => Effect.Effect<Vault>;
+  ) => Effect.Effect<Vault, Forbidden>;
   readonly listVaults: (userId: Uuid, params: PageParams) => Effect.Effect<VaultPage>;
   readonly getVaultDetail: (userId: Uuid, vaultId: Uuid) => Effect.Effect<VaultDetail, Forbidden>;
   readonly renameVault: (
@@ -250,6 +251,12 @@ const lockTransferTarget = (tx: TransactionClient, vaultId: Uuid, userId: Uuid) 
     if (target.deletedAt !== null) return yield* accountBeingDeleted();
   });
 
+const keyVaultIds = Effect.map(Effect.serviceOption(CurrentAuth), (current) =>
+  Option.isSome(current) && current.value.key_scope !== null
+    ? current.value.key_scope.vault_ids
+    : null,
+);
+
 export const VaultAccessServiceLive = Layer.effect(
   VaultAccessService,
   Effect.gen(function* () {
@@ -261,6 +268,9 @@ export const VaultAccessServiceLive = Layer.effect(
       detail = "Only vault members can perform this action",
     ) =>
       Effect.gen(function* () {
+        const keyVaults = yield* keyVaultIds;
+        if (keyVaults !== null && !keyVaults.includes(vaultId))
+          return yield* new Forbidden({ detail: "This API key can't reach this vault." });
         const rows = yield* db.query((d) =>
           d
             .select({
@@ -587,10 +597,22 @@ export const VaultsServiceLive = Layer.effect(
           );
           return deletedVaults.length + deletedUsers.length;
         }),
-      createVault,
+      createVault: (userId, input) =>
+        Effect.gen(function* () {
+          if ((yield* keyVaultIds) !== null)
+            return yield* new Forbidden({
+              detail: "An API key limited to some vaults can't create vaults.",
+            });
+          return yield* createVault(userId, input);
+        }),
       listVaults: (userId, params) =>
         Effect.gen(function* () {
-          const visible = and(eq(vaultMemberships.userId, userId), isNull(vaults.deletedAt));
+          const keyVaults = yield* keyVaultIds;
+          const visible = and(
+            eq(vaultMemberships.userId, userId),
+            isNull(vaults.deletedAt),
+            keyVaults === null ? undefined : inArray(vaults.id, [...keyVaults]),
+          );
           const countRows = yield* db.query((d) =>
             d
               .select({ total: sql<number>`count(*)::int` })

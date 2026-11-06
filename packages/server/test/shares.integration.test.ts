@@ -792,7 +792,7 @@ describe("share links", () => {
     });
     expect(rejected.status).toBe(403);
     expect(rejected.body).toMatchObject({
-      detail: "Share creation requires session authentication",
+      detail: "API keys can't do this. Sign in to Great Minds in a browser instead.",
     });
   });
 
