@@ -286,6 +286,9 @@ export const ApiKeyWithSecret = Schema.Struct({
 });
 export type ApiKeyWithSecret = typeof ApiKeyWithSecret.Type;
 
+export const SignInMethods = Schema.Struct({ email: Schema.Boolean });
+export type SignInMethods = typeof SignInMethods.Type;
+
 export const CliLoginStart = Schema.Struct({
   computer: Schema.String.pipe(Schema.check(Schema.isMaxLength(100))),
 });
@@ -1590,6 +1593,9 @@ const AuthApiGroup = HttpApiGroup.make("auth").add(
     success: HttpApiSchema.NoContent,
     error: NotFoundValidationErrors,
   }).middleware(AuthMiddleware),
+  HttpApiEndpoint.get("signInMethods", "/auth/methods", {
+    success: SignInMethods,
+  }),
   HttpApiEndpoint.post("startCliLogin", "/auth/cli/start", {
     payload: CliLoginStart,
     success: CliLoginStarted,
@@ -2168,6 +2174,7 @@ export const endpointPermissions: { readonly [Name in EndpointName]: Permission 
   passkeyAuthenticationOptions: "public",
   verifyPasskey: "public",
   startCliLogin: "public",
+  signInMethods: "public",
   pollCliLogin: "public",
   resolveShare: "public",
   passkeyRegisterOptions: "account",

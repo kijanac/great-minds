@@ -33,6 +33,7 @@ import { HttpApiSchemaError } from "effect/unstable/httpapi/HttpApiError";
 import { AppLayerLive, type AppLayerServices } from "./app-layer.ts";
 import { AuthService } from "./auth.ts";
 import { CliLogins } from "./cli-logins.ts";
+import { Mailer } from "./mailer.ts";
 import { AppConfig } from "./config.ts";
 import { CostsService } from "./costs.ts";
 import { DocumentRegistryMismatch, DocumentsService } from "./documents.ts";
@@ -316,6 +317,7 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
     .handle("deleteMe", () =>
       asUser(VaultsService, (vaultsService, userId) => vaultsService.deleteAccount(userId)),
     )
+    .handle("signInMethods", () => Effect.map(Mailer, (mailer) => ({ email: mailer.configured })))
     .handle("startCliLogin", ({ payload }) =>
       Effect.gen(function* () {
         const logins = yield* CliLogins;

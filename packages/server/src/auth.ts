@@ -37,6 +37,7 @@ type AuthServiceShape = {
     clientAddress: string | null,
   ) => Effect.Effect<void, ServiceUnavailable | TooManyRequests>;
   readonly verifyCode: (email: Email, code: string) => Effect.Effect<TokenPair, Unauthorized>;
+  readonly issueSignInCode: (email: Email) => Effect.Effect<string>;
   readonly refresh: (refreshToken: string) => Effect.Effect<TokenPair, Unauthorized>;
   readonly issueTokenPair: (userId: Uuid) => Effect.Effect<TokenPair, Unauthorized>;
   readonly authenticateBearer: (token: string) => Effect.Effect<AuthContext, Unauthorized>;
@@ -322,7 +323,32 @@ export const AuthServiceLive = Layer.effect(
         );
       });
 
+    const storeCode = (tx: TransactionClient, email: Email, code: string, now: Date, clientAddress: string | null) =>
+      Effect.gen(function* () {
+        yield* tx
+          .update(authCodes)
+          .set({ used: true })
+          .where(and(eq(authCodes.email, email), eq(authCodes.used, false)));
+        yield* tx.insert(authCodes).values({
+          id: Uuid.make(randomUUID(), { disableChecks: true }),
+          email,
+          codeHash: sha256Hex(code),
+          expiresAt: addMinutes(now, config.authCodeExpiryMinutes),
+          used: false,
+          clientAddress,
+          createdAt: now,
+        });
+      });
+
     return {
+      issueSignInCode: (emailInput) =>
+        Effect.gen(function* () {
+          const email = normalizeEmail(emailInput);
+          const code = yield* generateAuthCode;
+          const now = yield* clock.now;
+          yield* db.transaction((tx) => storeCode(tx, email, code, now, null));
+          return code;
+        }),
       requestCode: (emailInput, clientAddress) =>
         Effect.gen(function* () {
           const email = normalizeEmail(emailInput);
@@ -355,19 +381,7 @@ export const AuthServiceLive = Layer.effect(
                     );
               const refusal = sendRefusal(now, emailSends, clientSends);
               if (refusal !== undefined) return yield* refusal;
-              yield* tx
-                .update(authCodes)
-                .set({ used: true })
-                .where(and(eq(authCodes.email, email), eq(authCodes.used, false)));
-              yield* tx.insert(authCodes).values({
-                id: Uuid.make(randomUUID(), { disableChecks: true }),
-                email,
-                codeHash: sha256Hex(code),
-                expiresAt: addMinutes(now, config.authCodeExpiryMinutes),
-                used: false,
-                clientAddress,
-                createdAt: now,
-              });
+              yield* storeCode(tx, email, code, now, clientAddress);
             }),
           );
           yield* mailer.send({
