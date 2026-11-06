@@ -96,12 +96,7 @@
         return;
       }
       await requestCode(email);
-      if (import.meta.env.VITE_SUPPRESS_AUTH) {
-        await loginWithCode(email, "000000");
-        await goto(next);
-      } else {
-        step = "code";
-      }
+      step = "code";
     } catch (reason) {
       error =
         domainErrorDetail(reason) ??

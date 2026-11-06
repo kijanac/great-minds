@@ -63,7 +63,6 @@ export type AppConfigShape = {
   readonly corsOrigins: readonly string[];
   readonly publicWebUrl: URL;
   readonly typstBinary: string;
-  readonly suppressAuth: boolean;
   readonly clientIpHeader: Option.Option<string>;
   readonly allowPrivateUrlFetch: boolean;
   readonly serverHost: string;
@@ -240,7 +239,6 @@ const appConfig = Config.all({
     Config.withDefault(new URL("http://localhost:5173")),
   ),
   typstBinary: nonEmptyString("TYPST_BINARY").pipe(Config.withDefault("typst")),
-  suppressAuth: Config.boolean("SUPPRESS_AUTH").pipe(Config.withDefault(false)),
   clientIpHeader: Config.option(
     nonEmptyString("CLIENT_IP_HEADER").pipe(Config.map((name) => name.trim().toLowerCase())),
   ),
