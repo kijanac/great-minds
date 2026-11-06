@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import { page } from "$app/state";
   import {
     browserSupportsWebAuthn,
     browserSupportsWebAuthnAutofill,
@@ -19,6 +20,11 @@
   import { Label } from "$lib/components/ui/label";
 
   type Step = "email" | "code";
+
+  const next = $derived.by(() => {
+    const target = page.url.searchParams.get("next") ?? "/";
+    return target.startsWith("/") && !target.startsWith("//") ? target : "/";
+  });
 
   let step = $state<Step>("email");
   let email = $state("");
@@ -40,7 +46,7 @@
     });
     const tokens = await run(api.auth.verifyPasskey({ payload: response }));
     await loginWithTokenPair(tokens);
-    await goto("/");
+    await goto(next);
   }
 
   // Aborted conditional requests wedge Safari's WebAuthn state until reload.
@@ -82,7 +88,7 @@
       await requestCode(email);
       if (import.meta.env.VITE_SUPPRESS_AUTH) {
         await loginWithCode(email, "000000");
-        await goto("/");
+        await goto(next);
       } else {
         step = "code";
       }
@@ -101,7 +107,7 @@
     loading = true;
     try {
       await loginWithCode(email, code);
-      await goto("/");
+      await goto(next);
     } catch (reason) {
       error = domainErrorDetail(reason) ?? "Invalid or expired code.";
     } finally {

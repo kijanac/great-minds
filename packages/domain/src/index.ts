@@ -272,6 +272,43 @@ export const ApiKeyWithSecret = Schema.Struct({
 });
 export type ApiKeyWithSecret = typeof ApiKeyWithSecret.Type;
 
+export const CliLoginStart = Schema.Struct({
+  computer: Schema.String.pipe(Schema.check(Schema.isMaxLength(100))),
+});
+export type CliLoginStart = typeof CliLoginStart.Type;
+
+export const CliLoginStarted = Schema.Struct({
+  device_code: Schema.String,
+  user_code: Schema.String,
+  verification_url: Schema.String,
+  verification_url_complete: Schema.String,
+  interval_seconds: Schema.Int,
+  expires_at: IsoDateTime,
+});
+export type CliLoginStarted = typeof CliLoginStarted.Type;
+
+export const CliLoginPoll = Schema.Struct({ device_code: Schema.String });
+export type CliLoginPoll = typeof CliLoginPoll.Type;
+
+export const CliLoginPollResult = Schema.Union([
+  Schema.Struct({ status: Schema.Literals(["pending", "denied", "expired"] as const) }),
+  Schema.Struct({ status: Schema.Literal("approved"), email: Email, api_key: ApiKeyWithSecret }),
+]);
+export type CliLoginPollResult = typeof CliLoginPollResult.Type;
+
+export const CliLoginCode = Schema.Struct({
+  user_code: Schema.String.pipe(Schema.check(Schema.isMaxLength(20))),
+});
+export type CliLoginCode = typeof CliLoginCode.Type;
+
+export const CliLoginRequest = Schema.Struct({
+  user_code: Schema.String,
+  computer: Schema.String,
+  email: Email,
+  expires_at: IsoDateTime,
+});
+export type CliLoginRequest = typeof CliLoginRequest.Type;
+
 export const AccountDeleteRequest = Schema.Struct({
   confirm: Schema.Literal("DELETE"),
 });
@@ -1537,6 +1574,31 @@ const AuthApiGroup = HttpApiGroup.make("auth").add(
     },
     success: HttpApiSchema.NoContent,
     error: NotFoundValidationErrors,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("startCliLogin", "/auth/cli/start", {
+    payload: CliLoginStart,
+    success: CliLoginStarted,
+    error: [TooManyRequestsResponse, ValidationResponse] as const,
+  }),
+  HttpApiEndpoint.post("pollCliLogin", "/auth/cli/token", {
+    payload: CliLoginPoll,
+    success: CliLoginPollResult,
+    error: NotFoundValidationErrors,
+  }),
+  HttpApiEndpoint.get("getCliLogin", "/auth/cli/request", {
+    query: CliLoginCode,
+    success: CliLoginRequest,
+    error: [ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("approveCliLogin", "/auth/cli/approve", {
+    payload: CliLoginCode,
+    success: HttpApiSchema.NoContent,
+    error: [ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("denyCliLogin", "/auth/cli/deny", {
+    payload: CliLoginCode,
+    success: HttpApiSchema.NoContent,
+    error: [ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.delete("deleteMe", "/auth/me", {
     payload: AccountDeleteRequest,

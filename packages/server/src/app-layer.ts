@@ -3,6 +3,7 @@ import { Effect, Layer } from "effect";
 import type { WorkflowEngine } from "effect/unstable/workflow/WorkflowEngine";
 
 import { AuthService, AuthServiceLive, SignInCodeRetentionLoopLive } from "./auth.ts";
+import { CliLoginRetentionLoopLive, CliLogins, CliLoginsLive } from "./cli-logins.ts";
 import {
   CompileIntentReconcilerLive,
   CompileIntentReconcilerLoopLive,
@@ -130,6 +131,7 @@ export type AppLayerServices =
   | ProposalStorage
   | RandomBytesService
   | AuthService
+  | CliLogins
   | PasskeysService;
 
 export type AppLayerOverrides = {
@@ -185,7 +187,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     SharesServiceLive,
     SessionExportsServiceLive,
   ).pipe(
-    Layer.provideMerge(Layer.mergeAll(SessionsServiceLive, PasskeysServiceLive)),
+    Layer.provideMerge(Layer.mergeAll(SessionsServiceLive, PasskeysServiceLive, CliLoginsLive)),
     Layer.provideMerge(
       Layer.mergeAll(SourcesServiceLive, IngestServiceLive, JobsServiceLive, AuthServiceLive),
     ),
@@ -233,6 +235,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     ProposalReviewReconcilerLoopLive,
     DeletionReconcilerLoopLive,
     SignInCodeRetentionLoopLive,
+    CliLoginRetentionLoopLive,
     StorageMaintenanceLoopLive,
   ).pipe(
     Layer.provide(CompileIntentReconcilerLive),

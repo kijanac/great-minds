@@ -1,6 +1,5 @@
-import { Email, SessionId, Uuid } from "@great-minds/domain";
-import { Effect, Redacted } from "effect";
-import { Argument, Command, Flag, Prompt } from "effect/unstable/cli";
+import { SessionId, Uuid } from "@great-minds/domain";
+import { Argument, Command, Flag } from "effect/unstable/cli";
 
 import {
   add,
@@ -25,23 +24,10 @@ const jsonFlag = Flag.boolean("json").pipe(
 
 const loginCommand = Command.make(
   "login",
-  {
-    email: Argument.string("email").pipe(
-      Argument.withSchema(Email),
-      Argument.withDescription("Your account's email address"),
-    ),
-    url: Flag.string("url").pipe(Flag.withDescription("API base URL"), Flag.optional),
-  },
-  (input) =>
-    login({
-      email: input.email,
-      url: input.url,
-      readCode: Prompt.run(Prompt.hidden({ message: "Code from the email" })).pipe(
-        Effect.map(Redacted.value),
-      ),
-    }),
+  { url: Flag.string("url").pipe(Flag.withDescription("API base URL"), Flag.optional) },
+  login,
 ).pipe(
-  Command.withDescription("Sign in with an emailed code and save an API key on this computer"),
+  Command.withDescription("Sign in by approving this computer in your browser; saves an API key"),
 );
 
 const logoutCommand = Command.make("logout", {}, logout).pipe(

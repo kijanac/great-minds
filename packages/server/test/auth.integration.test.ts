@@ -1014,6 +1014,64 @@ describe("auth HTTP integration", () => {
     expect(refused._tag).toBe("Unauthorized");
   });
 
+  it("signs in the command line through browser approval, once, with a session only", async () => {
+    const started = await api("POST", "/auth/cli/start", { computer: "devbox" });
+    expect(started.status).toBe(200);
+    const login = asRecord(started.body);
+    const deviceCode = String(login.device_code);
+    const userCode = String(login.user_code);
+    expect(userCode).toMatch(/^[B-DF-HJ-NP-TV-XZ]{4}-[B-DF-HJ-NP-TV-XZ]{4}$/);
+    expect(String(login.verification_url_complete)).toBe(
+      `http://localhost:5173/cli?code=${userCode}`,
+    );
+
+    const poll = () => api("POST", "/auth/cli/token", { device_code: deviceCode });
+    expect(asRecord((await poll()).body).status).toBe("pending");
+
+    const pair = await signIn("cli@example.com");
+    const typed = userCode.toLowerCase().replace("-", " ");
+    const described = await api(
+      "GET",
+      `/auth/cli/request?user_code=${encodeURIComponent(typed)}`,
+      undefined,
+      pair.access_token,
+    );
+    expect(described.body).toMatchObject({ user_code: userCode, computer: "devbox", email: "cli@example.com" });
+
+    const key = await api("POST", "/auth/api-keys", { label: "script" }, pair.access_token);
+    const rawKey = String(asRecord(key.body).raw_key);
+    const byKey = await api("POST", "/auth/cli/approve", { user_code: typed }, rawKey);
+    expect(byKey.status).toBe(403);
+
+    const approved = await api("POST", "/auth/cli/approve", { user_code: typed }, pair.access_token);
+    expect(approved.status).toBe(204);
+    const granted = asRecord((await poll()).body);
+    expect(granted).toMatchObject({ status: "approved", email: "cli@example.com" });
+    const cliKey = asRecord(granted.api_key);
+    expect(cliKey.label).toBe("gm CLI (devbox)");
+    expect((await api("GET", "/vaults", undefined, String(cliKey.raw_key))).status).toBe(200);
+    expect((await poll()).status).toBe(404);
+
+    const again = await api("POST", "/auth/cli/start", { computer: "laptop" });
+    const second = asRecord(again.body);
+    const denied = await api(
+      "POST",
+      "/auth/cli/deny",
+      { user_code: String(second.user_code) },
+      pair.access_token,
+    );
+    expect(denied.status).toBe(204);
+    const refused = await api("POST", "/auth/cli/token", { device_code: String(second.device_code) });
+    expect(asRecord(refused.body).status).toBe("denied");
+
+    const third = asRecord((await api("POST", "/auth/cli/start", { computer: "old" })).body);
+    currentState().clock.set(new Date(initialTime.getTime() + 11 * 60 * 1000));
+    const late = await api("POST", "/auth/cli/approve", { user_code: String(third.user_code) }, pair.access_token);
+    expect(late.status).toBe(404);
+    const expired = await api("POST", "/auth/cli/token", { device_code: String(third.device_code) });
+    expect(asRecord(expired.body).status).toBe("expired");
+  });
+
   it("creates, lists, and revokes API keys with ownership checks", async () => {
     const ownerPair = await signIn("keys@example.com");
     const otherPair = await signIn("other-keys@example.com");

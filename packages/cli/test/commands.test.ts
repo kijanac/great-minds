@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { NodeServices } from "@effect/platform-node";
-import { Email, Uuid } from "@great-minds/domain";
+import { Uuid } from "@great-minds/domain";
 import {
   Cause,
   ConfigProvider,
@@ -149,32 +149,40 @@ const saveCredentials = (saved: {
   readonly vault_id: Uuid | null;
 }) => run(Effect.flatMap(Credentials, (credentials) => credentials.save(saved)));
 const savedFile = async () => JSON.parse(await readFile(credentialsFile(), "utf8"));
-const signInRoutes = (onDeleteOld: () => Response) => (request: Recorded) => {
-  if (request.path === "/v1/auth/request-code") return noContent();
-  if (request.path === "/v1/auth/verify-code")
-    return json(200, {
-      access_token: "access-1",
-      refresh_token: "refresh-1",
-      token_type: "bearer",
-    });
-  if (request.method === "POST" && request.path === "/v1/auth/api-keys")
-    return json(201, {
-      id: keyId,
-      label: "gm CLI",
-      created_at: now,
-      revoked: false,
-      raw_key: "gm_new",
-    });
-  if (request.method === "DELETE" && request.path === `/v1/auth/api-keys/${oldKeyId}`)
-    return onDeleteOld();
-  return json(404, {});
-};
-const signIn = (url: string) =>
-  login({
-    email: Schema.decodeUnknownSync(Email)("reader@example.com"),
-    url: Option.some(url),
-    readCode: Effect.succeed(" 123456 "),
-  });
+let polls = 0;
+const signInRoutes =
+  (onDeleteOld: () => Response, approval: "approved" | "denied" | "expired" = "approved") =>
+  (request: Recorded) => {
+    if (request.path === "/v1/auth/cli/start")
+      return json(200, {
+        device_code: "device-1",
+        user_code: "WDJB-MJHT",
+        verification_url: "https://example.test/cli",
+        verification_url_complete: "https://example.test/cli?code=WDJB-MJHT",
+        interval_seconds: 0,
+        expires_at: now,
+      });
+    if (request.path === "/v1/auth/cli/token") {
+      polls += 1;
+      if (polls < 2) return json(200, { status: "pending" });
+      if (approval !== "approved") return json(200, { status: approval });
+      return json(200, {
+        status: "approved",
+        email: "reader@example.com",
+        api_key: {
+          id: keyId,
+          label: "gm CLI (test)",
+          created_at: now,
+          revoked: false,
+          raw_key: "gm_new",
+        },
+      });
+    }
+    if (request.method === "DELETE" && request.path === `/v1/auth/api-keys/${oldKeyId}`)
+      return onDeleteOld();
+    return json(404, {});
+  };
+const signIn = (url: string) => login({ url: Option.some(url) });
 
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "gm-cli-"));
@@ -182,6 +190,7 @@ beforeEach(async () => {
   stdout = [];
   stderr = [];
   route = () => json(404, {});
+  polls = 0;
 });
 
 afterEach(() => rm(directory, { recursive: true, force: true }));
@@ -197,7 +206,14 @@ describe("gm login", () => {
     route = signInRoutes(noContent);
     await run(signIn(apiUrl));
 
-    expect(requests[3]).toMatchObject({ method: "DELETE", auth: "Bearer access-1" });
+    expect(requests.map((request) => request.path)).toEqual([
+      "/v1/auth/cli/start",
+      "/v1/auth/cli/token",
+      "/v1/auth/cli/token",
+      `/v1/auth/api-keys/${oldKeyId}`,
+    ]);
+    expect(requests[3]).toMatchObject({ method: "DELETE", auth: "Bearer gm_new" });
+    expect(stderr.join("\n")).toContain("https://example.test/cli?code=WDJB-MJHT");
     expect((await stat(credentialsFile())).mode & 0o777).toBe(0o600);
     expect(await savedFile()).toEqual({
       api_url: apiUrl,
@@ -205,7 +221,15 @@ describe("gm login", () => {
       api_key_id: keyId,
       vault_id: vaultId,
     });
-    expect(await readFile(credentialsFile(), "utf8")).not.toContain("access-1");
+  });
+
+  it("stops with a named error when the browser cancels or the code expires", async () => {
+    route = signInRoutes(noContent, "denied");
+    expect(await failureTag(signIn(apiUrl))).toBe("LoginCancelled");
+    polls = 0;
+    route = signInRoutes(noContent, "expired");
+    expect(await failureTag(signIn(apiUrl))).toBe("LoginExpired");
+    await expect(stat(credentialsFile())).rejects.toThrow();
   });
 
   it("still signs in when the old key cannot be revoked, and names the key left to revoke", async () => {

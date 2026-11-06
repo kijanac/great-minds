@@ -29,6 +29,7 @@ import { HttpApiSchemaError } from "effect/unstable/httpapi/HttpApiError";
 
 import { AppLayerLive, type AppLayerServices } from "./app-layer.ts";
 import { AuthService } from "./auth.ts";
+import { CliLogins } from "./cli-logins.ts";
 import { AppConfig } from "./config.ts";
 import { CostsService } from "./costs.ts";
 import { DocumentRegistryMismatch, DocumentsService } from "./documents.ts";
@@ -216,13 +217,17 @@ const signInClientAddress = (
   return Option.match(raw, { onNone: () => null, onSome: throttleAddress });
 };
 
-const passkeyEnrollmentAuth = Effect.gen(function* () {
-  const current = yield* CurrentAuth;
-  if (current.credential_kind !== "jwt") {
-    return yield* new Forbidden({ detail: "Passkey enrollment requires session authentication" });
-  }
-  return current;
-});
+const sessionAuth = (action: string) =>
+  Effect.gen(function* () {
+    const current = yield* CurrentAuth;
+    if (current.credential_kind !== "jwt") {
+      return yield* new Forbidden({ detail: `${action} requires session authentication` });
+    }
+    return current;
+  });
+
+const passkeyEnrollmentAuth = sessionAuth("Passkey enrollment");
+const cliApprovalAuth = sessionAuth("Approving a command-line sign-in");
 
 const MetaHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "meta", (handlers) =>
   handlers.handle("health", () => Effect.succeed({ status: "ok" as const })),
@@ -291,6 +296,41 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
     )
     .handle("deleteMe", () =>
       asUser(VaultsService, (vaultsService, userId) => vaultsService.deleteAccount(userId)),
+    )
+    .handle("startCliLogin", ({ payload }) =>
+      Effect.gen(function* () {
+        const logins = yield* CliLogins;
+        const config = yield* AppConfig;
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        return yield* logins.start(
+          payload.computer,
+          signInClientAddress(request, config.clientIpHeader),
+        );
+      }),
+    )
+    .handle("pollCliLogin", ({ payload }) =>
+      Effect.flatMap(CliLogins, (logins) => logins.poll(payload.device_code)),
+    )
+    .handle("getCliLogin", ({ query }) =>
+      Effect.gen(function* () {
+        const current = yield* cliApprovalAuth;
+        const logins = yield* CliLogins;
+        return yield* logins.describe(current.email, query.user_code);
+      }),
+    )
+    .handle("approveCliLogin", ({ payload }) =>
+      Effect.gen(function* () {
+        const current = yield* cliApprovalAuth;
+        const logins = yield* CliLogins;
+        yield* logins.approve(current.user_id, payload.user_code);
+      }),
+    )
+    .handle("denyCliLogin", ({ payload }) =>
+      Effect.gen(function* () {
+        yield* cliApprovalAuth;
+        const logins = yield* CliLogins;
+        yield* logins.deny(payload.user_code);
+      }),
     ),
 );
 

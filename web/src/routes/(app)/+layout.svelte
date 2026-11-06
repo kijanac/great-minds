@@ -1,6 +1,7 @@
 <script lang="ts">
   import { browser } from "$app/environment";
   import { goto } from "$app/navigation";
+  import { page } from "$app/state";
 
   import { auth } from "$lib/auth.svelte";
   import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
@@ -12,7 +13,13 @@
 
   $effect(() => {
     if (browser && auth.ready && !auth.isAuthenticated) {
-      void goto("/login", { replaceState: true });
+      const next = `${page.url.pathname}${page.url.search}`;
+      void goto(
+        next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`,
+        {
+          replaceState: true,
+        },
+      );
     }
   });
 
