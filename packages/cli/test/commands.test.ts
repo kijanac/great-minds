@@ -174,6 +174,11 @@ const signInRoutes =
           label: "gm CLI (test)",
           created_at: now,
           revoked: false,
+          vault_ids: null,
+          can_ask: true,
+          can_change: true,
+          expires_at: null,
+          last_used_at: null,
           raw_key: "gm_new",
         },
       });

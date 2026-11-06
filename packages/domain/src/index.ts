@@ -253,8 +253,19 @@ export const Passkey = Schema.Struct({
 });
 export type Passkey = typeof Passkey.Type;
 
+export const KeyScope = Schema.Struct({
+  vault_ids: Schema.NullOr(Schema.Array(Uuid)),
+  can_ask: Schema.Boolean,
+  can_change: Schema.Boolean,
+});
+export type KeyScope = typeof KeyScope.Type;
+
 export const ApiKeyCreate = Schema.Struct({
   label: Schema.String,
+  vault_ids: Schema.optionalKey(Schema.NullOr(Schema.Array(Uuid))),
+  can_ask: Schema.optionalKey(Schema.Boolean),
+  can_change: Schema.optionalKey(Schema.Boolean),
+  expires_at: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
 });
 export type ApiKeyCreate = typeof ApiKeyCreate.Type;
 
@@ -263,6 +274,9 @@ export const ApiKey = Schema.Struct({
   label: Schema.String,
   created_at: IsoDateTime,
   revoked: Schema.Boolean,
+  ...KeyScope.fields,
+  expires_at: Schema.NullOr(IsoDateTime),
+  last_used_at: Schema.NullOr(IsoDateTime),
 });
 export type ApiKey = typeof ApiKey.Type;
 
@@ -321,6 +335,7 @@ export const AuthContext = Schema.Struct({
   user_id: Uuid,
   email: Email,
   credential_kind: CredentialKind,
+  key_scope: Schema.NullOr(Schema.Struct({ key_id: Uuid, ...KeyScope.fields })),
 });
 export type AuthContext = typeof AuthContext.Type;
 
@@ -1488,7 +1503,7 @@ export class AuthMiddleware extends HttpApiMiddleware.Service<
     provides: CurrentAuth;
   }
 >()("@great-minds/domain/AuthMiddleware", {
-  error: UnauthorizedResponse,
+  error: [UnauthorizedResponse, ForbiddenResponse],
   security: {
     bearer: HttpApiSecurity.bearer,
   },
@@ -1660,7 +1675,7 @@ const VaultsApiGroup = HttpApiGroup.make("vaults").add(
   HttpApiEndpoint.post("createVault", "/vaults", {
     payload: VaultCreate,
     success: CreatedVault,
-    error: ValidationErrors,
+    error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post("draftVaultHint", "/vaults/draft-hint", {
     payload: DraftHintRequest,
@@ -2138,3 +2153,97 @@ export const GreatMindsApi = HttpApi.make("great-minds").add(
   SharesApiGroup,
   PublicApiGroup,
 );
+
+type ApiGroups =
+  typeof GreatMindsApi extends HttpApi.HttpApi<string, infer Groups> ? Groups : never;
+export type EndpointName = HttpApiEndpoint.Identifier<HttpApiGroup.Endpoints<ApiGroups>>;
+
+export type Permission = "public" | "read" | "ask" | "change" | "account";
+
+export const endpointPermissions: { readonly [Name in EndpointName]: Permission } = {
+  health: "public",
+  requestCode: "public",
+  verifyCode: "public",
+  refresh: "public",
+  passkeyAuthenticationOptions: "public",
+  verifyPasskey: "public",
+  startCliLogin: "public",
+  pollCliLogin: "public",
+  resolveShare: "public",
+  passkeyRegisterOptions: "account",
+  registerPasskey: "account",
+  listPasskeys: "account",
+  deletePasskey: "account",
+  createApiKey: "account",
+  listApiKeys: "account",
+  deleteApiKey: "read",
+  getCliLogin: "account",
+  approveCliLogin: "account",
+  denyCliLogin: "account",
+  deleteMe: "account",
+  inviteVaultMember: "account",
+  updateVaultMember: "account",
+  removeVaultMember: "account",
+  transferVaultOwnership: "account",
+  deleteVault: "account",
+  createShare: "account",
+  listShares: "account",
+  deleteShare: "account",
+  getUserCosts: "account",
+  listReferences: "read",
+  resolveReference: "read",
+  createReference: "change",
+  deleteReference: "change",
+  updateReference: "change",
+  listVaults: "read",
+  getVault: "read",
+  getVaultConfig: "read",
+  listVaultMembers: "read",
+  createVault: "change",
+  renameVault: "change",
+  updateVaultConfig: "change",
+  draftVaultHint: "ask",
+  listWikiArticles: "read",
+  listRecentWikiArticles: "read",
+  listSources: "read",
+  readSource: "read",
+  deleteSource: "change",
+  requestSourceDeletion: "change",
+  listProposals: "read",
+  getProposal: "read",
+  createProposal: "change",
+  reviewProposal: "change",
+  ingestRaw: "change",
+  promoteReference: "change",
+  ingestUserSuggestion: "change",
+  checkFileIngestDupes: "change",
+  createFileIngest: "change",
+  getFileIngest: "read",
+  resumeFileIngest: "change",
+  uploadFileIngestFile: "change",
+  acknowledgeFileIngestUpload: "change",
+  commitFileIngest: "change",
+  startUrlJob: "change",
+  retryUrlJob: "change",
+  listJobs: "read",
+  getJob: "read",
+  streamJob: "read",
+  requestCompile: "change",
+  cancelCompile: "change",
+  getLint: "read",
+  getVaultCosts: "read",
+  resolveDocument: "read",
+  readChunks: "read",
+  readLinks: "read",
+  listSessions: "read",
+  listSessionsByOrigin: "read",
+  readSession: "read",
+  readSessionMarkdown: "read",
+  prepareSessionExport: "read",
+  continueAsSession: "ask",
+  promoteSessionExchange: "change",
+  createReply: "ask",
+  retryReply: "ask",
+  stopReply: "ask",
+  streamReply: "read",
+};

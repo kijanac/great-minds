@@ -664,10 +664,8 @@ describe("auth HTTP integration", () => {
     const rawKey = asString(created.raw_key, "raw_key");
     expect(rawKey.startsWith("gm_")).toBe(true);
 
-    const withApiKey = await api("GET", "/auth/api-keys", undefined, rawKey);
+    const withApiKey = await api("GET", "/vaults", undefined, rawKey);
     expect(withApiKey.status).toBe(200);
-    const apiKeyList = asArray(withApiKey.body);
-    expect(apiKeyList).toHaveLength(1);
 
     const deleted = await api(
       "DELETE",
@@ -677,7 +675,7 @@ describe("auth HTTP integration", () => {
     );
     expect(deleted.status).toBe(204);
 
-    const withRevokedApiKey = await api("GET", "/auth/api-keys", undefined, rawKey);
+    const withRevokedApiKey = await api("GET", "/vaults", undefined, rawKey);
     expect(withRevokedApiKey.status).toBe(401);
     expect(withRevokedApiKey.body).toMatchObject({ detail: "Invalid credentials" });
 
@@ -1070,6 +1068,65 @@ describe("auth HTTP integration", () => {
     expect(late.status).toBe(404);
     const expired = await api("POST", "/auth/cli/token", { device_code: String(third.device_code) });
     expect(asRecord(expired.body).status).toBe("expired");
+  });
+
+  it("limits an API key to its vaults, its permissions and its lifetime", async () => {
+    const pair = await signIn("scoped@example.com");
+    const vaultList = asRecord((await api("GET", "/vaults", undefined, pair.access_token)).body);
+    const home = asString(asRecord(asArray(vaultList.items)[0]).id, "vault id");
+    const other = asString(
+      asRecord((await api("POST", "/vaults", { name: "Other" }, pair.access_token)).body).id,
+      "other vault id",
+    );
+    const create = (body: Record<string, unknown>) =>
+      api("POST", "/auth/api-keys", body, pair.access_token).then((response) =>
+        asRecord(response.body),
+      );
+
+    const reader = await create({
+      label: "reader",
+      vault_ids: [home],
+      can_ask: false,
+      can_change: false,
+    });
+    expect(reader).toMatchObject({ vault_ids: [home], can_ask: false, can_change: false });
+    const readerKey = asString(reader.raw_key, "reader key");
+    const visible = asRecord((await api("GET", "/vaults", undefined, readerKey)).body);
+    expect(asArray(visible.items).map((vault) => asRecord(vault).id)).toEqual([home]);
+    expect((await api("GET", `/vaults/${home}`, undefined, readerKey)).status).toBe(200);
+    const elsewhere = await api("GET", `/vaults/${other}`, undefined, readerKey);
+    expect(elsewhere.status).toBe(403);
+    expect(elsewhere.body).toMatchObject({ detail: "This API key can't reach this vault." });
+    const update = await api("POST", `/vaults/${home}/compile`, { job_id: randomUUID() }, readerKey);
+    expect(update.status).toBe(403);
+    expect(update.body).toMatchObject({ detail: "This API key can't add documents or make changes." });
+    const newVault = await api("POST", "/vaults", { name: "Nope" }, readerKey);
+    expect(newVault.status).toBe(403);
+    const moreKeys = await api("POST", "/auth/api-keys", { label: "escalate" }, readerKey);
+    expect(moreKeys.status).toBe(403);
+
+    const otherKey = asString((await create({ label: "other" })).id, "other key id");
+    const revokeOther = await api("DELETE", `/auth/api-keys/${otherKey}`, undefined, readerKey);
+    expect(revokeOther.status).toBe(403);
+    const revokeSelf = await api(
+      "DELETE",
+      `/auth/api-keys/${asString(reader.id, "reader id")}`,
+      undefined,
+      readerKey,
+    );
+    expect(revokeSelf.status).toBe(204);
+
+    const shortLived = await create({
+      label: "short",
+      expires_at: new Date(initialTime.getTime() + 5 * 60 * 1000).toISOString(),
+    });
+    const shortKey = asString(shortLived.raw_key, "short key");
+    expect((await api("GET", "/vaults", undefined, shortKey)).status).toBe(200);
+    const listed = asArray((await api("GET", "/auth/api-keys", undefined, pair.access_token)).body);
+    const used = listed.map(asRecord).find((key) => key.id === shortLived.id);
+    expect(used?.last_used_at).toBe(initialTime.toISOString());
+    currentState().clock.set(new Date(initialTime.getTime() + 6 * 60 * 1000));
+    expect((await api("GET", "/vaults", undefined, shortKey)).status).toBe(401);
   });
 
   it("creates, lists, and revokes API keys with ownership checks", async () => {

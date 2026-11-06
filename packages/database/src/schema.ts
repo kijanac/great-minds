@@ -118,6 +118,11 @@ export const apiKeys = pgTable(
     keyHash: varchar("key_hash", { length: 64 }).notNull(),
     label: text("label").notNull(),
     revoked: boolean("revoked").notNull(),
+    vaultIds: uuidColumn("vault_ids").array(),
+    canAsk: boolean("can_ask").default(true).notNull(),
+    canChange: boolean("can_change").default(true).notNull(),
+    expiresAt: timestamptz("expires_at"),
+    lastUsedAt: timestamptz("last_used_at"),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
   },
   (table) => [

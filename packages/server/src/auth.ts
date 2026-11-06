@@ -40,7 +40,11 @@ type AuthServiceShape = {
   readonly refresh: (refreshToken: string) => Effect.Effect<TokenPair, Unauthorized>;
   readonly issueTokenPair: (userId: Uuid) => Effect.Effect<TokenPair, Unauthorized>;
   readonly authenticateBearer: (token: string) => Effect.Effect<AuthContext, Unauthorized>;
-  readonly createApiKey: (userId: Uuid, label: string) => Effect.Effect<ApiKeyWithSecret>;
+  readonly createApiKey: (
+    userId: Uuid,
+    label: string,
+    grant?: KeyGrant,
+  ) => Effect.Effect<ApiKeyWithSecret>;
   readonly ensureUser: (email: Email) => Effect.Effect<Uuid, Unauthorized>;
   readonly findUser: (email: Email) => Effect.Effect<Option.Option<Uuid>>;
   readonly listApiKeys: (userId: Uuid) => Effect.Effect<readonly ApiKey[]>;
@@ -72,7 +76,21 @@ const apiKeyResponse = (row: ApiKeyRow): ApiKey => ({
   label: row.label,
   created_at: row.createdAt,
   revoked: row.revoked,
+  vault_ids: row.vaultIds,
+  can_ask: row.canAsk,
+  can_change: row.canChange,
+  expires_at: row.expiresAt,
+  last_used_at: row.lastUsedAt,
 });
+
+export type KeyGrant = {
+  readonly vaultIds?: readonly Uuid[] | null;
+  readonly canAsk?: boolean;
+  readonly canChange?: boolean;
+  readonly expiresAt?: Date | null;
+};
+
+const LAST_USED_RESOLUTION_MS = 60 * 1000;
 
 const firstUser = (rows: readonly UserRow[]) => {
   const row = rows[0];
@@ -199,6 +217,12 @@ export const AuthServiceLive = Layer.effect(
             .select({
               id: users.id,
               email: users.email,
+              keyId: apiKeys.id,
+              vaultIds: apiKeys.vaultIds,
+              canAsk: apiKeys.canAsk,
+              canChange: apiKeys.canChange,
+              expiresAt: apiKeys.expiresAt,
+              lastUsedAt: apiKeys.lastUsedAt,
             })
             .from(users)
             .innerJoin(apiKeys, eq(apiKeys.userId, users.id))
@@ -225,7 +249,7 @@ export const AuthServiceLive = Layer.effect(
         return user.id;
       });
 
-    const createApiKey = (userId: Uuid, label: string) =>
+    const createApiKey = (userId: Uuid, label: string, grant: KeyGrant = {}) =>
       Effect.gen(function* () {
         const rawKey = yield* generateApiKey;
         const rows = yield* db.query((d) => d
@@ -236,6 +260,10 @@ export const AuthServiceLive = Layer.effect(
             keyHash: sha256Hex(rawKey),
             label,
             revoked: false,
+            vaultIds: grant.vaultIds === undefined || grant.vaultIds === null ? null : [...grant.vaultIds],
+            canAsk: grant.canAsk ?? true,
+            canChange: grant.canChange ?? true,
+            expiresAt: grant.expiresAt ?? null,
           })
           .returning())
           .pipe(Effect.orDie);
@@ -454,17 +482,37 @@ export const AuthServiceLive = Layer.effect(
                 user_id: user.id,
                 email: asEmail(user.email),
                 credential_kind: "jwt",
+                key_scope: null,
               };
             }
           }
 
           const apiKeyRows = yield* resolveApiKey(token);
           const apiKeyUser = apiKeyRows[0];
-          if (apiKeyUser !== undefined) {
+          const now = yield* clock.now;
+          if (
+            apiKeyUser !== undefined &&
+            (apiKeyUser.expiresAt === null || apiKeyUser.expiresAt.getTime() > now.getTime())
+          ) {
+            if (
+              apiKeyUser.lastUsedAt === null ||
+              now.getTime() - apiKeyUser.lastUsedAt.getTime() > LAST_USED_RESOLUTION_MS
+            )
+              yield* db
+                .query((d) =>
+                  d.update(apiKeys).set({ lastUsedAt: now }).where(eq(apiKeys.id, apiKeyUser.keyId)),
+                )
+                .pipe(Effect.orDie);
             return {
               user_id: apiKeyUser.id,
               email: asEmail(apiKeyUser.email),
               credential_kind: "api_key",
+              key_scope: {
+                key_id: apiKeyUser.keyId,
+                vault_ids: apiKeyUser.vaultIds,
+                can_ask: apiKeyUser.canAsk,
+                can_change: apiKeyUser.canChange,
+              },
             };
           }
           return yield* new Unauthorized({ detail: "Invalid credentials" });

@@ -5,8 +5,11 @@ import {
   AuthMiddleware,
   BadRequest,
   CurrentAuth,
+  endpointPermissions,
   Forbidden,
   GreatMindsApi,
+  type AuthContext,
+  type Permission,
   ServiceUnavailable,
   Validation,
   type DomainError,
@@ -189,12 +192,27 @@ const handleHttpCause = (cause: Cause.Cause<unknown>) =>
     return yield* clean500Response;
   });
 
+const permissions = new Map<string, Permission>(Object.entries(endpointPermissions));
+
+const keyRefusal = (current: AuthContext, permission: Permission) => {
+  const scope = current.key_scope;
+  if (scope === null) return undefined;
+  if (permission === "account")
+    return "API keys can't do this. Sign in to Great Minds in a browser instead.";
+  if (permission === "ask" && !scope.can_ask) return "This API key can't ask questions.";
+  if (permission === "change" && !scope.can_change)
+    return "This API key can't add documents or make changes.";
+  return undefined;
+};
+
 const AuthMiddlewareLive = Layer.effect(
   AuthMiddleware,
   Effect.map(AuthService, (auth) => ({
-    bearer: (httpEffect, { credential }) =>
+    bearer: (httpEffect, { credential, endpoint }) =>
       Effect.gen(function* () {
         const current = yield* auth.authenticateBearer(Redacted.value(credential));
+        const refusal = keyRefusal(current, permissions.get(endpoint.identifier) ?? "account");
+        if (refusal !== undefined) return yield* new Forbidden({ detail: refusal });
         return yield* Effect.provideService(httpEffect, CurrentAuth, current);
       }),
   })),
@@ -216,18 +234,6 @@ const signInClientAddress = (
   const raw = Option.orElse(forwarded, () => request.remoteAddress);
   return Option.match(raw, { onNone: () => null, onSome: throttleAddress });
 };
-
-const sessionAuth = (action: string) =>
-  Effect.gen(function* () {
-    const current = yield* CurrentAuth;
-    if (current.credential_kind !== "jwt") {
-      return yield* new Forbidden({ detail: `${action} requires session authentication` });
-    }
-    return current;
-  });
-
-const passkeyEnrollmentAuth = sessionAuth("Passkey enrollment");
-const cliApprovalAuth = sessionAuth("Approving a command-line sign-in");
 
 const MetaHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "meta", (handlers) =>
   handlers.handle("health", () => Effect.succeed({ status: "ok" as const })),
@@ -258,14 +264,14 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
     .handle("passkeyRegisterOptions", () =>
       Effect.gen(function* () {
         const passkeys = yield* PasskeysService;
-        const current = yield* passkeyEnrollmentAuth;
+        const current = yield* CurrentAuth;
         return yield* passkeys.registrationOptions(current.user_id, current.email);
       }),
     )
     .handle("registerPasskey", ({ payload }) =>
       Effect.gen(function* () {
         const passkeys = yield* PasskeysService;
-        const current = yield* passkeyEnrollmentAuth;
+        const current = yield* CurrentAuth;
         return yield* passkeys.register(current.user_id, payload);
       }),
     )
@@ -288,11 +294,24 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
       asUser(PasskeysService, (passkeys, userId) => passkeys.delete(userId, params.id)),
     )
     .handle("createApiKey", ({ payload }) =>
-      asUser(AuthService, (auth, userId) => auth.createApiKey(userId, payload.label)),
+      asUser(AuthService, (auth, userId) =>
+        auth.createApiKey(userId, payload.label, {
+          vaultIds: payload.vault_ids,
+          canAsk: payload.can_ask,
+          canChange: payload.can_change,
+          expiresAt: payload.expires_at,
+        }),
+      ),
     )
     .handle("listApiKeys", () => asUser(AuthService, (auth, userId) => auth.listApiKeys(userId)))
     .handle("deleteApiKey", ({ params }) =>
-      asUser(AuthService, (auth, userId) => auth.revokeApiKey(userId, params.key_id)),
+      Effect.gen(function* () {
+        const current = yield* CurrentAuth;
+        if (current.key_scope !== null && current.key_scope.key_id !== params.key_id)
+          return yield* new Forbidden({ detail: "An API key can only revoke itself." });
+        const auth = yield* AuthService;
+        yield* auth.revokeApiKey(current.user_id, params.key_id);
+      }),
     )
     .handle("deleteMe", () =>
       asUser(VaultsService, (vaultsService, userId) => vaultsService.deleteAccount(userId)),
@@ -313,24 +332,20 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
     )
     .handle("getCliLogin", ({ query }) =>
       Effect.gen(function* () {
-        const current = yield* cliApprovalAuth;
+        const current = yield* CurrentAuth;
         const logins = yield* CliLogins;
         return yield* logins.describe(current.email, query.user_code);
       }),
     )
     .handle("approveCliLogin", ({ payload }) =>
       Effect.gen(function* () {
-        const current = yield* cliApprovalAuth;
+        const current = yield* CurrentAuth;
         const logins = yield* CliLogins;
         yield* logins.approve(current.user_id, payload.user_code);
       }),
     )
     .handle("denyCliLogin", ({ payload }) =>
-      Effect.gen(function* () {
-        yield* cliApprovalAuth;
-        const logins = yield* CliLogins;
-        yield* logins.deny(payload.user_code);
-      }),
+      Effect.flatMap(CliLogins, (logins) => logins.deny(payload.user_code)),
     ),
 );
 
@@ -705,11 +720,6 @@ const SharesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "shares", 
       Effect.gen(function* () {
         const shares = yield* SharesService;
         const current = yield* CurrentAuth;
-        if (current.credential_kind === "api_key") {
-          return yield* new Forbidden({
-            detail: "Share creation requires session authentication",
-          });
-        }
         return yield* shares.create(current.user_id, payload);
       }),
     )
