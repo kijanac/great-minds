@@ -109,6 +109,20 @@ const usersCreateCommand = Command.make("create", { email: emailFlag }, ({ email
   }).pipe(Effect.provide(AdminLive)),
 ).pipe(Command.withDescription("Create a user (if new) with their default vault"));
 
+const usersCodeCommand = Command.make("code", { email: emailFlag }, ({ email }) =>
+  Effect.gen(function* () {
+    const auth = yield* AuthService;
+    yield* existingUser(email);
+    const code = yield* auth.issueSignInCode(email);
+    yield* Console.log(code);
+    yield* Console.error(`One-time sign-in code for ${email}. It works once and expires soon.`);
+  }).pipe(Effect.provide(AdminLive)),
+).pipe(
+  Command.withDescription(
+    "Print a one-time sign-in code for an existing user, without sending email",
+  ),
+);
+
 const keysCreateCommand = Command.make(
   "create",
   {
@@ -161,7 +175,7 @@ const greatMinds = Command.make("great-minds").pipe(
     migrateCommand,
     Command.make("users").pipe(
       Command.withDescription("Manage users"),
-      Command.withSubcommands([usersCreateCommand]),
+      Command.withSubcommands([usersCreateCommand, usersCodeCommand]),
     ),
     Command.make("keys").pipe(
       Command.withDescription("Manage API keys"),

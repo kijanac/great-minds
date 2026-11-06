@@ -418,6 +418,20 @@ describe("auth HTTP integration", () => {
     expect(verified.status).toBe(200);
   });
 
+  it("reports email sign-in as unavailable and accepts a code issued on the server", async () => {
+    expect((await api("GET", "/auth/methods")).body).toEqual({ email: true });
+    currentState().mailer.settings.configured = false;
+    expect((await api("GET", "/auth/methods")).body).toEqual({ email: false });
+
+    const email = Schema.decodeUnknownSync(Email)("operator@example.com");
+    const code = await runDb(Effect.flatMap(AuthService, (auth) => auth.issueSignInCode(email)));
+    expect(currentState().mailer.sent).toHaveLength(0);
+    const verified = await api("POST", "/auth/verify-code", { email: "operator@example.com", code });
+    expect(verified.status).toBe(200);
+    const reused = await api("POST", "/auth/verify-code", { email: "operator@example.com", code });
+    expect(reused.status).toBe(401);
+  });
+
   it("mounts auth only under /v1 and preserves framework wrong-method behavior", async () => {
     const root = await rawApi("GET", "/");
     expect(root.status).toBe(200);

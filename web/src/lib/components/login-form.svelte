@@ -33,6 +33,7 @@
   let loading = $state(false);
   let passkeyLoading = $state(false);
   let passkeysSupported = $state(false);
+  let emailSignIn = $state(true);
 
   async function authenticateWithPasskey(
     useBrowserAutofill: boolean,
@@ -59,6 +60,11 @@
 
   onMount(() => {
     let active = true;
+    void run(api.auth.signInMethods())
+      .then((methods) => {
+        if (active) emailSignIn = methods.email;
+      })
+      .catch(() => undefined);
     passkeysSupported = browserSupportsWebAuthn();
     if (passkeysSupported && !isSafari) {
       void browserSupportsWebAuthnAutofill()
@@ -85,6 +91,10 @@
     error = "";
     loading = true;
     try {
+      if (!emailSignIn) {
+        step = "code";
+        return;
+      }
       await requestCode(email);
       if (import.meta.env.VITE_SUPPRESS_AUTH) {
         await loginWithCode(email, "000000");
@@ -156,7 +166,9 @@
       <p class="mt-2 text-small text-warm-faint">
         {step === "email"
           ? "Enter your email to sign in"
-          : `Code sent to ${email}`}
+          : emailSignIn
+            ? `Code sent to ${email}`
+            : `Enter the sign-in code your server's operator gave you for ${email}`}
       </p>
     </div>
 
@@ -190,7 +202,7 @@
           disabled={loading}
           class="w-full rounded-sm bg-gold px-4 py-3 font-mono text-small text-primary-foreground font-semibold hover:bg-gold-hover disabled:opacity-50 transition-colors"
         >
-          {loading ? "Sending..." : "Send code"}
+          {loading ? "Sending..." : emailSignIn ? "Send code" : "Continue"}
         </button>
       </form>
       {#if passkeysSupported}
@@ -226,14 +238,16 @@
         >
           {loading ? "Verifying..." : "Sign in"}
         </button>
-        <button
-          type="button"
-          onclick={() => void handleResend()}
-          disabled={loading}
-          class="w-full text-center text-caption text-warm-faint hover:text-warm transition-colors disabled:opacity-50"
-        >
-          Send a new code
-        </button>
+        {#if emailSignIn}
+          <button
+            type="button"
+            onclick={() => void handleResend()}
+            disabled={loading}
+            class="w-full text-center text-caption text-warm-faint hover:text-warm transition-colors disabled:opacity-50"
+          >
+            Send a new code
+          </button>
+        {/if}
         <button
           type="button"
           onclick={handleBack}
