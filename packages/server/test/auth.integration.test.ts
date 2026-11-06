@@ -14,7 +14,7 @@ import {
   webauthnChallenges,
   webauthnCredentials,
 } from "@great-minds/database";
-import { type TokenPair, Uuid } from "@great-minds/domain";
+import { Email, type TokenPair, Uuid } from "@great-minds/domain";
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { Deferred, Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -985,6 +985,31 @@ describe("auth HTTP integration", () => {
 
     const afterDelete = await api("GET", "/auth/passkeys", undefined, ownerPair.access_token);
     expect(afterDelete.body).toEqual([]);
+  });
+
+  it("creates a user and a working API key on the server without email", async () => {
+    currentState().mailer.settings.configured = false;
+    const email = Schema.decodeUnknownSync(Email)("Headless@Example.com");
+    const key = await runDb(
+      Effect.flatMap(AuthService, (auth) => auth.createUserKey(email, "server")),
+    );
+    expect(currentState().mailer.sent).toHaveLength(0);
+    const vaults = await api("GET", "/vaults", undefined, key.raw_key);
+    expect(vaults.status).toBe(200);
+    expect(asArray(asRecord(vaults.body).items)).toHaveLength(1);
+
+    const user = await userByEmail("headless@example.com");
+    await runDb(
+      Effect.flatMap(Database, (db) =>
+        db.query((d) =>
+          d.update(users).set({ deletedAt: initialTime }).where(eq(users.id, user.id)),
+        ),
+      ),
+    );
+    const refused = await runDb(
+      Effect.flip(Effect.flatMap(AuthService, (auth) => auth.createUserKey(email, "again"))),
+    );
+    expect(refused._tag).toBe("Unauthorized");
   });
 
   it("creates, lists, and revokes API keys with ownership checks", async () => {
