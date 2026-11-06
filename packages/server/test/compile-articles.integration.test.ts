@@ -211,7 +211,7 @@ describe("articles from themes", () => {
     expect(again.articles).toEqual(first.articles);
   });
 
-  describe("the group pass", () => {
+  describe("grouping", () => {
     const inOrder = Object.values(facets).toSorted((left, right) =>
       contentHash(`answer-${left.docs[0]}`, "0") < contentHash(`answer-${right.docs[0]}`, "0")
         ? -1
@@ -238,7 +238,7 @@ describe("articles from themes", () => {
         .filter((titles) => titles.length > 0)
         .toSorted((left, right) => (left.join() < right.join() ? -1 : 1));
 
-    it("does not chain: two groups linked by a same answer merge only when the groups themselves are the same", async () => {
+    it("does not chain: A same as B and B same as C does not put C with A", async () => {
       sameWhen = themeLevel;
       const result = await build(id.run, facetThemes);
       expect(facetArticles(result.articles)).toEqual(
@@ -249,14 +249,8 @@ describe("articles from themes", () => {
       expect(result.failedQuestions).toBe(0);
     });
 
-    it("merges two groups when the question about both groups says they are one entry", async () => {
-      sameWhen = (content) => themeLevel(content) || names(content).length === 3;
-      const result = await build(id.run, facetThemes);
-      expect(facetArticles(result.articles)).toEqual([[first, second, third].toSorted()]);
-    });
-
     it("builds the same articles whatever order the themes arrive in, and asks nothing again", async () => {
-      sameWhen = (content) => themeLevel(content) || names(content).length === 3;
+      sameWhen = themeLevel;
       const forward = await build(id.run, facetThemes);
       calls.length = 0;
       const backward = await build(id.rerun, facetThemes.toReversed());
