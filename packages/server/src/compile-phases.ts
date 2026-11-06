@@ -188,6 +188,7 @@ export const CompilePhasesLive = Layer.effect(
         yield* reportProgress(0);
 
         const indexedPaths: string[] = [];
+        const timedOut: string[] = [];
         let indexedChunks = 0;
         let embedOffset = 0;
         for (let start = 0; start < files.length; start += 100) {
@@ -303,6 +304,7 @@ export const CompilePhasesLive = Layer.effect(
             }
           }
           embedOffset += pending.length;
+          for (const document of unindexed) timedOut.push(document.file.path);
 
           for (const document of documents) {
             const { file, indexes } = document;
@@ -317,7 +319,7 @@ export const CompilePhasesLive = Layer.effect(
               !unindexed.has(document)
                 ? { id: file.source.id, value: file.etag }
                 : undefined;
-            indexedChunks += indexes.size;
+            if (!unindexed.has(document)) indexedChunks += indexes.size;
             if (indexes.size > 0) indexedPaths.push(file.path);
             if (upserts.length === 0 && !removed && etag === undefined) continue;
             yield* project(file, (tx) =>
@@ -375,6 +377,13 @@ export const CompilePhasesLive = Layer.effect(
               ),
           );
         }
+        if (timedOut.length > 0)
+          yield* pipeline.recordWarning(runId, {
+            phase: scope === "raw" ? "ingest" : "publish",
+            message: "documents not yet searchable (embedding timed out); the next Update retries them",
+            count: timedOut.length,
+            items: timedOut,
+          });
         return indexedChunks;
       });
 

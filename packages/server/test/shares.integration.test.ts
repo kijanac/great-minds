@@ -756,6 +756,27 @@ describe("share links", () => {
     expect(secondToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 
+  it("mints a fresh token when the existing share has expired", async () => {
+    const { aliceToken } = currentFixture();
+    const subjectId = await createSession("share-expired-key", "Expired?", "Expired.");
+
+    const expired = await api("POST", "/shares", aliceToken, {
+      subject_kind: "session",
+      subject_id: subjectId,
+      expires_at: "2020-01-01T00:00:00.000Z",
+    });
+    const expiredToken = String(asRecord(asRecord(expired.body).share).token);
+
+    const again = await api("POST", "/shares", aliceToken, {
+      subject_kind: "session",
+      subject_id: subjectId,
+    });
+    expect(asRecord(again.body).created).toBe(true);
+    const token = String(asRecord(asRecord(again.body).share).token);
+    expect(token).not.toBe(expiredToken);
+    expect((await api("GET", `/public/shares/${token}`)).status).toBe(200);
+  });
+
   it("rejects API-key authentication on share creation", async () => {
     const { aliceToken } = currentFixture();
     const keyCreate = await api("POST", "/auth/api-keys", aliceToken, {

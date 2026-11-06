@@ -1484,7 +1484,7 @@ const AuthApiGroup = HttpApiGroup.make("auth").add(
   HttpApiEndpoint.post("requestCode", "/auth/request-code", {
     payload: RequestCodeInput,
     success: HttpApiSchema.NoContent,
-    error: [TooManyRequestsResponse, ValidationResponse] as const,
+    error: [ServiceUnavailableResponse, TooManyRequestsResponse, ValidationResponse] as const,
   }),
   HttpApiEndpoint.post("verifyCode", "/auth/verify-code", {
     payload: VerifyCodeInput,

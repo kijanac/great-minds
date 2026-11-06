@@ -73,7 +73,11 @@ try {
     RUN_LIVE_LLM_SMOKE: "0",
     ...(binary === undefined ? {} : { TYPST_BINARY: binary }),
   };
-  await run("pnpm", ["--filter", "@great-minds/database", "migrate"], env);
+  await run(
+    process.execPath,
+    ["--experimental-strip-types", "packages/server/src/main.ts", "migrate"],
+    env,
+  );
   await run(
     "pnpm",
     [

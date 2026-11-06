@@ -8,10 +8,17 @@ import {
   type TransactionClient,
   users,
 } from "@great-minds/database";
-import { Email, NotFound, TooManyRequests, Unauthorized, Uuid } from "@great-minds/domain";
+import {
+  Email,
+  NotFound,
+  ServiceUnavailable,
+  TooManyRequests,
+  Unauthorized,
+  Uuid,
+} from "@great-minds/domain";
 import type { ApiKey, ApiKeyWithSecret, AuthContext, TokenPair } from "@great-minds/domain";
 import { and, asc, desc, eq, gt, isNull, lt, sql, type SQL } from "drizzle-orm";
-import { Context, Effect, Layer, Result, Schema } from "effect";
+import { Context, Effect, Layer, Option, Result, Schema } from "effect";
 
 import { backgroundLoop } from "./background-loop.ts";
 import { ClockService } from "./clock.ts";
@@ -28,12 +35,14 @@ type AuthServiceShape = {
   readonly requestCode: (
     email: Email,
     clientAddress: string | null,
-  ) => Effect.Effect<void, TooManyRequests>;
+  ) => Effect.Effect<void, ServiceUnavailable | TooManyRequests>;
   readonly verifyCode: (email: Email, code: string) => Effect.Effect<TokenPair, Unauthorized>;
   readonly refresh: (refreshToken: string) => Effect.Effect<TokenPair, Unauthorized>;
   readonly issueTokenPair: (userId: Uuid) => Effect.Effect<TokenPair, Unauthorized>;
   readonly authenticateBearer: (token: string) => Effect.Effect<AuthContext, Unauthorized>;
   readonly createApiKey: (userId: Uuid, label: string) => Effect.Effect<ApiKeyWithSecret>;
+  readonly ensureUser: (email: Email) => Effect.Effect<Uuid, Unauthorized>;
+  readonly findUser: (email: Email) => Effect.Effect<Option.Option<Uuid>>;
   readonly listApiKeys: (userId: Uuid) => Effect.Effect<readonly ApiKey[]>;
   readonly revokeApiKey: (userId: Uuid, keyId: Uuid) => Effect.Effect<void, NotFound>;
   readonly purgeSignInCodesOnce: () => Effect.Effect<number>;
@@ -204,6 +213,67 @@ export const AuthServiceLive = Layer.effect(
         )
         .pipe(Effect.orDie);
 
+    const userIdFor = (tx: TransactionClient, email: Email) =>
+      Effect.gen(function* () {
+        const created = yield* tx
+          .insert(users)
+          .values({ id: Uuid.make(randomUUID(), { disableChecks: true }), email })
+          .onConflictDoNothing({ target: users.email })
+          .returning();
+        const user =
+          created[0] ?? firstUser(yield* tx.select().from(users).where(eq(users.email, email)).limit(1));
+        return user.id;
+      });
+
+    const createApiKey = (userId: Uuid, label: string) =>
+      Effect.gen(function* () {
+        const rawKey = yield* generateApiKey;
+        const rows = yield* db.query((d) => d
+          .insert(apiKeys)
+          .values({
+            id: Uuid.make(randomUUID(), { disableChecks: true }),
+            userId,
+            keyHash: sha256Hex(rawKey),
+            label,
+            revoked: false,
+          })
+          .returning())
+          .pipe(Effect.orDie);
+        const row = rows[0];
+        if (row === undefined) {
+          throw new Error("api key insert returned no rows");
+        }
+        return {
+          ...apiKeyResponse(row),
+          raw_key: rawKey,
+        };
+      });
+
+    const ensureUser = (emailInput: Email) =>
+      Effect.gen(function* () {
+        const email = normalizeEmail(emailInput);
+        const userId = yield* db.transaction((tx) =>
+          Effect.gen(function* () {
+            const id = yield* userIdFor(tx, email);
+            yield* requireActiveUser(tx, id);
+            return id;
+          }),
+        );
+        yield* vaultsService.ensureDefaultForUser(userId, email);
+        return userId;
+      });
+
+    const findUser = (emailInput: Email) =>
+      db
+        .query((d) =>
+          d
+            .select({ id: users.id })
+            .from(users)
+            .where(and(eq(users.email, normalizeEmail(emailInput)), isNull(users.deletedAt)))
+            .limit(1),
+        )
+        .pipe(Effect.map((rows) => Option.fromNullishOr(rows[0]?.id)));
+
     const issueTokenPair = (userId: Uuid) =>
       Effect.gen(function* () {
         const now = yield* clock.now;
@@ -230,6 +300,11 @@ export const AuthServiceLive = Layer.effect(
           const email = normalizeEmail(emailInput);
           if (config.suppressAuth) {
             return;
+          }
+          if (!mailer.configured) {
+            return yield* new ServiceUnavailable({
+              detail: "Email sign-in is not set up on this server",
+            });
           }
           const code = yield* generateAuthCode;
           const now = yield* clock.now;
@@ -313,22 +388,7 @@ export const AuthServiceLive = Layer.effect(
                 yield* tx.update(authCodes).set({ used: true }).where(eq(authCodes.id, current.id));
               }
 
-              const created = yield* tx
-                .insert(users)
-                .values({
-                  id: Uuid.make(randomUUID(), { disableChecks: true }),
-                  email,
-                })
-                .onConflictDoNothing({ target: users.email })
-                .returning();
-              const createdUser = created[0];
-              const user =
-                createdUser !== undefined
-                  ? createdUser
-                  : firstUser(
-                      yield* tx.select().from(users).where(eq(users.email, email)).limit(1),
-                    );
-              return Result.succeed(user.id);
+              return Result.succeed(yield* userIdFor(tx, email));
             }),
           );
           if (Result.isFailure(result)) {
@@ -409,29 +469,9 @@ export const AuthServiceLive = Layer.effect(
           }
           return yield* new Unauthorized({ detail: "Invalid credentials" });
         }),
-      createApiKey: (userId, label) =>
-        Effect.gen(function* () {
-          const rawKey = yield* generateApiKey;
-          const rows = yield* db.query((d) => d
-            .insert(apiKeys)
-            .values({
-              id: Uuid.make(randomUUID(), { disableChecks: true }),
-              userId,
-              keyHash: sha256Hex(rawKey),
-              label,
-              revoked: false,
-            })
-            .returning())
-            .pipe(Effect.orDie);
-          const row = rows[0];
-          if (row === undefined) {
-            throw new Error("api key insert returned no rows");
-          }
-          return {
-            ...apiKeyResponse(row),
-            raw_key: rawKey,
-          };
-        }),
+      createApiKey,
+      ensureUser,
+      findUser,
       listApiKeys: (userId) =>
         db
           .query((d) =>

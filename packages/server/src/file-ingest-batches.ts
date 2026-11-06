@@ -693,7 +693,8 @@ export const FileIngestBatchesLive = Layer.effect(
           if (!inserted && !sameManifest(manifest, files)) {
             return yield* new Conflict({ detail: "Batch ID is bound to a different manifest" });
           }
-          return yield* resumableResponse(batch);
+          if (!inserted) return yield* resumableResponse(batch);
+          return batchResponse(batch, files, yield* prepareTargets(batch, files));
         }),
       get: (userId, batchId) =>
         Effect.gen(function* () {

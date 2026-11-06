@@ -118,6 +118,25 @@ describe("saved model questions", () => {
     expect(state.costs.map((row) => row.userId)).toEqual([id.user]);
   });
 
+  it("asks again when a saved answer no longer reads, and replaces it", async () => {
+    await withRunner(id.run, (runner) => runner.ask(question("Is A part of B?")));
+    await runHistoryDatabase(
+      Effect.flatMap(Database, (db) =>
+        db.query((d) =>
+          d
+            .update(compileCacheEntries)
+            .set({ value: { verdict: "perhaps" } })
+            .where(eq(compileCacheEntries.vaultId, id.vault)),
+        ),
+      ),
+    );
+    const again = await withRunner(id.rerun, (runner) => runner.ask(question("Is A part of B?")));
+    expect(again).toEqual({ verdict: "yes" });
+    expect(calls).toHaveLength(2);
+    const state = await rows();
+    expect(state.saved.map((row) => row.value)).toEqual([{ verdict: "yes" }]);
+  });
+
   it("records the cost of a cut-off or malformed reply but saves no answer, so the next run asks again", async () => {
     reply = () => ({
       text: '{"verd',

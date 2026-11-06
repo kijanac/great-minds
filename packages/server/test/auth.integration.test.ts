@@ -14,7 +14,7 @@ import {
   webauthnChallenges,
   webauthnCredentials,
 } from "@great-minds/database";
-import { type TokenPair, Uuid } from "@great-minds/domain";
+import { Email, type TokenPair, Uuid } from "@great-minds/domain";
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { Deferred, Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -347,6 +347,7 @@ describe("auth HTTP integration", () => {
     const current = currentState();
     current.clock.set(initialTime);
     current.mailer.sent.length = 0;
+    current.mailer.settings.configured = true;
     await resetDatabase();
   });
 
@@ -400,6 +401,21 @@ describe("auth HTTP integration", () => {
     expect(newest.codeHash).toMatch(/^[a-f0-9]{64}$/);
     expect(older.codeHash).not.toBe(firstCode);
     expect(older.used).toBe(true);
+  });
+
+  it("refuses to send a code when email is not set up, keeping earlier codes valid", async () => {
+    const first = await api("POST", "/auth/request-code", { email: "person@example.com" });
+    expect(first.status).toBe(204);
+    const code = latestCode();
+
+    currentState().mailer.settings.configured = false;
+    currentState().clock.set(new Date(initialTime.getTime() + 61 * 1000));
+    const refused = await api("POST", "/auth/request-code", { email: "person@example.com" });
+    expect(refused.status).toBe(503);
+    expect(refused.body).toMatchObject({ _tag: "ServiceUnavailable" });
+
+    const verified = await api("POST", "/auth/verify-code", { email: "person@example.com", code });
+    expect(verified.status).toBe(200);
   });
 
   it("mounts auth only under /v1 and preserves framework wrong-method behavior", async () => {
@@ -969,6 +985,33 @@ describe("auth HTTP integration", () => {
 
     const afterDelete = await api("GET", "/auth/passkeys", undefined, ownerPair.access_token);
     expect(afterDelete.body).toEqual([]);
+  });
+
+  it("creates a user and a working API key on the server without email", async () => {
+    currentState().mailer.settings.configured = false;
+    const email = Schema.decodeUnknownSync(Email)("Headless@Example.com");
+    const key = await runDb(
+      Effect.flatMap(AuthService, (auth) =>
+        Effect.flatMap(auth.ensureUser(email), (userId) => auth.createApiKey(userId, "server")),
+      ),
+    );
+    expect(currentState().mailer.sent).toHaveLength(0);
+    const vaults = await api("GET", "/vaults", undefined, key.raw_key);
+    expect(vaults.status).toBe(200);
+    expect(asArray(asRecord(vaults.body).items)).toHaveLength(1);
+
+    const user = await userByEmail("headless@example.com");
+    await runDb(
+      Effect.flatMap(Database, (db) =>
+        db.query((d) =>
+          d.update(users).set({ deletedAt: initialTime }).where(eq(users.id, user.id)),
+        ),
+      ),
+    );
+    const refused = await runDb(
+      Effect.flip(Effect.flatMap(AuthService, (auth) => auth.ensureUser(email))),
+    );
+    expect(refused._tag).toBe("Unauthorized");
   });
 
   it("creates, lists, and revokes API keys with ownership checks", async () => {

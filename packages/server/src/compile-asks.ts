@@ -83,11 +83,43 @@ export const makeAskRunner = (
         for (const row of rows) loaded.set(`${phase}\u0000${row.cacheKey}`, row.value);
       });
 
+    const decodeSaved = <A, I>(
+      phase: string,
+      key: string,
+      answer: Schema.Codec<A, I>,
+      value: unknown,
+    ) =>
+      Schema.decodeUnknownEffect(answer)(value).pipe(
+        Effect.catchTag("SchemaError", (error) =>
+          Effect.gen(function* () {
+            loaded.delete(`${phase}\u0000${key}`);
+            yield* logger.warn("compile_cache.malformed", {
+              vault_id: scope.vaultId,
+              run_id: scope.runId,
+              phase,
+              cache_key: key,
+              error: error.message,
+            });
+            yield* db.query((d) =>
+              d
+                .delete(compileCacheEntries)
+                .where(
+                  and(
+                    eq(compileCacheEntries.vaultId, scope.vaultId),
+                    eq(compileCacheEntries.phase, phase),
+                    eq(compileCacheEntries.cacheKey, key),
+                  ),
+                ),
+            );
+            return undefined;
+          }),
+        ),
+      );
+
     const saved = <A, I>(phase: string, key: string, answer: Schema.Codec<A, I>) =>
       Effect.gen(function* () {
         const preloaded = loaded.get(`${phase}\u0000${key}`);
-        if (preloaded !== undefined)
-          return yield* Schema.decodeUnknownEffect(answer)(preloaded).pipe(Effect.orDie);
+        if (preloaded !== undefined) return yield* decodeSaved(phase, key, answer, preloaded);
         const [row] = yield* db.query((d) =>
           d
             .select({ value: compileCacheEntries.value })
@@ -102,7 +134,7 @@ export const makeAskRunner = (
             .limit(1),
         );
         if (row === undefined) return undefined;
-        return yield* Schema.decodeUnknownEffect(answer)(row.value).pipe(Effect.orDie);
+        return yield* decodeSaved(phase, key, answer, row.value);
       });
 
     const keep = <A, I>(kind: string, key: string, codec: Schema.Codec<A, I>, value: A) =>

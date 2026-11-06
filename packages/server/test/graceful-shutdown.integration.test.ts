@@ -45,7 +45,7 @@ const decodeServerListening = Schema.decodeUnknownOption(ServerListening);
 const startMain = (dataDir: string, port: number) => {
   const child = spawn(
     process.execPath,
-    ["--experimental-strip-types", "packages/server/src/main.ts"],
+    ["--experimental-strip-types", "packages/server/src/main.ts", "serve"],
     {
       cwd: repoRoot,
       env: {
