@@ -493,7 +493,10 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
       for (let offset = 0; offset < embeddingInputs.length; offset += 50) {
         const batch = embeddingInputs.slice(offset, offset + 50);
         const embedded = yield* Effect.result(
-          embeddings.embed(batch.map(({ idea }) => `${idea.label}. ${idea.description}`.trim())),
+          embeddings.embed(
+            batch.map(({ idea }) => `${idea.label}. ${idea.description}`.trim()),
+            { vaultId, runId, eventType: "compile", phase: "embed:ideas" },
+          ),
         );
         if (embedded._tag === "Failure") {
           if (!isTimeoutError(embedded.failure)) return yield* Effect.fail(embedded.failure);

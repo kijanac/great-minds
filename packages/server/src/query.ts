@@ -693,8 +693,9 @@ export const QueryServiceLive = Layer.effect(
         };
       });
 
-    const searchRows = (vaultId: Uuid, query: string, path?: string) =>
+    const searchRows = (context: QueryExecutionState, query: string, path?: string) =>
       Effect.gen(function* () {
+        const vaultId = context.vaultId;
         if (query.trim().length === 0) {
           return [];
         }
@@ -726,7 +727,13 @@ export const QueryServiceLive = Layer.effect(
           vectorConditions.push(eq(searchIndex.path, path));
         }
         const rank = sql<number>`ts_rank(${searchIndex.tsv}, ${tsquery})`;
-        const embedded = yield* embeddings.embed([query]);
+        const embedded = yield* embeddings.embed([query], {
+          vaultId,
+          userId: context.userId,
+          eventType: "query.embed",
+          phase: "embed:search",
+          correlationId: context.correlationId,
+        });
         const queryEmbedding = embedded[0];
         if (queryEmbedding === undefined) {
           return [];
@@ -824,7 +831,7 @@ export const QueryServiceLive = Layer.effect(
         const results = yield* withFootnoteNotes(
           storage,
           context.vaultId,
-          yield* searchRows(context.vaultId, query),
+          yield* searchRows(context, query),
         );
         const source = yield* sourceEvent(context, { name: "search_content", args: { query } });
         if (results.length === 0) {
@@ -847,7 +854,7 @@ export const QueryServiceLive = Layer.effect(
         const results = yield* withFootnoteNotes(
           storage,
           context.vaultId,
-          yield* searchRows(context.vaultId, query, path),
+          yield* searchRows(context, query, path),
         );
         const source = yield* sourceEvent(context, {
           name: "search_in_document",

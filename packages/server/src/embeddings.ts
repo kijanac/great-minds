@@ -3,8 +3,11 @@ import { Buffer } from "node:buffer";
 import { Context, Data, Effect, Layer, Schema } from "effect";
 
 import { AppConfig, optionalRedactedValue, resolveModel } from "./config.ts";
+import { CostLedger, type CostScope } from "./cost-ledger.ts";
+import { StructuredLogger } from "./logging.ts";
 import {
   ModelProviderError,
+  priceCost,
   rateLimitRetry,
   responseDetail,
   RetryableModelError,
@@ -16,7 +19,10 @@ const embeddingDimensions = 1024;
 const embeddingTimeoutMs = 300_000;
 
 type EmbeddingsShape = {
-  readonly embed: (texts: readonly string[]) => Effect.Effect<readonly (readonly number[])[], EmbeddingBatchFailed>;
+  readonly embed: (
+    texts: readonly string[],
+    scope?: CostScope,
+  ) => Effect.Effect<readonly (readonly number[])[], EmbeddingBatchFailed>;
 };
 
 export class EmbeddingsService extends Context.Service<EmbeddingsService, EmbeddingsShape>()(
@@ -88,8 +94,25 @@ const EmbeddingResponse = Schema.Struct({
       embedding: Schema.Union([Schema.String, Schema.Array(Schema.Number)]),
     }),
   ),
+  usage: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        prompt_tokens: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+        cost: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+      }),
+    ),
+  ),
 });
 const decodeEmbeddingResponse = Schema.decodeUnknownResult(EmbeddingResponse);
+
+export const embeddingUsage = (value: unknown) => {
+  const decoded = decodeEmbeddingResponse(value);
+  const usage = decoded._tag === "Success" ? decoded.success.usage : undefined;
+  return {
+    promptTokens: usage?.prompt_tokens ?? undefined,
+    cost: usage?.cost ?? undefined,
+  };
+};
 
 export const parseEmbeddingResponse = (
   value: unknown,
@@ -136,7 +159,9 @@ export const embeddingRequestBody = (
   input: [...texts],
   model,
   encoding_format: "base64" as const,
-  ...(providers.length === 0 ? {} : { provider: { order: [...providers], allow_fallbacks: false } }),
+  ...(providers.length === 0
+    ? {}
+    : { provider: { order: [...providers], allow_fallbacks: false } }),
 });
 
 export const sizedGroups = (texts: readonly string[], limit = REQUEST_CHARS) => {
@@ -157,67 +182,95 @@ export const sizedGroups = (texts: readonly string[], limit = REQUEST_CHARS) => 
 
 export const EmbeddingsLive = Layer.effect(
   EmbeddingsService,
-  Effect.map(AppConfig, (config) => {
+  Effect.gen(function* () {
+    const config = yield* AppConfig;
+    const ledger = yield* CostLedger;
+    const logger = yield* StructuredLogger;
     const target = resolveModel(config, config.embeddingModel);
     const apiKey = optionalRedactedValue(target.provider.apiKey);
     const routing = target.provider.kind === "openrouter" ? config.embeddingProviders : [];
     const embedGroup = (texts: readonly string[], key: string | undefined) =>
       Effect.gen(function* () {
-          const response = yield* Effect.tryPromise({
-            try: (signal) =>
-              fetch(`${target.provider.url.replace(/\/$/, "")}/embeddings`, {
-                method: "POST",
-                headers: {
-                  ...(key === undefined ? {} : { authorization: `Bearer ${key}` }),
-                  "content-type": "application/json",
-                },
-                body: JSON.stringify(
-                  embeddingRequestBody(texts, target.model, routing),
-                ),
-                signal: AbortSignal.any([signal, AbortSignal.timeout(embeddingTimeoutMs)]),
-              }),
-            catch: (cause) =>
-              new ModelProviderError({
-                message: "embedding provider request failed",
-                cause,
-                transient: true,
-              }),
+        const response = yield* Effect.tryPromise({
+          try: (signal) =>
+            fetch(`${target.provider.url.replace(/\/$/, "")}/embeddings`, {
+              method: "POST",
+              headers: {
+                ...(key === undefined ? {} : { authorization: `Bearer ${key}` }),
+                "content-type": "application/json",
+              },
+              body: JSON.stringify(embeddingRequestBody(texts, target.model, routing)),
+              signal: AbortSignal.any([signal, AbortSignal.timeout(embeddingTimeoutMs)]),
+            }),
+          catch: (cause) =>
+            new ModelProviderError({
+              message: "embedding provider request failed",
+              cause,
+              transient: true,
+            }),
+        });
+        if (response.status === 429)
+          return yield* new RetryableModelError({
+            message: `embedding provider rate limited request (${yield* responseDetail(response)})`,
+            retryAfterMs: retryAfterMs(response.headers),
           });
-          if (response.status === 429)
-            return yield* new RetryableModelError({
-              message: `embedding provider rate limited request (${yield* responseDetail(response)})`,
-              retryAfterMs: retryAfterMs(response.headers),
-            });
-          if (!response.ok)
-            return yield* new ModelProviderError({
-              message: `embedding provider returned ${yield* responseDetail(response)}`,
-              transient: response.status >= 500,
-            });
-          return yield* Effect.tryPromise({
-            try: async () => parseEmbeddingResponse(await response.json(), texts.length),
-            catch: (cause) =>
-              cause instanceof ModelProviderError
-                ? cause
-                : new ModelProviderError({
-                    message: "embedding provider returned an unreadable response",
-                    cause,
-                    transient: true,
-                  }),
+        if (!response.ok)
+          return yield* new ModelProviderError({
+            message: `embedding provider returned ${yield* responseDetail(response)}`,
+            transient: response.status >= 500,
           });
-        }).pipe(
-          Effect.retry(rateLimitRetry),
-          Effect.retry(transientRetry),
-          Effect.mapError(
-            (error) => new EmbeddingBatchFailed({ message: error.message, cause: error }),
-          ),
-        );
+        return yield* Effect.tryPromise({
+          try: async () => {
+            const json = await response.json();
+            return {
+              vectors: parseEmbeddingResponse(json, texts.length),
+              usage: embeddingUsage(json),
+            };
+          },
+          catch: (cause) =>
+            cause instanceof ModelProviderError
+              ? cause
+              : new ModelProviderError({
+                  message: "embedding provider returned an unreadable response",
+                  cause,
+                  transient: true,
+                }),
+        });
+      }).pipe(
+        Effect.retry(rateLimitRetry),
+        Effect.retry(transientRetry),
+        Effect.mapError(
+          (error) => new EmbeddingBatchFailed({ message: error.message, cause: error }),
+        ),
+      );
+    const record = (scope: CostScope | undefined, usage: ReturnType<typeof embeddingUsage>) => {
+      const cost = usage.cost ?? priceCost(target.price, usage.promptTokens, 0);
+      if (scope === undefined) return Effect.void;
+      if (cost === undefined)
+        return logger.warn("embedding_cost_unknown", {
+          model: config.embeddingModel,
+          phase: scope.phase,
+          prompt_tokens: usage.promptTokens ?? -1,
+        });
+      return ledger.record({
+        ...scope,
+        model: config.embeddingModel,
+        promptTokens: usage.promptTokens,
+        costUsd: cost,
+      });
+    };
     return {
-      embed: (texts) =>
+      embed: (texts, scope) =>
         apiKey === undefined && target.provider.kind === "openrouter"
-          ? Effect.fail(new EmbeddingBatchFailed({ message: "OpenRouter API key is not configured" }))
-          : Effect.forEach(sizedGroups(texts), (group) => embedGroup(group, apiKey)).pipe(
-              Effect.map((groups) => groups.flat()),
-            ),
+          ? Effect.fail(
+              new EmbeddingBatchFailed({ message: "OpenRouter API key is not configured" }),
+            )
+          : Effect.forEach(sizedGroups(texts), (group) =>
+              embedGroup(group, apiKey).pipe(
+                Effect.tap((result) => record(scope, result.usage)),
+                Effect.map((result) => result.vectors),
+              ),
+            ).pipe(Effect.map((groups) => groups.flat())),
     } satisfies EmbeddingsShape;
   }),
 );
