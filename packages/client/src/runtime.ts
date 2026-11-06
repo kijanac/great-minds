@@ -155,7 +155,13 @@ export const makeApi = (options: ApiOptions) => {
   const fork = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof services>>) =>
     runtime.runFork(effect);
 
-  return { api, http, externalHttp, context, run, fork, stream };
+  const use = <A>(effect: Effect.Effect<A, ClientFailure, Layer.Success<typeof services>>) =>
+    withApiErrors(effect).pipe(Effect.provideContext(context));
+
+  const follow = <A>(source: Stream.Stream<A, StreamFailure, Layer.Success<typeof services>>) =>
+    withStreamErrors(source).pipe(Stream.provideContext(context));
+
+  return { api, http, externalHttp, context, run, fork, stream, use, follow };
 };
 
 export type Api = ReturnType<typeof makeApi>["api"];

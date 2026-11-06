@@ -11,6 +11,7 @@ RUN corepack enable
 RUN corepack prepare pnpm@11.7.0 --activate
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/cli/package.json packages/cli/package.json
 COPY packages/client/package.json packages/client/package.json
 COPY packages/database/package.json packages/database/package.json
 COPY packages/domain/package.json packages/domain/package.json
@@ -29,7 +30,7 @@ RUN node --experimental-strip-types packages/server/scripts/install-publication-
 
 FROM workspace AS deploy
 
-RUN rm -rf packages/client packages/goldens packages/server/test packages/server/scripts web
+RUN rm -rf packages/cli packages/client packages/goldens packages/server/test packages/server/scripts web
 RUN rm -rf packages/server/node_modules/@types
 RUN rm -f package.json pnpm-lock.yaml pnpm-workspace.yaml packages/*/tsconfig.json
 
