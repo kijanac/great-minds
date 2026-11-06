@@ -73,6 +73,10 @@ export const makeThemesPipeline = (options: {
   readonly rebuildWiki: (vaultId: Uuid, runId: Uuid) => Effect.Effect<number, unknown>;
 }) => {
   const { config, db, embeddings, languageModel, logger, pipeline, storage } = options;
+  const embeddingsFor = (vaultId: Uuid, runId: Uuid, phase: string) => ({
+    embed: (texts: readonly string[]) =>
+      embeddings.embed(texts, { vaultId, runId, eventType: "compile", phase }),
+  });
   const runnerFor = (vaultId: Uuid, runId: Uuid) =>
     makeAskRunner({ db, languageModel, logger }, { vaultId, runId });
   const warn = (runId: Uuid, phase: string, count: number, message: string) =>
@@ -150,7 +154,7 @@ export const makeThemesPipeline = (options: {
       yield* steps.start("propose_topics");
       const library = yield* loadLibrary(db, vaultId);
       const proposed = yield* proposeTopics(
-        { db, embeddings, runner },
+        { db, embeddings: embeddingsFor(vaultId, runId, "embed:topics"), runner },
         vaultId,
         library,
         themeSettings,
@@ -159,7 +163,7 @@ export const makeThemesPipeline = (options: {
       yield* pairCandidates(db, vaultId);
       const blocks = yield* loadBlocks(db, vaultId, library);
       const grouped = yield* groupThemes(
-        { db, embeddings, runner },
+        { db, embeddings: embeddingsFor(vaultId, runId, "embed:topics"), runner },
         vaultId,
         blocks,
         themeSettings,
@@ -289,7 +293,7 @@ export const makeThemesPipeline = (options: {
       );
       yield* steps.start("link_articles");
       const linked = yield* findLinks(
-        { embeddings, runner },
+        { embeddings: embeddingsFor(vaultId, runId, "embed:links"), runner },
         validated.map((topic) => ({
           id: topic.topicId,
           title: topic.title,

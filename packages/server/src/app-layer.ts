@@ -19,6 +19,7 @@ import { ReplySettlement, ReplySettlementLive } from "./conversation-history/set
 import { HistoryStore, type HistoryStoreShape } from "./conversation-history/store.ts";
 import { PgClientLive } from "./db.ts";
 import { DocumentsService, DocumentsServiceLive } from "./documents.ts";
+import { CostLedgerLive } from "./cost-ledger.ts";
 import { EmbeddingsLive, EmbeddingsService } from "./embeddings.ts";
 import {
   FileIngestBatchReconcilerLoopLive,
@@ -177,7 +178,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
     overrides.mailer ?? MailerLive,
     overrides.pdfRenderer ?? PdfRendererLive,
     overrides.languageModel ?? LanguageModelLive,
-    overrides.embeddings ?? EmbeddingsLive,
+    overrides.embeddings ?? EmbeddingsLive.pipe(Layer.provide(CostLedgerLive)),
     overrides.costLookup ?? CostLookupLive,
     overrides.parallelSearch ?? ParallelSearchLive,
   ).pipe(Layer.provideMerge(InfrastructureLive));

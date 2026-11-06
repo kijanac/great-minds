@@ -3,12 +3,21 @@ import { TestClock } from "effect/testing";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppConfigLive } from "../src/config.ts";
+import { CostLedger, type CostEntry } from "../src/cost-ledger.ts";
 import { EmbeddingsLive, EmbeddingsService } from "../src/embeddings.ts";
+import { StructuredLoggerLive } from "../src/logging.ts";
 import { CostLookupLive, CostLookupService } from "../src/llm-costs.ts";
 import { LanguageModel, LanguageModelLive } from "../src/llm.ts";
 import { ParallelSearchLive, ParallelSearchService } from "../src/parallel.ts";
 
+const recorded: CostEntry[] = [];
+const LedgerLive = Layer.mergeAll(
+  Layer.succeed(CostLedger, { record: (entry) => Effect.sync(() => { recorded.push(entry); }) }),
+  StructuredLoggerLive,
+);
+
 const runtime = ManagedRuntime.make(Layer.mergeAll(EmbeddingsLive, CostLookupLive, ParallelSearchLive, LanguageModelLive).pipe(
+  Layer.provide(LedgerLive),
   Layer.provide(AppConfigLive),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {
     DATABASE_URL: "postgresql://great-minds.test/great_minds",
@@ -22,6 +31,7 @@ afterEach(() => { vi.unstubAllGlobals(); });
 afterAll(() => runtime.dispose());
 
 const directRuntime = ManagedRuntime.make(Layer.mergeAll(EmbeddingsLive, LanguageModelLive).pipe(
+  Layer.provide(LedgerLive),
   Layer.provide(AppConfigLive),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {
     DATABASE_URL: "postgresql://great-minds.test/great_minds",
@@ -66,6 +76,26 @@ describe("direct providers", () => {
     });
     expect(completion.generationId).toBeUndefined();
     expect(completion.usage?.cost).toBeCloseTo(0.003);
+  });
+
+  it("records each embedding batch's cost: the provider's figure, or tokens at the configured price", async () => {
+    recorded.length = 0;
+    const scope = { vaultId: "00000000-0000-4000-8000-000000000001" as never, eventType: "compile" as const, phase: "embed:ideas" };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      data: [{ index: 0, embedding: [1, 0] }],
+      usage: { prompt_tokens: 2_000, cost: 0.00004 },
+    })));
+    await runtime.runPromise(Effect.flatMap(EmbeddingsService, (embeddings) => embeddings.embed(["text"], scope)));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      data: [{ index: 0, embedding: [1, 0] }],
+      usage: { prompt_tokens: 2_000 },
+    })));
+    await directRuntime.runPromise(Effect.flatMap(EmbeddingsService, (embeddings) => embeddings.embed(["text"], scope)));
+    await runtime.runPromise(Effect.flatMap(EmbeddingsService, (embeddings) => embeddings.embed(["text"])));
+    expect(recorded.map((entry) => [entry.model, entry.promptTokens, entry.costUsd])).toEqual([
+      ["qwen/qwen3-embedding-8b", 2_000, 0.00004],
+      ["local:qwen3-embedding-8b", 2_000, 0],
+    ]);
   });
 
   it("embeds through a keyless local provider without OpenRouter routing", async () => {

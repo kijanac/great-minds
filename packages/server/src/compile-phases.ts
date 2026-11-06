@@ -264,7 +264,10 @@ export const CompilePhasesLive = Layer.effect(
             Array.from({ length: Math.ceil(pending.length / 50) }, (_unused, index) => index * 50),
             (offset) =>
               Effect.result(
-                embeddings.embed(pending.slice(offset, offset + 50).map(({ chunk }) => chunk.body)),
+                embeddings.embed(
+                  pending.slice(offset, offset + 50).map(({ chunk }) => chunk.body),
+                  { vaultId, runId, eventType: "compile", phase: `embed:search_${scope}` },
+                ),
               ).pipe(Effect.map((embedded) => ({ offset, embedded }))),
             { concurrency: config.compileEmbedConcurrency },
           );
