@@ -1071,6 +1071,16 @@ describe("M4.3a deterministic compile phases", () => {
       event: "search_index.embed_batch_timeout",
       fields: expect.objectContaining({ scope: "raw", batch_size: 2, error_type: "TimeoutError" }),
     });
+    const warnings = await run(
+      Effect.flatMap(Database, (db) => db.query((d) => d
+        .select({ warnings: pipelineRuns.warnings })
+        .from(pipelineRuns)
+        .where(eq(pipelineRuns.id, id.run)))
+        .pipe(Effect.orDie)),
+    );
+    expect(warnings[0]?.warnings).toEqual([
+      expect.objectContaining({ phase: "ingest", count: 1, items: ["raw/docs/source.md"] }),
+    ]);
 
     embed = defaultEmbed;
     embeddingRequests.length = 0;
