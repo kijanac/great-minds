@@ -1202,7 +1202,7 @@ export const QueryServiceLive = Layer.effect(
         });
         const completion = yield* languageModel.complete({
           model: appConfig.extractModel,
-          temperature: 0,
+          temperature: Option.getOrUndefined(appConfig.extractTemperature),
           responseFormat: "json_object",
           messages: [
             { role: "system", content: webFactExtractionPrompt },
@@ -1331,7 +1331,7 @@ export const QueryServiceLive = Layer.effect(
             model,
             messages: context.messages,
             tools: context.tools,
-            temperature: 0.3,
+            temperature: Option.getOrUndefined(appConfig.queryTemperature),
           })
           .pipe(
             Stream.runForEach((part) => {
@@ -1752,7 +1752,7 @@ export const QueryServiceLive = Layer.effect(
           const completion = yield* languageModel
             .complete({
               model: appConfig.queryModel,
-              temperature: 0.4,
+              temperature: Option.getOrUndefined(appConfig.queryTemperature),
               messages: [
                 { role: "system", content: draftHintSystem },
                 { role: "user", content: trimmed },

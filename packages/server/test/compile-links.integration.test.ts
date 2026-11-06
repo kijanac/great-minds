@@ -53,6 +53,8 @@ const prompt = (name: string) =>
 const settings = {
   pickModel: "deepseek/deepseek-v3.2",
   checkModel: "anthropic/claude-sonnet-5.5",
+  pickTemperature: 0,
+  checkTemperature: undefined,
   mentionPrompt: await prompt("find_mentions"),
   pickPrompt: await prompt("pick_link_target"),
   checkPrompt: await prompt("check_link"),

@@ -62,6 +62,7 @@ const FaceRows = Schema.Struct({
 
 export type ThemeSettings = {
   readonly model: string;
+  readonly temperature: number | undefined;
   readonly proposePrompt: string;
   readonly judgePrompt: string;
   readonly concurrency: number;
@@ -250,7 +251,7 @@ const proposalRequest = (
           content: settings.proposePrompt.replace("{idea_block}", () => lines.join("\n")),
         },
       ],
-      temperature: 0,
+      temperature: settings.temperature,
       responseFormat: responseFormat("document_topics", ProposalAnswer),
       answer: ProposalAnswer,
     },
@@ -506,7 +507,7 @@ export const groupThemes = (
                     .replace("{topic_b}", () => blocks.get(candidate) ?? ""),
                 },
               ],
-              temperature: 0,
+              temperature: settings.temperature,
               responseFormat: responseFormat("topic_relation", SameTopicAnswer),
               answer: SameTopicAnswer,
             })
