@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { Uuid } from "@great-minds/domain";
 import { Config, Context, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 
-import { CredentialsUnreadable, NotSignedIn } from "./errors.ts";
+import { CredentialsUnreadable, InsecureApiUrl, NotSignedIn } from "./errors.ts";
 
 export const DEFAULT_API_URL = "https://great-minds-api.onrender.com/v1";
 
@@ -28,8 +28,11 @@ export interface CredentialsShape {
   readonly load: Effect.Effect<Option.Option<SavedCredentials>, CredentialsUnreadable>;
   readonly save: (credentials: SavedCredentials) => Effect.Effect<void>;
   readonly clear: Effect.Effect<void>;
-  readonly apiUrl: (flag: Option.Option<string>, saved: Option.Option<SavedCredentials>) => string;
-  readonly signedIn: Effect.Effect<SignedIn, NotSignedIn | CredentialsUnreadable>;
+  readonly apiUrl: (
+    flag: Option.Option<string>,
+    saved: Option.Option<SavedCredentials>,
+  ) => Effect.Effect<string, InsecureApiUrl>;
+  readonly signedIn: Effect.Effect<SignedIn, NotSignedIn | CredentialsUnreadable | InsecureApiUrl>;
 }
 
 export class Credentials extends Context.Service<Credentials, CredentialsShape>()(
@@ -39,6 +42,14 @@ export class Credentials extends Context.Service<Credentials, CredentialsShape>(
 const decodeSaved = Schema.decodeUnknownEffect(Schema.fromJsonString(SavedCredentials));
 const encodeSaved = Schema.encodeSync(Schema.fromJsonString(SavedCredentials));
 const setting = (name: string) => Config.option(Config.nonEmptyString(name));
+const localHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const isAllowedUrl = (url: string) => {
+  if (!URL.canParse(url)) return false;
+  const parsed = new URL(url);
+  return (
+    parsed.protocol === "https:" || (parsed.protocol === "http:" && localHosts.has(parsed.hostname))
+  );
+};
 
 const makeCredentials = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -77,18 +88,20 @@ const makeCredentials = Effect.gen(function* () {
 
   const clear = fs.remove(file, { force: true }).pipe(Effect.orDie);
 
-  const apiUrl = (flag: Option.Option<string>, saved: Option.Option<SavedCredentials>) =>
-    Option.getOrElse(
+  const apiUrl = (flag: Option.Option<string>, saved: Option.Option<SavedCredentials>) => {
+    const url = Option.getOrElse(
       Option.orElse(
         Option.orElse(flag, () => envUrl),
         () => Option.map(saved, (found) => found.api_url),
       ),
       () => DEFAULT_API_URL,
     );
+    return isAllowedUrl(url) ? Effect.succeed(url) : Effect.fail(new InsecureApiUrl({ url }));
+  };
 
   const signedIn = Effect.gen(function* () {
     const saved = yield* load;
-    const url = apiUrl(Option.none(), saved);
+    const url = yield* apiUrl(Option.none(), saved);
     const sameServer = Option.filter(saved, (found) => found.api_url === url);
     const apiKey = Option.orElse(envKey, () => Option.map(sameServer, (found) => found.api_key));
     if (Option.isNone(apiKey)) return yield* new NotSignedIn();

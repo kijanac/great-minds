@@ -1,3 +1,4 @@
+import { Email, SessionId, Uuid } from "@great-minds/domain";
 import { Effect, Redacted } from "effect";
 import { Argument, Command, Flag, Prompt } from "effect/unstable/cli";
 
@@ -24,7 +25,10 @@ const jsonFlag = Flag.boolean("json").pipe(
 const loginCommand = Command.make(
   "login",
   {
-    email: Argument.string("email").pipe(Argument.withDescription("Your account's email address")),
+    email: Argument.string("email").pipe(
+      Argument.withSchema(Email),
+      Argument.withDescription("Your account's email address"),
+    ),
     url: Flag.string("url").pipe(Flag.withDescription("API base URL"), Flag.optional),
   },
   (input) =>
@@ -63,6 +67,7 @@ const askCommand = Command.make(
   {
     question: Argument.string("question").pipe(Argument.withDescription("Your question")),
     session: Flag.string("session").pipe(
+      Flag.withSchema(SessionId),
       Flag.withDescription("Continue an earlier session (its id is printed after each answer)"),
       Flag.optional,
     ),
@@ -85,6 +90,10 @@ const runsCommand = Command.make(
   {
     vault: vaultFlag,
     limit: Flag.integer("limit").pipe(
+      Flag.filter(
+        (limit) => limit >= 1 && limit <= 200,
+        (limit) => `--limit must be between 1 and 200 (got ${limit})`,
+      ),
       Flag.withDescription("How many runs to list (1-200)"),
       Flag.withDefault(20),
     ),
@@ -96,7 +105,10 @@ const runsCommand = Command.make(
 const runCommand = Command.make(
   "run",
   {
-    run: Argument.string("id").pipe(Argument.withDescription("Run id (from gm runs)")),
+    run: Argument.string("id").pipe(
+      Argument.withSchema(Uuid),
+      Argument.withDescription("Run id (from gm runs)"),
+    ),
     vault: vaultFlag,
     json: jsonFlag,
   },

@@ -1,8 +1,7 @@
-export { AuthClient, AuthMiddlewareClientLive, makeAuthenticate } from "./auth-middleware.ts";
 export { citationPath, citationsOf, type Citation } from "./citations.ts";
 export { domainErrorDetail, errorMessage } from "./errors.ts";
 export { newUuid } from "./ids.ts";
-export { allVaults, followJob, followReply, jobFinished, replyRequest } from "./operations.ts";
+export { allVaults, followJob, followReply, replyRequest } from "./operations.ts";
 export {
   changedNothing,
   isFirstBuild,
@@ -11,16 +10,5 @@ export {
   stoppedHeadline,
 } from "./outcome.ts";
 export { nextPageOffset } from "./pagination.ts";
-export {
-  ApiError,
-  decodeInput,
-  makeApi,
-  withApiErrors,
-  type Api,
-  type ApiContext,
-  type ApiOptions,
-  type RequestFailure,
-  type RunOptions,
-} from "./runtime.ts";
-export { followSnapshots, type StreamFailure } from "./sse.ts";
+export { ApiError, decodeInput, makeApi, withApiErrors } from "./runtime.ts";
 export { TokenStore, type StoredTokens, type TokenStoreShape } from "./token-store.ts";

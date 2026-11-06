@@ -119,6 +119,7 @@ export const makeApi = (options: ApiOptions) => {
   const services = AuthMiddlewareClientLive.pipe(Layer.provideMerge(authentication));
   const runtime = ManagedRuntime.make(services);
   const context = runtime.runSync(runtime.contextEffect);
+  type Services = Layer.Success<typeof services>;
   const api = runtime.runSync(HttpApiClient.make(GreatMindsApi, { baseUrl: options.baseUrl }));
   const authenticate = runtime.runSync(AuthClient);
   const transportClient = runtime.runSync(HttpClient.HttpClient);
@@ -134,35 +135,31 @@ export const makeApi = (options: ApiOptions) => {
   );
   const externalHttp = transportClient;
 
-  const run = <A>(
-    effect: Effect.Effect<A, ClientFailure, Layer.Success<typeof services>>,
-    runOptions?: RunOptions,
-  ): Promise<A> =>
-    runtime
-      .runPromise(withApiErrors(effect), runOptions)
-      .catch((error: unknown) => rethrowAsAbort(runOptions?.signal, error));
-
-  const stream = <A>(
-    source: Stream.Stream<A, StreamFailure, Layer.Success<typeof services>>,
-    signal?: AbortSignal,
-  ): AsyncIterable<A> => {
-    const events = Stream.toAsyncIterableWith(withStreamErrors(source), context);
-    if (signal === undefined) return events;
-    const interrupted = Stream.interruptWhen(source, abortedSignal(signal));
-    return abortAware(Stream.toAsyncIterableWith(withStreamErrors(interrupted), context), signal);
-  };
-
-  const fork = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof services>>) =>
-    runtime.runFork(effect);
-
-  const use = <A>(effect: Effect.Effect<A, ClientFailure, Layer.Success<typeof services>>) =>
+  const use = <A>(effect: Effect.Effect<A, ClientFailure, Services>) =>
     withApiErrors(effect).pipe(Effect.provideContext(context));
 
-  const follow = <A>(source: Stream.Stream<A, StreamFailure, Layer.Success<typeof services>>) =>
+  const follow = <A>(source: Stream.Stream<A, StreamFailure, Services>) =>
     withStreamErrors(source).pipe(Stream.provideContext(context));
 
-  return { api, http, externalHttp, context, run, fork, stream, use, follow };
+  const run = <A>(effect: Effect.Effect<A, ClientFailure, Services>, runOptions?: RunOptions) =>
+    Effect.runPromise(use(effect), runOptions).catch((error: unknown) =>
+      rethrowAsAbort(runOptions?.signal, error),
+    );
+
+  const stream = <A>(
+    source: Stream.Stream<A, StreamFailure, Services>,
+    signal?: AbortSignal,
+  ): AsyncIterable<A> =>
+    signal === undefined
+      ? Stream.toAsyncIterable(follow(source))
+      : abortAware(
+          Stream.toAsyncIterable(follow(Stream.interruptWhen(source, abortedSignal(signal)))),
+          signal,
+        );
+
+  const fork = <A, E>(effect: Effect.Effect<A, E, Services>) => runtime.runFork(effect);
+
+  return { api, http, externalHttp, run, fork, stream, use, follow };
 };
 
 export type Api = ReturnType<typeof makeApi>["api"];
-export type ApiContext = ReturnType<typeof makeApi>["context"];

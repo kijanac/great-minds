@@ -4,16 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { NodeServices } from "@effect/platform-node";
-import { Uuid } from "@great-minds/domain";
-import { ConfigProvider, Console, Effect, Exit, Layer, Option, Schema } from "effect";
+import { Email, Uuid } from "@great-minds/domain";
+import { Cause, ConfigProvider, Console, Effect, Exit, Layer, Option, Schema } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ask, listRuns, login, logout, update } from "../src/commands.ts";
 import { CliFetch } from "../src/connection.ts";
 import { Credentials, CredentialsLive } from "../src/credentials.ts";
 
-const apiUrl = "http://test.local/v1";
-const otherUrl = "http://other.local/v1";
+const apiUrl = "https://test.local/v1";
+const otherUrl = "https://other.local/v1";
 const uuid = Schema.decodeUnknownSync(Uuid);
 const vaultId = uuid("70000000-0000-4000-8000-000000000001");
 const keyId = uuid("70000000-0000-4000-8000-000000000002");
@@ -26,7 +26,6 @@ const now = "2026-11-06T00:00:00.000Z";
 type Recorded = {
   readonly method: string;
   readonly path: string;
-  readonly host: string;
   readonly auth: string | null;
   readonly body: string;
 };
@@ -43,6 +42,16 @@ const events = (snapshots: readonly unknown[]) =>
     ].join(""),
     { status: 200, headers: { "content-type": "text/event-stream" } },
   );
+const vaultDetail = () =>
+  json(200, {
+    id: vaultId,
+    name: "One",
+    owner_id: vaultId,
+    created_at: now,
+    role: "owner",
+    member_count: 1,
+    article_count: 0,
+  });
 const oneVault = () =>
   json(200, {
     items: [{ id: vaultId, name: "One", owner_id: vaultId, created_at: now }],
@@ -62,7 +71,6 @@ const fakeFetch: typeof fetch = async (input, init) => {
   const recorded = {
     method: request.method,
     path: url.pathname,
-    host: url.host,
     auth: request.headers.get("authorization"),
     body: await request.text(),
   };
@@ -112,9 +120,13 @@ const failureTag = async <A, E>(
 ) => {
   const result = await exit(effect, env);
   if (Exit.isSuccess(result)) return "success";
-  const failure = result.cause.reasons.find((reason) => reason._tag === "Fail");
-  const error = failure?._tag === "Fail" ? failure.error : undefined;
-  return typeof error === "object" && error !== null && "_tag" in error ? error._tag : "defect";
+  const error = Cause.findErrorOption(result.cause);
+  return Option.isSome(error) &&
+    typeof error.value === "object" &&
+    error.value !== null &&
+    "_tag" in error.value
+    ? error.value._tag
+    : "defect";
 };
 
 const credentialsFile = () => join(directory, "credentials.json");
@@ -147,7 +159,7 @@ const signInRoutes = (onDeleteOld: () => Response) => (request: Recorded) => {
 };
 const signIn = (url: string) =>
   login({
-    email: "reader@example.com",
+    email: Schema.decodeUnknownSync(Email)("reader@example.com"),
     url: Option.some(url),
     readCode: Effect.succeed(" 123456 "),
   });
@@ -215,7 +227,7 @@ describe("gm logout", () => {
     await expect(stat(credentialsFile())).rejects.toThrow();
   });
 
-  it("removes the key when revoking fails, without claiming it was revoked", async () => {
+  it("keeps the key and fails when revoking fails, so it can be retried", async () => {
     await saveCredentials({
       api_url: apiUrl,
       api_key: "gm_saved",
@@ -223,10 +235,8 @@ describe("gm logout", () => {
       vault_id: null,
     });
     route = () => json(503, { _tag: "ServiceUnavailable", detail: "busy" });
-    await run(logout());
-    await expect(stat(credentialsFile())).rejects.toThrow();
-    expect(stdout[0]).not.toContain("was revoked");
-    expect(stdout[0]).toContain(oldKeyId);
+    expect(await failureTag(logout())).toBe("KeyNotRevoked");
+    expect(await savedFile()).toMatchObject({ api_key_id: oldKeyId });
   });
 });
 
@@ -311,7 +321,7 @@ describe("gm ask", () => {
       vault_id: vaultId,
     });
     route = (request) => {
-      if (request.path === "/v1/vaults") return oneVault();
+      if (request.path === `/v1/vaults/${vaultId}`) return vaultDetail();
       if (request.method === "POST" && request.path === `/v1/vaults/${vaultId}/replies`)
         return json(202, { reply_id: replyId, session_id: "session-1" });
       if (request.path === `/v1/vaults/${vaultId}/replies/${replyId}/stream`)
@@ -397,7 +407,7 @@ describe("gm update", () => {
       vault_id: vaultId,
     });
     route = (request) => {
-      if (request.path === "/v1/vaults") return oneVault();
+      if (request.path === `/v1/vaults/${vaultId}`) return vaultDetail();
       if (request.method === "POST" && request.path === `/v1/vaults/${vaultId}/compile`)
         return accepted();
       if (request.path === `/v1/vaults/${vaultId}/jobs/${runId}/stream`)

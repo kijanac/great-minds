@@ -2,13 +2,13 @@
 import { readFileSync } from "node:fs";
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
+import { errorMessage } from "@great-minds/client";
 import { Cause, Effect, Layer } from "effect";
 import { CliError } from "effect/unstable/cli";
 
 import { runGm } from "./cli.ts";
 import { CliFetch } from "./connection.ts";
 import { CredentialsLive } from "./credentials.ts";
-import { describeFailure } from "./errors.ts";
 
 const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
@@ -26,7 +26,7 @@ const program = runGm(process.argv.slice(2), String(version)).pipe(
         if (failure._tag !== "ShowHelp" || failure.errors.length > 0) process.exitCode = 1;
         return;
       }
-      process.stderr.write(`gm: ${describeFailure(failure)}\n`);
+      process.stderr.write(`gm: ${errorMessage(failure)}\n`);
       process.exitCode = 1;
     });
   }),

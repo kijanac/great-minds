@@ -3,7 +3,6 @@ import { hostname } from "node:os";
 import {
   allVaults,
   citationsOf,
-  decodeInput,
   errorMessage,
   followJob,
   followReply,
@@ -14,36 +13,32 @@ import {
   stoppedHeadline,
 } from "@great-minds/client";
 import {
-  Email,
-  SessionId,
-  Uuid,
+  isUuid,
+  type Email,
   type JobProgressSnapshot,
   type ReplySource,
   type RunOutcome,
+  type SessionId,
+  type Uuid,
+  type Vault,
 } from "@great-minds/domain";
 import { Console, Effect, Option, Stream } from "effect";
 
 import { connect, type Connection } from "./connection.ts";
 import { Credentials } from "./credentials.ts";
 import {
-  LimitOutOfRange,
-  NoVaults,
+  KeyNotRevoked,
   ReplyNotCompleted,
   RunStopped,
   StreamEnded,
   VaultChoiceNeeded,
   VaultNameAmbiguous,
+  VaultNotAccessible,
   VaultNotFound,
   VaultUseNeedsLogin,
 } from "./errors.ts";
 
 const printJson = (value: unknown) => Console.log(JSON.stringify(value, null, 2));
-
-const savedOrNothing = Effect.flatMap(Credentials, (credentials) =>
-  credentials.load.pipe(
-    Effect.catchTag("CredentialsUnreadable", () => Effect.succeed(Option.none())),
-  ),
-);
 
 const signedInConnection = Effect.gen(function* () {
   const credentials = yield* Credentials;
@@ -52,25 +47,36 @@ const signedInConnection = Effect.gen(function* () {
   return { connection, signedIn };
 });
 
+const normalized = (value: string) => value.trim().toLowerCase();
+const isVault = (vault: Vault, wanted: string) =>
+  vault.id === normalized(wanted) || normalized(vault.name) === normalized(wanted);
+
 const chooseVault = (connection: Connection, wanted: Option.Option<string>) =>
   Effect.gen(function* () {
+    const id = Option.map(wanted, normalized);
+    if (Option.isSome(wanted) && Option.isSome(id) && isUuid(id.value)) {
+      const vaultId = id.value;
+      const vault = yield* connection
+        .use(connection.api.vaults.getVault({ params: { vault_id: vaultId } }))
+        .pipe(
+          Effect.catchTags({
+            Forbidden: () => Effect.fail(new VaultNotAccessible({ vault: wanted.value })),
+            NotFound: () => Effect.fail(new VaultNotAccessible({ vault: wanted.value })),
+          }),
+        );
+      return vault.id;
+    }
     const { items } = yield* connection.use(allVaults(connection.api));
     if (Option.isNone(wanted)) {
-      const only = items.length === 1 ? items[0] : undefined;
-      if (only !== undefined) return only.id;
-      return yield* items.length === 0
-        ? new NoVaults()
-        : new VaultChoiceNeeded({ count: items.length });
+      const [only, ...rest] = items;
+      if (only !== undefined && rest.length === 0) return only.id;
+      return yield* new VaultChoiceNeeded({ count: items.length });
     }
-    const name = wanted.value.trim().toLowerCase();
-    const byId = items.find((vault) => vault.id === wanted.value.trim());
-    if (byId !== undefined) return byId.id;
-    const matches = items.filter((vault) => vault.name.trim().toLowerCase() === name);
-    const match = matches.length === 1 ? matches[0] : undefined;
-    if (match !== undefined) return match.id;
-    return yield* matches.length === 0
+    const [match, ...others] = items.filter((vault) => isVault(vault, wanted.value));
+    if (match !== undefined && others.length === 0) return match.id;
+    return yield* match === undefined
       ? new VaultNotFound({ vault: wanted.value })
-      : new VaultNameAmbiguous({ vault: wanted.value, count: matches.length });
+      : new VaultNameAmbiguous({ vault: wanted.value, count: others.length + 1 });
   });
 
 const vaultConnection = (flag: Option.Option<string>) =>
@@ -83,100 +89,112 @@ const vaultConnection = (flag: Option.Option<string>) =>
     return { connection, vaultId };
   });
 
+type Revocation = "revoked" | "gone" | { readonly failed: string };
+
+const revokeKey = (connection: Connection, keyId: Uuid) =>
+  connection.use(connection.api.auth.deleteApiKey({ params: { key_id: keyId } })).pipe(
+    Effect.as<Revocation>("revoked"),
+    Effect.catchTags({
+      NotFound: () => Effect.succeed<Revocation>("gone"),
+      Unauthorized: () => Effect.succeed<Revocation>("gone"),
+    }),
+    Effect.catch((error) => Effect.succeed<Revocation>({ failed: errorMessage(error) })),
+  );
+
+const lastSnapshot = <A, E, R>(snapshots: Stream.Stream<A, E, R>, what: "answer" | "run") =>
+  Stream.runLast(snapshots).pipe(
+    Effect.flatMap((last) =>
+      Option.isSome(last) ? Effect.succeed(last.value) : Effect.fail(new StreamEnded({ what })),
+    ),
+  );
+
 export const login = <E, R>(input: {
-  readonly email: string;
+  readonly email: Email;
   readonly url: Option.Option<string>;
   readonly readCode: Effect.Effect<string, E, R>;
 }) =>
   Effect.gen(function* () {
     const credentials = yield* Credentials;
-    const saved = yield* savedOrNothing;
-    const apiUrl = credentials.apiUrl(input.url, saved);
-    const email = yield* decodeInput(Email, input.email.trim());
+    const saved = yield* credentials.load.pipe(
+      Effect.catchTag("CredentialsUnreadable", () => Effect.succeed(Option.none())),
+    );
+    const apiUrl = yield* credentials.apiUrl(input.url, saved);
     const anonymous = yield* connect(apiUrl, null);
-    yield* anonymous.use(anonymous.api.auth.requestCode({ payload: { email } }));
-    yield* Console.error(`A sign-in code was sent to ${email}.`);
+    yield* anonymous.use(anonymous.api.auth.requestCode({ payload: { email: input.email } }));
+    yield* Console.error(`A sign-in code was sent to ${input.email}.`);
     const code = yield* input.readCode;
     const tokens = yield* anonymous.use(
-      anonymous.api.auth.verifyCode({ payload: { email, code: code.trim() } }),
+      anonymous.api.auth.verifyCode({ payload: { email: input.email, code: code.trim() } }),
     );
     const session = yield* connect(apiUrl, tokens.access_token);
     const label = `gm CLI (${hostname()})`;
     const key = yield* session.use(session.api.auth.createApiKey({ payload: { label } }));
     const sameServer = Option.filter(saved, (found) => found.api_url === apiUrl);
-    yield* credentials.save({
-      api_url: apiUrl,
-      api_key: key.raw_key,
-      api_key_id: key.id,
-      vault_id: Option.getOrNull(
-        Option.flatMap(sameServer, (found) => Option.fromNullishOr(found.vault_id)),
-      ),
-    });
-    yield* Console.log(`Signed in as ${email}. Saved key "${label}" to ${credentials.path}.`);
+    yield* credentials
+      .save({
+        api_url: apiUrl,
+        api_key: key.raw_key,
+        api_key_id: key.id,
+        vault_id: Option.getOrNull(
+          Option.flatMap(sameServer, (found) => Option.fromNullishOr(found.vault_id)),
+        ),
+      })
+      .pipe(Effect.onError(() => revokeKey(session, key.id)));
+    yield* Console.log(`Signed in as ${input.email}. Saved key "${label}" to ${credentials.path}.`);
+    if (credentials.keyFromEnvironment)
+      yield* Console.error(
+        "GM_API_KEY is set and takes precedence over this key until you unset it.",
+      );
     const previous = Option.flatMap(sameServer, (found) => Option.fromNullishOr(found.api_key_id));
-    if (Option.isSome(previous) && previous.value !== key.id)
-      yield* session
-        .use(session.api.auth.deleteApiKey({ params: { key_id: previous.value } }))
-        .pipe(
-          Effect.catchTag("NotFound", () => Effect.void),
-          Effect.catch((error) =>
-            Console.error(
-              `Could not revoke the previous key (${errorMessage(error)}); revoke it in Settings: ${previous.value}`,
-            ),
-          ),
-        );
+    if (Option.isNone(previous) || previous.value === key.id) return;
+    const revoked = yield* revokeKey(session, previous.value);
+    if (typeof revoked === "object")
+      yield* Console.error(
+        `Could not revoke the previous key (${revoked.failed}); revoke it in Settings: ${previous.value}`,
+      );
   });
 
 export const logout = () =>
   Effect.gen(function* () {
     const credentials = yield* Credentials;
+    if (credentials.keyFromEnvironment)
+      yield* Console.error(
+        "GM_API_KEY is set; gm logout cannot revoke it. Revoke that key in Settings and unset it.",
+      );
     const loaded = yield* Effect.result(credentials.load);
     if (loaded._tag === "Failure") {
       yield* credentials.clear;
       return yield* Console.log(`Removed the unreadable ${credentials.path}.`);
     }
-    if (credentials.keyFromEnvironment)
-      yield* Console.error(
-        "GM_API_KEY is set; gm logout cannot revoke it. Revoke that key in Settings and unset it.",
-      );
     if (Option.isNone(loaded.success))
       return yield* Console.log("No key is saved on this computer.");
     const saved = loaded.success.value;
-    yield* credentials.clear;
-    if (saved.api_key_id === null)
+    if (saved.api_key_id === null) {
+      yield* credentials.clear;
       return yield* Console.log(
         "Removed the saved key from this computer; it has no recorded id, so revoke it in Settings.",
       );
-    const keyId = saved.api_key_id;
-    const connection = yield* connect(saved.api_url, saved.api_key);
-    const revoked = yield* connection
-      .use(connection.api.auth.deleteApiKey({ params: { key_id: keyId } }))
-      .pipe(
-        Effect.as("revoked"),
-        Effect.catchTags({
-          NotFound: () => Effect.succeed("gone"),
-          Unauthorized: () => Effect.succeed("gone"),
-        }),
-        Effect.catch((error) => Effect.succeed(errorMessage(error))),
-      );
-    yield* revoked === "revoked"
-      ? Console.log("Signed out: the key was revoked and removed from this computer.")
-      : revoked === "gone"
-        ? Console.log("Signed out: the key was already revoked; removed it from this computer.")
-        : Console.log(
-            `Removed the key from this computer, but could not revoke it (${revoked}); revoke it in Settings: ${keyId}`,
-          );
+    }
+    const revoked = yield* revokeKey(
+      yield* connect(saved.api_url, saved.api_key),
+      saved.api_key_id,
+    );
+    if (typeof revoked === "object")
+      return yield* new KeyNotRevoked({ keyId: saved.api_key_id, reason: revoked.failed });
+    yield* credentials.clear;
+    yield* Console.log(
+      revoked === "revoked"
+        ? "Signed out: the key was revoked and removed from this computer."
+        : "Signed out: the key no longer worked; removed it from this computer.",
+    );
   });
 
 export const listVaults = (input: { readonly json: boolean }) =>
   Effect.gen(function* () {
     const { connection, signedIn } = yield* signedInConnection;
     const { items, roles } = yield* connection.use(allVaults(connection.api));
-    const chosen = Option.getOrUndefined(
-      Option.map(signedIn.vault, (wanted) => wanted.trim().toLowerCase()),
-    );
-    const isDefault = (vault: (typeof items)[number]) =>
-      chosen !== undefined && (vault.id === chosen || vault.name.trim().toLowerCase() === chosen);
+    const isDefault = (vault: Vault) =>
+      Option.isSome(signedIn.vault) && isVault(vault, signedIn.vault.value);
     if (input.json)
       return yield* printJson(
         items.map((vault) => ({
@@ -224,15 +242,12 @@ const describeStep = (source: ReplySource) => {
 
 export const ask = (input: {
   readonly question: string;
-  readonly session: Option.Option<string>;
+  readonly session: Option.Option<SessionId>;
   readonly vault: Option.Option<string>;
   readonly json: boolean;
 }) =>
   Effect.gen(function* () {
     const { connection, vaultId } = yield* vaultConnection(input.vault);
-    const existing = Option.isSome(input.session)
-      ? Option.some(yield* decodeInput(SessionId, input.session.value))
-      : Option.none<SessionId>();
     const created = yield* connection.use(
       connection.api.replies.createReply({
         params: { vault_id: vaultId },
@@ -240,16 +255,15 @@ export const ask = (input: {
           question: input.question,
           exchangeId: newUuid(),
           originScope: "vault",
-          conversation: Option.isSome(existing)
-            ? { kind: "existing", id: existing.value }
+          conversation: Option.isSome(input.session)
+            ? { kind: "existing", id: input.session.value }
             : { kind: "new", conversationKind: "session", idempotencyKey: newUuid() },
         }),
       }),
     );
     const shown = new Set<string>();
-    const last = yield* connection
-      .follow(followReply(connection.api, vaultId, created.reply_id))
-      .pipe(
+    const reply = yield* lastSnapshot(
+      connection.follow(followReply(connection.api, vaultId, created.reply_id)).pipe(
         Stream.tap((snapshot) =>
           Effect.forEach(
             snapshot.sources,
@@ -262,10 +276,9 @@ export const ask = (input: {
             { discard: true },
           ),
         ),
-        Stream.runLast,
-      );
-    if (Option.isNone(last)) return yield* new StreamEnded({ what: "answer" });
-    const reply = last.value;
+      ),
+      "answer",
+    );
     if (input.json) yield* printJson(reply);
     if (reply.status !== "completed")
       return yield* new ReplyNotCompleted({ status: reply.status, error: reply.error });
@@ -307,26 +320,27 @@ const outcomeLines = (outcome: RunOutcome) => {
 const followRun = (connection: Connection, vaultId: Uuid, jobId: Uuid, json: boolean) =>
   Effect.gen(function* () {
     const stageStatus = new Map<string, string>();
-    const last = yield* connection.follow(followJob(connection.api, vaultId, jobId)).pipe(
-      Stream.tap((snapshot) =>
-        Effect.forEach(
-          snapshot.track,
-          (stage) => {
-            if (stageStatus.get(stage.key) === stage.status || stage.status === "pending")
-              return Effect.void;
-            stageStatus.set(stage.key, stage.status);
-            const mark = stage.status === "completed" ? "✓" : stage.status === "failed" ? "✗" : "…";
-            return stage.status === "skipped"
-              ? Effect.void
-              : Console.error(`${mark} ${stage.title}`);
-          },
-          { discard: true },
+    const run: JobProgressSnapshot = yield* lastSnapshot(
+      connection.follow(followJob(connection.api, vaultId, jobId)).pipe(
+        Stream.tap((snapshot) =>
+          Effect.forEach(
+            snapshot.track,
+            (stage) => {
+              if (stageStatus.get(stage.key) === stage.status || stage.status === "pending")
+                return Effect.void;
+              stageStatus.set(stage.key, stage.status);
+              const mark =
+                stage.status === "completed" ? "✓" : stage.status === "failed" ? "✗" : "…";
+              return stage.status === "skipped"
+                ? Effect.void
+                : Console.error(`${mark} ${stage.title}`);
+            },
+            { discard: true },
+          ),
         ),
       ),
-      Stream.runLast,
+      "run",
     );
-    if (Option.isNone(last)) return yield* new StreamEnded({ what: "run" });
-    const run: JobProgressSnapshot = last.value;
     if (json) yield* printJson(run);
     if (run.job_status === "cancelled")
       return yield* new RunStopped({ headline: stoppedHeadline("cancelled", null), error: null });
@@ -357,14 +371,13 @@ export const update = (input: { readonly vault: Option.Option<string>; readonly 
   });
 
 export const followExistingRun = (input: {
-  readonly run: string;
+  readonly run: Uuid;
   readonly vault: Option.Option<string>;
   readonly json: boolean;
 }) =>
   Effect.gen(function* () {
     const { connection, vaultId } = yield* vaultConnection(input.vault);
-    const runId = yield* decodeInput(Uuid, input.run);
-    yield* followRun(connection, vaultId, runId, input.json);
+    yield* followRun(connection, vaultId, input.run, input.json);
   });
 
 export const listRuns = (input: {
@@ -373,8 +386,6 @@ export const listRuns = (input: {
   readonly json: boolean;
 }) =>
   Effect.gen(function* () {
-    if (input.limit < 1 || input.limit > 200)
-      return yield* new LimitOutOfRange({ limit: input.limit });
     const { connection, vaultId } = yield* vaultConnection(input.vault);
     const page = yield* connection.use(
       connection.api.jobs.listJobs({
@@ -390,6 +401,6 @@ export const listRuns = (input: {
       );
     if (page.pagination.total > page.items.length)
       yield* Console.error(
-        `(${page.items.length} of ${page.pagination.total}; --limit shows more)`,
+        `(${page.items.length} of ${page.pagination.total}; --limit up to 200 shows more)`,
       );
   });

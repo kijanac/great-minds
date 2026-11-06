@@ -18,7 +18,7 @@ import { followSnapshots } from "./sse.ts";
 
 const VAULT_PAGE = 50;
 
-export const jobFinished = (snapshot: JobProgressSnapshot) =>
+const jobFinished = (snapshot: JobProgressSnapshot) =>
   (snapshot.job_status !== "pending" && snapshot.job_status !== "running") ||
   snapshot.phase_status === "failed" ||
   (snapshot.phase === "publish" && snapshot.phase_status === "completed");
