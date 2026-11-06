@@ -202,12 +202,21 @@ export const makeThemesPipeline = (options: {
         description: article.description,
         subsumedIdeaIds: article.ideaIds,
       }));
+      const articleOfTheme = new Map(
+        built.articles.flatMap((article) =>
+          article.themeIds.map((themeId) => [themeId, article.id] as const),
+        ),
+      );
       yield* options.archiveTransitions(
         vaultId,
         runId,
         existing
           .filter((topic) => !kept.has(topic.topicId) && topic.status !== "archived")
-          .map((topic) => ({ topicId: topic.topicId, slug: topic.slug, supersededBy: null })),
+          .map((topic) => ({
+            topicId: topic.topicId,
+            slug: topic.slug,
+            supersededBy: articleOfTheme.get(topic.topicId) ?? null,
+          })),
       );
       const taken = new Set(validated.map((topic) => topic.slug));
       const vacated = existing

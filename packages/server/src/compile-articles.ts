@@ -15,6 +15,9 @@ const PLACE_CANDIDATES = 3;
 const PLACE_NEAREST_THEMES = 20;
 const SAMPLE_MEMBERS = 5;
 const SAMPLE_IDEAS = 2;
+const MERGE_NEAREST = 3;
+const GROUP_SAMPLE_TOPICS = 12;
+const GROUP_SAMPLE_SHOWN = 8;
 
 export const SameEntryAnswer = Schema.Struct({
   relation: Schema.Literals(["same", "related", "unrelated"] as const),
@@ -29,6 +32,15 @@ export const PlacementAnswer = Schema.Struct({
 const PairRows = Schema.Struct({
   rows: Schema.Array(Schema.Struct({ a: Uuid, b: Uuid })),
 });
+
+const IdRows = Schema.Struct({
+  rows: Schema.Array(Schema.Struct({ id: Uuid })),
+});
+
+type Pair = { readonly left: Uuid; readonly right: Uuid };
+
+const pairKey = (left: Uuid, right: Uuid) =>
+  left < right ? `${left}|${right}` : `${right}|${left}`;
 
 export type ArticleSettings = {
   readonly model: string;
@@ -77,47 +89,69 @@ export const buildArticles = (
     const themeById = new Map(themes.map((theme) => [theme.id, theme]));
     const bigIds = big.map((theme) => theme.id);
 
-    const sampleBlock = (theme: Theme) => {
-      const founding = proposalById.get(theme.id);
-      const sample = theme.members.toSorted(byOrder).slice(0, SAMPLE_MEMBERS);
-      const lines = [
-        `Name: ${founding?.title ?? theme.title}`,
-        `Description: ${founding?.description ?? theme.description}`,
-        `Topics in it include: ${sample.map((member) => `"${proposalById.get(member)?.title ?? ""}"`).join("; ")}`,
+    const ideaLines = (topics: readonly Uuid[], shown: number) =>
+      topics.slice(0, shown).flatMap((topic) =>
+        (proposalById.get(topic)?.ideaIds ?? [])
+          .toSorted((left, right) => (contentHash(left) < contentHash(right) ? -1 : 1))
+          .slice(0, SAMPLE_IDEAS)
+          .flatMap((ideaId) => {
+            const idea = ideaById.get(ideaId);
+            if (idea === undefined) return [];
+            const claim = claimsOf.get(ideaId)?.[0];
+            return [
+              `- [${idea.kind}] ${idea.label}: ${idea.description}`,
+              ...(claim === undefined ? [] : [`  - claim: ${claim}`]),
+            ];
+          }),
+      );
+    const describe = (lead: Theme, topics: readonly Uuid[], shown: number) => {
+      const founding = proposalById.get(lead.id);
+      return [
+        `Name: ${founding?.title ?? lead.title}`,
+        `Description: ${founding?.description ?? lead.description}`,
+        `Topics in it include: ${topics.map((topic) => `"${proposalById.get(topic)?.title ?? ""}"`).join("; ")}`,
         "Ideas placed under those topics, with the documents' claims:",
-      ];
-      for (const member of sample) {
-        const ideaIds = (proposalById.get(member)?.ideaIds ?? []).toSorted((left, right) =>
-          contentHash(left) < contentHash(right) ? -1 : 1,
-        );
-        for (const ideaId of ideaIds.slice(0, SAMPLE_IDEAS)) {
-          const idea = ideaById.get(ideaId);
-          if (idea === undefined) continue;
-          lines.push(`- [${idea.kind}] ${idea.label}: ${idea.description}`);
-          const claim = claimsOf.get(ideaId)?.[0];
-          if (claim !== undefined) lines.push(`  - claim: ${claim}`);
-        }
-      }
-      return lines.join("\n");
+        ...ideaLines(topics, shown),
+      ].join("\n");
+    };
+    const sampleBlock = (theme: Theme) => {
+      const sample = theme.members.toSorted(byOrder).slice(0, SAMPLE_MEMBERS);
+      return describe(theme, sample, SAMPLE_MEMBERS);
     };
 
-    const mergePairs =
+    const candidates =
       bigIds.length < 2
         ? { rows: [] }
         : yield* db
             .query((d) =>
               d.execute(sql`
-                select a.id as a, b.id as b
-                from ${topicProposals} a
-                join ${topicProposals} b on b.id > a.id
-                where a.id = any(${sql.param(bigIds)}::uuid[])
-                  and b.id = any(${sql.param(bigIds)}::uuid[])
-                  and (a.embedding <=> b.embedding) <= ${MERGE_MAX_DISTANCE}
-                order by a.embedding <=> b.embedding, a.id, b.id`),
+                with big as (
+                  select id, embedding from ${topicProposals} where id = any(${sql.param(bigIds)}::uuid[])
+                ),
+                within as (
+                  select a.id as a, b.id as b, a.embedding <=> b.embedding as distance
+                  from big a join big b on b.id > a.id
+                  where (a.embedding <=> b.embedding) <= ${MERGE_MAX_DISTANCE}
+                ),
+                nearest as (
+                  select least(s.id, c.id) as a, greatest(s.id, c.id) as b, c.distance
+                  from big s
+                  cross join lateral (
+                    select n.id, n.embedding <=> s.embedding as distance
+                    from big n
+                    where n.id <> s.id
+                    order by n.embedding <=> s.embedding, n.id
+                    limit ${MERGE_NEAREST}
+                  ) c
+                )
+                select a, b
+                from (select * from within union all select * from nearest) pairs
+                group by a, b
+                order by min(distance), a, b`),
             )
             .pipe(Effect.flatMap(Schema.decodeUnknownEffect(PairRows)), Effect.orDie);
     const neighbours = new Map<Uuid, Uuid[]>();
-    for (const { a, b } of mergePairs.rows) {
+    for (const { a, b } of candidates.rows) {
       append(neighbours, a, b);
       append(neighbours, b, a);
     }
@@ -126,39 +160,51 @@ export const buildArticles = (
     let failedQuestions = 0;
     yield* runner.preloadKind("same_entry");
     yield* runner.preloadKind("place_in_article");
+    const sameEntry = (blockA: string, blockB: string) =>
+      runner
+        .ask({
+          kind: "same_entry",
+          model: settings.model,
+          messages: [
+            {
+              role: "user",
+              content: settings.mergePrompt
+                .replace("{topic_a}", () => blockA)
+                .replace("{topic_b}", () => blockB),
+            },
+          ],
+          temperature: 0,
+          responseFormat: responseFormat("topic_relation", SameEntryAnswer),
+          answer: SameEntryAnswer,
+        })
+        .pipe(
+          Semaphore.withPermit(permits),
+          Effect.map((answer) => answer.relation === "same"),
+          Effect.catchTag("AskFailed", () =>
+            Effect.sync(() => {
+              failedQuestions += 1;
+              return false;
+            }),
+          ),
+        );
     const sampleOf = new Map(big.map((theme) => [theme.id, sampleBlock(theme)]));
+    const sameThemes = new Map<string, Pair & { readonly same: boolean }>();
+    const themesSame = (left: Uuid, right: Uuid) => {
+      const key = pairKey(left, right);
+      const known = sameThemes.get(key);
+      if (known !== undefined) return Effect.succeed(known.same);
+      const [first, second] = byOrder(left, right) < 0 ? [left, right] : [right, left];
+      return sameEntry(sampleOf.get(first) ?? "", sampleOf.get(second) ?? "").pipe(
+        Effect.tap((same) => Effect.sync(() => sameThemes.set(key, { left, right, same }))),
+      );
+    };
     const judgeMerge = (pivot: Uuid, open: readonly Uuid[]) =>
       Effect.forEach(
         open,
         (candidate) =>
-          runner
-            .ask({
-              kind: "same_entry",
-              model: settings.model,
-              messages: [
-                {
-                  role: "user",
-                  content: settings.mergePrompt
-                    .replace("{topic_a}", () => sampleOf.get(pivot) ?? "")
-                    .replace("{topic_b}", () => sampleOf.get(candidate) ?? ""),
-                },
-              ],
-              temperature: 0,
-              responseFormat: responseFormat("topic_relation", SameEntryAnswer),
-              answer: SameEntryAnswer,
-            })
-            .pipe(
-              Semaphore.withPermit(permits),
-              Effect.map((answer): readonly Uuid[] =>
-                answer.relation === "same" ? [candidate] : [],
-              ),
-              Effect.catchTag("AskFailed", () =>
-                Effect.sync((): readonly Uuid[] => {
-                  failedQuestions += 1;
-                  return [];
-                }),
-              ),
-            ),
+          themesSame(pivot, candidate).pipe(
+            Effect.map((same): readonly Uuid[] => (same ? [candidate] : [])),
+          ),
         { concurrency: "unbounded" },
       ).pipe(Effect.map((joined) => joined.flat()));
     const report = (done: number) => settings.progress("build_articles", done, themes.length);
@@ -170,6 +216,10 @@ export const buildArticles = (
       settings.pivotsInFlight,
       report,
     );
+    yield* Effect.forEach(candidates.rows, ({ a, b }) => themesSame(a, b), {
+      concurrency: "unbounded",
+      discard: true,
+    });
     let placedCount = big.length;
 
     const parent = new Map<Uuid, Uuid>();
@@ -195,16 +245,96 @@ export const buildArticles = (
       if (earlier === undefined) firstWithName.set(key, theme.id);
       else union(earlier, theme.id);
     }
-    const groups = new Map<Uuid, Theme[]>();
-    for (const theme of big) {
-      const root = find(theme.id);
-      append(groups, root, theme);
-    }
     const headOf = (members: readonly Theme[]) =>
       members.toSorted(
         (left, right) =>
           right.documentIds.length - left.documentIds.length || byOrder(left.id, right.id),
       )[0];
+    const groupBlock = (members: readonly Theme[]) =>
+      Effect.gen(function* () {
+        const lead = headOf(members);
+        if (lead === undefined) return "";
+        const topics = members.flatMap((theme) => theme.members);
+        const nearestCentre = yield* db
+          .query((d) =>
+            d.execute(sql`
+              with m as (
+                select id, embedding from ${topicProposals} where id = any(${sql.param(topics)}::uuid[])
+              ),
+              c as (select avg(embedding) as centre from m)
+              select m.id from m, c
+              order by m.embedding <=> c.centre, m.id
+              limit ${GROUP_SAMPLE_TOPICS}`),
+          )
+          .pipe(Effect.flatMap(Schema.decodeUnknownEffect(IdRows)), Effect.orDie);
+        return describe(
+          lead,
+          nearestCentre.rows.map((row) => row.id),
+          GROUP_SAMPLE_SHOWN,
+        );
+      });
+    let groups = new Map<Uuid, Theme[]>();
+    for (const theme of big) append(groups, find(theme.id), theme);
+    while (true) {
+      const groupOfTheme = new Map<Uuid, Uuid>();
+      for (const [root, members] of groups)
+        for (const theme of members) groupOfTheme.set(theme.id, root);
+      const links = new Map<string, Pair & { readonly count: number }>();
+      for (const answer of sameThemes.values()) {
+        if (!answer.same) continue;
+        const left = groupOfTheme.get(answer.left);
+        const right = groupOfTheme.get(answer.right);
+        if (left === undefined || right === undefined || left === right) continue;
+        const link = pairKey(left, right);
+        links.set(link, { left, right, count: (links.get(link)?.count ?? 0) + 1 });
+      }
+      if (links.size === 0) break;
+      const leadOrder = (root: Uuid) => headOf(groups.get(root) ?? [])?.id ?? root;
+      const blocks = new Map<Uuid, string>();
+      const blockOf = (root: Uuid) =>
+        Effect.gen(function* () {
+          const known = blocks.get(root);
+          if (known !== undefined) return known;
+          const block = yield* groupBlock(groups.get(root) ?? []);
+          blocks.set(root, block);
+          return block;
+        });
+      const sameGroups = new Set<string>();
+      yield* Effect.forEach(
+        links,
+        ([link, { left, right }]) =>
+          Effect.gen(function* () {
+            const [first, second] =
+              byOrder(leadOrder(left), leadOrder(right)) < 0 ? [left, right] : [right, left];
+            if (yield* sameEntry(yield* blockOf(first), yield* blockOf(second)))
+              sameGroups.add(link);
+          }),
+        { concurrency: "unbounded", discard: true },
+      );
+      const groupNeighbours = new Map<Uuid, Uuid[]>();
+      for (const [, { left, right }] of [...links].toSorted(
+        ([leftKey, leftLink], [rightKey, rightLink]) =>
+          rightLink.count - leftLink.count || (leftKey < rightKey ? -1 : 1),
+      )) {
+        append(groupNeighbours, left, right);
+        append(groupNeighbours, right, left);
+      }
+      const leaders = yield* pivotGroups(
+        [...groups.keys()].toSorted((left, right) => byOrder(leadOrder(left), leadOrder(right))),
+        groupNeighbours,
+        (pivot, open) =>
+          Effect.succeed(open.filter((other) => sameGroups.has(pairKey(pivot, other)))),
+        settings.pivotsInFlight,
+        () => Effect.void,
+      );
+      const next = new Map<Uuid, Theme[]>();
+      for (const [root, members] of groups) {
+        const leader = leaders.get(root) ?? root;
+        next.set(leader, [...(next.get(leader) ?? []), ...members]);
+      }
+      if (next.size === groups.size) break;
+      groups = next;
+    }
     const articleOfTheme = new Map<Uuid, Uuid>();
     const heads = new Map<Uuid, Theme>();
     for (const members of groups.values()) {

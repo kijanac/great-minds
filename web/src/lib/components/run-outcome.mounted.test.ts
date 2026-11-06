@@ -40,7 +40,13 @@ it("names what an Update changed, a few titles per group with the rest one tap a
     sources: 14,
     added: [1, 2, 3, 4, 5, 6, 7].map(article),
     changed: [article(8), article(9)],
-    removed: [{ title: "Old topic", file_path: "archive/x/old-topic.md" }],
+    removed: [
+      {
+        title: "Old topic",
+        file_path: "archive/x/old-topic.md",
+        merged_into: { title: "Article 1", file_path: "wiki/article-1.md" },
+      },
+    ],
     unchanged: 414,
   });
   expect(view.text("h1")).toEqual(["7 new articles, 2 updated, 1 removed"]);
@@ -56,6 +62,11 @@ it("names what an Update changed, a few titles per group with the rest one tap a
   ]);
   view.target.querySelector<HTMLButtonElement>("section:first-of-type li button")?.click();
   expect(view.opened).toEqual(["wiki/article-1.md"]);
+  const mergedInto = [...view.target.querySelectorAll<HTMLButtonElement>("button")].find(
+    (button) => button.textContent?.trim() === "merged into Article 1",
+  );
+  mergedInto?.click();
+  expect(view.opened).toEqual(["wiki/article-1.md", "wiki/article-1.md"]);
   [...view.target.querySelectorAll<HTMLButtonElement>("button")]
     .find((b) => b.textContent?.includes("show all"))
     ?.click();

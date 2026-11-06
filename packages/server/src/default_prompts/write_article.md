@@ -14,6 +14,7 @@ Start the article with a single `# Heading` line naming the topic. Use `##` subh
 
 - Be precise and scholarly. Attribute positions to specific authors and texts the way someone who shares their view would: "as X made clear", not "X argues".
 - Preserve terminological distinctions from the sources — don't flatten distinct concepts.
+- Write from the present day. A source's "now" is its own time, not the reader's: describe the events, debates and conditions the sources report in the past tense, dated as the sources date them. General principles may stay in the present tense.
 - Reflect what the sources say. Where the sources disagree among themselves, present that debate; do not balance them against outside views.
 - Length is proportional to evidence density. Typically 400-1200 words. Longer is fine when evidence supports a detailed treatment; don't pad.
 - No preamble ("This article covers..."), no closing summary ("In conclusion..."), no frontmatter.

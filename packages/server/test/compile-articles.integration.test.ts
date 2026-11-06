@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { buildArticles } from "../src/compile-articles.ts";
 import { makeAskRunner } from "../src/compile-asks.ts";
+import { contentHash } from "../src/crypto.ts";
 import { loadBlocks, loadLibrary, type Theme } from "../src/compile-themes.ts";
 import type { CompleteInput, ModelCompletion } from "../src/llm.ts";
 import { seedLegacySources } from "./fixtures/source-documents.ts";
@@ -57,6 +58,13 @@ const themeOf = (spec: Spec): Theme => ({
 });
 const themes = Object.values(specs).map(themeOf);
 
+const facets = {
+  press: { title: "Party press under censorship", axis: 3, docs: [21, 22, 23, 24, 25] },
+  newspapers: { title: "Legal workers' newspapers", axis: 3, docs: [26, 27, 28, 29, 30] },
+  printing: { title: "Underground printing shops", axis: 3, docs: [31, 32, 33, 34, 35] },
+} satisfies Record<string, Spec>;
+const facetThemes = Object.values(facets).map(themeOf);
+
 const prompt = (name: string) =>
   readFile(new URL(`../src/default_prompts/${name}.md`, import.meta.url), "utf8").then((text) =>
     text.trim(),
@@ -71,12 +79,17 @@ const settings = {
 };
 
 const calls: CompleteInput[] = [];
+let sameWhen: (content: string) => boolean = () => false;
 const reply = (input: CompleteInput): ModelCompletion => {
   calls.push(input);
   const content = String(input.messages[0]?.content);
   const text = content.includes("Article B:")
     ? JSON.stringify({ verdict: "yes", reason: "Within its subject." })
-    : JSON.stringify({ relation: "related", reason: "Different framing." });
+    : JSON.stringify(
+        sameWhen(content)
+          ? { relation: "same", reason: "One subject." }
+          : { relation: "related", reason: "Different framing." },
+      );
   return {
     text,
     finishReason: "stop",
@@ -90,7 +103,7 @@ const languageModel = {
 };
 const logger = { info: () => Effect.void, warn: () => Effect.void, error: () => Effect.void };
 
-const build = (runId: Uuid) =>
+const build = (runId: Uuid, input: readonly Theme[] = themes) =>
   runHistoryDatabase(
     Effect.gen(function* () {
       const db = yield* Database;
@@ -99,12 +112,13 @@ const build = (runId: Uuid) =>
         { vaultId: id.vault, runId },
       );
       const blocks = yield* loadBlocks(db, id.vault, yield* loadLibrary(db, id.vault));
-      return yield* buildArticles({ db, runner }, blocks, themes, settings);
+      return yield* buildArticles({ db, runner }, blocks, input, settings);
     }),
   );
 
 beforeEach(async () => {
   calls.length = 0;
+  sameWhen = () => false;
   await runHistoryDatabase(
     Effect.gen(function* () {
       const db = yield* Database;
@@ -118,7 +132,9 @@ beforeEach(async () => {
           yield* tx
             .insert(vaultMemberships)
             .values({ id: id.membership, vaultId: id.vault, userId: id.user, role: "EDITOR" });
-          const all = Object.values(specs).flatMap((spec) => spec.docs.map((n) => ({ n, spec })));
+          const all = [...Object.values(specs), ...Object.values(facets)].flatMap((spec) =>
+            spec.docs.map((n) => ({ n, spec })),
+          );
           yield* seedLegacySources(
             tx,
             all.map(({ n }) => ({
@@ -184,7 +200,7 @@ describe("articles from themes", () => {
     expect(result.placedThemes).toBe(1);
     expect(result.unplacedThemes).toBe(1);
     expect(result.failedQuestions).toBe(0);
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(4);
   });
 
   it("asks nothing again and builds the same articles when nothing changed", async () => {
@@ -193,5 +209,59 @@ describe("articles from themes", () => {
     const again = await build(id.rerun);
     expect(calls).toHaveLength(0);
     expect(again.articles).toEqual(first.articles);
+  });
+
+  describe("the group pass", () => {
+    const inOrder = Object.values(facets).toSorted((left, right) =>
+      contentHash(`answer-${left.docs[0]}`, "0") < contentHash(`answer-${right.docs[0]}`, "0")
+        ? -1
+        : 1,
+    );
+    const [first, second, third] = inOrder.map((spec) => spec.title);
+    const names = (content: string) =>
+      [first, second, third].filter((title) => title !== undefined && content.includes(title));
+    const themeLevel = (content: string) => {
+      const shown = names(content);
+      return (
+        shown.length === 2 &&
+        ((shown.includes(first ?? "") && shown.includes(second ?? "")) ||
+          (shown.includes(second ?? "") && shown.includes(third ?? "")))
+      );
+    };
+    const facetArticles = (articles: readonly { readonly themeIds: readonly Uuid[] }[]) =>
+      articles
+        .map((article) =>
+          article.themeIds
+            .flatMap((themeId) => facetThemes.find((theme) => theme.id === themeId)?.title ?? [])
+            .toSorted(),
+        )
+        .filter((titles) => titles.length > 0)
+        .toSorted((left, right) => (left.join() < right.join() ? -1 : 1));
+
+    it("does not chain: two groups linked by a same answer merge only when the groups themselves are the same", async () => {
+      sameWhen = themeLevel;
+      const result = await build(id.run, facetThemes);
+      expect(facetArticles(result.articles)).toEqual(
+        [[first, second].toSorted(), [third]].toSorted((left, right) =>
+          left.join() < right.join() ? -1 : 1,
+        ),
+      );
+      expect(result.failedQuestions).toBe(0);
+    });
+
+    it("merges two groups when the question about both groups says they are one entry", async () => {
+      sameWhen = (content) => themeLevel(content) || names(content).length === 3;
+      const result = await build(id.run, facetThemes);
+      expect(facetArticles(result.articles)).toEqual([[first, second, third].toSorted()]);
+    });
+
+    it("builds the same articles whatever order the themes arrive in, and asks nothing again", async () => {
+      sameWhen = (content) => themeLevel(content) || names(content).length === 3;
+      const forward = await build(id.run, facetThemes);
+      calls.length = 0;
+      const backward = await build(id.rerun, facetThemes.toReversed());
+      expect(calls).toHaveLength(0);
+      expect(backward.articles).toEqual(forward.articles);
+    });
   });
 });

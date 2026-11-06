@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { OutcomeArticle, RunOutcome } from "@great-minds/domain";
+  import type { RemovedArticle, RunOutcome } from "@great-minds/domain";
   import { createQuery } from "@tanstack/svelte-query";
   import type { Snippet } from "svelte";
 
@@ -70,7 +70,7 @@
 {#snippet group(
   key: string,
   label: string,
-  articles: readonly OutcomeArticle[],
+  articles: readonly RemovedArticle[],
 )}
   {#if articles.length > 0}
     {@const shown = expanded[key] ? articles : articles.slice(0, LIMIT)}
@@ -92,9 +92,19 @@
               >
             {:else}
               <span
-                class="block py-1.5 font-serif text-[length:var(--text-body)] leading-[1.5] text-warm-faint [overflow-wrap:anywhere]"
-                >{article.title}</span
+                class="block pt-1.5 font-serif text-[length:var(--text-body)] leading-[1.5] text-warm-faint [overflow-wrap:anywhere] {article.merged_into
+                  ? ''
+                  : 'pb-1.5'}">{article.title}</span
               >
+              {#if article.merged_into}
+                {@const into = article.merged_into}
+                <button
+                  type="button"
+                  onclick={() => onOpen(into.file_path)}
+                  class="block pb-1.5 text-left font-mono text-[length:var(--text-chrome)] text-warm-ghost hover:text-gold [overflow-wrap:anywhere]"
+                  >merged into {into.title}</button
+                >
+              {/if}
             {/if}
           </li>
         {/each}

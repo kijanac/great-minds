@@ -559,11 +559,17 @@ export const OutcomeArticle = Schema.Struct({
 });
 export type OutcomeArticle = typeof OutcomeArticle.Type;
 
+export const RemovedArticle = Schema.Struct({
+  ...OutcomeArticle.fields,
+  merged_into: Schema.optionalKey(OutcomeArticle),
+});
+export type RemovedArticle = typeof RemovedArticle.Type;
+
 export const RunOutcome = Schema.Struct({
   sources: Schema.Number,
   added: Schema.Array(OutcomeArticle),
   changed: Schema.Array(OutcomeArticle),
-  removed: Schema.Array(OutcomeArticle),
+  removed: Schema.Array(RemovedArticle),
   unchanged: Schema.Number,
 });
 export type RunOutcome = typeof RunOutcome.Type;

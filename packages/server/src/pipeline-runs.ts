@@ -3,6 +3,7 @@ import {
   compileIntents,
   Database,
   pipelineRuns,
+  topics,
   wikiArticles,
 } from "@great-minds/database";
 import type { PipelineProgressStep, PipelineWarning, Uuid } from "@great-minds/domain";
@@ -84,14 +85,17 @@ export const PipelineRunsServiceLive = Layer.effect(
         const articles = yield* db.query((d) =>
           d
             .select({
+              topicId: wikiArticles.topicId,
               title: wikiArticles.title,
               filePath: wikiArticles.filePath,
               archived: wikiArticles.archived,
               addedRunId: wikiArticles.addedRunId,
               changedRunId: wikiArticles.changedRunId,
               archivedRunId: wikiArticles.archivedRunId,
+              supersededBy: topics.supersededBy,
             })
             .from(wikiArticles)
+            .innerJoin(topics, eq(topics.topicId, wikiArticles.topicId))
             .where(
               and(
                 eq(wikiArticles.vaultId, run.vaultId),
@@ -117,6 +121,14 @@ export const PipelineRunsServiceLive = Layer.effect(
           file_path: article.filePath,
         });
         const live = articles.filter((article) => !article.archived);
+        const liveByTopic = new Map(live.map((article) => [article.topicId, article]));
+        const removedEntry = (article: (typeof articles)[number]) => {
+          const successor =
+            article.supersededBy === null ? undefined : liveByTopic.get(article.supersededBy);
+          return successor === undefined
+            ? entry(article)
+            : { ...entry(article), merged_into: entry(successor) };
+        };
         const added = live.filter((article) => article.addedRunId === runId);
         const changed = live.filter(
           (article) => article.addedRunId !== runId && article.changedRunId === runId,
@@ -132,7 +144,7 @@ export const PipelineRunsServiceLive = Layer.effect(
                 sources: sources?.count ?? 0,
                 added: added.map(entry),
                 changed: changed.map(entry),
-                removed: removed.map(entry),
+                removed: removed.map(removedEntry),
                 unchanged: live.length - added.length - changed.length,
               },
             })
