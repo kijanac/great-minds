@@ -4,6 +4,7 @@ import { Effect, Schema } from "effect";
 import { Buffer } from "node:buffer";
 
 import { append } from "./collections.ts";
+import type { ReasoningEffort } from "./config.ts";
 import type { AskFailed, AskRunner, Progress } from "./compile-asks.ts";
 import { contentHash } from "./crypto.ts";
 import type { ArticleContent } from "./compile-write.ts";
@@ -25,6 +26,8 @@ export type LinkSettings = {
   readonly checkModel: string;
   readonly pickTemperature: number | undefined;
   readonly checkTemperature: number | undefined;
+  readonly pickReasoningEffort: ReasoningEffort | undefined;
+  readonly checkReasoningEffort: ReasoningEffort | undefined;
   readonly mentionPrompt: string;
   readonly pickPrompt: string;
   readonly checkPrompt: string;
@@ -155,6 +158,7 @@ export const findLinks = (
                 { role: "user", content: settings.mentionPrompt.replace("{prose}", () => prose) },
               ],
               temperature: settings.pickTemperature,
+              reasoningEffort: settings.pickReasoningEffort,
               responseFormat: responseFormat("article_mentions", MentionList),
               answer: MentionList,
             })
@@ -292,6 +296,7 @@ export const findLinks = (
                 },
               ],
               temperature: settings.pickTemperature,
+              reasoningEffort: settings.pickReasoningEffort,
               responseFormat: responseFormat("link_pick", Pick),
               answer: Pick,
             }),
@@ -305,6 +310,7 @@ export const findLinks = (
               kind: "check_link",
               model: settings.checkModel,
               temperature: settings.checkTemperature,
+              reasoningEffort: settings.checkReasoningEffort,
               messages: [
                 {
                   role: "user",

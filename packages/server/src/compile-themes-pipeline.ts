@@ -140,6 +140,7 @@ export const makeThemesPipeline = (options: {
       const themeSettings = {
         model: config.mapModel,
         temperature: Option.getOrUndefined(config.mapTemperature),
+        reasoningEffort: Option.getOrUndefined(config.mapReasoningEffort),
         proposePrompt: yield* prompt("propose_topics"),
         judgePrompt: yield* prompt("judge_same_topic"),
         concurrency: config.compileEnrichConcurrency,
@@ -167,6 +168,7 @@ export const makeThemesPipeline = (options: {
       const built = yield* buildArticles({ db, runner }, blocks, grouped.themes, {
         model: config.mapModel,
         temperature: Option.getOrUndefined(config.mapTemperature),
+        reasoningEffort: Option.getOrUndefined(config.mapReasoningEffort),
         mergePrompt: yield* prompt("judge_same_entry"),
         placePrompt: yield* prompt("place_in_article"),
         concurrency: config.compileEnrichConcurrency,
@@ -299,6 +301,8 @@ export const makeThemesPipeline = (options: {
           checkModel: config.reduceModel,
           pickTemperature: Option.getOrUndefined(config.mapTemperature),
           checkTemperature: Option.getOrUndefined(config.reduceTemperature),
+          pickReasoningEffort: Option.getOrUndefined(config.mapReasoningEffort),
+          checkReasoningEffort: Option.getOrUndefined(config.reduceReasoningEffort),
           mentionPrompt: yield* prompt("find_mentions"),
           pickPrompt: yield* prompt("pick_link_target"),
           checkPrompt: yield* prompt("check_link"),

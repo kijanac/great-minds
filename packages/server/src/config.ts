@@ -49,6 +49,10 @@ export type AppConfigShape = {
   readonly reduceTemperature: Option.Option<number>;
   readonly renderTemperature: Option.Option<number>;
   readonly renderReasoningEffort: Option.Option<ReasoningEffort>;
+  readonly queryReasoningEffort: Option.Option<ReasoningEffort>;
+  readonly extractReasoningEffort: Option.Option<ReasoningEffort>;
+  readonly mapReasoningEffort: Option.Option<ReasoningEffort>;
+  readonly reduceReasoningEffort: Option.Option<ReasoningEffort>;
   readonly compileEnrichConcurrency: number;
   readonly compileWriteConcurrency: number;
   readonly compileEmbedConcurrency: number;
@@ -112,6 +116,9 @@ const samplingTemperature = (name: string, fallback: Option.Option<number>) =>
       }),
     ),
   );
+
+const reasoningEffort = (name: string) =>
+  Config.option(Config.literals(["none", "low", "high", "max"] as const, name));
 
 const validateRedacted = (value: Redacted.Redacted<string>) =>
   Schema.decodeUnknownEffect(Schema.NonEmptyString)(Redacted.value(value)).pipe(
@@ -209,6 +216,10 @@ const appConfig = Config.all({
   mapTemperature: samplingTemperature("MAP_TEMPERATURE", Option.some(0)),
   reduceTemperature: samplingTemperature("REDUCE_TEMPERATURE", Option.none()),
   renderTemperature: samplingTemperature("RENDER_TEMPERATURE", Option.some(0.3)),
+  queryReasoningEffort: reasoningEffort("QUERY_REASONING_EFFORT"),
+  extractReasoningEffort: reasoningEffort("EXTRACT_REASONING_EFFORT"),
+  mapReasoningEffort: reasoningEffort("MAP_REASONING_EFFORT"),
+  reduceReasoningEffort: reasoningEffort("REDUCE_REASONING_EFFORT"),
   renderReasoningEffort: Config.literals(
     ["none", "low", "high", "max"] as const,
     "RENDER_REASONING_EFFORT",

@@ -60,6 +60,21 @@ describe("server config defaults", () => {
     expect((await loadConfig({ COMPILE_EMBED_CONCURRENCY: "2" })).compileEmbedConcurrency).toBe(2);
   });
 
+  it("sends no reasoning effort unless a role sets one", async () => {
+    const defaults = await loadConfig({});
+    expect([
+      defaults.queryReasoningEffort,
+      defaults.extractReasoningEffort,
+      defaults.mapReasoningEffort,
+      defaults.reduceReasoningEffort,
+    ]).toEqual([Option.none(), Option.none(), Option.none(), Option.none()]);
+    const set = await loadConfig({ QUERY_REASONING_EFFORT: "low", MAP_REASONING_EFFORT: "high" });
+    expect([set.queryReasoningEffort, set.mapReasoningEffort]).toEqual([
+      Option.some("low"),
+      Option.some("high"),
+    ]);
+  });
+
   it("gives every model role a temperature that can be turned off", async () => {
     const defaults = await loadConfig({});
     expect([

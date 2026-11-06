@@ -12,6 +12,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { Effect, Queue, Schema, Semaphore } from "effect";
 
 import { append } from "./collections.ts";
+import type { ReasoningEffort } from "./config.ts";
 import { askKey, type AskRunner, type Progress } from "./compile-asks.ts";
 import { contentHash } from "./crypto.ts";
 import type { EmbeddingsService } from "./embeddings.ts";
@@ -63,6 +64,7 @@ const FaceRows = Schema.Struct({
 export type ThemeSettings = {
   readonly model: string;
   readonly temperature: number | undefined;
+  readonly reasoningEffort: ReasoningEffort | undefined;
   readonly proposePrompt: string;
   readonly judgePrompt: string;
   readonly concurrency: number;
@@ -252,6 +254,7 @@ const proposalRequest = (
         },
       ],
       temperature: settings.temperature,
+      reasoningEffort: settings.reasoningEffort,
       responseFormat: responseFormat("document_topics", ProposalAnswer),
       answer: ProposalAnswer,
     },
@@ -508,6 +511,7 @@ export const groupThemes = (
                 },
               ],
               temperature: settings.temperature,
+              reasoningEffort: settings.reasoningEffort,
               responseFormat: responseFormat("topic_relation", SameTopicAnswer),
               answer: SameTopicAnswer,
             })
@@ -527,8 +531,12 @@ export const groupThemes = (
       ).pipe(Effect.map((joined) => joined.flat()));
     const order = proposals.map((proposal) => proposal.id).toSorted(byOrder);
     yield* settings.progress("group_topics", 0, order.length);
-    const leader = yield* pivotGroups(order, neighbours, judge, settings.pivotsInFlight, (settled) =>
-      settings.progress("group_topics", settled, order.length),
+    const leader = yield* pivotGroups(
+      order,
+      neighbours,
+      judge,
+      settings.pivotsInFlight,
+      (settled) => settings.progress("group_topics", settled, order.length),
     );
     const leaders = order.map((id) => leader.get(id) ?? id);
     const faceResult = yield* db.query((d) =>

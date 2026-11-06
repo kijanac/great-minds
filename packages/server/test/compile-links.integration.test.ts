@@ -55,6 +55,8 @@ const settings = {
   checkModel: "anthropic/claude-sonnet-5.5",
   pickTemperature: 0,
   checkTemperature: undefined,
+  pickReasoningEffort: undefined,
+  checkReasoningEffort: undefined,
   mentionPrompt: await prompt("find_mentions"),
   pickPrompt: await prompt("pick_link_target"),
   checkPrompt: await prompt("check_link"),

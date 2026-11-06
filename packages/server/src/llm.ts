@@ -91,6 +91,7 @@ export type StreamChatInput = {
   readonly messages: readonly LlmMessage[];
   readonly tools: readonly LlmToolDefinition[];
   readonly temperature?: number;
+  readonly reasoningEffort?: ReasoningEffort;
 };
 
 export type CompleteInput = {
@@ -309,6 +310,7 @@ const streamRequestBody = (provider: Provider, model: string, input: StreamChatI
   messages: input.messages,
   tools: input.tools,
   temperature: input.temperature,
+  ...reasoningField(provider, input.reasoningEffort),
   stream: true,
   stream_options: { include_usage: true },
   ...(provider.kind === "openrouter"
