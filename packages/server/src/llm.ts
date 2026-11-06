@@ -1,7 +1,14 @@
-import { Context, Data, Duration, Effect, Layer, Schedule, Schema, Stream } from "effect";
+import { Context, Data, Duration, Effect, Layer, Option, Schedule, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
 
-import { AppConfig, optionalRedactedValue, type ReasoningEffort } from "./config.ts";
+import {
+  AppConfig,
+  optionalRedactedValue,
+  resolveModel,
+  type ModelPrice,
+  type Provider,
+  type ReasoningEffort,
+} from "./config.ts";
 import { scopedAbortSignal } from "./scoped-abort-signal.ts";
 
 export const LlmToolDefinitionSchema = Schema.Struct({
@@ -33,6 +40,7 @@ export const LlmMessageSchema = Schema.Union([
     role: Schema.Literals(["system", "user", "assistant"] as const),
     content: Schema.Union([Schema.String, Schema.Null, Schema.Array(LlmTextContentPartSchema)]),
     tool_calls: Schema.optionalKey(Schema.Array(LlmAssistantToolCallSchema)),
+    reasoning_content: Schema.optionalKey(Schema.String),
   }),
   Schema.Struct({
     role: Schema.Literal("tool"),
@@ -68,6 +76,10 @@ export type ModelStreamPart =
       readonly delta: LlmToolCallDelta;
     }
   | {
+      readonly type: "reasoning";
+      readonly text: string;
+    }
+  | {
       readonly type: "finish";
       readonly finishReason: string | null;
       readonly generationId?: string;
@@ -98,7 +110,6 @@ export type ModelCompletion = {
 };
 
 type LanguageModelShape = {
-  readonly hasApiKey: boolean;
   readonly streamChat: (
     input: StreamChatInput,
   ) => Stream.Stream<ModelStreamPart, RetryableModelError | ModelProviderError>;
@@ -157,8 +168,8 @@ export const transientRetry = {
   schedule: Schedule.exponential("2 seconds"),
 };
 
-const openRouterHeaders = (apiKey: string) => ({
-  authorization: `Bearer ${apiKey}`,
+const providerHeaders = (apiKey: string | undefined) => ({
+  ...(apiKey === undefined ? {} : { authorization: `Bearer ${apiKey}` }),
   "content-type": "application/json",
 });
 
@@ -194,6 +205,7 @@ const WireStreamChunk = Schema.Struct({
             Schema.NullOr(
               Schema.Struct({
                 content: Schema.optionalKey(Schema.NullOr(Schema.String)),
+                reasoning_content: Schema.optionalKey(Schema.NullOr(Schema.String)),
                 tool_calls: Schema.optionalKey(Schema.NullOr(Schema.Array(WireToolCallDelta))),
               }),
             ),
@@ -226,14 +238,26 @@ const WireCompletion = Schema.Struct({
 });
 const decodeWireCompletion = Schema.decodeUnknownEffect(WireCompletion);
 
-const usageFrom = (usage: typeof WireUsage.Type | null | undefined): LlmUsage | undefined => {
+export const priceCost = (
+  price: ModelPrice | undefined,
+  promptTokens: number | undefined,
+  completionTokens: number | undefined,
+) =>
+  price === undefined || promptTokens === undefined || completionTokens === undefined
+    ? undefined
+    : (promptTokens * price.inputPerMillion + completionTokens * price.outputPerMillion) / 1_000_000;
+
+const usageFrom = (
+  usage: typeof WireUsage.Type | null | undefined,
+  price: ModelPrice | undefined,
+): LlmUsage | undefined => {
   if (usage === undefined || usage === null) {
     return undefined;
   }
   const promptTokens = usage.prompt_tokens ?? undefined;
   const completionTokens = usage.completion_tokens ?? undefined;
   const totalTokens = usage.total_tokens ?? undefined;
-  const cost = usage.cost ?? undefined;
+  const cost = usage.cost ?? priceCost(price, promptTokens, completionTokens);
   if (
     promptTokens === undefined &&
     completionTokens === undefined &&
@@ -266,34 +290,49 @@ export const responseDetail = (response: Response) =>
     Effect.orElseSucceed(() => String(response.status)),
   );
 
-const streamRequestBody = (input: StreamChatInput) => ({
-  model: input.model,
+const OPENROUTER_DEFAULTS: Provider = {
+  name: "openrouter",
+  kind: "openrouter",
+  url: "",
+  apiKey: Option.none(),
+};
+
+const reasoningField = (provider: Provider, effort: ReasoningEffort | undefined) =>
+  effort === undefined
+    ? {}
+    : provider.kind === "openrouter"
+      ? { reasoning: { effort } }
+      : { reasoning_effort: effort };
+
+const streamRequestBody = (provider: Provider, model: string, input: StreamChatInput) => ({
+  model,
   messages: input.messages,
   tools: input.tools,
   temperature: input.temperature,
   stream: true,
   stream_options: { include_usage: true },
-  usage: { include: true },
-  provider: {
-    allow_fallbacks: true,
-    sort: "throughput",
-  },
+  ...(provider.kind === "openrouter"
+    ? { usage: { include: true }, provider: { allow_fallbacks: true, sort: "throughput" } }
+    : {}),
 });
 
-export const completionRequestBody = (input: CompleteInput) => {
+export const completionRequestBody = (
+  input: CompleteInput,
+  provider: Provider = OPENROUTER_DEFAULTS,
+  model: string = input.model,
+) => {
   const responseFormat =
     typeof input.responseFormat === "string"
       ? { type: input.responseFormat }
       : input.responseFormat;
   const common = {
-    model: input.model,
+    model,
     messages: input.messages,
     ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
-    ...(input.reasoningEffort === undefined
-      ? {}
-      : { reasoning: { effort: input.reasoningEffort } }),
+    ...reasoningField(provider, input.reasoningEffort),
     response_format: responseFormat,
   };
+  if (provider.kind === "openai") return { ...common, stream: false };
   if (input.requestProfile === "compile") {
     return {
       ...common,
@@ -354,7 +393,7 @@ const emptyTrailer: StreamTrailer = {
   usage: undefined,
 };
 
-const foldStreamFrame = (
+const foldStreamFrame = (price: ModelPrice | undefined, keepGenerationId: boolean) => (
   trailer: StreamTrailer,
   data: string,
 ): Effect.Effect<readonly [StreamTrailer, readonly ModelStreamPart[]], ModelProviderError> =>
@@ -377,10 +416,14 @@ const foldStreamFrame = (
     }
     const next: StreamTrailer = {
       finishReason: choice?.finish_reason ?? trailer.finishReason,
-      generationId: chunk.id ?? trailer.generationId,
-      usage: usageFrom(chunk.usage) ?? trailer.usage,
+      generationId: keepGenerationId ? (chunk.id ?? trailer.generationId) : undefined,
+      usage: usageFrom(chunk.usage, price) ?? trailer.usage,
     };
     const parts: ModelStreamPart[] = [];
+    const reasoning = choice?.delta?.reasoning_content;
+    if (reasoning !== undefined && reasoning !== null && reasoning.length > 0) {
+      parts.push({ type: "reasoning", text: reasoning });
+    }
     const content = choice?.delta?.content;
     if (content !== undefined && content !== null && content.length > 0) {
       parts.push({ type: "token", text: content });
@@ -405,8 +448,10 @@ const requireFinishReason = (part: ModelStreamPart) =>
     ? Effect.fail(new ModelProviderError({ message: "model stream ended without a finish reason" }))
     : Effect.succeed(part);
 
-export const parseOpenRouterStream = (
+export const parseChatStream = (
   response: Response,
+  price?: ModelPrice,
+  keepGenerationId = true,
 ): Stream.Stream<ModelStreamPart, ModelProviderError> => {
   const body = response.body;
   if (body === null) {
@@ -424,55 +469,72 @@ export const parseOpenRouterStream = (
     }),
     Stream.decodeText(),
     sseData,
-    Stream.mapAccumEffect(() => emptyTrailer, foldStreamFrame, { onHalt: finishPart }),
+    Stream.mapAccumEffect(() => emptyTrailer, foldStreamFrame(price, keepGenerationId), {
+      onHalt: finishPart,
+    }),
     Stream.mapEffect(requireFinishReason),
   );
 };
 
 const makeLanguageModel = Effect.gen(function* () {
   const config = yield* AppConfig;
-  const apiKey = optionalRedactedValue(config.openRouterApiKey);
-  const chatUrl = `${config.openRouterApiUrl.replace(/\/$/, "")}/chat/completions`;
 
-  const openChat = (body: unknown) =>
+  const openChat = (provider: Provider, body: unknown) =>
     Effect.gen(function* () {
-      if (apiKey === undefined) {
+      const apiKey = optionalRedactedValue(provider.apiKey);
+      if (apiKey === undefined && provider.kind === "openrouter") {
         return yield* new ModelProviderError({ message: "OpenRouter API key is not configured" });
       }
       const signal = yield* scopedAbortSignal;
       const response = yield* Effect.tryPromise({
         try: () =>
-          fetch(chatUrl, {
+          fetch(`${provider.url.replace(/\/$/, "")}/chat/completions`, {
             method: "POST",
-            headers: openRouterHeaders(apiKey),
+            headers: providerHeaders(apiKey),
             body: JSON.stringify(body),
             signal,
           }),
         catch: (cause) =>
-          new ModelProviderError({ message: "model provider request failed", cause, transient: true }),
+          new ModelProviderError({
+            message: `model provider ${provider.name} request failed`,
+            cause,
+            transient: true,
+          }),
       });
       if (response.status === 429) {
         return yield* new RetryableModelError({
-          message: `model provider rate limited request (${yield* responseDetail(response)})`,
+          message: `model provider ${provider.name} rate limited request (${yield* responseDetail(response)})`,
           retryAfterMs: retryAfterMs(response.headers),
         });
       }
       if (!response.ok) {
         const detail = yield* responseDetail(response);
         return yield* new ModelProviderError({
-          message: `model provider returned ${detail}`,
+          message: `model provider ${provider.name} returned ${detail}`,
           transient: response.status >= 500,
         });
       }
       return response;
     });
 
-  const streamChat = (input: StreamChatInput) =>
-    Stream.unwrap(Effect.map(openChat(streamRequestBody(input)), parseOpenRouterStream));
+  const streamChat = (input: StreamChatInput) => {
+    const target = resolveModel(config, input.model);
+    return Stream.unwrap(
+      Effect.map(
+        openChat(target.provider, streamRequestBody(target.provider, target.model, input)),
+        (response) =>
+          parseChatStream(response, target.price, target.provider.kind === "openrouter"),
+      ),
+    );
+  };
 
   const complete = (input: CompleteInput) =>
     Effect.gen(function* () {
-      const response = yield* openChat(completionRequestBody(input));
+      const target = resolveModel(config, input.model);
+      const response = yield* openChat(
+        target.provider,
+        completionRequestBody(input, target.provider, target.model),
+      );
       const payload = yield* Effect.tryPromise({
         try: () => response.json(),
         catch: (cause) =>
@@ -495,12 +557,13 @@ const makeLanguageModel = Effect.gen(function* () {
       return {
         text: first?.message?.content ?? "",
         finishReason: first?.finish_reason ?? null,
-        generationId: completion.id ?? undefined,
-        usage: usageFrom(completion.usage),
+        generationId:
+          target.provider.kind === "openrouter" ? (completion.id ?? undefined) : undefined,
+        usage: usageFrom(completion.usage, target.price),
       } satisfies ModelCompletion;
     }).pipe(Effect.scoped, Effect.retry(rateLimitRetry), Effect.retry(transientRetry));
 
-  return { hasApiKey: apiKey !== undefined, streamChat, complete } satisfies LanguageModelShape;
+  return { streamChat, complete } satisfies LanguageModelShape;
 });
 
 export const LanguageModelLive = Layer.effect(LanguageModel, makeLanguageModel);

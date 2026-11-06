@@ -87,6 +87,8 @@ const config = (dataDir: string): AppConfigShape => ({
   r2BucketName: Option.none(),
   openRouterApiKey: Option.some(Redacted.make("test-openrouter-key")),
   openRouterApiUrl: "https://openrouter.ai/api/v1",
+  providers: new Map(),
+  modelPrices: new Map(),
   parallelApiKey: Option.none(),
   parallelSearchUrl: "https://api.parallel.ai/v1beta/search",
   queryModel: "query/test",

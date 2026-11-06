@@ -36,7 +36,7 @@ export const seedConversationReply = (
     const clock = yield* ClockService;
     const random = yield* RandomBytesService;
     const access = yield* VaultAccessService;
-    const admission = makeReplyAdmission(db, histories, clock, random, access, true);
+    const admission = makeReplyAdmission(db, histories, clock, random, access, undefined);
     const settlement = makeReplySettlement(db, histories, clock);
     const response = yield* admission.accept(userId, vaultId, command);
     const rows = yield* db.query((d) =>

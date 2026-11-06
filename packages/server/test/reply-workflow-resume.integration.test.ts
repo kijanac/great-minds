@@ -139,7 +139,7 @@ const withReply = async (
           { now: Effect.sync(() => new Date()) },
           { bytes: (size) => Effect.sync(() => new Uint8Array(randomBytes(size))) },
           access,
-          true,
+          undefined,
         );
         const input = Schema.decodeUnknownSync(CreateReplyRequest)({
           reply_id: replyId,

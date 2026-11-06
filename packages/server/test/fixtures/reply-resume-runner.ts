@@ -30,7 +30,6 @@ Schema.decodeUnknownSync(Schema.NonEmptyString)(process.env.DATA_DIR);
 
 let modelCalls = 0;
 const LanguageLive = Layer.succeed(LanguageModel, {
-  hasApiKey: true,
   streamChat: (_input: StreamChatInput) =>
     Stream.unwrap(
       Effect.gen(function* () {

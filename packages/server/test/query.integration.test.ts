@@ -36,7 +36,7 @@ import { promptContentHash } from "../src/crypto.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import {
   ModelProviderError,
-  parseOpenRouterStream,
+  parseChatStream,
   type LlmAssistantToolCall,
   type LlmMessage,
 } from "../src/llm.ts";
@@ -159,6 +159,8 @@ const testConfig = (
   r2BucketName: Option.none(),
   openRouterApiKey: overrides.openRouterApiKey ?? Option.some(Redacted.make("test-openrouter-key")),
   openRouterApiUrl: "https://openrouter.ai/api/v1",
+  providers: new Map(),
+  modelPrices: new Map(),
   parallelApiKey: Option.some(Redacted.make("test-parallel-key")),
   parallelSearchUrl: "https://api.parallel.ai/v1beta/search",
   queryModel: overrides.queryModel ?? "primary/test-model",
@@ -1523,7 +1525,7 @@ describe("query stream", () => {
       streams: [
         {
           kind: "stream",
-          stream: parseOpenRouterStream(
+          stream: parseChatStream(
             new Response(
               `data: ${JSON.stringify({
                 choices: [{ delta: { content: partial }, finish_reason: null }],
@@ -2489,7 +2491,7 @@ describe("query stream", () => {
   });
 
   it("returns draft-hint 503 before blank-description validation when the LLM key is missing", async () => {
-    const language = makeScriptedLanguageModel({ completions: [], hasApiKey: false });
+    const language = makeScriptedLanguageModel({ completions: [] });
     await startHarness({
       language,
       configOverrides: { openRouterApiKey: Option.none() },

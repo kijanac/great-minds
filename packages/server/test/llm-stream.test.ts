@@ -2,7 +2,7 @@ import { Cause, Effect, Exit, Fiber, Result, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { assert, describe, expect, it } from "vitest";
 
-import { parseOpenRouterStream, type ModelStreamPart } from "../src/llm.ts";
+import { parseChatStream, type ModelStreamPart } from "../src/llm.ts";
 
 const sseResponse = (blocks: readonly string[], newline = "\n") =>
   new Response(
@@ -13,10 +13,10 @@ const sseResponse = (blocks: readonly string[], newline = "\n") =>
   );
 
 const collect = (response: Response) =>
-  Effect.runPromise(Stream.runCollect(parseOpenRouterStream(response)));
+  Effect.runPromise(Stream.runCollect(parseChatStream(response)));
 
 const recordParts = (response: Response, parts: ModelStreamPart[]) =>
-  Stream.runForEach(parseOpenRouterStream(response), (part) =>
+  Stream.runForEach(parseChatStream(response), (part) =>
     Effect.sync(() => {
       parts.push(part);
     }),
@@ -67,6 +67,30 @@ describe("openrouter stream protocol", () => {
         finishReason: "tool_calls",
         generationId: "gen-1",
         usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, cost: 0.001 },
+      },
+    ]);
+  });
+
+  it("passes on reasoning and prices a direct provider's usage from its configured price", async () => {
+    const response = sseResponse([
+      'data: {"id":"direct-1","choices":[{"index":0,"delta":{"reasoning_content":"Think"},"finish_reason":null}]}',
+      'data: {"id":"direct-1","choices":[{"index":0,"delta":{"content":"Done"},"finish_reason":"stop"}]}',
+      'data: {"id":"direct-1","choices":[],"usage":{"prompt_tokens":1000,"completion_tokens":500}}',
+      "data: [DONE]",
+    ]);
+    const parts = await Effect.runPromise(
+      Stream.runCollect(
+        parseChatStream(response, { inputPerMillion: 1, outputPerMillion: 4 }, false),
+      ),
+    );
+    expect(parts).toEqual([
+      { type: "reasoning", text: "Think" },
+      { type: "token", text: "Done" },
+      {
+        type: "finish",
+        finishReason: "stop",
+        generationId: undefined,
+        usage: { promptTokens: 1000, completionTokens: 500, totalTokens: undefined, cost: 0.003 },
       },
     ]);
   });

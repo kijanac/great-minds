@@ -60,10 +60,28 @@ describe("server config defaults", () => {
     expect((await loadConfig({ COMPILE_EMBED_CONCURRENCY: "2" })).compileEmbedConcurrency).toBe(2);
   });
 
+  it("refuses a model whose provider is not listed or whose price is missing", async () => {
+    const moonshot = {
+      PROVIDERS: "moonshot",
+      PROVIDER_MOONSHOT_URL: "https://api.moonshot.test/v1",
+      RENDER_MODEL: "moonshot:kimi-k3",
+    };
+    await expect(loadConfig({ RENDER_MODEL: "moonshot:kimi-k3" })).rejects.toThrow(
+      "which PROVIDERS does not list",
+    );
+    await expect(loadConfig(moonshot)).rejects.toThrow("MODEL_PRICES needs an entry");
+    const config = await loadConfig({ ...moonshot, MODEL_PRICES: "moonshot:kimi-k3=0.6/2.5" });
+    expect(config.providers.get("moonshot")).toMatchObject({ kind: "openai" });
+    expect(config.modelPrices.get("moonshot:kimi-k3")).toEqual({
+      inputPerMillion: 0.6,
+      outputPerMillion: 2.5,
+    });
+  });
+
   it("asks the writer for high reasoning effort unless configured otherwise", async () => {
     expect((await loadConfig({})).renderReasoningEffort).toEqual(Option.some("high"));
     expect((await loadConfig({ RENDER_REASONING_EFFORT: "none" })).renderReasoningEffort).toEqual(
-      Option.none(),
+      Option.some("none"),
     );
     expect((await loadConfig({ RENDER_REASONING_EFFORT: "low" })).renderReasoningEffort).toEqual(
       Option.some("low"),

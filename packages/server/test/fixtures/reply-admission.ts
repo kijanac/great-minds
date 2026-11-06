@@ -84,7 +84,7 @@ const setup = Effect.gen(function* () {
       clock,
       random,
       access,
-      options.configured ?? true,
+      options.configured === false ? "OPENROUTER_API_KEY" : undefined,
     );
   const address = (sessionId: SessionId) => ({ vault_id: vaultId, session_id: sessionId });
   const key = (sessionId: SessionId) => `vaults/${vaultId}/sessions/${sessionId}.jsonl`;

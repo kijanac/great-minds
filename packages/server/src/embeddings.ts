@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 
 import { Context, Data, Effect, Layer, Schema } from "effect";
 
-import { AppConfig, optionalRedactedValue } from "./config.ts";
+import { AppConfig, optionalRedactedValue, resolveModel } from "./config.ts";
 import {
   ModelProviderError,
   rateLimitRetry,
@@ -158,19 +158,21 @@ export const sizedGroups = (texts: readonly string[], limit = REQUEST_CHARS) => 
 export const EmbeddingsLive = Layer.effect(
   EmbeddingsService,
   Effect.map(AppConfig, (config) => {
-    const apiKey = optionalRedactedValue(config.openRouterApiKey);
-    const embedGroup = (texts: readonly string[], key: string) =>
+    const target = resolveModel(config, config.embeddingModel);
+    const apiKey = optionalRedactedValue(target.provider.apiKey);
+    const routing = target.provider.kind === "openrouter" ? config.embeddingProviders : [];
+    const embedGroup = (texts: readonly string[], key: string | undefined) =>
       Effect.gen(function* () {
           const response = yield* Effect.tryPromise({
             try: (signal) =>
-              fetch(`${config.openRouterApiUrl.replace(/\/$/, "")}/embeddings`, {
+              fetch(`${target.provider.url.replace(/\/$/, "")}/embeddings`, {
                 method: "POST",
                 headers: {
-                  authorization: `Bearer ${key}`,
+                  ...(key === undefined ? {} : { authorization: `Bearer ${key}` }),
                   "content-type": "application/json",
                 },
                 body: JSON.stringify(
-                  embeddingRequestBody(texts, config.embeddingModel, config.embeddingProviders),
+                  embeddingRequestBody(texts, target.model, routing),
                 ),
                 signal: AbortSignal.any([signal, AbortSignal.timeout(embeddingTimeoutMs)]),
               }),
@@ -211,7 +213,7 @@ export const EmbeddingsLive = Layer.effect(
         );
     return {
       embed: (texts) =>
-        apiKey === undefined
+        apiKey === undefined && target.provider.kind === "openrouter"
           ? Effect.fail(new EmbeddingBatchFailed({ message: "OpenRouter API key is not configured" }))
           : Effect.forEach(sizedGroups(texts), (group) => embedGroup(group, apiKey)).pipe(
               Effect.map((groups) => groups.flat()),

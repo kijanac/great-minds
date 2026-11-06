@@ -100,6 +100,8 @@ const config: AppConfigShape = {
   r2BucketName: Option.none(),
   openRouterApiKey: Option.none(),
   openRouterApiUrl: "https://example.invalid",
+  providers: new Map(),
+  modelPrices: new Map(),
   parallelApiKey: Option.none(),
   parallelSearchUrl: "https://example.invalid",
   queryModel: "test",
@@ -198,7 +200,6 @@ const EmbeddingsLive = Layer.succeed(EmbeddingsService, {
     }),
 });
 const LanguageModelLive = Layer.succeed(LanguageModel, {
-  hasApiKey: true,
   streamChat: () => Stream.empty,
   complete: (input) =>
     Effect.tryPromise({

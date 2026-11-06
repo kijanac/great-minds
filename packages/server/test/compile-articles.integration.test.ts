@@ -97,7 +97,6 @@ const reply = (input: CompleteInput): ModelCompletion => {
   };
 };
 const languageModel = {
-  hasApiKey: true,
   streamChat: () => Stream.empty,
   complete: (input: CompleteInput) => Effect.sync(() => reply(input)),
 };

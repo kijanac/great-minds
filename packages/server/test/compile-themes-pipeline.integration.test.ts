@@ -77,6 +77,8 @@ const config: AppConfigShape = {
   r2BucketName: Option.none(),
   openRouterApiKey: Option.none(),
   openRouterApiUrl: "https://example.invalid",
+  providers: new Map(),
+  modelPrices: new Map(),
   parallelApiKey: Option.none(),
   parallelSearchUrl: "https://example.invalid",
   queryModel: "test",
@@ -166,7 +168,6 @@ const reply = (input: CompleteInput): string => {
   throw new Error(`unexpected compile call: ${content.slice(0, 80)}`);
 };
 const LanguageModelLive = Layer.succeed(LanguageModel, {
-  hasApiKey: true,
   streamChat: () => Stream.empty,
   complete: (input) =>
     Effect.sync((): ModelCompletion => {

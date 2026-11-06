@@ -77,14 +77,12 @@ export const malformedToolCallPart = (
 export const makeScriptedLanguageModel = (options: {
   readonly streams?: readonly StreamScript[];
   readonly completions?: readonly CompleteScript[];
-  readonly hasApiKey?: boolean;
 }) => {
   const streamScripts = [...(options.streams ?? [])];
   const completionScripts = [...(options.completions ?? [])];
   const streamCalls: StreamChatInput[] = [];
   const completeCalls: CompleteInput[] = [];
   const service = {
-    hasApiKey: options.hasApiKey ?? true,
     streamChat: (input: StreamChatInput) => {
       streamCalls.push(input);
       const script = streamScripts.shift();
