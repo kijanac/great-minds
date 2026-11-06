@@ -43,6 +43,32 @@ export const FileFingerprint = Schema.String.pipe(
 );
 export type FileFingerprint = typeof FileFingerprint.Type;
 
+const UPLOAD_KINDS: Readonly<Record<string, "text" | "html" | "office">> = {
+  ".md": "text",
+  ".markdown": "text",
+  ".txt": "text",
+  ".text": "text",
+  ".csv": "text",
+  ".json": "text",
+  ".xml": "text",
+  ".html": "html",
+  ".htm": "html",
+  ".pdf": "office",
+  ".docx": "office",
+  ".pptx": "office",
+  ".xlsx": "office",
+  ".odt": "office",
+  ".odp": "office",
+  ".ods": "office",
+};
+
+export const uploadKind = (filename: string, mimetype: string) => {
+  const suffixAt = filename.lastIndexOf(".");
+  const kind = suffixAt < 0 ? "text" : UPLOAD_KINDS[filename.slice(suffixAt).toLowerCase()];
+  if (kind !== undefined) return kind;
+  return mimetype.toLowerCase().includes("text/html") ? "html" : null;
+};
+
 export const IsoDateTime = Schema.DateFromString;
 export type IsoDateTime = typeof IsoDateTime.Type;
 
@@ -1805,6 +1831,15 @@ const IngestApiGroup = HttpApiGroup.make("ingest").add(
       batch_id: Uuid,
     },
     success: FileIngestBatch,
+    error: [BadRequestResponse, ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,
+  }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("uploadFileIngestFile", "/file-ingests/:batch_id/files/:hash", {
+    params: {
+      batch_id: Uuid,
+      hash: FileFingerprint,
+    },
+    payload: Schema.Struct({}).pipe(HttpApiSchema.asMultipartStream()),
+    success: HttpApiSchema.NoContent,
     error: [BadRequestResponse, ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.post(

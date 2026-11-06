@@ -1,14 +1,25 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { NodeServices } from "@effect/platform-node";
 import { Email, Uuid } from "@great-minds/domain";
-import { Cause, ConfigProvider, Console, Effect, Exit, Layer, Option, Schema } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Console,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Schema,
+} from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { ask, listRuns, login, logout, update } from "../src/commands.ts";
+import { add, ask, listRuns, login, logout, update } from "../src/commands.ts";
 import { CliFetch } from "../src/connection.ts";
 import { Credentials, CredentialsLive } from "../src/credentials.ts";
 
@@ -94,10 +105,11 @@ const layer = (env: Record<string, string>) =>
       ),
     ),
     Layer.succeed(CliFetch, fakeFetch),
+    NodeServices.layer,
   );
 
 const exit = <A, E>(
-  effect: Effect.Effect<A, E, Credentials | CliFetch>,
+  effect: Effect.Effect<A, E, Credentials | CliFetch | FileSystem.FileSystem>,
   env: Record<string, string> = {},
 ) =>
   Effect.runPromise(
@@ -107,7 +119,7 @@ const exit = <A, E>(
     ),
   );
 const run = async <A, E>(
-  effect: Effect.Effect<A, E, Credentials | CliFetch>,
+  effect: Effect.Effect<A, E, Credentials | CliFetch | FileSystem.FileSystem>,
   env: Record<string, string> = {},
 ) => {
   const result = await exit(effect, env);
@@ -115,7 +127,7 @@ const run = async <A, E>(
   return result.value;
 };
 const failureTag = async <A, E>(
-  effect: Effect.Effect<A, E, Credentials | CliFetch>,
+  effect: Effect.Effect<A, E, Credentials | CliFetch | FileSystem.FileSystem>,
   env: Record<string, string> = {},
 ) => {
   const result = await exit(effect, env);
@@ -382,8 +394,8 @@ describe("gm update", () => {
     updated_at: now,
     completed_at: status === "completed" ? now : null,
   });
-  const accepted = () =>
-    json(202, {
+  const accepted = (status = 202) =>
+    json(status, {
       id: runId,
       vault_id: vaultId,
       trigger: "manual",
@@ -445,6 +457,66 @@ describe("gm update", () => {
       "Removed:",
       "  Liquidationism Debate  (merged into Liquidationism)",
     ]);
+  });
+  it("gm add uploads only new supported files from a folder, then follows the run", async () => {
+    await saveCredentials({
+      api_url: apiUrl,
+      api_key: "gm_saved",
+      api_key_id: oldKeyId,
+      vault_id: vaultId,
+    });
+    const folder = join(directory, "notes");
+    await mkdir(join(folder, "sub"), { recursive: true });
+    await mkdir(join(folder, ".obsidian"), { recursive: true });
+    await writeFile(join(folder, "new.md"), "# New\n");
+    await writeFile(join(folder, "sub", "known.md"), "# Known\n");
+    await writeFile(join(folder, "photo.png"), "not text");
+    await writeFile(join(folder, ".obsidian", "workspace.json"), "{}");
+    const hashOf = (text: string) => createHash("sha256").update(text).digest("hex");
+    const newHash = hashOf("# New\n");
+    route = (request) => {
+      if (request.path === `/v1/vaults/${vaultId}`) return vaultDetail();
+      if (request.path === `/v1/vaults/${vaultId}/file-ingests/check-dupes`)
+        return json(200, { existing: [hashOf("# Known\n")] });
+      if (request.path === `/v1/vaults/${vaultId}/file-ingests`) {
+        const { batch_id, files } = JSON.parse(request.body);
+        return json(201, {
+          id: batch_id,
+          vault_id: vaultId,
+          created_by: vaultId,
+          status: "uploading",
+          error: null,
+          expires_at: now,
+          files: files.map((file: { readonly name: string; readonly hash: string }) => ({
+            ...file,
+            size: 6,
+            mimetype: "",
+            status: "pending",
+            error: null,
+          })),
+          targets: files.map((file: { readonly hash: string }) => ({
+            hash: file.hash,
+            transport: "api",
+          })),
+        });
+      }
+      if (request.path.endsWith(`/files/${newHash}`) || request.path.endsWith("/complete"))
+        return noContent();
+      if (request.path.endsWith("/commit")) return accepted(200);
+      if (request.path === `/v1/vaults/${vaultId}/jobs/${runId}/stream`)
+        return events([snapshot("completed", [stage("completed")], null)]);
+      return json(404, {});
+    };
+    await run(add({ paths: [folder], vault: Option.none(), json: false }));
+    const created = requests.find((request) => request.path.endsWith("/file-ingests"));
+    expect(JSON.parse(created?.body ?? "{}").files).toEqual([
+      { name: "new.md", size: 6, hash: newHash, mimetype: "" },
+    ]);
+    expect(
+      requests.map((request) => request.path).filter((path) => path.includes("/files/")),
+    ).toHaveLength(2);
+    expect(requests.some((request) => request.path.endsWith("/commit"))).toBe(true);
+    expect(stdout).toEqual(["Update finished."]);
   });
 });
 

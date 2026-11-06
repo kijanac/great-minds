@@ -5,12 +5,9 @@ import {
   AuthMiddleware,
   BadRequest,
   CurrentAuth,
-  type FileFingerprint,
   Forbidden,
   GreatMindsApi,
-  isUuid,
   ServiceUnavailable,
-  Unauthorized,
   Validation,
   type DomainError,
 } from "@great-minds/domain";
@@ -86,16 +83,6 @@ export const jobSseHeartbeatChunk = (chunk: Uint8Array) =>
     : chunk;
 
 const clean500Response = jsonResponse(500, { detail: "Internal Server Error" });
-
-const parseUuidPathParam = (value: string | undefined) =>
-  value !== undefined && isUuid(value) ? value : undefined;
-
-const FILE_FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
-
-const parseFileFingerprintPathParam = (value: string | undefined) =>
-  value !== undefined && FILE_FINGERPRINT_PATTERN.test(value)
-    ? (value as FileFingerprint)
-    : undefined;
 
 const validationDetail = (error: HttpApiSchemaError) => {
   switch (error.kind) {
@@ -617,6 +604,18 @@ const IngestHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "ingest", 
         return yield* batches.resume(current.user_id, params.batch_id);
       }),
     )
+    .handle("uploadFileIngestFile", ({ params, payload }) =>
+      Effect.gen(function* () {
+        const batches = yield* FileIngestBatches;
+        const current = yield* CurrentAuth;
+        yield* batches.upload(
+          current.user_id,
+          params.batch_id,
+          params.hash,
+          uploadedFileContent(payload),
+        );
+      }),
+    )
     .handle("acknowledgeFileIngestUpload", ({ params }) =>
       Effect.gen(function* () {
         const batches = yield* FileIngestBatches;
@@ -949,28 +948,6 @@ const StreamHeadersLive = HttpRouter.middleware(
   { global: true },
 );
 
-const bearerFromRequest = (request: HttpServerRequest.HttpServerRequest) => {
-  const header = request.headers.authorization;
-  if (header === undefined || !header.startsWith("Bearer ")) {
-    return undefined;
-  }
-  return header.slice("Bearer ".length);
-};
-
-const currentAuthFromRequest = (request: HttpServerRequest.HttpServerRequest) =>
-  Effect.gen(function* () {
-    const token = bearerFromRequest(request);
-    if (token === undefined || token.length === 0) {
-      return yield* domainErrorJsonResponse(new Unauthorized({ detail: "Missing bearer token" }));
-    }
-    const auth = yield* AuthService;
-    const current = yield* Effect.result(auth.authenticateBearer(token));
-    if (current._tag === "Failure") {
-      return yield* domainErrorJsonResponse(current.failure);
-    }
-    return current.success;
-  });
-
 const invalidMultipart = () => new BadRequest({ detail: "Invalid multipart upload" });
 
 const uploadedPartContent = (part: Multipart.Part) =>
@@ -978,45 +955,12 @@ const uploadedPartContent = (part: Multipart.Part) =>
     ? part.content.pipe(Stream.mapError(invalidMultipart))
     : Stream.fail(new BadRequest({ detail: "Uploaded file must have a filename" }));
 
-const uploadedFileContent = (request: HttpServerRequest.HttpServerRequest) =>
-  request.multipartStream.pipe(
+const uploadedFileContent = (parts: Stream.Stream<Multipart.Part, Multipart.MultipartError>) =>
+  parts.pipe(
     Stream.mapError(invalidMultipart),
     Stream.take(1),
     Stream.flatMap(uploadedPartContent),
   );
-
-const FileIngestUploadRouteLive = HttpRouter.add(
-  "POST",
-  "/v1/file-ingests/:batch_id/files/:hash",
-  (request) =>
-    Effect.gen(function* () {
-      const params = yield* HttpRouter.params;
-      const batchId = parseUuidPathParam(params.batch_id);
-      const hash = parseFileFingerprintPathParam(params.hash);
-      if (batchId === undefined || hash === undefined) {
-        return yield* jsonResponse(422, { detail: "Invalid path parameter" });
-      }
-      const current = yield* currentAuthFromRequest(request);
-      if (HttpServerResponse.isHttpServerResponse(current)) {
-        return current;
-      }
-      const batches = yield* FileIngestBatches;
-      return yield* batches
-        .upload(current.user_id, batchId, hash, uploadedFileContent(request))
-        .pipe(
-          Effect.catchTags({
-            BadRequest: domainErrorJsonResponse,
-            Forbidden: domainErrorJsonResponse,
-            NotFound: domainErrorJsonResponse,
-          }),
-          Effect.map((value) =>
-            HttpServerResponse.isHttpServerResponse(value)
-              ? value
-              : HttpServerResponse.empty({ status: 204 }),
-          ),
-        );
-    }),
-);
 
 const ApiGroupsLive = Layer.mergeAll(
   MetaHandlersLive,
@@ -1044,7 +988,6 @@ const AppRoutesLive = Layer.mergeAll(
   StreamHeadersLive,
   HttpRouter.add("GET", "/health", healthResponse),
   HttpRouter.add("GET", "/", healthResponse),
-  FileIngestUploadRouteLive,
   ApiLive,
 );
 

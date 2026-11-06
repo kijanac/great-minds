@@ -12,3 +12,10 @@ export {
 export { nextPageOffset } from "./pagination.ts";
 export { ApiError, decodeInput, makeApi, withApiErrors } from "./runtime.ts";
 export { TokenStore, type StoredTokens, type TokenStoreShape } from "./token-store.ts";
+export {
+  fingerprint,
+  manifestOf,
+  uploadTarget,
+  UploadRejected,
+  type UploadFile,
+} from "./uploads.ts";

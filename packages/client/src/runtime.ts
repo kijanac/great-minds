@@ -1,6 +1,6 @@
 import { GreatMindsApi, type DomainError } from "@great-minds/domain";
 import { Data, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient } from "effect/unstable/http";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
@@ -121,18 +121,7 @@ export const makeApi = (options: ApiOptions) => {
   const context = runtime.runSync(runtime.contextEffect);
   type Services = Layer.Success<typeof services>;
   const api = runtime.runSync(HttpApiClient.make(GreatMindsApi, { baseUrl: options.baseUrl }));
-  const authenticate = runtime.runSync(AuthClient);
   const transportClient = runtime.runSync(HttpClient.HttpClient);
-  const authenticatedClient = HttpClient.transform(transportClient, (_, request) =>
-    authenticate({
-      request,
-      next: (authenticated) => transportClient.execute(authenticated),
-    }),
-  );
-  const http = HttpClient.mapRequest(
-    authenticatedClient,
-    HttpClientRequest.prependUrl(options.baseUrl),
-  );
   const externalHttp = transportClient;
 
   const use = <A>(effect: Effect.Effect<A, ClientFailure, Services>) =>
@@ -159,7 +148,7 @@ export const makeApi = (options: ApiOptions) => {
 
   const fork = <A, E>(effect: Effect.Effect<A, E, Services>) => runtime.runFork(effect);
 
-  return { api, http, externalHttp, run, fork, stream, use, follow };
+  return { api, externalHttp, run, fork, stream, use, follow };
 };
 
 export type Api = ReturnType<typeof makeApi>["api"];
