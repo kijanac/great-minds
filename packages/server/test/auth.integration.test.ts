@@ -347,6 +347,7 @@ describe("auth HTTP integration", () => {
     const current = currentState();
     current.clock.set(initialTime);
     current.mailer.sent.length = 0;
+    current.mailer.settings.configured = true;
     await resetDatabase();
   });
 
@@ -400,6 +401,21 @@ describe("auth HTTP integration", () => {
     expect(newest.codeHash).toMatch(/^[a-f0-9]{64}$/);
     expect(older.codeHash).not.toBe(firstCode);
     expect(older.used).toBe(true);
+  });
+
+  it("refuses to send a code when email is not set up, keeping earlier codes valid", async () => {
+    const first = await api("POST", "/auth/request-code", { email: "person@example.com" });
+    expect(first.status).toBe(204);
+    const code = latestCode();
+
+    currentState().mailer.settings.configured = false;
+    currentState().clock.set(new Date(initialTime.getTime() + 61 * 1000));
+    const refused = await api("POST", "/auth/request-code", { email: "person@example.com" });
+    expect(refused.status).toBe(503);
+    expect(refused.body).toMatchObject({ _tag: "ServiceUnavailable" });
+
+    const verified = await api("POST", "/auth/verify-code", { email: "person@example.com", code });
+    expect(verified.status).toBe(200);
   });
 
   it("mounts auth only under /v1 and preserves framework wrong-method behavior", async () => {

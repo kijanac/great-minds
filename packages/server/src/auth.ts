@@ -8,7 +8,14 @@ import {
   type TransactionClient,
   users,
 } from "@great-minds/database";
-import { Email, NotFound, TooManyRequests, Unauthorized, Uuid } from "@great-minds/domain";
+import {
+  Email,
+  NotFound,
+  ServiceUnavailable,
+  TooManyRequests,
+  Unauthorized,
+  Uuid,
+} from "@great-minds/domain";
 import type { ApiKey, ApiKeyWithSecret, AuthContext, TokenPair } from "@great-minds/domain";
 import { and, asc, desc, eq, gt, isNull, lt, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer, Result, Schema } from "effect";
@@ -28,7 +35,7 @@ type AuthServiceShape = {
   readonly requestCode: (
     email: Email,
     clientAddress: string | null,
-  ) => Effect.Effect<void, TooManyRequests>;
+  ) => Effect.Effect<void, ServiceUnavailable | TooManyRequests>;
   readonly verifyCode: (email: Email, code: string) => Effect.Effect<TokenPair, Unauthorized>;
   readonly refresh: (refreshToken: string) => Effect.Effect<TokenPair, Unauthorized>;
   readonly issueTokenPair: (userId: Uuid) => Effect.Effect<TokenPair, Unauthorized>;
@@ -230,6 +237,11 @@ export const AuthServiceLive = Layer.effect(
           const email = normalizeEmail(emailInput);
           if (config.suppressAuth) {
             return;
+          }
+          if (!mailer.configured) {
+            return yield* new ServiceUnavailable({
+              detail: "Email sign-in is not set up on this server",
+            });
           }
           const code = yield* generateAuthCode;
           const now = yield* clock.now;
