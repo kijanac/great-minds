@@ -23,7 +23,7 @@ import { and, asc, desc, eq, gte, ilike, lte, ne, or, sql, type SQL } from "driz
 import { Cause, Context, Data, Effect, Layer, Option, Schema, Stream } from "effect";
 
 import { ClockService } from "./clock.ts";
-import { AppConfig } from "./config.ts";
+import { AppConfig, missingModelKey, notConfiguredDetail } from "./config.ts";
 import { defaultVaultConfigFile, readVaultConfig, type VaultConfigFile } from "./vault-config.ts";
 import { promptContentHash } from "./crypto.ts";
 import { type EmbeddingBatchFailed, EmbeddingsService, vectorLiteral } from "./embeddings.ts";
@@ -222,6 +222,7 @@ type QueryToolExecutionResult = {
 
 type ModelRoundState = {
   content: string;
+  reasoning: string;
   finishReason: string | null;
   readonly toolCalls: Map<number, ToolCallState>;
 };
@@ -1321,6 +1322,7 @@ export const QueryServiceLive = Layer.effect(
       Effect.gen(function* () {
         const state: ModelRoundState = {
           content: "",
+          reasoning: "",
           finishReason: null,
           toolCalls: new Map(),
         };
@@ -1336,6 +1338,10 @@ export const QueryServiceLive = Layer.effect(
               if (part.type === "token") {
                 state.content += part.text;
                 return onToken(part.text);
+              }
+              if (part.type === "reasoning") {
+                state.reasoning += part.text;
+                return Effect.void;
               }
               if (part.type === "tool_call_delta") {
                 const current = state.toolCalls.get(part.delta.index) ?? {
@@ -1449,6 +1455,9 @@ export const QueryServiceLive = Layer.effect(
           messages.push({
             role: "assistant",
             content: roundState.content.length === 0 ? null : roundState.content,
+            ...(roundState.reasoning.length === 0
+              ? {}
+              : { reasoning_content: roundState.reasoning }),
             tool_calls: rawToolCalls.map((toolCall) => ({
               id: toolCall.id,
               type: "function",
@@ -1462,7 +1471,13 @@ export const QueryServiceLive = Layer.effect(
           } satisfies QueryModelAttemptResult;
         }
         if (roundState.content.length > 0) {
-          messages.push({ role: "assistant", content: roundState.content });
+          messages.push({
+            role: "assistant",
+            content: roundState.content,
+            ...(roundState.reasoning.length === 0
+              ? {}
+              : { reasoning_content: roundState.reasoning }),
+          });
         }
         return {
           kind: "done",
@@ -1726,10 +1741,9 @@ export const QueryServiceLive = Layer.effect(
         ),
       draftHint: (_userId, description) =>
         Effect.gen(function* () {
-          if (!languageModel.hasApiKey) {
-            return yield* new ServiceUnavailable({
-              detail: "LLM service not configured (OPENROUTER_API_KEY missing)",
-            });
+          const missingKey = missingModelKey(appConfig, appConfig.queryModel);
+          if (missingKey !== undefined) {
+            return yield* new ServiceUnavailable({ detail: notConfiguredDetail(missingKey) });
           }
           const trimmed = description.trim();
           if (trimmed.length === 0) {

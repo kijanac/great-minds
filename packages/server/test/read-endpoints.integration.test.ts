@@ -183,6 +183,8 @@ const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   r2BucketName: Option.none(),
   openRouterApiKey: Option.none(),
   openRouterApiUrl: "https://openrouter.ai/api/v1",
+  providers: new Map(),
+  modelPrices: new Map(),
   parallelApiKey: Option.none(),
   parallelSearchUrl: "https://api.parallel.ai/v1beta/search",
   queryModel: "z-ai/glm-5.2",
@@ -252,7 +254,7 @@ const acceptReadReply = (confirm = true) =>
         yield* ClockService,
         yield* RandomBytesService,
         yield* VaultAccessService,
-        true,
+        undefined,
       );
       const input = command({ session: { kind: "existing", id: id.sessionAliceMain } });
       const accepted = yield* confirm

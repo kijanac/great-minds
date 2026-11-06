@@ -13,10 +13,10 @@ import {
   type Uuid,
 } from "@great-minds/domain";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { Context, Data, Effect, Layer, Option, Result, Schema } from "effect";
+import { Context, Data, Effect, Layer, Result, Schema } from "effect";
 
 import { ClockService } from "../clock.ts";
-import { AppConfig } from "../config.ts";
+import { AppConfig, missingModelKey, notConfiguredDetail } from "../config.ts";
 import { formatUuid7, RandomBytesService } from "../random.ts";
 import { VaultAccessService } from "../vaults.ts";
 import {
@@ -93,7 +93,7 @@ export const ReplyAdmissionLive = Layer.effect(
       clock,
       random,
       access,
-      Option.isSome(config.openRouterApiKey),
+      missingModelKey(config, config.queryModel),
     );
   }),
 );
@@ -174,7 +174,7 @@ export const makeReplyAdmission = (
   clock: ClockService["Service"],
   random: RandomBytesService["Service"],
   access: VaultAccessService["Service"],
-  generationConfigured: boolean,
+  missingKey: string | undefined,
 ) => {
   const readReply = (replyId: Uuid) =>
     db
@@ -299,10 +299,8 @@ export const makeReplyAdmission = (
       const existingReply = yield* readReply(command.reply_id);
       if (existingReply !== undefined)
         return yield* replay(existingReply, userId, vaultId, command, previousReplyId);
-      if (!generationConfigured) {
-        return yield* new ServiceUnavailable({
-          detail: "LLM service not configured (OPENROUTER_API_KEY missing)",
-        });
+      if (missingKey !== undefined) {
+        return yield* new ServiceUnavailable({ detail: notConfiguredDetail(missingKey) });
       }
       const destination = command.session;
       const [existingSession] = yield* db.query((client) =>

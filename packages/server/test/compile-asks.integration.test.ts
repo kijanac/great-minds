@@ -41,7 +41,6 @@ let reply = (_input: CompleteInput): ModelCompletion => ({
   usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12, cost: 0.01 },
 });
 const languageModel = {
-  hasApiKey: true,
   streamChat: () => Stream.empty,
   complete: (input: CompleteInput) =>
     Effect.sync(() => {

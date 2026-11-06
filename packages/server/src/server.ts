@@ -34,7 +34,7 @@ import { AppLayerLive, type AppLayerServices } from "./app-layer.ts";
 import { AuthService } from "./auth.ts";
 import { CliLogins } from "./cli-logins.ts";
 import { Mailer } from "./mailer.ts";
-import { AppConfig } from "./config.ts";
+import { AppConfig, missingModelKey, notConfiguredDetail } from "./config.ts";
 import { CostsService } from "./costs.ts";
 import { DocumentRegistryMismatch, DocumentsService } from "./documents.ts";
 import { domainErrorResponse } from "./http-errors.ts";
@@ -600,10 +600,17 @@ const CompileHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "compile"
         const access = yield* VaultAccessService;
         yield* access.requireOwner(current.user_id, params.vault_id);
         const config = yield* AppConfig;
-        if (Option.isNone(config.openRouterApiKey)) {
-          return yield* new ServiceUnavailable({
-            detail: "LLM service not configured (OPENROUTER_API_KEY missing)",
-          });
+        const missing = [
+          config.extractModel,
+          config.mapModel,
+          config.reduceModel,
+          config.renderModel,
+          config.embeddingModel,
+        ]
+          .map((model) => missingModelKey(config, model))
+          .find((key) => key !== undefined);
+        if (missing !== undefined) {
+          return yield* new ServiceUnavailable({ detail: notConfiguredDetail(missing) });
         }
         const jobs = yield* JobsService;
         return yield* jobs.requestCompile(current.user_id, params.vault_id, payload.job_id);

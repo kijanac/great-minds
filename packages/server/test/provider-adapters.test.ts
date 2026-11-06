@@ -21,6 +21,70 @@ const runtime = ManagedRuntime.make(Layer.mergeAll(EmbeddingsLive, CostLookupLiv
 afterEach(() => { vi.unstubAllGlobals(); });
 afterAll(() => runtime.dispose());
 
+const directRuntime = ManagedRuntime.make(Layer.mergeAll(EmbeddingsLive, LanguageModelLive).pipe(
+  Layer.provide(AppConfigLive),
+  Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {
+    DATABASE_URL: "postgresql://great-minds.test/great_minds",
+    JWT_SECRET: "provider-adapter-test-secret",
+    OPENROUTER_API_KEY: "provider-test-key",
+    PROVIDERS: "moonshot,local",
+    PROVIDER_MOONSHOT_URL: "https://api.moonshot.test/v1",
+    PROVIDER_MOONSHOT_KEY: "moonshot-key",
+    PROVIDER_LOCAL_URL: "http://studio.test:8080/v1",
+    RENDER_MODEL: "moonshot:kimi-k3",
+    EMBEDDING_MODEL: "local:qwen3-embedding-8b",
+    MODEL_PRICES: "moonshot:kimi-k3=1/4,local:qwen3-embedding-8b=0/0",
+  } }))),
+));
+
+afterAll(() => directRuntime.dispose());
+
+describe("direct providers", () => {
+  it("sends a direct provider standard fields only, at its own address, priced from config", async () => {
+    const fetch = vi.fn(async (_url: string, _init: RequestInit) => Response.json({
+      id: "moonshot-generation",
+      choices: [{ message: { content: "{}" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1_000, completion_tokens: 500 },
+    }));
+    vi.stubGlobal("fetch", fetch);
+    const completion = await directRuntime.runPromise(Effect.flatMap(LanguageModel, (model) => model.complete({
+      model: "moonshot:kimi-k3",
+      messages: [{ role: "user", content: "question" }],
+      reasoningEffort: "low",
+      responseFormat: "json_object",
+      requestProfile: "compile",
+    })));
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe("https://api.moonshot.test/v1/chat/completions");
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer moonshot-key");
+    expect(JSON.parse(String(init.body))).toEqual({
+      model: "kimi-k3",
+      messages: [{ role: "user", content: "question" }],
+      reasoning_effort: "low",
+      response_format: { type: "json_object" },
+      stream: false,
+    });
+    expect(completion.generationId).toBeUndefined();
+    expect(completion.usage?.cost).toBeCloseTo(0.003);
+  });
+
+  it("embeds through a keyless local provider without OpenRouter routing", async () => {
+    const fetch = vi.fn(async (_url: string, _init: RequestInit) => Response.json({
+      data: [{ index: 0, embedding: [1, 0] }],
+    }));
+    vi.stubGlobal("fetch", fetch);
+    await directRuntime.runPromise(Effect.flatMap(EmbeddingsService, (embeddings) => embeddings.embed(["text"])));
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe("http://studio.test:8080/v1/embeddings");
+    expect(new Headers(init.headers).has("authorization")).toBe(false);
+    expect(JSON.parse(String(init.body))).toEqual({
+      input: ["text"],
+      model: "qwen3-embedding-8b",
+      encoding_format: "base64",
+    });
+  });
+});
+
 describe("provider adapters", () => {
   it.each([
     { kind: "stream", headersReceived: false },

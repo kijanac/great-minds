@@ -134,6 +134,8 @@ const config: AppConfigShape = {
   r2BucketName: Option.none(),
   openRouterApiKey: Option.none(),
   openRouterApiUrl: "https://openrouter.ai/api/v1",
+  providers: new Map(),
+  modelPrices: new Map(),
   parallelApiKey: Option.none(),
   parallelSearchUrl: "https://api.parallel.ai/v1beta/search",
   queryModel: "test",
@@ -284,7 +286,6 @@ const PipelineLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));
 const VaultAccessLive = VaultAccessServiceLive.pipe(Layer.provideMerge(BaseLive));
 const EmbeddingsLive = Layer.succeed(EmbeddingsService, { embed: () => Effect.succeed([]) });
 const LanguageModelLive = Layer.succeed(LanguageModel, {
-  hasApiKey: true,
   streamChat: () => Stream.empty,
   complete: () => Effect.fail(new ModelProviderError({ message: "unexpected compile LLM call" })),
 });
