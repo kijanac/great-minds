@@ -95,8 +95,6 @@ const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   compileDeriveRelatedLimit: 20,
   compileEmbedConcurrency: 1,
   pipelineConcurrency: 1,
-  goldensRandomSeed: Option.none(),
-  goldensClock: Option.none(),
   embeddingModel: "qwen/qwen3-embedding-8b",
   embeddingProviders: [],
   corsOrigins: ["http://localhost:5173"],

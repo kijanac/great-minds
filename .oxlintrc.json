@@ -7,7 +7,6 @@
   "overrides": [
     {
       "files": [
-        "packages/goldens/**",
         "packages/server/test/**",
         "packages/server/src/error-details.ts"
       ],

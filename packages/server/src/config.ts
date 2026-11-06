@@ -44,8 +44,6 @@ export type AppConfigShape = {
   readonly compilePremergeJaccardThreshold: number;
   readonly compileDeriveRelatedLimit: number;
   readonly pipelineConcurrency: number;
-  readonly goldensRandomSeed: Option.Option<number>;
-  readonly goldensClock: Option.Option<Date>;
   readonly embeddingModel: string;
   readonly embeddingProviders: readonly string[];
   readonly corsOrigins: readonly string[];
@@ -190,8 +188,6 @@ const appConfig = Config.all({
     Config.withDefault(20),
   ),
   pipelineConcurrency: positiveInt("PIPELINE_CONCURRENCY").pipe(Config.withDefault(1)),
-  goldensRandomSeed: Config.option(Config.schema(Schema.Int, "GOLDENS_RANDOM_SEED")),
-  goldensClock: Config.option(Config.schema(Schema.DateFromString, "GOLDENS_CLOCK")),
   embeddingModel: nonEmptyString("EMBEDDING_MODEL").pipe(
     Config.withDefault("qwen/qwen3-embedding-8b"),
   ),

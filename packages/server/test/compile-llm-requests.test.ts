@@ -1,42 +1,7 @@
-import { readFile } from "node:fs/promises";
-
 import { describe, expect, it } from "vitest";
 
-import {
-  codePointLength,
-  extractResponseFormat,
-  normalizePythonWhitespace,
-} from "../src/compile-extract.ts";
-import { completionRequestBody, type LlmMessage } from "../src/llm.ts";
-
-type CassetteEntry = {
-  readonly sequence: number;
-  readonly requestBody: {
-    readonly messages: readonly LlmMessage[];
-  };
-};
-
-const cassette = JSON.parse(
-  await readFile(new URL("../../goldens/cassettes/compile.json", import.meta.url), "utf8"),
-) as { readonly entries: readonly CassetteEntry[] };
-
-const entry = (sequence: number) => {
-  const found = cassette.entries.find((candidate) => candidate.sequence === sequence);
-  if (found === undefined) throw new Error(`cassette entry ${sequence} is missing`);
-  return found;
-};
-
-const expectRecordedPrompt = (
-  sequence: number,
-  input: Parameters<typeof completionRequestBody>[0],
-) => {
-  const recorded = entry(sequence).requestBody;
-  expect(completionRequestBody({ ...input, messages: recorded.messages })).toEqual({
-    ...recorded,
-    response_format: input.responseFormat,
-    provider: { require_parameters: true },
-  });
-};
+import { normalizePythonWhitespace } from "../src/compile-extract.ts";
+import { completionRequestBody } from "../src/llm.ts";
 
 const articleFormat = {
   type: "json_schema",
@@ -53,21 +18,6 @@ const articleFormat = {
 } as const;
 
 describe("compile LLM request composition", () => {
-  it("sends the recorded extract prompt with a strict schema to capable hosts only", () => {
-    expectRecordedPrompt(1, {
-      model: "deepseek/deepseek-v3.2",
-      messages: [],
-      temperature: 0.2,
-      responseFormat: extractResponseFormat({
-        thematicHint: "",
-        kinds: ["person", "event", "organization", "concept"],
-        webSearch: false,
-        enrichedFields: [],
-      }),
-      requestProfile: "compile",
-    });
-  });
-
   it("omits temperature for models whose hosts reject one", () => {
     expect(
       completionRequestBody({
@@ -115,9 +65,5 @@ describe("Python text-kernel alignment", () => {
       "alpha beta gamma",
     );
     expect(normalizePythonWhitespace("alpha\ufeffbeta")).toBe("alpha\ufeffbeta");
-  });
-
-  it("counts Unicode code points rather than UTF-16 code units", () => {
-    expect(codePointLength("a😀b")).toBe(3);
   });
 });

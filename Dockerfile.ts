@@ -15,7 +15,6 @@ COPY packages/cli/package.json packages/cli/package.json
 COPY packages/client/package.json packages/client/package.json
 COPY packages/database/package.json packages/database/package.json
 COPY packages/domain/package.json packages/domain/package.json
-COPY packages/goldens/package.json packages/goldens/package.json
 COPY packages/server/package.json packages/server/package.json
 COPY web/package.json web/package.json
 
@@ -30,7 +29,7 @@ RUN node --experimental-strip-types packages/server/scripts/install-publication-
 
 FROM workspace AS deploy
 
-RUN rm -rf packages/cli packages/client packages/goldens packages/server/test packages/server/scripts web
+RUN rm -rf packages/cli packages/client packages/server/test packages/server/scripts web
 RUN rm -rf packages/server/node_modules/@types
 RUN rm -f package.json pnpm-lock.yaml pnpm-workspace.yaml packages/*/tsconfig.json
 

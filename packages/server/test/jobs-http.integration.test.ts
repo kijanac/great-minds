@@ -109,8 +109,6 @@ const config = (dataDir: string): AppConfigShape => ({
   compileDeriveRelatedLimit: 20,
   compileEmbedConcurrency: 1,
   pipelineConcurrency: 1,
-  goldensRandomSeed: Option.none(),
-  goldensClock: Option.none(),
   embeddingModel: "embedding/test",
   embeddingProviders: [],
   corsOrigins: ["http://localhost:5173"],

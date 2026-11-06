@@ -781,5 +781,3 @@ type JsonCall = <A>(input: {
   readonly maxParseRetries?: number;
   readonly logFields?: Record<string, string | number>;
 }) => Effect.Effect<A, unknown>;
-
-export const codePointLength = (value: string) => [...value].length;

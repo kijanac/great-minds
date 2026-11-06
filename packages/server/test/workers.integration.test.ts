@@ -156,8 +156,6 @@ const config: AppConfigShape = {
   compileDeriveRelatedLimit: 20,
   compileEmbedConcurrency: 1,
   pipelineConcurrency: 1,
-  goldensRandomSeed: Option.none(),
-  goldensClock: Option.none(),
   embeddingModel: "test",
   embeddingProviders: [],
   corsOrigins: [],
