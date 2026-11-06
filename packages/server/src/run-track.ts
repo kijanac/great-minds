@@ -30,11 +30,16 @@ const FETCH: StageDefinition = {
 
 const COMPILE: readonly StageDefinition[] = [
   {
+    key: "search",
+    label: "Search",
+    title: "Making sources searchable",
+    steps: [["ingest", "index_sources", "Making sources searchable"]],
+  },
+  {
     key: "reading",
     label: "Reading",
     title: "Reading your sources",
     steps: [
-      ["ingest", "index_sources", "Indexing sources for search"],
       ["extract", "extract_cards", "Reading sources"],
       ["extract", "embed_ideas", "Embedding new ideas"],
     ],
