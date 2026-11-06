@@ -1,4 +1,4 @@
-import { compileIntents, Database, pipelineRuns } from "@great-minds/database";
+import { Database, pipelineRuns } from "@great-minds/database";
 import {
   Forbidden,
   NotFound,
@@ -10,11 +10,11 @@ import {
   type JobSseEvent,
   type Uuid,
 } from "@great-minds/domain";
-import { and, count, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, inArray, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer, Schema, Stream } from "effect";
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
 
-import { cancelCompileWorkflow } from "./compile-intents.ts";
+import { cancelCompileWorkflow, linkRunToIntent, queueCompile } from "./compile-intents.ts";
 import { FileIngestBatches } from "./file-ingest-batches.ts";
 import { jobResponse } from "./job-response.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
@@ -115,31 +115,9 @@ export const JobsServiceLive = Layer.effect(
               .returning({ id: pipelineRuns.id });
             const insertedRun = insertedRuns.length === 1;
 
-            const intentRows = yield* tx
-              .insert(compileIntents)
-              .values({ vaultId, pipelineRunId: jobId })
-              .onConflictDoUpdate({
-                target: compileIntents.vaultId,
-                targetWhere: sql`${compileIntents.dispatchedAt} IS NULL`,
-                set: { vaultId: sql`compile_intents.vault_id` },
-              })
-              .returning({ id: compileIntents.id, pipelineRunId: compileIntents.pipelineRunId });
-            const intent = intentRows[0];
-            if (intent === undefined) {
-              throw new Error("compile intent upsert returned no row");
-            }
-
-            const runId = intent.pipelineRunId ?? jobId;
-            if (intent.pipelineRunId === null) {
-              yield* tx
-                .update(compileIntents)
-                .set({ pipelineRunId: jobId })
-                .where(eq(compileIntents.id, intent.id));
-            }
-            yield* tx
-              .update(pipelineRuns)
-              .set({ compileIntentId: intent.id, updatedAt: sql`now()` })
-              .where(and(eq(pipelineRuns.id, runId), eq(pipelineRuns.vaultId, vaultId)));
+            const intent = yield* queueCompile(tx, vaultId, jobId);
+            const runId = intent.runId ?? jobId;
+            yield* linkRunToIntent(tx, runId, intent.id);
             if (insertedRun && runId !== jobId) {
               yield* tx.delete(pipelineRuns).where(eq(pipelineRuns.id, jobId));
             }
