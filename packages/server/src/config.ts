@@ -31,17 +31,11 @@ export type AppConfigShape = {
   readonly reduceModel: string;
   readonly renderModel: string;
   readonly extractTemperature: Option.Option<number>;
-  readonly mapTemperature: Option.Option<number>;
-  readonly reduceTemperature: Option.Option<number>;
   readonly renderTemperature: Option.Option<number>;
   readonly renderReasoningEffort: Option.Option<ReasoningEffort>;
   readonly compileEnrichConcurrency: number;
   readonly compileWriteConcurrency: number;
   readonly compileEmbedConcurrency: number;
-  readonly compilePartitionTargetTokens: number;
-  readonly compilePartitionMinFactor: number;
-  readonly compilePartitionMaxFactor: number;
-  readonly compilePremergeJaccardThreshold: number;
   readonly compileDeriveRelatedLimit: number;
   readonly pipelineConcurrency: number;
   readonly embeddingModel: string;
@@ -73,8 +67,16 @@ export class AppConfig extends Context.Service<AppConfig, AppConfigShape>()(
 const nonEmptyString = (name: string) => Config.schema(Schema.NonEmptyString, name);
 const positiveInt = (name: string) =>
   Config.schema(Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))), name);
-const positiveNumber = (name: string) =>
-  Config.schema(Schema.Number.pipe(Schema.check(Schema.isGreaterThan(0))), name);
+const commaList = (name: string, fallback: string) =>
+  nonEmptyString(name).pipe(
+    Config.withDefault(fallback),
+    Config.map((raw) =>
+      raw
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0),
+    ),
+  );
 const samplingTemperature = (name: string, fallback: Option.Option<number>) =>
   Config.option(
     Config.schema(
@@ -111,15 +113,7 @@ const appConfig = Config.all({
   jwtRefreshExpiryDays: positiveInt("JWT_REFRESH_EXPIRY_DAYS").pipe(Config.withDefault(60)),
   authCodeExpiryMinutes: positiveInt("AUTH_CODE_EXPIRY_MINUTES").pipe(Config.withDefault(10)),
   webauthnRpId: nonEmptyString("WEBAUTHN_RP_ID").pipe(Config.withDefault("localhost")),
-  webauthnOrigins: nonEmptyString("WEBAUTHN_ORIGINS").pipe(
-    Config.withDefault("http://localhost:5173"),
-    Config.map((raw) =>
-      raw
-        .split(",")
-        .map((origin) => origin.trim())
-        .filter((origin) => origin.length > 0),
-    ),
-  ),
+  webauthnOrigins: commaList("WEBAUTHN_ORIGINS", "http://localhost:5173"),
   webauthnRpName: nonEmptyString("WEBAUTHN_RP_NAME").pipe(Config.withDefault("Great Minds")),
   resendApiKey: Config.option(redactedNonEmpty("RESEND_API_KEY")),
   resendFromEmail: Config.option(nonEmptyString("RESEND_FROM_EMAIL")),
@@ -140,15 +134,7 @@ const appConfig = Config.all({
     Config.withDefault("https://api.parallel.ai/v1beta/search"),
   ),
   queryModel: nonEmptyString("QUERY_MODEL").pipe(Config.withDefault("z-ai/glm-5.2")),
-  queryFallbackModels: nonEmptyString("QUERY_FALLBACK_MODELS").pipe(
-    Config.withDefault("deepseek/deepseek-v3.2"),
-    Config.map((raw) =>
-      raw
-        .split(",")
-        .map((model) => model.trim())
-        .filter((model) => model.length > 0),
-    ),
-  ),
+  queryFallbackModels: commaList("QUERY_FALLBACK_MODELS", "deepseek/deepseek-v3.2"),
   extractModel: nonEmptyString("EXTRACT_MODEL").pipe(Config.withDefault("deepseek/deepseek-v3.2")),
   mapModel: nonEmptyString("MAP_MODEL").pipe(Config.withDefault("deepseek/deepseek-v3.2")),
   reduceModel: nonEmptyString("REDUCE_MODEL").pipe(
@@ -156,8 +142,6 @@ const appConfig = Config.all({
   ),
   renderModel: nonEmptyString("RENDER_MODEL").pipe(Config.withDefault(DEFAULT_RENDER_MODEL)),
   extractTemperature: samplingTemperature("EXTRACT_TEMPERATURE", Option.some(0.2)),
-  mapTemperature: samplingTemperature("MAP_TEMPERATURE", Option.some(0.3)),
-  reduceTemperature: samplingTemperature("REDUCE_TEMPERATURE", Option.none()),
   renderTemperature: samplingTemperature("RENDER_TEMPERATURE", Option.some(0.3)),
   renderReasoningEffort: Config.option(
     Config.literals(["none", "low", "high", "max"] as const, "RENDER_REASONING_EFFORT"),
@@ -172,18 +156,6 @@ const appConfig = Config.all({
   compileEnrichConcurrency: positiveInt("COMPILE_ENRICH_CONCURRENCY").pipe(Config.withDefault(20)),
   compileWriteConcurrency: positiveInt("COMPILE_WRITE_CONCURRENCY").pipe(Config.withDefault(3)),
   compileEmbedConcurrency: positiveInt("COMPILE_EMBED_CONCURRENCY").pipe(Config.withDefault(1)),
-  compilePartitionTargetTokens: positiveInt("COMPILE_PARTITION_TARGET_TOKENS").pipe(
-    Config.withDefault(100_000),
-  ),
-  compilePartitionMinFactor: positiveNumber("COMPILE_PARTITION_MIN_FACTOR").pipe(
-    Config.withDefault(0.3),
-  ),
-  compilePartitionMaxFactor: positiveNumber("COMPILE_PARTITION_MAX_FACTOR").pipe(
-    Config.withDefault(1.5),
-  ),
-  compilePremergeJaccardThreshold: positiveNumber("COMPILE_PREMERGE_JACCARD_THRESHOLD").pipe(
-    Config.withDefault(0.8),
-  ),
   compileDeriveRelatedLimit: positiveInt("COMPILE_DERIVE_RELATED_LIMIT").pipe(
     Config.withDefault(20),
   ),
@@ -191,24 +163,8 @@ const appConfig = Config.all({
   embeddingModel: nonEmptyString("EMBEDDING_MODEL").pipe(
     Config.withDefault("qwen/qwen3-embedding-8b"),
   ),
-  embeddingProviders: nonEmptyString("EMBEDDING_PROVIDERS").pipe(
-    Config.withDefault("deepinfra,nebius"),
-    Config.map((raw) =>
-      raw
-        .split(",")
-        .map((provider) => provider.trim())
-        .filter((provider) => provider.length > 0),
-    ),
-  ),
-  corsOrigins: nonEmptyString("CORS_ORIGINS").pipe(
-    Config.withDefault("http://localhost:5173"),
-    Config.map((raw) =>
-      raw
-        .split(",")
-        .map((origin) => origin.trim())
-        .filter((origin) => origin.length > 0),
-    ),
-  ),
+  embeddingProviders: commaList("EMBEDDING_PROVIDERS", "deepinfra,nebius"),
+  corsOrigins: commaList("CORS_ORIGINS", "http://localhost:5173"),
   publicWebUrl: Config.url("PUBLIC_WEB_URL").pipe(
     Config.withDefault(new URL("http://localhost:5173")),
   ),

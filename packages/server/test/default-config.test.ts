@@ -48,8 +48,6 @@ describe("server config defaults", () => {
   it("sends compile temperatures only to stages whose default models accept them", async () => {
     const defaults = await loadConfig({});
     expect(defaults.extractTemperature).toEqual(Option.some(0.2));
-    expect(defaults.mapTemperature).toEqual(Option.some(0.3));
-    expect(defaults.reduceTemperature).toEqual(Option.none());
     expect(defaults.renderTemperature).toEqual(Option.some(0.3));
 
     const overridden = await loadConfig({ EXTRACT_TEMPERATURE: "none", RENDER_TEMPERATURE: "0.4" });
