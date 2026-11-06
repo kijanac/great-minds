@@ -1,7 +1,7 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
-import { newUuid } from "$lib/ids";
+import { newUuid } from "@great-minds/client";
 
 export type {
   WithElementRef,

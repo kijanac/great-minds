@@ -15,7 +15,7 @@
   import { run } from "$lib/api/app";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
-  import { newUuid } from "$lib/ids";
+  import { newUuid } from "@great-minds/client";
   import type { DroppedFile } from "$lib/types";
 
   const SUPPORTED_UPLOAD_EXTS = new Set([

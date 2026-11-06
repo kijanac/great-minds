@@ -1,40 +1,7 @@
 import type { HastNode } from "$lib/markdown-plugins";
+import { citationPath, citationsOf } from "@great-minds/client";
 
-export interface Citation {
-  n: number;
-  label: string;
-  href: string;
-  path: string;
-  kind: "article" | "source";
-}
-
-const LINK = /\[([^\]]+)\]\(((?:raw|wiki)\/[^)\s]+)\)/g;
-
-export const citationPath = (href: string) => {
-  const path = href.split("#", 1)[0] ?? href;
-  try {
-    return decodeURI(path);
-  } catch {
-    return path;
-  }
-};
-
-export function citationsOf(markdown: string): Citation[] {
-  const seen = new Map<string, Citation>();
-  for (const match of markdown.matchAll(LINK)) {
-    const href = match[2] ?? "";
-    const path = citationPath(href);
-    if (seen.has(path)) continue;
-    seen.set(path, {
-      n: seen.size + 1,
-      label: (match[1] ?? "").trim(),
-      href,
-      path,
-      kind: path.startsWith("wiki/") ? "article" : "source",
-    });
-  }
-  return [...seen.values()];
-}
+export { citationsOf, type Citation } from "@great-minds/client";
 
 export function numberCitations(tree: HastNode, markdown: string): HastNode {
   const numbers = new Map(citationsOf(markdown).map((citation) => [citation.path, citation.n]));

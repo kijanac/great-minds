@@ -2,17 +2,23 @@ import {
   JobProgressSnapshot,
   ReplySnapshot,
   isReplyPending,
+  type ConversationKind,
+  type CreateReplyRequest,
+  type OriginScope,
+  type SessionId,
+  type SessionOrigin,
   type Uuid,
   type Vault,
 } from "@great-minds/domain";
 import { Effect, Stream } from "effect";
 
+import { newUuid } from "./ids.ts";
 import type { Api } from "./runtime.ts";
 import { followSnapshots } from "./sse.ts";
 
 const VAULT_PAGE = 50;
 
-export const jobFinished = (snapshot: JobProgressSnapshot) =>
+const jobFinished = (snapshot: JobProgressSnapshot) =>
   (snapshot.job_status !== "pending" && snapshot.job_status !== "running") ||
   snapshot.phase_status === "failed" ||
   (snapshot.phase === "publish" && snapshot.phase_status === "completed");
@@ -45,3 +51,36 @@ export const allVaults = (api: Api) =>
     }
     return { items, roles };
   });
+
+export type ReplyConversation =
+  | { readonly kind: "existing"; readonly id: SessionId }
+  | {
+      readonly kind: "new";
+      readonly conversationKind: ConversationKind;
+      readonly idempotencyKey: string;
+      readonly origin?: SessionOrigin;
+    };
+
+export const replyRequest = (input: {
+  readonly question: string;
+  readonly exchangeId: Uuid;
+  readonly originScope: OriginScope;
+  readonly originPath?: string;
+  readonly conversation: ReplyConversation;
+}): CreateReplyRequest => ({
+  reply_id: newUuid(),
+  exchange_id: input.exchangeId,
+  question: input.question,
+  ...(input.originPath === undefined ? {} : { origin_path: input.originPath }),
+  origin_scope: input.originScope,
+  session:
+    input.conversation.kind === "existing"
+      ? { kind: "existing", id: input.conversation.id }
+      : {
+          kind: "new",
+          conversation_kind: input.conversation.conversationKind,
+          idempotency_key: input.conversation.idempotencyKey,
+          origin_scope: input.originScope,
+          ...(input.conversation.origin === undefined ? {} : { origin: input.conversation.origin }),
+        },
+});

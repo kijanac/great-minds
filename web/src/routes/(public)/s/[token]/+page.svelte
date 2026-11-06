@@ -4,7 +4,7 @@
 
   import { resolveShare } from "$lib/api/shares";
   import AnswerBlock from "$lib/components/answer-block.svelte";
-  import { newUuid } from "$lib/ids";
+  import { newUuid } from "@great-minds/client";
   import type { ThreadLike } from "$lib/types";
 
   const token = $derived(page.params.token);

@@ -5,12 +5,10 @@ import {
   type PipelineRunFilter,
   type Uuid,
 } from "@great-minds/domain";
-
-import { newUuid } from "../ids";
+import { followJob as followJobSnapshots, newUuid } from "@great-minds/client";
 
 import { api, run, stream } from "./app";
 import { selectedVault } from "./selected-vault";
-import { followJob as followJobSnapshots } from "@great-minds/client";
 
 export type { JobProgressSnapshot, JobResponse };
 
