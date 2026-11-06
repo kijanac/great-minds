@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { plural } from "@great-minds/client";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
 
   import type { SourceRef, ThinkingBlock } from "$lib/types";
@@ -24,9 +25,6 @@
   const sources = $derived(reads("raw"));
   const current = $derived(steps.at(-1));
   const readSoFar = $derived(articles + sources);
-
-  const plural = (count: number, word: string) =>
-    `${count} ${word}${count === 1 ? "" : "s"}`;
 
   const filterLabel = (label: string) =>
     /^contains: (.*?)(, sort:.*)?$/.exec(label)?.[1] ?? label;

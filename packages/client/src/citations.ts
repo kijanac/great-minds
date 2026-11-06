@@ -9,7 +9,8 @@ export interface Citation {
 const LINK = /\[([^\]]+)\]\(((?:raw|wiki)\/[^)\s]+)\)/g;
 
 export const citationPath = (href: string) => {
-  const path = href.split("#", 1)[0] ?? href;
+  const hash = href.indexOf("#");
+  const path = hash === -1 ? href : href.slice(0, hash);
   try {
     return decodeURI(path);
   } catch {

@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Redacted } from "effect";
 import { Argument, Command, Flag, Prompt } from "effect/unstable/cli";
 
 import {
@@ -17,7 +17,7 @@ const vaultFlag = Flag.string("vault").pipe(
   Flag.optional,
 );
 const jsonFlag = Flag.boolean("json").pipe(
-  Flag.withDescription("Print the API's own response as JSON"),
+  Flag.withDescription("Print machine-readable JSON instead of text"),
   Flag.withDefault(false),
 );
 
@@ -31,13 +31,15 @@ const loginCommand = Command.make(
     login({
       email: input.email,
       url: input.url,
-      readCode: Prompt.run(Prompt.text({ message: "Code from the email" })),
+      readCode: Prompt.run(Prompt.hidden({ message: "Code from the email" })).pipe(
+        Effect.map(Redacted.value),
+      ),
     }),
 ).pipe(
   Command.withDescription("Sign in with an emailed code and save an API key on this computer"),
 );
 
-const logoutCommand = Command.make("logout", {}, () => logout).pipe(
+const logoutCommand = Command.make("logout", {}, logout).pipe(
   Command.withDescription("Revoke this computer's API key and forget it"),
 );
 
@@ -68,7 +70,11 @@ const askCommand = Command.make(
     json: jsonFlag,
   },
   ask,
-).pipe(Command.withDescription("Ask the vault a question; the answer streams in as it is written"));
+).pipe(
+  Command.withDescription(
+    "Ask the vault a question; shows the agent's steps as it works, then the answer and its sources",
+  ),
+);
 
 const updateCommand = Command.make("update", { vault: vaultFlag, json: jsonFlag }, update).pipe(
   Command.withDescription("Start an Update and follow it to the end"),
@@ -78,7 +84,10 @@ const runsCommand = Command.make(
   "runs",
   {
     vault: vaultFlag,
-    limit: Flag.integer("limit").pipe(Flag.withDefault(20)),
+    limit: Flag.integer("limit").pipe(
+      Flag.withDescription("How many runs to list (1-200)"),
+      Flag.withDefault(20),
+    ),
     json: jsonFlag,
   },
   listRuns,
@@ -94,7 +103,7 @@ const runCommand = Command.make(
   followExistingRun,
 ).pipe(Command.withDescription("Follow a run until it ends and show what it changed"));
 
-export const gm = Command.make("gm").pipe(
+const gm = Command.make("gm").pipe(
   Command.withDescription("Great Minds from the command line"),
   Command.withSubcommands([
     loginCommand,
@@ -108,7 +117,5 @@ export const gm = Command.make("gm").pipe(
   ]),
 );
 
-export const cliVersion = "0.1.0";
-
-export const runGm = (args: readonly string[]) =>
-  Command.runWith(gm, { version: cliVersion })(args).pipe(Effect.asVoid);
+export const runGm = (args: readonly string[], version: string) =>
+  Command.runWith(gm, { version })(args);

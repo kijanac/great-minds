@@ -5,13 +5,10 @@ import {
   type UserSuggestionResult,
 } from "@great-minds/domain";
 import { Effect } from "effect";
+import { errorMessage, newUuid, withApiErrors } from "@great-minds/client";
 import { HttpBody, HttpClientRequest } from "effect/unstable/http";
 
-import { newUuid } from "@great-minds/client";
-
 import { api, externalHttp, http, run } from "./app";
-import { errorMessage } from "@great-minds/client";
-import { withApiErrors } from "@great-minds/client";
 import { selectedVault } from "./selected-vault";
 
 export type { FileIngestBatch, UserSuggestionResult };

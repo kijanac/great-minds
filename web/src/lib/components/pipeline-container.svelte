@@ -9,7 +9,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import { fly } from "svelte/transition";
 
-  import { errorMessage } from "@great-minds/client";
+  import { errorMessage, newUuid } from "@great-minds/client";
   import {
     continueFileIngest,
     getFileIngestBatch,
@@ -33,7 +33,6 @@
   import { Button } from "$lib/components/ui/button";
   import { useJobSSE } from "$lib/hooks/use-job-sse.svelte";
   import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
-  import { newUuid } from "@great-minds/client";
 
   interface FileUploadState {
     uploadFiles?: readonly HashedFile[];

@@ -2,14 +2,7 @@ export { AuthClient, AuthMiddlewareClientLive, makeAuthenticate } from "./auth-m
 export { citationPath, citationsOf, type Citation } from "./citations.ts";
 export { domainErrorDetail, errorMessage } from "./errors.ts";
 export { newUuid } from "./ids.ts";
-export {
-  allVaults,
-  followJob,
-  followReply,
-  jobFinished,
-  replyRequest,
-  type ReplyConversation,
-} from "./operations.ts";
+export { allVaults, followJob, followReply, jobFinished, replyRequest } from "./operations.ts";
 export {
   changedNothing,
   isFirstBuild,

@@ -1,7 +1,9 @@
 import { homedir } from "node:os";
 
 import { Uuid } from "@great-minds/domain";
-import { Config, Context, Data, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
+import { Config, Context, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
+
+import { CredentialsUnreadable, NotSignedIn } from "./errors.ts";
 
 export const DEFAULT_API_URL = "https://great-minds-api.onrender.com/v1";
 
@@ -13,27 +15,21 @@ export const SavedCredentials = Schema.Struct({
 });
 export type SavedCredentials = typeof SavedCredentials.Type;
 
-export type Login = {
+export type SignedIn = {
   readonly apiUrl: string;
   readonly apiKey: string;
   readonly vault: Option.Option<string>;
-  readonly saved: Option.Option<SavedCredentials>;
 };
-
-export class NotSignedIn extends Data.TaggedError("NotSignedIn")<{
-  readonly message: string;
-}> {}
-
-export class CredentialsUnreadable extends Data.TaggedError("CredentialsUnreadable")<{
-  readonly message: string;
-}> {}
 
 export interface CredentialsShape {
   readonly path: string;
+  readonly keyFromEnvironment: boolean;
+  readonly vaultFromEnvironment: boolean;
   readonly load: Effect.Effect<Option.Option<SavedCredentials>, CredentialsUnreadable>;
   readonly save: (credentials: SavedCredentials) => Effect.Effect<void>;
   readonly clear: Effect.Effect<void>;
-  readonly login: Effect.Effect<Login, NotSignedIn | CredentialsUnreadable>;
+  readonly apiUrl: (flag: Option.Option<string>, saved: Option.Option<SavedCredentials>) => string;
+  readonly signedIn: Effect.Effect<SignedIn, NotSignedIn | CredentialsUnreadable>;
 }
 
 export class Credentials extends Context.Service<Credentials, CredentialsShape>()(
@@ -42,27 +38,27 @@ export class Credentials extends Context.Service<Credentials, CredentialsShape>(
 
 const decodeSaved = Schema.decodeUnknownEffect(Schema.fromJsonString(SavedCredentials));
 const encodeSaved = Schema.encodeSync(Schema.fromJsonString(SavedCredentials));
+const setting = (name: string) => Config.option(Config.nonEmptyString(name));
 
 const makeCredentials = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const configDir = yield* Config.option(Config.string("GM_CONFIG_DIR"));
-  const envKey = yield* Config.option(Config.string("GM_API_KEY"));
-  const envUrl = yield* Config.option(Config.string("GM_API_URL"));
-  const envVault = yield* Config.option(Config.string("GM_VAULT"));
-  const directory = Option.getOrElse(configDir, () =>
-    path.join(homedir(), ".config", "great-minds"),
+  const configDir = yield* setting("GM_CONFIG_DIR");
+  const envKey = yield* setting("GM_API_KEY");
+  const envUrl = yield* setting("GM_API_URL");
+  const envVault = yield* setting("GM_VAULT");
+  const directory = path.resolve(
+    Option.getOrElse(configDir, () => path.join(homedir(), ".config", "great-minds")),
   );
   const file = path.join(directory, "credentials.json");
 
   const load = Effect.gen(function* () {
-    if (!(yield* fs.exists(file).pipe(Effect.orDie))) return Option.none();
+    const exists = yield* fs.exists(file).pipe(Effect.orDie);
+    if (!exists) return Option.none();
     const text = yield* fs.readFileString(file).pipe(Effect.orDie);
     return Option.some(
       yield* decodeSaved(text).pipe(
-        Effect.mapError(
-          () => new CredentialsUnreadable({ message: `cannot read ${file}: run gm login again` }),
-        ),
+        Effect.mapError(() => new CredentialsUnreadable({ path: file })),
       ),
     );
   });
@@ -70,31 +66,52 @@ const makeCredentials = Effect.gen(function* () {
   const save = (credentials: SavedCredentials) =>
     Effect.gen(function* () {
       yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 });
-      yield* fs.writeFileString(file, `${encodeSaved(credentials)}\n`, { mode: 0o600 });
-      yield* fs.chmod(file, 0o600);
+      yield* fs.chmod(directory, 0o700);
+      const temporary = path.join(directory, `credentials.${crypto.randomUUID()}.tmp`);
+      yield* fs.writeFileString(temporary, `${encodeSaved(credentials)}\n`, {
+        flag: "wx",
+        mode: 0o600,
+      });
+      yield* fs.rename(temporary, file);
     }).pipe(Effect.orDie);
 
   const clear = fs.remove(file, { force: true }).pipe(Effect.orDie);
 
-  const login = Effect.gen(function* () {
+  const apiUrl = (flag: Option.Option<string>, saved: Option.Option<SavedCredentials>) =>
+    Option.getOrElse(
+      Option.orElse(
+        Option.orElse(flag, () => envUrl),
+        () => Option.map(saved, (found) => found.api_url),
+      ),
+      () => DEFAULT_API_URL,
+    );
+
+  const signedIn = Effect.gen(function* () {
     const saved = yield* load;
-    const apiKey = Option.orElse(envKey, () => Option.map(saved, (found) => found.api_key));
-    if (Option.isNone(apiKey))
-      return yield* new NotSignedIn({ message: "not signed in: run gm login, or set GM_API_KEY" });
+    const url = apiUrl(Option.none(), saved);
+    const sameServer = Option.filter(saved, (found) => found.api_url === url);
+    const apiKey = Option.orElse(envKey, () => Option.map(sameServer, (found) => found.api_key));
+    if (Option.isNone(apiKey)) return yield* new NotSignedIn();
+    const savedVault = Option.isSome(envKey)
+      ? Option.none()
+      : Option.flatMap(sameServer, (found) => Option.fromNullishOr(found.vault_id));
     return {
-      apiUrl: Option.getOrElse(
-        Option.orElse(envUrl, () => Option.map(saved, (found) => found.api_url)),
-        () => DEFAULT_API_URL,
-      ),
+      apiUrl: url,
       apiKey: apiKey.value,
-      vault: Option.orElse(envVault, () =>
-        Option.flatMap(saved, (found) => Option.fromNullishOr(found.vault_id)),
-      ),
-      saved,
-    } satisfies Login;
+      vault: Option.orElse(envVault, () => savedVault),
+    } satisfies SignedIn;
   });
 
-  return { path: file, load, save, clear, login } satisfies CredentialsShape;
+  return {
+    path: file,
+    keyFromEnvironment: Option.isSome(envKey),
+    vaultFromEnvironment: Option.isSome(envVault),
+    load,
+    save,
+    clear,
+    apiUrl,
+    signedIn,
+  } satisfies CredentialsShape;
 });
 
 export const CredentialsLive = Layer.effect(Credentials, makeCredentials);
