@@ -12,6 +12,7 @@ import {
   ReplySnapshot as ReplySnapshotSchema,
   type ReplySource,
   ReplySource as ReplySourceSchema,
+  type ReplySnapshot,
   type ReplySseEvent,
   ServiceUnavailable,
   Uuid,
@@ -266,6 +267,11 @@ type RepliesServiceShape = {
     vaultId: Uuid,
     replyId: Uuid,
   ) => Effect.Effect<Stream.Stream<ReplySseEvent>, Forbidden | NotFound>;
+  readonly settled: (
+    userId: Uuid,
+    vaultId: Uuid,
+    replyId: Uuid,
+  ) => Effect.Effect<ReplySnapshot, Forbidden | NotFound>;
   readonly prepareStep: (replyId: Uuid) => Effect.Effect<ReplyStepControl>;
   readonly modelStep: (replyId: Uuid, cursor: number) => Effect.Effect<ReplyStepControl>;
   readonly toolStep: (replyId: Uuid, cursor: number) => Effect.Effect<ReplyStepControl>;
@@ -928,6 +934,18 @@ export const RepliesServiceLive = Layer.effect(
             },
             pollIntervalMs,
           );
+        }),
+      settled: (userId, vaultId, replyId) =>
+        Effect.gen(function* () {
+          yield* access.requireMember(userId, vaultId);
+          while (true) {
+            const row = yield* readReply(vaultId, replyId);
+            if (row === undefined || row.userId !== userId)
+              return yield* new NotFound({ detail: "Reply not found" });
+            const snapshot = replySnapshot(row);
+            if (!isReplyPending(snapshot.status)) return snapshot;
+            yield* Effect.sleep(pollIntervalMs);
+          }
         }),
       prepareStep,
       modelStep,

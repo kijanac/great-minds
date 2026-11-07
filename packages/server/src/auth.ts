@@ -16,7 +16,13 @@ import {
   Unauthorized,
   Uuid,
 } from "@great-minds/domain";
-import type { ApiKey, ApiKeyWithSecret, AuthContext, TokenPair } from "@great-minds/domain";
+import type {
+  ApiKey,
+  ApiKeyWithSecret,
+  AuthContext,
+  Permission,
+  TokenPair,
+} from "@great-minds/domain";
 import { and, asc, desc, eq, gt, isNull, lt, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer, Option, Result, Schema } from "effect";
 
@@ -583,3 +589,14 @@ export const SignInCodeRetentionLoopLive = Layer.effectDiscard(
     }),
   ),
 );
+
+export const keyRefusal = (current: AuthContext, permission: Permission) => {
+  const scope = current.key_scope;
+  if (scope === null) return undefined;
+  if (permission === "account")
+    return "API keys can't do this. Sign in to Great Minds in a browser instead.";
+  if (permission === "ask" && !scope.can_ask) return "This API key can't ask questions.";
+  if (permission === "change" && !scope.can_change)
+    return "This API key can't add documents or make changes.";
+  return undefined;
+};
