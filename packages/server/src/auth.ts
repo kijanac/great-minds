@@ -32,7 +32,7 @@ import { AppConfig } from "./config.ts";
 import { generateApiKey, generateAuthCode, generateRefreshToken, sha256Hex } from "./crypto.ts";
 import { Mailer } from "./mailer.ts";
 import { TokenService } from "./tokens.ts";
-import { VaultsService } from "./vaults.ts";
+import { ensureDefaultVault } from "./vaults.ts";
 
 type UserRow = typeof users.$inferSelect;
 type ApiKeyRow = typeof apiKeys.$inferSelect;
@@ -215,7 +215,6 @@ export const AuthServiceLive = Layer.effect(
     const clock = yield* ClockService;
     const mailer = yield* Mailer;
     const tokens = yield* TokenService;
-    const vaultsService = yield* VaultsService;
 
     const resolveApiKey = (rawKey: string) =>
       db
@@ -294,7 +293,7 @@ export const AuthServiceLive = Layer.effect(
             return id;
           }),
         );
-        yield* vaultsService.ensureDefaultForUser(userId, email);
+        yield* ensureDefaultVault(db, userId, email);
         return userId;
       });
 
@@ -438,7 +437,7 @@ export const AuthServiceLive = Layer.effect(
             return yield* new Unauthorized({ detail: result.failure });
           }
           const pair = yield* issueTokenPair(result.success);
-          yield* vaultsService.ensureDefaultForUser(result.success, email);
+          yield* ensureDefaultVault(db, result.success, email);
           return pair;
         }),
       refresh: (refreshToken) =>
