@@ -3,7 +3,6 @@ import { basename, join } from "node:path";
 
 import {
   allVaults,
-  citationsOf,
   errorMessage,
   fingerprint,
   manifestOf,
@@ -304,7 +303,7 @@ export const ask = (input: {
       return yield* new ReplyNotCompleted({ status: reply.status, error: reply.error });
     if (!input.json) {
       yield* Console.log(reply.answer.trim());
-      const cited = citationsOf(reply.answer);
+      const cited = reply.citations;
       if (cited.length > 0) {
         yield* Console.log("");
         yield* Console.log("Sources:");

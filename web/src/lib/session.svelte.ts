@@ -197,6 +197,7 @@ export class Session {
         query: attempt.payload.question,
         thinking: [],
         answer: "",
+        citations: [],
         btws: [],
         status: "running",
         version: null,
@@ -256,6 +257,7 @@ export class Session {
     this.#updateExchange(exchangeId, {
       thinking: [],
       answer: "",
+        citations: [],
       status: "running",
       version: null,
       error: null,

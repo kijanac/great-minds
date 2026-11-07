@@ -338,6 +338,7 @@
             <div data-answer>
               <AnswerBlock
                 text={exchange.answer}
+                citations={exchange.citations}
                 exchangeId={exchange.id}
                 btws={exchange.btws}
                 {streaming}

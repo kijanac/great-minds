@@ -1,4 +1,4 @@
-import type { ReplySource, SessionExchangeEvent, Uuid } from "@great-minds/domain";
+import type { Citation, ReplySource, SessionExchangeEvent, Uuid } from "@great-minds/domain";
 import type { UnmentionedLink } from "$lib/api/lint";
 import type { SessionSummary } from "$lib/api/sessions";
 import type { SourceDocumentSummary, SourceTypeFacet } from "$lib/api/sources";
@@ -24,6 +24,7 @@ export interface Exchange {
   query: string;
   thinking: readonly ThinkingBlock[];
   answer: string;
+  citations: readonly Citation[];
   btws: Btw[];
   replyId?: Uuid;
   error?: string | null;

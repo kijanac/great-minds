@@ -37,6 +37,7 @@ const reply: ReplySnapshot = {
   session_id: SessionId.make(id),
   status: "running",
   answer: "Partial answer",
+  citations: [],
   sources: [],
   error: null,
   version: 1,
