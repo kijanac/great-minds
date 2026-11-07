@@ -91,13 +91,51 @@ const migrateCommand = Command.make("migrate", {}, () =>
   Effect.flatMap(Config.Redacted("DATABASE_URL"), migrate),
 ).pipe(Command.withDescription("Apply database migrations and exit (needs only DATABASE_URL)"));
 
-const usersCreateCommand = Command.make("create", { email: emailFlag }, ({ email }) =>
+const sponsoredFlag = Flag.Boolean("sponsored").pipe(
+  Flag.withDescription("Let the account use this server's models"),
+  Flag.withDefault(false),
+);
+
+const usersCreateCommand = Command.make(
+  "create",
+  { email: emailFlag, sponsored: sponsoredFlag },
+  ({ email, sponsored }) =>
+    Effect.gen(function* () {
+      const auth = yield* AuthService;
+      const userId = yield* auth.ensureUser(email);
+      if (sponsored) yield* auth.setSponsored(userId, true);
+      yield* Console.log(`${email} ${userId}`);
+    }).pipe(Effect.provide(AdminLive)),
+).pipe(Command.withDescription("Create a user (if new) with their default vault"));
+
+const sponsorCommand = (sponsored: boolean) =>
+  Command.make(sponsored ? "sponsor" : "unsponsor", { email: emailFlag }, ({ email }) =>
+    Effect.gen(function* () {
+      const auth = yield* AuthService;
+      yield* auth.setSponsored(yield* existingUser(email), sponsored);
+      yield* Console.log(
+        sponsored
+          ? `${email} can now use this server's models.`
+          : `${email} can no longer use this server's models.`,
+      );
+    }).pipe(Effect.provide(AdminLive)),
+  ).pipe(
+    Command.withDescription(
+      sponsored
+        ? "Let a user's actions use this server's models (asking, search, Updates, adding documents)"
+        : "Stop a user's actions from using this server's models",
+    ),
+  );
+
+const usersListCommand = Command.make("list", {}, () =>
   Effect.gen(function* () {
     const auth = yield* AuthService;
-    const userId = yield* auth.ensureUser(email);
-    yield* Console.log(`${email} ${userId}`);
+    for (const user of yield* auth.listUsers())
+      yield* Console.log(
+        `${user.sponsored ? "sponsored  " : "-          "}${user.createdAt.toISOString().slice(0, 10)}  ${user.email}`,
+      );
   }).pipe(Effect.provide(AdminLive)),
-).pipe(Command.withDescription("Create a user (if new) with their default vault"));
+).pipe(Command.withDescription("List users and whether each is sponsored"));
 
 const usersCodeCommand = Command.make("code", { email: emailFlag }, ({ email }) =>
   Effect.gen(function* () {
@@ -121,11 +159,14 @@ const keysCreateCommand = Command.make(
       Flag.withDescription("Name shown in Settings"),
       Flag.withDefault("created on the server"),
     ),
+    sponsored: sponsoredFlag,
   },
-  ({ email, label }) =>
+  ({ email, label, sponsored }) =>
     Effect.gen(function* () {
       const auth = yield* AuthService;
-      const key = yield* auth.createApiKey(yield* auth.ensureUser(email), label);
+      const userId = yield* auth.ensureUser(email);
+      if (sponsored) yield* auth.setSponsored(userId, true);
+      const key = yield* auth.createApiKey(userId, label);
       yield* Console.log(key.raw_key);
       yield* Console.error(`API key "${key.label}" for ${email} (${key.id}). Shown only once.`);
     }).pipe(Effect.provide(AdminLive)),
@@ -165,7 +206,13 @@ const greatMinds = Command.make("great-minds").pipe(
     migrateCommand,
     Command.make("users").pipe(
       Command.withDescription("Manage users"),
-      Command.withSubcommands([usersCreateCommand, usersCodeCommand]),
+      Command.withSubcommands([
+        usersCreateCommand,
+        usersCodeCommand,
+        usersListCommand,
+        sponsorCommand(true),
+        sponsorCommand(false),
+      ]),
     ),
     Command.make("keys").pipe(
       Command.withDescription("Manage API keys"),

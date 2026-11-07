@@ -232,7 +232,9 @@ const insertUser = (userId: Uuid, email: string) =>
     Effect.gen(function* () {
       const db = yield* Database;
       yield* db
-        .query((d) => d.insert(users).values({ id: userId, email, createdAt: initialTime }))
+        .query((d) =>
+          d.insert(users).values({ id: userId, email, createdAt: initialTime, sponsored: true }),
+        )
         .pipe(Effect.orDie);
     }),
   );
@@ -311,9 +313,12 @@ const seedFixtures = async (webSearch: boolean) => {
       const db = yield* Database;
       yield* db
         .query((d) =>
-          d
-            .insert(users)
-            .values({ id: id.alice, email: "alice-query@example.com", createdAt: initialTime }),
+          d.insert(users).values({
+            id: id.alice,
+            email: "alice-query@example.com",
+            createdAt: initialTime,
+            sponsored: true,
+          }),
         )
         .pipe(Effect.orDie);
       yield* db.transaction((tx) =>

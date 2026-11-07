@@ -338,6 +338,7 @@ export const AuthContext = Schema.Struct({
   user_id: Uuid,
   email: Email,
   credential_kind: CredentialKind,
+  sponsored: Schema.Boolean,
   key_scope: Schema.NullOr(Schema.Struct({ key_id: Uuid, ...KeyScope.fields })),
 });
 export type AuthContext = typeof AuthContext.Type;
@@ -2272,6 +2273,23 @@ type ApiGroups =
 export type EndpointName = HttpApiEndpoint.Identifier<HttpApiGroup.Endpoints<ApiGroups>>;
 
 export type Permission = "public" | "read" | "ask" | "change" | "account";
+
+export const modelEndpoints: ReadonlySet<EndpointName> = new Set<EndpointName>([
+  "createReply",
+  "retryReply",
+  "draftVaultHint",
+  "searchVault",
+  "requestCompile",
+  "ingestRaw",
+  "promoteReference",
+  "ingestUserSuggestion",
+  "createFileIngest",
+  "commitFileIngest",
+  "startUrlJob",
+  "retryUrlJob",
+  "reviewProposal",
+  "promoteSessionExchange",
+]);
 
 export const endpointPermissions: { readonly [Name in EndpointName]: Permission } = {
   health: "public",

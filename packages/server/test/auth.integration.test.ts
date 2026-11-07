@@ -1092,6 +1092,33 @@ describe("auth HTTP integration", () => {
     expect(asRecord(expired.body).status).toBe("expired");
   });
 
+  it("lets only sponsored accounts use the server's models", async () => {
+    const pair = await signIn("unsponsored@example.com");
+    const vaultList = asRecord((await api("GET", "/vaults", undefined, pair.access_token)).body);
+    const home = asString(asRecord(asArray(vaultList.items)[0]).id, "vault id");
+    const refusal =
+      "This account isn't sponsored to use this server's models. Ask the person who runs this Great Minds server to sponsor it.";
+
+    expect((await api("GET", `/vaults/${home}`, undefined, pair.access_token)).status).toBe(200);
+    const search = await api("GET", `/vaults/${home}/search?q=%20`, undefined, pair.access_token);
+    expect(search.status).toBe(403);
+    expect(search.body).toMatchObject({ detail: refusal });
+    const update = await api(
+      "POST",
+      `/vaults/${home}/compile`,
+      { job_id: randomUUID() },
+      pair.access_token,
+    );
+    expect(update.status).toBe(403);
+    expect(update.body).toMatchObject({ detail: refusal });
+
+    const user = await userByEmail("unsponsored@example.com");
+    await runDb(Effect.flatMap(AuthService, (auth) => auth.setSponsored(user.id, true)));
+    const sponsored = await api("GET", `/vaults/${home}/search?q=%20`, undefined, pair.access_token);
+    expect(sponsored.status).toBe(200);
+    expect(sponsored.body).toEqual([]);
+  });
+
   it("serves MCP at /v1/mcp to API keys, within each key's vaults and permissions", async () => {
     const pair = await signIn("mcp@example.com");
     const vaultList = asRecord((await api("GET", "/vaults", undefined, pair.access_token)).body);

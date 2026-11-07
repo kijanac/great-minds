@@ -14,7 +14,7 @@ import { Effect, Layer, Schema } from "effect";
 import { McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
-import { AuthService, keyRefusal } from "./auth.ts";
+import { AuthService, keyRefusal, modelRefusal } from "./auth.ts";
 import { AppConfig } from "./config.ts";
 import { DocumentsService } from "./documents.ts";
 import { SessionExportsService } from "./publication/service.ts";
@@ -181,6 +181,8 @@ const toolPermissions: Readonly<Record<string, Permission>> = {
   ask: "ask",
 };
 
+const modelTools: ReadonlySet<string> = new Set(["search_vault", "ask"]);
+
 const newUuid = () => Uuid.make(randomUUID(), { disableChecks: true });
 
 const ToolHandlers = GreatMindsTools.toLayer(
@@ -292,7 +294,10 @@ const ToolHandlers = GreatMindsTools.toLayer(
 
 const KeyPermissions = McpServer.middleware((effect, { target }) =>
   Effect.gen(function* () {
-    const refusal = keyRefusal(yield* CurrentAuth, toolPermissions[target] ?? "account");
+    const current = yield* CurrentAuth;
+    const refusal =
+      keyRefusal(current, toolPermissions[target] ?? "account") ??
+      (modelTools.has(target) ? modelRefusal(current) : undefined);
     if (refusal !== undefined) return yield* new KeyRefused({ message: refusal });
     return yield* effect;
   }),

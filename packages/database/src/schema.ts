@@ -99,6 +99,7 @@ export const users = pgTable(
   {
     id: uuidColumn("id").primaryKey(),
     email: varchar("email", { length: 320 }).notNull(),
+    sponsored: boolean("sponsored").notNull().default(false),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     deletedAt: timestamptz("deleted_at"),
   },
