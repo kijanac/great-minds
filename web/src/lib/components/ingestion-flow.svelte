@@ -62,9 +62,11 @@
   let {
     hasActivePipeline,
     vaultName,
+    locked = false,
   }: {
     hasActivePipeline: boolean;
     vaultName: string;
+    locked?: boolean;
   } = $props();
 
   function isSelectableFile(
@@ -484,15 +486,16 @@
   <!-- svelte-ignore a11y_no_noninteractive_tabindex - the shell is a keyboard button only while collapsed -->
   <div
     role={expanded ? undefined : "button"}
-    tabindex={expanded ? undefined : 0}
+    tabindex={expanded ? undefined : locked ? -1 : 0}
+    aria-disabled={!expanded && locked ? true : undefined}
     aria-label={expanded
       ? "source ingestion"
       : hasActivePipeline
         ? "view active pipeline"
         : "add sources"}
-    onclick={expanded ? undefined : handleCircleClick}
+    onclick={expanded || locked ? undefined : handleCircleClick}
     onkeydown={(event) => {
-      if (!expanded && (event.key === "Enter" || event.key === " ")) {
+      if (!expanded && !locked && (event.key === "Enter" || event.key === " ")) {
         event.preventDefault();
         handleCircleClick();
       }
@@ -500,7 +503,7 @@
     class={`relative h-12 overflow-hidden border border-solid transition-[width,border-radius,border-color,background-color] ease-[cubic-bezier(0.22,1,0.36,1)] duration-[280ms] ${
       expanded
         ? `w-[min(640px,100%)] rounded-sm ${isDragOver ? "border-gold" : "border-gold-dim"} bg-ink-raised`
-        : "w-12 cursor-pointer rounded-[1.5rem] border-transparent bg-transparent delay-[80ms]"
+        : `w-12 rounded-[1.5rem] border-transparent bg-transparent delay-[80ms] ${locked ? "cursor-default opacity-45" : "cursor-pointer"}`
     }`}
   >
     <!-- dashed ring crossfades instead of border-style flipping (not animatable) -->

@@ -20,6 +20,7 @@
   import ShareDialog from "$lib/components/share-dialog.svelte";
   import { Button } from "$lib/components/ui/button";
   import { useActiveJob } from "$lib/hooks/use-active-job.svelte";
+  import { unsponsoredNotice, useMe } from "$lib/hooks/use-me.svelte";
   import { useHealthReport } from "$lib/hooks/use-health-report.svelte";
   import { usePanelCard } from "$lib/hooks/use-panel-card.svelte";
   import { usePanelContent } from "$lib/hooks/use-panel-content.svelte";
@@ -46,6 +47,7 @@
   const vaults = useVaults();
   const health = useHealthReport();
   const activeJob = useActiveJob();
+  const me = useMe();
   const initial = untrack(() => ({
     saved,
     initialQuery,
@@ -229,12 +231,20 @@
                     recentSessions={sessions.data?.items ?? []}
                     sessionsLoading={sessions.isLoading}
                     submissionFailed={session.submission.status === "failed"}
+                    locked={!me.canUseModels}
                     onQueryChange={session.clearSubmissionFailure}
                     onSessionClick={(id) => void goto(`/sessions/${id}`)}
                     onViewAllSessions={() => void goto("/sessions")}
                   />
                 </div>
               </div>
+              {#if !me.canUseModels}
+                <p
+                  class="w-full max-w-[640px] font-mono text-[length:var(--text-chrome)] leading-[1.7] tracking-[0.04em] text-warm-faint"
+                >
+                  {unsponsoredNotice}
+                </p>
+              {/if}
 
               {#if currentVault?.owner_id === auth.userId}
                 <div
@@ -243,6 +253,7 @@
                   <IngestionFlow
                     hasActivePipeline={activeJob.data ?? false}
                     vaultName={currentVault.name}
+                    locked={!me.canUseModels}
                   />
                 </div>
               {/if}

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button } from "$lib/components/ui/button";
+  import { useMe } from "$lib/hooks/use-me.svelte";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import type { WikiArticleOverview } from "$lib/types";
   import { formatShortDate } from "$lib/utils";
@@ -35,6 +36,8 @@
     onReadingRoom: () => void;
     onUpdate: () => void;
   } = $props();
+
+  const me = useMe();
 
   const jump = (id: string) =>
     document.getElementById(id)?.scrollIntoView({ block: "start" });
@@ -76,8 +79,8 @@
         variant="outline"
         size="sm"
         onclick={onUpdate}
-        disabled={updating}
-        class="min-h-9 rounded-sm border-gold-dim font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold uppercase hover:bg-gold/10"
+        disabled={updating || !me.canUseModels}
+        class="min-h-9 rounded-sm disabled:opacity-45 border-gold-dim font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold uppercase hover:bg-gold/10"
       >
         {updating ? "starting…" : "update"}
       </Button>

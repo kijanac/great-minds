@@ -310,6 +310,14 @@ const AuthHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "auth", (han
         yield* auth.revokeApiKey(current.user_id, params.key_id);
       }),
     )
+    .handle("getMe", () =>
+      Effect.map(CurrentAuth, (current) => ({
+        user_id: current.user_id,
+        email: current.email,
+        can_use_models: modelRefusal(current) === undefined,
+        key: current.key_scope,
+      })),
+    )
     .handle("deleteMe", () =>
       asUser(VaultsService, (vaultsService, userId) => vaultsService.deleteAccount(userId)),
     )

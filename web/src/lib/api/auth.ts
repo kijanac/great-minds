@@ -1,5 +1,5 @@
 import { decodeInput, TokenStore } from "@great-minds/client";
-import { Email, type TokenPair } from "@great-minds/domain";
+import { Email, type Me, type TokenPair } from "@great-minds/domain";
 import { Effect } from "effect";
 
 import { api, run } from "./app";
@@ -28,6 +28,10 @@ export function loginWithCode(address: string, code: string): Promise<void> {
 
 export function loginWithTokenPair(tokens: TokenPair): Promise<void> {
   return run(storeSession(tokens));
+}
+
+export function fetchMe(signal?: AbortSignal): Promise<Me> {
+  return run(api.auth.getMe(), { signal });
 }
 
 export function logout(): Promise<void> {

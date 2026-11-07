@@ -3,6 +3,7 @@
   import HealthArticleRow from "$lib/components/health-article-row.svelte";
   import { Alert, AlertTitle } from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
+  import { useMe } from "$lib/hooks/use-me.svelte";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import type {
     UnmentionedLink,
@@ -37,6 +38,8 @@
     onRetry: () => void;
     onBrowseLibrary: () => void;
   } = $props();
+
+  const me = useMe();
 </script>
 
 <main class="mx-auto max-w-[740px] px-4 pt-8 pb-20 md:px-10">
@@ -107,8 +110,8 @@
               variant="outline"
               size="sm"
               onclick={onUpdate}
-              disabled={health.compiling}
-              class="rounded-sm border-gold-dim font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold hover:bg-gold/10"
+              disabled={health.compiling || !me.canUseModels}
+              class="rounded-sm disabled:opacity-45 border-gold-dim font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold hover:bg-gold/10"
             >
               {health.compiling ? "compiling…" : "update now"}
             </Button>
@@ -203,6 +206,7 @@
         <IngestionFlow
           hasActivePipeline={health.hasActivePipeline}
           vaultName={health.vaultName}
+          locked={!me.canUseModels}
         />
       </div>
     {/if}

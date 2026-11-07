@@ -19,6 +19,7 @@
   import SessionPassage from "$lib/components/session-passage.svelte";
   import ThreadSurface from "$lib/components/thread-surface.svelte";
   import { Button } from "$lib/components/ui/button";
+  import { unsponsoredNotice, useMe } from "$lib/hooks/use-me.svelte";
   import type { Session } from "$lib/session.svelte";
   import { sessionOriginHref } from "$lib/session-origin";
   import { passageMark, revealPassage } from "$lib/passage-navigation";
@@ -44,6 +45,8 @@
     onLinkClick?: (event: MouseEvent) => void;
     receive?: ReturnType<typeof crossfade>[1];
   } = $props();
+
+  const me = useMe();
 
   const openCitation = (href: string, path: string) => {
     const fragment = href.split("#", 2)[1] ?? "";
@@ -402,6 +405,7 @@
                     sessionId={session.sessionId}
                     exchangeId={exchange.id}
                     role={vaultRole}
+                    locked={!me.canUseModels}
                   />
                 {/if}
               </div>
@@ -446,7 +450,7 @@
   <FollowUpBar
     bind:value={session.followUpDraft}
     chips={session.chips}
-    disabled={session.phase !== "done"}
+    disabled={session.phase !== "done" || !me.canUseModels}
     submissionFailed={session.submission.status === "failed"}
     stopping={session.stopping}
     stopFailed={session.stopFailed}
@@ -456,6 +460,13 @@
     onRemoveChip={session.removeChip}
     onSubmit={submitFollowUp}
   />
+  {#if !me.canUseModels}
+    <p
+      class="mx-auto w-full max-w-[720px] px-4 pb-4 font-mono text-[length:var(--text-chrome)] leading-[1.7] tracking-[0.04em] text-warm-faint"
+    >
+      {unsponsoredNotice}
+    </p>
+  {/if}
 {/if}
 
 {#if session.popover}

@@ -4,6 +4,7 @@
 
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
+  import { useMe } from "$lib/hooks/use-me.svelte";
 
   let {
     label,
@@ -19,6 +20,7 @@
     footer?: Snippet;
   } = $props();
 
+  const me = useMe();
   let queryText = $state("");
 
   function submit() {
@@ -60,7 +62,7 @@
     </div>
 
     <div
-      class="flex max-w-[400px] flex-1 items-center overflow-hidden rounded-sm border border-input bg-secondary focus-within:border-ring"
+      class={`flex max-w-[400px] flex-1 items-center overflow-hidden rounded-sm border border-input bg-secondary focus-within:border-ring ${me.canUseModels ? "" : "opacity-45"}`}
     >
       <Input
         bind:value={queryText}
@@ -68,10 +70,11 @@
         class="h-auto flex-1 rounded-none border-none bg-transparent px-3 py-[9px] font-serif text-[length:var(--text-small)] text-foreground caret-gold placeholder:text-input focus-visible:border-none focus-visible:ring-0 dark:bg-transparent"
         placeholder="Ask about this article..."
         aria-label="ask about this article"
+        disabled={!me.canUseModels}
       />
       <Button
         onclick={submit}
-        disabled={!queryText.trim()}
+        disabled={!me.canUseModels || !queryText.trim()}
         class="h-auto rounded-none bg-gold px-3 py-[9px] font-mono text-[length:var(--text-chrome)] font-medium tracking-[0.12em] text-primary-foreground hover:bg-gold-hover disabled:bg-interactive-ghost disabled:text-muted-foreground disabled:opacity-100"
       >
         ASK

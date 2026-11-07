@@ -32,6 +32,7 @@
   import { Alert, AlertDescription } from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
   import { useJobSSE } from "$lib/hooks/use-job-sse.svelte";
+  import { useMe } from "$lib/hooks/use-me.svelte";
   import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
 
   interface FileUploadState {
@@ -43,6 +44,7 @@
 
   const queryClient = useQueryClient();
   const vaults = useVaults();
+  const me = useMe();
   const uploadingBatchIds = new SvelteSet<Uuid>();
   let resolvedJobId = $state<Uuid | null>(null);
   let noJobFound = $state(false);
@@ -475,7 +477,8 @@
                 variant="outline"
                 size="xs"
                 onclick={() => void retry()}
-                class="h-auto rounded-sm border-gold-dim px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold uppercase hover:bg-gold/10"
+                disabled={!me.canUseModels}
+                class="h-auto rounded-sm border-gold-dim px-3 py-1.5 disabled:opacity-45 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold uppercase hover:bg-gold/10"
               >
                 {progress.trigger === "url" &&
                 progress.backendPhase === "source_ingest"
@@ -538,7 +541,8 @@
                 variant="outline"
                 size="xs"
                 onclick={() => void retry()}
-                class="h-auto rounded-sm border-gold-dim px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold uppercase hover:bg-gold/10"
+                disabled={!me.canUseModels}
+                class="h-auto rounded-sm border-gold-dim px-3 py-1.5 disabled:opacity-45 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold uppercase hover:bg-gold/10"
               >
                 Run again
               </Button>
