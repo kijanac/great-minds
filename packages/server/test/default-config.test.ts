@@ -136,7 +136,7 @@ describe("server config defaults", () => {
 describe("default vault config", () => {
   it("stays byte-exact", () => {
     expect(sha256(defaultVaultConfigText)).toBe(
-      "fffd8a7c1c946d201a756a99bcff12bf8a803c824c3c2937153a7cf1ba95f7e6",
+      "08ca735e39ad08aa743e09ecef13e4e0b48ea1c56ef04fe8ae53e8f16d36fbe5",
     );
   });
 });

@@ -2420,6 +2420,48 @@ describe("read-only HTTP integration", () => {
     }
   });
 
+  it("queries sources by metadata, the vault's own fields and dates at their written precision", async () => {
+    const { aliceToken, malloryToken } = currentFixture();
+    await writeVaultFile(
+      id.vaultAlpha,
+      "config.yaml",
+      "metadata:\n  tradition:\n    type: string\n    description: school of thought\n",
+    );
+    const query = (body: Record<string, unknown>, token = aliceToken) =>
+      api("POST", `/vaults/${id.vaultAlpha}/raw/sources/query`, token, body);
+    const paths = (response: ApiResponse) =>
+      itemRecords(asPage(response.body)).map((source) => source.file_path);
+
+    const all = await query({});
+    expect(all.status).toBe(200);
+    expect(asPage(all.body).pagination).toEqual({ limit: 50, offset: 0, total: 4 });
+    expect(paths(all)[0]).toBe("raw/books/capital.md");
+
+    expect(paths(await query({ author: "lenin" }))).toEqual(["raw/articles/organization.md"]);
+    expect(paths(await query({ tags: ["Economics"] }))).toEqual(["raw/books/capital.md"]);
+    expect(paths(await query({ genre: "ESSAY" }))).toEqual(["raw/articles/organization.md"]);
+    expect(paths(await query({ date_from: "1867-05", date_to: "1867-05-01" }))).toEqual([
+      "raw/books/capital.md",
+    ]);
+    expect(paths(await query({ date_to: "1866-12" }))).toEqual([]);
+    expect(paths(await query({ fields: { tradition: "Marxist" } }))).toEqual([
+      "raw/books/capital.md",
+    ]);
+
+    const unknown = await query({ fields: { region: "europe" } });
+    expect(unknown.status).toBe(400);
+    expect(unknown.body).toMatchObject({
+      detail: 'Unknown metadata field "region": this vault\'s fields are tradition.',
+    });
+    expect((await query({ date_from: "1860s" })).status).toBe(422);
+
+    const titled = await query({ sort: "title", limit: 2, offset: 1 });
+    expect(asPage(titled.body).pagination).toEqual({ limit: 2, offset: 1, total: 4 });
+    expect(paths(titled)).toEqual(["raw/books/encoded title.md", "raw/articles/organization.md"]);
+
+    expect((await query({}, malloryToken)).status).toBe(403);
+  });
+
   it("lists raw sources with search, source-type facets, nullability, and authz", async () => {
     const { aliceToken, malloryToken } = currentFixture();
     const listed = await api("GET", `/vaults/${id.vaultAlpha}/raw/sources`, aliceToken);

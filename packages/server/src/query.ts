@@ -14,6 +14,7 @@ import {
   ServiceUnavailable,
   type DraftHintResponse,
   type SearchHit,
+  SourceQuery,
   type OriginScope,
   type QueryRequest,
   type QuerySourceData,
@@ -43,6 +44,8 @@ import { StructuredLogger } from "./logging.ts";
 import { ParallelSearchService, type ParallelSearchResult } from "./parallel.ts";
 import { loadPrompt } from "./prompts.ts";
 import { ContentStorage, userOwner, vaultOwner } from "./storage.ts";
+import { readSourceSummary } from "./document-metadata.ts";
+import { querySourceRows } from "./source-query.ts";
 import { withFootnoteNotes } from "./wiki-footnotes.ts";
 
 type QueryServiceShape = {
@@ -179,22 +182,13 @@ const toolArgs = {
     query: Schema.NonEmptyString.annotate({ description: "Web search query" }),
   }),
   query_documents: Schema.Struct({
-    tags: Schema.optionalKey(
-      Schema.Array(Schema.String).annotate({ description: "Filter by tags (all must match)" }),
+    ...SourceQuery.fields,
+    limit: Schema.optionalKey(
+      Schema.Int.annotate({ description: "Results per call (default 20, at most 50)" }),
     ),
-    author: Schema.optionalKey(
-      Schema.String.annotate({ description: "Filter by author name (partial match)" }),
+    offset: Schema.optionalKey(
+      Schema.Int.annotate({ description: "Skip this many results, to page through a total" }),
     ),
-    genre: Schema.optionalKey(
-      Schema.String.annotate({ description: "Filter by genre (e.g. theoretical, polemical)" }),
-    ),
-    date_gte: Schema.optionalKey(
-      Schema.String.annotate({ description: "Published on or after this date/year" }),
-    ),
-    date_lte: Schema.optionalKey(
-      Schema.String.annotate({ description: "Published on or before this date/year" }),
-    ),
-    limit: Schema.optionalKey(Schema.Int.annotate({ description: "Max results (default 20)" })),
   }),
 };
 
@@ -398,13 +392,24 @@ const webSearchTool: LlmToolDefinition = {
   },
 };
 
-const queryDocumentsTool = (tags: readonly string[]): LlmToolDefinition => ({
+const queryDocumentsTool = (
+  tags: readonly string[],
+  fields: VaultConfigFile["enrichedFields"],
+): LlmToolDefinition => ({
   type: "function",
   function: {
     name: "query_documents",
     description:
-      "Use when the question names a STRUCTURED attribute of raw sources — a tag, author, genre, or date/date-range (e.g. 'sources by X', 'everything tagged Y', 'written after Z'). Filters by metadata, not text content. Do NOT use it for topical/conceptual questions (use search_content), and do NOT use it for wiki articles (use list_articles). " +
-      (tags.length > 0 ? `Available tags: ${tags.join(", ")}.` : "No tags yet."),
+      "Use when the question names a STRUCTURED attribute of raw sources — a tag, author, genre, date/date-range, or one of this vault's own metadata fields (e.g. 'sources by X', 'everything tagged Y', 'written after Z'). Filters by metadata, not text content. Results report the total that match; page through them with offset. Do NOT use it for topical/conceptual questions (use search_content), and do NOT use it for wiki articles (use list_articles). " +
+      (tags.length > 0 ? `Available tags: ${tags.join(", ")}. ` : "No tags yet. ") +
+      (fields.length > 0
+        ? `This vault's own fields (filter with fields: {name: value}): ${fields
+            .map(
+              (field) =>
+                `${field.name} (${field.type}${field.description === "" ? "" : `: ${field.description}`})`,
+            )
+            .join("; ")}.`
+        : "This vault declares no metadata fields of its own."),
     parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.query_documents)).schema,
   },
 });
@@ -1014,72 +1019,53 @@ export const QueryServiceLive = Layer.effect(
       args: Extract<QueryTool, { name: "query_documents" }>["args"],
     ) =>
       Effect.gen(function* () {
-        const conditions: SQL[] = [eq(sourceDocuments.vaultId, context.vaultId)];
-        const tags = args.tags ?? [];
-        if (tags.length > 0) {
-          conditions.push(
-            sql`${sourceDocuments.tags} @> ARRAY[${sql.join(
-              tags.map((tag) => sql`${tag}`),
-              sql`, `,
-            )}]::text[]`,
-          );
-        }
-        if (args.author) {
-          conditions.push(ilike(sourceDocuments.author, `%${args.author}%`));
-        }
-        if (args.genre) {
-          conditions.push(eq(sourceDocuments.genre, args.genre));
-        }
-        if (args.date_gte) {
-          conditions.push(gte(sourceDocuments.publishedDate, args.date_gte));
-        }
-        if (args.date_lte) {
-          conditions.push(lte(sourceDocuments.publishedDate, args.date_lte));
-        }
-        const limit = Math.max(1, Math.min(50, args.limit ?? 20));
-        const rows = yield* db.query((d) =>
-          d
-            .select()
-            .from(sourceDocuments)
-            .where(and(...conditions))
-            .orderBy(desc(sourceDocuments.updatedAt))
-            .limit(limit),
+        const config = yield* readVaultConfig(storage, context.vaultId).pipe(
+          Effect.catchTag("VaultConfigMalformed", () => Effect.succeed(defaultVaultConfigFile)),
         );
+        const limit = Math.max(1, Math.min(50, args.limit ?? 20));
+        const offset = Math.max(0, args.offset ?? 0);
+        const page = yield* querySourceRows(
+          db,
+          context.vaultId,
+          config,
+          { ...args, limit, offset },
+          20,
+        ).pipe(Effect.mapError((error) => new ToolMiss({ message: error.detail })));
         const source = yield* sourceEvent(context, { name: "query_documents", args });
-        if (rows.length === 0) {
+        if (page.rows.length === 0) {
           const filters = Object.fromEntries(
-            Object.entries({
-              tags: tags.length > 0 ? tags : undefined,
-              author: args.author,
-              genre: args.genre,
-              date_gte: args.date_gte,
-              date_lte: args.date_lte,
-              limit,
-            }).filter(([, value]) => Boolean(value)),
+            truthyEntries({ ...args, limit, offset: offset === 0 ? undefined : offset }),
           );
           return {
-            content: `No documents match the filters: ${JSON.stringify(filters)}`,
+            content:
+              page.total === 0
+                ? `No documents match the filters: ${JSON.stringify(filters)}`
+                : `No documents past offset ${offset}; ${page.total} match the filters: ${JSON.stringify(filters)}`,
             source,
           } satisfies ToolResult;
         }
-        const parts = rows.map((row) => {
-          const lines = [`### ${row.title ?? row.filePath}`, `  [raw] ${row.filePath}`];
-          if (row.author !== null) {
-            lines[1] += ` by ${row.author}`;
-          }
-          if (row.publishedDate !== null) {
-            lines[1] += ` (${row.publishedDate})`;
-          }
-          if (row.genre !== null) {
-            lines.push(`  genre: ${row.genre}`);
-          }
-          if (row.tags.length > 0) {
-            lines.push(`  tags: ${row.tags.join(", ")}`);
+        const declared = config.enrichedFields.map((field) => field.name);
+        const summaries = yield* Effect.forEach(page.rows, readSourceSummary);
+        const parts = summaries.map((row) => {
+          const lines = [`### ${row.title ?? row.file_path}`, `  [raw] ${row.file_path}`];
+          if (row.author !== null) lines[1] += ` by ${row.author}`;
+          if (row.published_date !== null) lines[1] += ` (${row.published_date})`;
+          if (row.genre !== null) lines.push(`  genre: ${row.genre}`);
+          if (row.tags.length > 0) lines.push(`  tags: ${row.tags.join(", ")}`);
+          for (const name of declared) {
+            const value = row.derived_extras[name];
+            const shown = Array.isArray(value) ? value.join(", ") : value;
+            if (typeof shown === "string" && shown !== "") lines.push(`  ${name}: ${shown}`);
           }
           return lines.join("\n");
         });
+        const last = offset + page.rows.length;
+        const more =
+          last < page.total
+            ? ` Call again with offset ${last} for the next ${Math.min(limit, page.total - last)}.`
+            : "";
         return {
-          content: `Found ${rows.length} documents:\n\n${parts.join("\n\n")}`,
+          content: `Showing ${offset + 1}-${last} of ${page.total} documents.${more}\n\n${parts.join("\n\n")}`,
           source,
         } satisfies ToolResult;
       });
@@ -1597,7 +1583,7 @@ export const QueryServiceLive = Layer.effect(
         const webSearchEnabled = vaultConfig.webSearch && parallel.hasApiKey;
         const tools = [
           ...baseTools,
-          queryDocumentsTool(tags),
+          queryDocumentsTool(tags, vaultConfig.enrichedFields),
           ...(webSearchEnabled ? [webSearchTool] : []),
         ];
         const systemPrompt = yield* buildSystemPrompt(

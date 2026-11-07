@@ -1181,6 +1181,7 @@ describe("auth HTTP integration", () => {
       "search_vault",
       "read_document",
       "list_articles",
+      "query_sources",
       "list_sessions",
       "read_session",
       "ask",

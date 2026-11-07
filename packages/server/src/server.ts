@@ -455,6 +455,11 @@ const SourcesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "sources"
         sources.listSources(userId, params.vault_id, query),
       ),
     )
+    .handle("querySources", ({ params, payload }) =>
+      asUser(SourcesService, (sources, userId) =>
+        sources.querySources(userId, params.vault_id, payload),
+      ),
+    )
     .handle("readSource", ({ params }) =>
       asUser(DocumentsService, (documents, userId) =>
         documents.readSource(userId, params.vault_id, params.source_id),

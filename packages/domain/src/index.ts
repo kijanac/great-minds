@@ -819,6 +819,9 @@ export const SourceDocumentPage = Schema.Struct({
 });
 export type SourceDocumentPage = typeof SourceDocumentPage.Type;
 
+export const SourceQueryPage = pageOf(SourceDocumentSummary);
+export type SourceQueryPage = typeof SourceQueryPage.Type;
+
 export const SourceListQuery = Schema.Struct({
   ...PageParamsQuery.fields,
   source_type: Schema.optionalKey(Schema.String),
@@ -826,6 +829,43 @@ export const SourceListQuery = Schema.Struct({
   tag: Schema.optionalKey(Schema.String),
 });
 export type SourceListQuery = typeof SourceListQuery.Type;
+
+export const PartialDate = Schema.String.pipe(
+  Schema.check(Schema.isPattern(/^\d{4}(?:-\d{2}(?:-\d{2})?)?$/)),
+);
+
+export const SourceSort = Schema.Literals(["date", "date_desc", "title"] as const);
+export type SourceSort = typeof SourceSort.Type;
+
+export const SourceQuery = Schema.Struct({
+  tags: Schema.optionalKey(
+    Schema.Array(Schema.String).annotate({ description: "Sources must have all of these tags" }),
+  ),
+  author: Schema.optionalKey(Schema.String.annotate({ description: "Part of the author's name" })),
+  genre: Schema.optionalKey(Schema.String.annotate({ description: "The exact genre" })),
+  date_from: Schema.optionalKey(
+    PartialDate.annotate({
+      description: "Published on or after this date: YYYY, YYYY-MM or YYYY-MM-DD",
+    }),
+  ),
+  date_to: Schema.optionalKey(
+    PartialDate.annotate({
+      description: "Published on or before this date: YYYY, YYYY-MM or YYYY-MM-DD",
+    }),
+  ),
+  fields: Schema.optionalKey(
+    Schema.Record(Schema.String, Schema.String).annotate({
+      description:
+        "The vault's own metadata fields, name to value. A text field must equal the value; a list field must contain it.",
+    }),
+  ),
+  sort: Schema.optionalKey(
+    SourceSort.annotate({ description: "date (oldest first, the default), date_desc or title" }),
+  ),
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 }))),
+  offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+});
+export type SourceQuery = typeof SourceQuery.Type;
 
 export const OriginScope = Schema.Literals(["vault", "personal"] as const);
 export type OriginScope = typeof OriginScope.Type;
@@ -1829,6 +1869,12 @@ const SourcesApiGroup = HttpApiGroup.make("sources").add(
     success: SourceDocumentPage,
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post("querySources", "/vaults/:vault_id/raw/sources/query", {
+    params: VaultIdParams,
+    payload: SourceQuery,
+    success: SourceQueryPage,
+    error: [BadRequestResponse, ForbiddenResponse, ValidationResponse],
+  }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("readSource", "/vaults/:vault_id/raw/sources/:source_id", {
     params: SourceIdParams,
     success: DocResponse,
@@ -2274,6 +2320,7 @@ export const endpointPermissions: { readonly [Name in EndpointName]: Permission 
   listWikiArticles: "read",
   listRecentWikiArticles: "read",
   listSources: "read",
+  querySources: "read",
   readSource: "read",
   deleteSource: "change",
   requestSourceDeletion: "change",
