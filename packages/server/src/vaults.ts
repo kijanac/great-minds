@@ -144,27 +144,19 @@ thematic_hint: ""
 # never blended into the knowledge base's own voice. (Requires PARALLEL_API_KEY.)
 web_search: false
 
-# Vault-configured enriched metadata fields. Each entry declares a field
-# the extract LLM should look for in every document. The LLM's value
-# lands in source_documents.derived_extras (JSONB) and gets surfaced in
-# compile's editorial context (partition / synthesize per-doc context)
-# automatically.
+# Optional extra metadata fields. Extraction fills each declared field for
+# every document, alongside the universal title, precis, author,
+# published_date, genre and tags, and each can be filtered on when querying
+# sources. A "string" field holds one value, a "list" field several.
+# Example:
 #
-# Curator never fills these — extract owns them end-to-end. A vault with
-# no \`metadata:\` block gets no extra enriched fields; the universal
-# title/precis/genre/tags/author/published_date set is always populated.
-metadata:
-  tradition:
-    type: string
-    description: >-
-      the intellectual or political tradition this text belongs to
-      (e.g. "marxist-leninist", "anarchist", "liberal"). Use a short
-      lowercase label. Empty string if unclear.
-  interlocutors:
-    type: list
-    description: >-
-      names of thinkers, writers, or figures this text is responding to,
-      arguing against, or in direct dialogue with. Empty list if none.
+# metadata:
+#   region:
+#     type: string
+#     description: the country or region the document is mainly about
+#   people:
+#     type: list
+#     description: the people the document discusses at length
 `;
 
 const uuidOf = Schema.decodeSync(Uuid);

@@ -7,12 +7,17 @@ import {
   type Proposal,
   type SourceDocumentPage,
   type SourceListQuery,
+  type SourceQuery,
+  type SourceQueryPage,
   type Uuid
 } from "@great-minds/domain";
 import { and, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
 import { readSourceSummary } from "./document-metadata.ts";
+import { querySourceRows, tagCondition } from "./source-query.ts";
+import { ContentStorage } from "./storage.ts";
+import { defaultVaultConfigFile, readVaultConfig } from "./vault-config.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { ProposalsService } from "./proposals.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
@@ -24,6 +29,11 @@ type SourcesServiceShape = {
     vaultId: Uuid,
     query: SourceListQuery
   ) => Effect.Effect<SourceDocumentPage, Forbidden>;
+  readonly querySources: (
+    userId: Uuid,
+    vaultId: Uuid,
+    query: SourceQuery
+  ) => Effect.Effect<SourceQueryPage, BadRequest | Forbidden>;
   readonly deleteSource: (
     userId: Uuid,
     vaultId: Uuid,
@@ -39,9 +49,6 @@ type SourcesServiceShape = {
 export class SourcesService extends Context.Service<SourcesService, SourcesServiceShape>()(
   "@great-minds/server/SourcesService"
 ) {}
-
-const tagCondition = (tag: string) =>
-  sql`exists (select 1 from unnest(${sourceDocuments.tags}) as tag_value where lower(tag_value) = lower(${tag}))`;
 
 const sourceConditions = (vaultId: Uuid, query: SourceListQuery) => {
   const conditions: SQL[] = [eq(sourceDocuments.vaultId, vaultId)];
@@ -71,6 +78,7 @@ export const SourcesServiceLive = Layer.effect(
     const access = yield* VaultAccessService;
     const sourceDocumentsWrite = yield* SourceDocumentsService;
     const proposals = yield* ProposalsService;
+    const storage = yield* ContentStorage;
 
     return {
       listSources: (userId, vaultId, query) =>
@@ -114,6 +122,19 @@ export const SourcesServiceLive = Layer.effect(
               source_types: facetRows,
             },
           };
+        }),
+      querySources: (userId, vaultId, query) =>
+        Effect.gen(function* () {
+          yield* access.requireMember(userId, vaultId);
+          const config = yield* readVaultConfig(storage, vaultId).pipe(
+            Effect.catchTag("VaultConfigMalformed", () => Effect.succeed(defaultVaultConfigFile))
+          );
+          const page = yield* querySourceRows(db, vaultId, config, query, 50);
+          return pageEnvelope(
+            yield* Effect.forEach(page.rows, readSourceSummary),
+            { limit: page.limit, offset: page.offset },
+            page.total
+          );
         }),
       deleteSource: (userId, vaultId, sourceId) =>
         Effect.gen(function* () {

@@ -5,6 +5,7 @@ import {
   add,
   callApi,
   listSessions,
+  listSources,
   readDocument,
   readSession,
   ask,
@@ -132,6 +133,49 @@ const limitFlag = Flag.Int("limit").pipe(
   Flag.withDefault(20),
 );
 
+const sourcesCommand = Command.make(
+  "sources",
+  {
+    vault: vaultFlag,
+    tags: Flag.String("tag").pipe(
+      Flag.withDescription("Only sources with this tag (repeat for several)"),
+      Flag.atLeast(0),
+    ),
+    author: Flag.String("author").pipe(
+      Flag.withDescription("Part of the author's name"),
+      Flag.optional,
+    ),
+    genre: Flag.String("genre").pipe(Flag.withDescription("The exact genre"), Flag.optional),
+    from: Flag.String("from").pipe(
+      Flag.withDescription("Published on or after: YYYY, YYYY-MM or YYYY-MM-DD"),
+      Flag.optional,
+    ),
+    to: Flag.String("to").pipe(
+      Flag.withDescription("Published on or before: YYYY, YYYY-MM or YYYY-MM-DD"),
+      Flag.optional,
+    ),
+    fields: Flag.KeyValuePair("field").pipe(
+      Flag.withDescription("One of the vault's own metadata fields, name=value (repeatable)"),
+      Flag.optional,
+    ),
+    sort: Flag.Literals("sort", ["date", "date_desc", "title"]).pipe(
+      Flag.withDescription("date (oldest first), date_desc or title"),
+      Flag.withDefault("date" as const),
+    ),
+    limit: limitFlag,
+    offset: Flag.Int("offset").pipe(
+      Flag.filter(
+        (offset) => offset >= 0,
+        (offset) => `--offset can't be negative (got ${offset})`,
+      ),
+      Flag.withDescription("Skip this many, to page through a total"),
+      Flag.withDefault(0),
+    ),
+    json: jsonFlag,
+  },
+  listSources,
+).pipe(Command.withDescription("Filter the vault's sources by their metadata"));
+
 const sessionsCommand = Command.make(
   "sessions",
   { vault: vaultFlag, limit: limitFlag, json: jsonFlag },
@@ -189,6 +233,7 @@ const gm = Command.make("gm").pipe(
     updateCommand,
     runsCommand,
     runCommand,
+    sourcesCommand,
     sessionsCommand,
     sessionCommand,
     readCommand,

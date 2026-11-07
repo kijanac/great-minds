@@ -6,6 +6,8 @@ import {
   type Permission,
   SearchHit,
   SessionId,
+  SourceQuery,
+  SourceQueryPage,
   Uuid,
 } from "@great-minds/domain";
 import { Effect, Layer, Schema } from "effect";
@@ -19,6 +21,7 @@ import { SessionExportsService } from "./publication/service.ts";
 import { QueryService } from "./query.ts";
 import { RepliesService } from "./replies.ts";
 import { SessionsService } from "./sessions.ts";
+import { SourcesService } from "./sources.ts";
 import { VaultAccessService, VaultsService } from "./vaults.ts";
 import { WikiService } from "./wiki.ts";
 
@@ -104,6 +107,17 @@ const ListArticles = Tool.make("list_articles", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.OpenWorld, false);
 
+const QuerySources = Tool.make("query_sources", {
+  description:
+    "Filter a vault's sources by metadata: tags, author, genre, published date range, and the vault's own metadata fields. Returns a page of sources with their metadata and the total that match; page with offset. For questions about content, use search_vault instead.",
+  parameters: Schema.Struct({ vault_id: vaultId, ...SourceQuery.fields }),
+  success: SourceQueryPage,
+  failure: ToolFailed,
+  dependencies: [CurrentAuth],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.OpenWorld, false);
+
 const ListSessions = Tool.make("list_sessions", {
   description: "List a vault's question-and-answer sessions, newest first.",
   parameters: Schema.Struct({ vault_id: vaultId, limit: Schema.optionalKey(pageLimit) }),
@@ -150,6 +164,7 @@ const GreatMindsTools = Toolkit.make(
   SearchVault,
   ReadDocument,
   ListArticles,
+  QuerySources,
   ListSessions,
   ReadSession,
   Ask,
@@ -160,6 +175,7 @@ const toolPermissions: Readonly<Record<string, Permission>> = {
   search_vault: "read",
   read_document: "read",
   list_articles: "read",
+  query_sources: "read",
   list_sessions: "read",
   read_session: "read",
   ask: "ask",
@@ -175,6 +191,7 @@ const ToolHandlers = GreatMindsTools.toLayer(
     const documents = yield* DocumentsService;
     const wiki = yield* WikiService;
     const sessions = yield* SessionsService;
+    const sources = yield* SourcesService;
     const exports = yield* SessionExportsService;
     const replies = yield* RepliesService;
     const userId = Effect.map(CurrentAuth, (current) => current.user_id);
@@ -217,6 +234,10 @@ const ToolHandlers = GreatMindsTools.toLayer(
               summary: article.precis,
             })),
           };
+        }).pipe(Effect.mapError(failed)),
+      query_sources: ({ vault_id, ...query }) =>
+        Effect.gen(function* () {
+          return yield* sources.querySources(yield* userId, vault_id, query);
         }).pipe(Effect.mapError(failed)),
       list_sessions: ({ vault_id, limit }) =>
         Effect.gen(function* () {

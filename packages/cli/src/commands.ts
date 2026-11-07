@@ -514,6 +514,54 @@ export const add = (input: {
 
 const shortDate = (date: Date) => date.toISOString().slice(0, 16).replace("T", " ");
 
+export const listSources = (input: {
+  readonly vault: Option.Option<string>;
+  readonly tags: ReadonlyArray<string>;
+  readonly author: Option.Option<string>;
+  readonly genre: Option.Option<string>;
+  readonly from: Option.Option<string>;
+  readonly to: Option.Option<string>;
+  readonly fields: Option.Option<Record<string, string>>;
+  readonly sort: "date" | "date_desc" | "title";
+  readonly limit: number;
+  readonly offset: number;
+  readonly json: boolean;
+}) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const page = yield* connection.use(
+      connection.api.sources.querySources({
+        params: { vault_id: vaultId },
+        payload: {
+          ...(input.tags.length === 0 ? {} : { tags: input.tags }),
+          ...Option.match(input.author, { onNone: () => ({}), onSome: (author) => ({ author }) }),
+          ...Option.match(input.genre, { onNone: () => ({}), onSome: (genre) => ({ genre }) }),
+          ...Option.match(input.from, {
+            onNone: () => ({}),
+            onSome: (date_from) => ({ date_from }),
+          }),
+          ...Option.match(input.to, { onNone: () => ({}), onSome: (date_to) => ({ date_to }) }),
+          ...Option.match(input.fields, { onNone: () => ({}), onSome: (fields) => ({ fields }) }),
+          sort: input.sort,
+          limit: input.limit,
+          offset: input.offset,
+        },
+      }),
+    );
+    if (input.json) return yield* printJson(page);
+    if (page.items.length === 0) return yield* Console.log("No sources match.");
+    for (const source of page.items) {
+      const by = source.author === null ? "" : `  ${source.author}`;
+      const date = source.published_date === null ? "" : `  ${source.published_date}`;
+      yield* Console.log(`${source.file_path}  ${source.title ?? ""}${by}${date}`);
+    }
+    const last = page.pagination.offset + page.items.length;
+    if (last < page.pagination.total || page.pagination.offset > 0)
+      yield* Console.error(
+        `(${page.pagination.offset + 1}-${last} of ${page.pagination.total}${last < page.pagination.total ? `; --offset ${last} shows more` : ""})`,
+      );
+  });
+
 export const listSessions = (input: {
   readonly vault: Option.Option<string>;
   readonly limit: number;
