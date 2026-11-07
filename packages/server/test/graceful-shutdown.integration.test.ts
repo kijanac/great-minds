@@ -42,23 +42,40 @@ const ServerListening = Schema.fromJsonString(
 );
 const decodeServerListening = Schema.decodeUnknownOption(ServerListening);
 
+const mainEnv = (dataDir: string, port: number) => ({
+  ...process.env,
+  DATABASE_URL: databaseUrl(),
+  JWT_SECRET: "graceful-shutdown-test-secret",
+  STORAGE_BACKEND: "local",
+  DATA_DIR: dataDir,
+  HOST: "127.0.0.1",
+  PORT: String(port),
+});
+
+const runAdmin = (dataDir: string, port: number, args: readonly string[]) =>
+  new Promise<{ readonly code: number | null; readonly stdout: string; readonly stderr: string }>(
+    (resolve, reject) => {
+      const child = spawn(
+        process.execPath,
+        ["--experimental-strip-types", "packages/server/src/main.ts", ...args],
+        { cwd: repoRoot, env: mainEnv(dataDir, port), stdio: ["ignore", "pipe", "pipe"] },
+      );
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => (stdout += chunk));
+      child.stderr.on("data", (chunk: string) => (stderr += chunk));
+      child.once("error", reject);
+      child.once("exit", (code) => resolve({ code, stdout, stderr }));
+    },
+  );
+
 const startMain = (dataDir: string, port: number) => {
   const child = spawn(
     process.execPath,
     ["--experimental-strip-types", "packages/server/src/main.ts", "serve"],
-    {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        DATABASE_URL: databaseUrl(),
-        JWT_SECRET: "graceful-shutdown-test-secret",
-        STORAGE_BACKEND: "local",
-        DATA_DIR: dataDir,
-        HOST: "127.0.0.1",
-        PORT: String(port),
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    },
+    { cwd: repoRoot, env: mainEnv(dataDir, port), stdio: ["ignore", "pipe", "pipe"] },
   );
   let output = "";
   let pendingLine = "";
@@ -94,6 +111,42 @@ const startMain = (dataDir: string, port: number) => {
 };
 
 describe("production process lifetime", () => {
+  it("runs admin commands beside a server on local storage", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "gm-admin-"));
+    const port = await availablePort();
+    const main = startMain(dataDir, port);
+    try {
+      const url = await main.listening;
+      const created = await runAdmin(dataDir, port, [
+        "keys",
+        "create",
+        "--email",
+        "operator-made@example.com",
+      ]);
+      expect(created.stderr).not.toContain("LocalHistoryWriterBusy");
+      expect(created.code).toBe(0);
+      const key = created.stdout.trim();
+      expect(key).toMatch(/^gm_/);
+      const vaults = await fetch(`${url}/v1/vaults`, {
+        headers: { authorization: `Bearer ${key}` },
+      });
+      expect(vaults.status).toBe(200);
+      const body = (await vaults.json()) as { readonly items: readonly unknown[] };
+      expect(body.items).toHaveLength(1);
+      const code = await runAdmin(dataDir, port, [
+        "users",
+        "code",
+        "--email",
+        "operator-made@example.com",
+      ]);
+      expect(code.code).toBe(0);
+      expect(code.stdout.trim()).not.toBe("");
+    } finally {
+      await main.stop();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("SIGTERM closes the server, releases the local history writer lock and exits 0", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "gm-shutdown-"));
     const main = startMain(dataDir, await availablePort());

@@ -20,14 +20,8 @@ import { errorDetails } from "./error-details.ts";
 import { StructuredLoggerLive } from "./logging.ts";
 import { MailerLive } from "./mailer.ts";
 import { openServer } from "./server.ts";
-import {
-  ContentStorageLive,
-  StagedStorageLive,
-  StorageBackendLive,
-  ensureStorageReady,
-} from "./storage.ts";
+import { ensureStorageReady } from "./storage.ts";
 import { TokenServiceLive } from "./tokens.ts";
-import { VaultAccessServiceLive, VaultsServiceLive } from "./vaults.ts";
 
 class UserNotFound extends Data.TaggedError("UserNotFound")<{ readonly email: string }> {
   override get message() {
@@ -74,15 +68,7 @@ const AdminBase = Layer.mergeAll(
 ).pipe(Layer.provideMerge(AppConfigLive));
 
 const AdminLive = AuthServiceLive.pipe(
-  Layer.provide(VaultsServiceLive),
-  Layer.provide(VaultAccessServiceLive),
-  Layer.provide(
-    Layer.mergeAll(
-      MailerLive,
-      TokenServiceLive,
-      Layer.mergeAll(ContentStorageLive, StagedStorageLive).pipe(Layer.provide(StorageBackendLive)),
-    ).pipe(Layer.provideMerge(AdminBase)),
-  ),
+  Layer.provide(Layer.mergeAll(MailerLive, TokenServiceLive).pipe(Layer.provideMerge(AdminBase))),
 );
 
 const existingUser = (email: Email) =>

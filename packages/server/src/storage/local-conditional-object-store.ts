@@ -16,7 +16,11 @@ import {
 
 export class LocalHistoryWriterBusy extends Data.TaggedError("LocalHistoryWriterBusy")<{
   readonly directory: string;
-}> {}
+}> {
+  override get message() {
+    return `Another Great Minds process is already using the data folder ${this.directory}. Only one server can run on a data folder at a time.`;
+  }
+}
 
 const hasCode = (error: unknown, code: string) =>
   typeof error === "object" && error !== null && "code" in error && error.code === code;

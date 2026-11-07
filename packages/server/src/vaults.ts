@@ -62,7 +62,6 @@ type VaultAccessServiceShape = {
 };
 
 type VaultsServiceShape = {
-  readonly ensureDefaultForUser: (userId: Uuid, email: Email) => Effect.Effect<void>;
   readonly deleteAccount: (userId: Uuid) => Effect.Effect<void, NotFound>;
   readonly reconcileDeletionsOnce: () => Effect.Effect<number>;
   readonly createVault: (
@@ -193,6 +192,47 @@ const roleToDb = (role: AssignableMemberRole): DbMemberRole => {
       return "VIEWER";
   }
 };
+
+const insertVault = (
+  tx: TransactionClient,
+  input: { readonly vaultId: Uuid; readonly name: string; readonly ownerId: Uuid },
+) =>
+  Effect.gen(function* () {
+    const rows = yield* tx
+      .insert(vaults)
+      .values({ id: input.vaultId, name: input.name, ownerId: input.ownerId })
+      .returning();
+    yield* tx.insert(vaultMemberships).values({
+      id: Uuid.make(randomUUID(), { disableChecks: true }),
+      vaultId: input.vaultId,
+      userId: input.ownerId,
+      role: "EDITOR",
+    });
+    const row = rows[0];
+    if (row === undefined) {
+      throw new Error("vault insert returned no row");
+    }
+    return row;
+  });
+
+export const ensureDefaultVault = (db: Database["Service"], userId: Uuid, email: Email) =>
+  Effect.gen(function* () {
+    const membershipCounts = yield* db.query((d) =>
+      d
+        .select({ total: sql<number>`count(*)::int` })
+        .from(vaultMemberships)
+        .innerJoin(vaults, eq(vaults.id, vaultMemberships.vaultId))
+        .where(and(eq(vaultMemberships.userId, userId), isNull(vaults.deletedAt))),
+    );
+    if (oneTotal(membershipCounts) > 0) return;
+    yield* db.transaction((tx) =>
+      insertVault(tx, {
+        vaultId: Uuid.make(randomUUID(), { disableChecks: true }),
+        name: `${email}'s vault`,
+        ownerId: userId,
+      }),
+    );
+  });
 
 const vaultResponse = (row: {
   readonly id: Uuid;
@@ -408,15 +448,6 @@ export const VaultsServiceLive = Layer.effect(
           ? Effect.interrupt
           : logger.warn(event, { ...fields, error_message: Cause.pretty(cause) });
 
-    const ensureConfig = (vaultId: Uuid) =>
-      Effect.gen(function* () {
-        const owner = vaultOwner(vaultId);
-        const exists = yield* storage.exists(owner, VAULT_CONFIG_PATH);
-        if (!exists) {
-          yield* storage.writeText(owner, VAULT_CONFIG_PATH, defaultVaultConfigText);
-        }
-      });
-
     const applyConfigUpdate = (vaultId: Uuid, input: VaultConfigUpdate) =>
       Effect.gen(function* () {
         const owner = vaultOwner(vaultId);
@@ -469,7 +500,6 @@ export const VaultsServiceLive = Layer.effect(
     ) =>
       Effect.gen(function* () {
         const vaultId = Uuid.make(randomUUID(), { disableChecks: true });
-        yield* ensureConfig(vaultId);
         if (input.thematic_hint !== undefined || input.kinds !== undefined) {
           const update: VaultConfigUpdate =
             input.kinds === undefined
@@ -481,29 +511,7 @@ export const VaultsServiceLive = Layer.effect(
           yield* applyConfigUpdate(vaultId, update);
         }
         const created = yield* db
-          .transaction((tx) =>
-            Effect.gen(function* () {
-              const rows = yield* tx
-                .insert(vaults)
-                .values({
-                  id: vaultId,
-                  name: input.name,
-                  ownerId: userId,
-                })
-                .returning();
-              yield* tx.insert(vaultMemberships).values({
-                id: Uuid.make(randomUUID(), { disableChecks: true }),
-                vaultId,
-                userId,
-                role: "EDITOR",
-              });
-              const row = rows[0];
-              if (row === undefined) {
-                throw new Error("vault insert returned no row");
-              }
-              return row;
-            }),
-          )
+          .transaction((tx) => insertVault(tx, { vaultId, name: input.name, ownerId: userId }))
           .pipe(
             Effect.catchCause((cause) =>
               logger
@@ -519,20 +527,6 @@ export const VaultsServiceLive = Layer.effect(
       });
 
     return {
-      ensureDefaultForUser: (userId, email) =>
-        Effect.gen(function* () {
-          const membershipCounts = yield* db.query((d) =>
-            d
-              .select({ total: sql<number>`count(*)::int` })
-              .from(vaultMemberships)
-              .innerJoin(vaults, eq(vaults.id, vaultMemberships.vaultId))
-              .where(and(eq(vaultMemberships.userId, userId), isNull(vaults.deletedAt))),
-          );
-          if (oneTotal(membershipCounts) > 0) {
-            return;
-          }
-          yield* createVault(userId, { name: `${email}'s vault` });
-        }),
       deleteAccount: (userId) =>
         Effect.gen(function* () {
           yield* db.transaction((tx) =>
