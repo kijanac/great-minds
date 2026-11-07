@@ -86,6 +86,15 @@ export class LoginExpired extends Data.TaggedError("LoginExpired")<{}> {
   }
 }
 
+export class ApiCallFailed extends Data.TaggedError("ApiCallFailed")<{
+  readonly status: number;
+  readonly body: string;
+}> {
+  override get message() {
+    return `the API answered ${this.status}${this.body === "" ? "" : `: ${this.body.slice(0, 500)}`}`;
+  }
+}
+
 export class StreamEnded extends Data.TaggedError("StreamEnded")<{
   readonly what: "answer" | "run";
 }> {
