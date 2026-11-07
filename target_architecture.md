@@ -1,295 +1,112 @@
-# Target Architecture
+# Architecture
+
+How Great Minds turns a vault's sources into a wiki, as the code runs today (November 2026). The previous version of this document described a map/reduce design that has been replaced; it is preserved in git history.
 
 ## Principles
 
-1. **Ideas are the atomic citation unit.** Claims paired with verbatim anchor quotes, extracted per document. Never re-written, never canonicalized across documents. Every downstream artifact cites ideas.
-2. **Topics are the article unit.** One article per topic. Topics are thematic abstractions, not entities. A single real-world person, event, or work may appear in many topics' articles; a topic may span many real-world entities.
-3. **Ideas ↔ topics is many-to-many.** Derived from map/reduce provenance, not from clustering or retrieval.
-4. **No intermediate concept/entity layer.** Entity identity is not a first-class structural concern. It's handled implicitly inside render when the LLM writes about a person/event across its contributing idea fragments.
-5. **Batch-agnosticism is a structural property (within a cache snapshot).** Given a cache C recording the LLM's outputs for corpus state S, any incremental compile drawing from a subset of C produces the same canonical topics as a full compile over C. Convergence across independent LLM passes is not claimed — nor achievable — because extract/map/reduce/render are stochastic. Identity stability across compiles comes from slug continuity for topics and from the cache returning recorded outputs for everything below the LLM surfaces. UUIDs themselves are opaque identifiers; they carry no semantic content.
-6. **Stochastic surfaces are bounded and named.** Exactly four LLM-call types: extract, map, reduce, render. Everything else is mechanical.
-7. **Raw markdown is immutable.** User feedback and lint findings re-enter the pipeline as new source documents.
-8. **Per-vault configuration shapes the pipeline.** The `kind` taxonomy and the thematic-schema hint to the reducer are declared at vault creation. Defaults exist; overrides are cheap.
+1. **Themes are the skeleton of the wiki.** Each article covers one theme: a subject that several documents treat. The wiki is a coherent encyclopedia, not a registry of every idea.
+2. **Ideas are the citation unit.** Each document is read once into ideas (a kind, a label, a description) with verbatim anchor quotes. Articles cite ideas' anchors as footnotes, so every claim traces back to a source passage.
+3. **Every model answer is saved and reused.** Each question to a model is keyed by a hash of its full request (model, messages, temperature, reasoning effort, answer format). An Update asks only the questions it has never asked; everything else is read back. This is what keeps cost proportional to change and articles stable when sources don't change.
+4. **Model questions are small and judgment-shaped.** Instead of one large call that decides the whole wiki, the pipeline asks many small questions: what are this document's topics; are these two topics the same; are these two themes the same entry; does this small theme belong in that article; what does this article mention; which article is that mention about; is that the best place to read about it.
+5. **Failures are loud.** A question that fails is counted and reported as a warning on the run; a phase that fails stops the run with its reason. Nothing silently becomes an empty answer.
+6. **Raw sources are immutable.** Feedback and suggestions re-enter as new source documents.
+7. **Each vault's focus comes only from its configuration** (`thematic_hint`, `kinds`, optional enriched fields), never from wording about a particular corpus in the prompts.
+
+## Surfaces
+
+One HTTP API (`packages/domain` defines it, `packages/server` serves it). The web app (`web`), the `gm` command line (`packages/cli`) and any future MCP adapter are sibling clients of that API, sharing `packages/client`. Operators administer a server with the `great-minds` admin CLI (`packages/server/src/main.ts`: `serve`, `migrate`, `users`, `keys`).
 
 ## Per-vault configuration
 
-Declared at vault creation, stored alongside the vault:
+Stored as `config.yaml` in the vault:
 
-```yaml
-kinds:
-  - person
-  - event
-  - organization
-  - movement
-  - concept
-  # ... whatever taxonomy fits the domain
-thematic_hint: |
-  Prefer topics shaped like events, movements, historical
-  conjunctures, and intellectual debates. Avoid biography-first
-  framings.
-```
+- `kinds`: the idea taxonomy reading uses (default person, event, organization, concept; `other` is always allowed).
+- `thematic_hint`: the vault's editorial focus, substituted into prompts as `{vault_focus}`.
+- `enrichedFields`: optional extra per-document fields for reading to fill.
 
-`kinds` is consumed by extract's prompt to constrain idea-level classification. `thematic_hint` is prepended to reduce's prompt. Both have defaults.
+Prompts live in `packages/server/src/default_prompts/`; a vault can override any of them under `prompts/<name>.md`.
 
-## Data model
+## Models
 
-| table | authoritative | purpose |
+Each role has its own model, temperature and reasoning effort, configured by environment:
+
+| Role | Used for | Settings |
 |---|---|---|
-| `documents` | Postgres | one row per on-disk file — both ingested raw (`doc_kind=raw`) and rendered wiki articles (`doc_kind=wiki`); title, doc_metadata, precis. Raw rows are written by ingest + updated by extract; wiki rows are written by render (precis = topic.description). Topics is the editorial plan; documents is the artifact metadata index. |
-| `source_cards` (`.compile/<vault>/source_cards.jsonl`) | JSONL on disk | per-document extraction output: ideas, anchors |
-| `idea_embeddings` | Postgres (pgvector) | one vector per idea; used for partition |
-| `topics` | Postgres | canonical theme registry: slug, title, description, lifecycle |
-| `topic_membership` | Postgres | derived: `(topic_id, idea_id)` edges |
-| `topic_links` | Postgres | derived from reduce's validated link_targets |
-| `topic_related` | Postgres | derived: shared-idea relatedness for sidebar UI |
-| `backlinks` | Postgres | derived: article-to-article links found in rendered prose |
-| `chunks` (raw + wiki) | Postgres | paragraph/heading-level anchors + embeddings for agent RAG |
+| query | answers, vault hint | `QUERY_MODEL`, `QUERY_FALLBACK_MODELS`, `QUERY_TEMPERATURE`, `QUERY_REASONING_EFFORT` |
+| extract | reading documents, web facts | `EXTRACT_MODEL`, `EXTRACT_TEMPERATURE`, `EXTRACT_REASONING_EFFORT` |
+| map | topics, same-topic, same-entry, placement, link picks | `MAP_MODEL`, `MAP_TEMPERATURE`, `MAP_REASONING_EFFORT` |
+| reduce | link check | `REDUCE_MODEL`, `REDUCE_TEMPERATURE`, `REDUCE_REASONING_EFFORT` |
+| render | writing articles | `RENDER_MODEL`, `RENDER_TEMPERATURE`, `RENDER_REASONING_EFFORT` |
+| embedding | search index, idea/topic/link embeddings | `EMBEDDING_MODEL` |
 
-The `concepts` table and its associated code (`distiller.py` clustering, `concept_repository.py`) are retired.
+A model setting may name a provider (`moonshot:kimi-k3`); without a prefix it goes to OpenRouter. Providers are declared with `PROVIDERS` and `PROVIDER_<NAME>_URL`, `_KEY`, `_KIND` (`openai` or `openrouter`). Direct providers need a price in `MODEL_PRICES`. Every model and embedding call is recorded in `llm_cost_events` with its run or answer.
 
-## Ideas — schema (from extract)
+## Data model (main tables)
 
-```
-idea_id           uuid7 (minted at extract time; opaque)
-document_id       uuid
-kind              one of vault's configured kinds (fallback: other)
-label             short canonical name as it appears in this doc
-description       one-sentence description of what this is, as treated in this doc
-anchors           ordered list of {claim, quote}
-```
+| Table | Holds |
+|---|---|
+| `source_documents`, `source_incarnations` | each source: identity, path, title, précis, metadata; the incarnation fences writes against concurrent deletion |
+| `ideas`, `anchors` | what reading found in each document, with verbatim quotes; idea embeddings |
+| `topic_proposals` | each document's topics (title, description, idea ids), with embeddings |
+| `topic_candidates` | pairs of topics similar enough to ask whether they are the same |
+| `topics` | the article registry: slug, title, description, status, superseded-by |
+| `topic_membership` | which ideas each article covers |
+| `topic_links` | article-to-article links chosen by the link step |
+| `topic_related` | related articles by shared source documents |
+| `wiki_articles`, `backlinks` | published articles and the links actually present in their text |
+| `search_index` | passages of sources and articles, with full-text and vector search |
+| `compile_cache_entries` | every saved model answer, by phase and key |
+| `pipeline_runs`, `compile_intents` | runs, their stages, warnings and outcome; queued Updates |
+| `llm_cost_events` | cost of every model and embedding call |
 
-Idea rows are rewritten on every extract re-run for a document: delete-then-insert keyed on `document_id`. Cache hits on `sha256(doc_content + prompt_version + kinds_config + extract_model)` short-circuit extract entirely and return the stored `source_card` verbatim, so `idea_id`s stay stable across incremental compiles without any derivation trick. On cache miss the LLM re-draws and fresh ids are minted — that's expected, not a regression.
-
-`kind` lives at the idea layer because ideas describe specific factual things (a person, an event) and kind is useful for idea-level filtering and as a partition hint. Topics are thematic abstractions that span multiple kinds by design, so they have no `kind` field.
-
-## Topics — schema (from reduce)
-
-```
-topic_id             uuid7 (minted fresh, stabilized via slug continuity)
-vault_id             uuid
-slug                 kebab-case, unique within vault
-title                human-readable theme title
-description          2-3 sentences describing what this topic covers
-article_status       no_article | rendered | needs_revision | archived
-rendered_from_hash   hash of the idea set at last successful render
-compiled_from_hash   hash of the current idea set (dirty if != rendered)
-supersedes           topic_id that this one replaced (nullable)
-superseded_by        topic_id that replaced this one (nullable)
-```
-
-## Doc-level metadata threaded into ideas
-
-When ideas are prepared for map's prompt, each idea is rendered with provenance:
-
-```
-[kind] label: description
-  ← from {title} ({genre}, {date}) by {author}; interlocutors: {...}; tags: {...}
-  ← precis: {2-3 sentences on what the doc is doing}
-```
-
-This gives the map LLM whole-doc context per fragment without a separate per-doc plan step.
+Articles are written to the vault's storage as `wiki/<slug>.md`, so the vault is directly usable as an Obsidian vault. Sources live under `raw/`.
 
 ## Pipeline
 
-The compilation pipeline has seven named phases: `ingest → extract → abstract → derive → render → verify → publish`. "Compile" is the umbrella term for the whole pipeline.
+An Update runs seven phases as a durable workflow (`compile-intents.ts`); each phase is a resumable activity and checks for cancellation before it starts. Phases are in `compile-phases.ts`; the theme work is in `compile-themes-pipeline.ts` and the files it calls.
 
-### Phase 0 — ingest (mechanical)
+### 1. Ingest: making sources searchable (`ingest`)
 
-Per document:
-- Store raw markdown in `raw/<source_type>/<slug>.md` (immutable)
-- Paragraph-level chunking with anchor IDs; embed chunks; write to `chunks` table
-- No LLM calls
+Each source's markdown is split into passages and embedded into `search_index`. A source whose content hasn't changed (by ETag) is skipped. Documents whose embedding times out keep their old passages, are retried next Update, and are listed as a warning. No language-model calls.
 
-Raw-doc chunking gives the agent RAG access to primary sources.
+### 2. Extract: reading sources (`compile-extract.ts`)
 
-### Phase 1 — extract (LLM, one call per document)
+One question per changed document: read the whole document and return its title, précis, author, date, genre, tags and ideas with anchors (`extract` prompt, strict JSON schema built from the vault's kinds). Answers are cached by document content and prompt. New ideas are embedded. Documents that can't be read (for example, longer than the reading model's context) are listed as left out.
 
-Per document (cache key: `sha256(doc_content)`):
-- Single LLM call reads raw doc + source_type + vault's kinds config
-- Output: `title`, `doc_metadata` (genre, tags, tradition, interlocutors), `precis` (2-3 sentences), `ideas[]` (claims + anchors), `anchors[]` (verbatim quotes)
-- Write to `source_cards.jsonl`; write `documents` row with title + metadata + precis
-- Embed ideas (`qwen3-embedding-8b` on `label + description`), store in `idea_embeddings`
+### 3. Abstract: finding topics, grouping themes, building articles
 
-A doc-generated title is critical because filenames are often uninformative (e.g., `04x.md`, `M00.md`).
+- **Topics** (`compile-themes.ts`, `propose_topics`): for each document with ideas, the map model names the document's topics, each with the ideas it covers. Topics are embedded.
+- **Candidate pairs:** topic pairs whose embeddings are at least 0.75 similar become candidates.
+- **Themes** (`judge_same_topic`): for candidate pairs, the map model answers same / related / unrelated. Topics judged the same are grouped by a pivot rule: a topic joins the group of a pivot that called it the same, without chaining through intermediaries. Each group is a theme.
+- **Articles** (`compile-articles.ts`):
+  - A theme covering at least 5 documents can be an article. Big themes within 0.35 embedding distance of each other, plus each big theme's 3 nearest, are asked whether they are the same entry (`judge_same_entry`); same entries merge into one article, again without chaining.
+  - A smaller theme is asked whether it belongs in one of its nearest articles (`place_in_article`, up to 3 candidates within 0.4 distance); if yes it joins that article, otherwise it is left out.
+- **Registry:** articles keep their existing topic id and slug where they continue an earlier article; new ones get a slug from their title. Articles that no longer exist are archived, with a pointer to the article that absorbed them when there is one.
 
-Model: DeepSeek v3.2 (→ V4 when live). Cheap, volume-heavy.
+### 4. Derive: relating articles
 
-### Phase 2 — abstract (mixed)
+`topic_membership` is rebuilt from the ideas each article covers, and `topic_related` from the source documents articles share.
 
-Five sub-steps, only two of which are LLM calls.
+### 5. Render: writing and linking (`compile-write.ts`, `compile-links.ts`)
 
-**2a. Partition (mechanical).** Cache key: `sha256(sorted idea_ids)`.
-- Load all idea embeddings
-- Seeded k-means with `k = total_trimmed_tokens / target_chunk_tokens` (target ~100K tokens per chunk)
-- Size-rebalance pass: subdivide chunks exceeding token budget, merge chunks below a floor
-- Output: `chunks[]`, each a list of `idea_id`s
+- **Writing** (`write_article`): one question per article whose content changed, with its ideas and numbered sources; the answer is the article body, and sources become footnotes.
+- **Linking:** for each article, the map model lists phrases that mention other subjects (`find_mentions`); each mention is matched to candidate articles by blended text and embedding search, the map model picks one (`pick_link_target`), and the reduce model checks it is the best place to read about that subject (`check_link`). Accepted links are written into the text and recorded in `topic_links`.
+- Articles are then indexed for search.
 
-Fully deterministic for a given embedding set.
+### 6. Verify: checking references
 
-**2b. Map (LLM, one call per chunk).** Cache key: `sha256(sorted idea_ids in chunk)`.
-- Render each idea with doc-level provenance (title, precis, metadata)
-- Prompt asks for 10–30 thematic topics covering this subset; each topic has `slug`, `title`, `description`, `subsumed_idea_ids[]`
-- Temperature 0.3, structured JSON output
+Links actually present in article text are rebuilt into `backlinks`.
 
-Model: DeepSeek v3.2 (→ V4). ~30 calls at 10K-doc scale.
+### 7. Publish
 
-**2c. Pre-merge (mechanical).**
-Collapse obvious duplicates from map outputs using exact-match signals only:
-- Identical slugs merge
-- Identical titles merge
-- Jaccard similarity of `subsumed_idea_ids` > 0.8 merge
+Writes `wiki/_index.md` (start here and the full list) and `raw/_index.md`, records the run's outcome (articles added, changed, removed, merged) and marks the run complete.
 
-Union `subsumed_idea_ids` on merge. No cosine/embedding signal — exact matches are precise; subtler merges are left to the reducer LLM, which has global view.
+## Incremental Updates
 
-**2d. Reduce (LLM, one call).** Cache key: `sha256(sorted local topic ids + their hashes)`.
+Because every model answer is saved by the hash of its request, an Update re-asks only what changed: new or edited documents are read; their topics are proposed; only new candidate pairs are judged; only articles whose content changed are rewritten; only changed articles are re-linked. A small change costs a small Update. Some churn remains: placing small themes can shift when neighbouring themes change, so a few articles change without any of their own sources changing.
 
-Prompt:
-- Vault's `thematic_hint` prepended
-- Reads all pre-merged local topics at once
-- Produces the **canonical topic registry** for this compile
-- Also produces `link_targets[]` per canonical topic
+## Known limits
 
-Structured output:
-```json
-{
-  "canonical_topics": [
-    {
-      "slug": "kebab-case",
-      "title": "...",
-      "description": "2-3 sentences",
-      "merged_local_topic_ids": ["t17", "t34", "..."],
-      "link_targets": ["other-canonical-slug-1", "other-canonical-slug-2"]
-    }
-  ]
-}
-```
-
-Model: **Qwen 3.6 Plus** (primary). Fallback to Claude Sonnet 4.6 if quality insufficient; Claude Opus 4.7 if Sonnet is insufficient.
-
-**Scale escape (in order of preference)**:
-1. Baseline reduce (fits in budget): one LLM call sees everything.
-2. Pre-merge + reduce: exact-match compression, reducer still sees all survivors.
-3. Aggressive pre-merge + reduce: looser Jaccard threshold (~0.6), normalized title matching (case/punctuation-insensitive). Same reducer view.
-4. Hierarchical reduce: cluster local topics by description embedding, reduce each cluster, then final reduce over sub-canonical outputs. Last resort — top-level reducer loses global view.
-
-**Validation (mechanical, part of abstract):**
-- Intersect each topic's `link_targets` with the set of emitted `slug`s; drop non-matches (closes the hallucinated-link error surface)
-- Reconcile topic IDs via slug continuity: for any canonical slug already in `topics`, reuse the existing `topic_id`; otherwise mint UUID7
-- M7 archive flow: any existing topic whose slug is NOT in the new canonical set gets `article_status=archived`, moved to `archive/<topic_id>/<old_slug>.md` with `superseded_by` pointer
-
-End of phase 2: the `topics` registry is updated and the merge structure is in hand.
-
-### Phase 3 — derive (mechanical)
-
-Build relational tables from reduce's validated output. These tables reflect **topic-level intent**, not what ends up in article prose.
-
-- `topic_membership`: for each canonical topic, union the `subsumed_idea_ids` from all its merged local topics
-- `topic_links`: one edge per `(source_topic_id, target_topic_id)` from validated `link_targets`. Represents intended citations.
-- `topic_related` (for sidebar UI): for each topic pair, count of shared ideas and Jaccard over their idea sets; stored sorted per topic
-- `compiled_from_hash` on each topic: hash of its `topic_membership` + `title` + `description`
-
-`backlinks` is NOT built here — it belongs to article-level reality, not topic-level intent, and is constructed in verify.
-
-### Phase 4 — render (LLM, one call per topic)
-
-Per topic (cache key: `sha256(topic_id + topic_membership_hash + link_targets)`):
-- Renderer receives: topic (title, description), ideas (full records with anchors), `link_targets` (authoritative list)
-- Prompt instructs: write the article body, use `[title](wiki/<slug>.md)` markdown links when referencing any of the `link_targets` by concept, cite anchors as `[^n]` footnotes
-- Output: markdown article body
-
-Model: **Qwen 3.6 Plus** (primary), upgrade to Sonnet 4.6 if prose quality matters.
-
-Write to `wiki/<slug>.md` with frontmatter (`topic_id`, `title`, `description`). Set `rendered_from_hash = compiled_from_hash`, `article_status = rendered`.
-
-Re-chunk rendered articles and update wiki-article chunks in `chunks` (retains existing `rebuild_index` behavior).
-
-### Phase 5 — verify (mechanical)
-
-Verify operates on article-level reality — what rendered prose actually contains.
-
-- Walk rendered articles, extract `[title](wiki/<slug>.md)` citations from each body
-- Build `backlinks` table from actual article citations: `(source_document_id, target_document_id)` reflecting real article-to-article links
-- Log unresolved links (citation points to a nonexistent slug) as lint signals
-- Log intended-but-unmentioned discrepancies (link_target from `topic_links` that doesn't appear in the article body) as quality signals
-
-The split: `topic_links` is topic-level intent (from reduce); `backlinks` is article-level reality (from rendered prose). They can diverge, and verify surfaces the divergence.
-
-### Phase 6 — publish (mechanical)
-
-- Generate `wiki/index.md`: topic list with title + description
-- Generate `raw/index.md`: doc list with title + precis + doc_metadata
-- Append compile entry to `.compile/<vault>/log.md`: timestamp, topic counts, diff vs. prior compile
-
-## Incremental compilation
-
-Every LLM phase is cached by content hash. Invalidation propagates:
-
-```
-doc changes
-  → extract re-runs for that doc
-  → source_cards.jsonl updated
-  → idea_embeddings updated for changed ideas
-  → partition re-runs (idea_set_hash changed)
-  → chunks with changed composition → map re-runs
-  → map outputs hash changed → reduce re-runs
-  → canonical registry changes → derive re-runs
-  → topics with changed topic_membership_hash → render re-runs
-  → verify + publish re-run
-```
-
-**Convergence property (within a cache snapshot)**: given a cache C, any incremental compile drawing from a subset of C produces the same canonical topics as a full compile over C — identity stable via slug continuity for topics and via cache-returned outputs for everything else. Convergence across independent LLM passes (i.e., a full recompile with C cleared) is not claimed: extract/map/reduce/render are stochastic surfaces, and a fresh pass is a fresh recording. The cache is therefore both optimization (skip the LLM call) and semantics (define the authoritative recording of this corpus state's LLM outputs).
-
-**Partition stability**: k-means centroids shift when new ideas are added. Chunk composition near cluster boundaries is unstable, causing some map cache misses. Stable corpus regions form stable chunks and cache-hit across compiles. This is acceptable because re-mapping unchanged chunks is cheap.
-
-## Stochastic surfaces and call counts at 10K-doc scale
-
-| step | LLM calls | model |
-|---|---|---|
-| extract | ~10,000 (1/doc) | DeepSeek v3.2 / V4 |
-| map (inside abstract) | ~30 (1/chunk) | DeepSeek v3.2 / V4 |
-| reduce (inside abstract) | 1 | Qwen 3.6 Plus (primary) |
-| render | ~200 (1/topic) | Qwen 3.6 Plus or Sonnet 4.6 |
-
-Everything else mechanical. Estimated cost per 10K-doc compile: $17 budget config, $40 quality config.
-
-## Invariants (reaffirmed from six-phase, adjusted where needed)
-
-| invariant | status |
-|---|---|
-| Raw markdown immutable | preserved |
-| Feedback re-enters as source docs | preserved |
-| Batch-agnostic / convergent compilation | preserved via caching + slug continuity |
-| Sessions immutable | preserved |
-| No backcompat shims during refactor | preserved |
-| Agent operates on articles, not concepts | preserved (articles now = topics) |
-| 1 Concept = 1 Article | **replaced** by 1 Topic = 1 Article, with many-to-many ideas |
-| Phase 2 clustering is the only place that makes namespace decisions | **replaced** by reduce step is the only place that makes article-inventory decisions |
-| Identity persistence via slug continuity | preserved, moved from concept to topic |
-| No structural mutations from lint | preserved (lint remains detection-only) |
-
-## What changes from current six-phase
-
-| current state | new state |
-|---|---|
-| `concepts` table + `concept_repository.py` + clustering in `distiller.py` | retired |
-| 6 phases (extract → distill → render → crosslink → index → lint) | 7 phases (ingest → extract → abstract → derive → render → verify → publish); lint unchanged as on-demand |
-| `kind` at article level | gone (idea-level only) |
-| `kind` taxonomy hardcoded | per-vault config |
-| Fuzzy-match crosslinker | replaced by intentional authored links verified mechanically |
-| `[[wikilink]]` style (if any) | `[title](wiki/<slug>.md)` markdown style throughout |
-| Per-concept article | per-topic article; ideas are many-to-many |
-| `concept.member_idea_ids` | `topic_membership` derived table |
-| Slug continuity on concepts | slug continuity on topics |
-| Archive flow on concepts (M7) | archive flow on topics |
-| Chunks of rendered articles only | chunks of both raw docs (phase 0) and rendered articles (phase 4) |
-
-## Points of uncertainty to validate empirically
-
-1. **Qwen 3.6 Plus reduce quality** vs. Sonnet 4.6 vs. Opus 4.7 on merge decisions.
-2. **Pre-merge threshold tuning** (cosine > 0.95 may be too strict or too loose).
-3. **Map's exhaustive-vs-curated assignment behavior** — what % of ideas end up uncovered.
-4. **Partition chunk size sweet spot** — 100K tokens is a guess; may want 50K or 150K.
-5. **Token trimming of ideas for map** — does dropping anchors from map's prompt cost thematic judgment, or not.
-6. **Whether `link_targets` should be mechanically seeded** (top-K by shared ideas) before reduce, or left fully to the LLM.
-7. **Hierarchical reduce threshold** — at what local topic count aggressive pre-merge stops being sufficient.
-8. **Vault-level kind taxonomy defaults** — what's a good default set that covers most domains.
+- Reading sends a whole document in one request, so a document longer than the reading model's context is left out. Splitting long documents into chapters before upload avoids this; reading long documents in parts is a planned safety net.
+- Duplicate subjects can still appear as separate articles: a pairwise "same?" question can't separate "same subject" from "one contains the other". Proper duplicate merging is an open design question.
+- Embedding concurrency defaults to 1, so indexing a large upload is slow.
