@@ -17,6 +17,7 @@
   } from "$lib/api/proposals";
   import { nextPageOffset } from "@great-minds/client";
   import { Button } from "$lib/components/ui/button";
+  import { useMe } from "$lib/hooks/use-me.svelte";
   import { Input } from "$lib/components/ui/input";
   import * as Select from "$lib/components/ui/select";
   import { Textarea } from "$lib/components/ui/textarea";
@@ -37,6 +38,7 @@
     role: MemberRole;
   } = $props();
 
+  const me = useMe();
   const canReview = $derived(role === "owner");
   const canPropose = $derived(role !== "viewer");
 
@@ -207,9 +209,9 @@
                         proposalId: proposal.id,
                         nextStatus: "approved",
                       })}
-                    disabled={review.isPending}
+                    disabled={review.isPending || !me.canUseModels}
                     aria-label="approve"
-                    class="text-warm-ghost hover:bg-transparent hover:text-gold"
+                    class="text-warm-ghost hover:bg-transparent hover:text-gold disabled:opacity-45"
                   >
                     <Check size={12} />
                   </Button>

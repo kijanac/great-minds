@@ -343,6 +343,14 @@ export const AuthContext = Schema.Struct({
 });
 export type AuthContext = typeof AuthContext.Type;
 
+export const Me = Schema.Struct({
+  user_id: Uuid,
+  email: Email,
+  can_use_models: Schema.Boolean,
+  key: Schema.NullOr(Schema.Struct({ key_id: Uuid, ...KeyScope.fields })),
+});
+export type Me = typeof Me.Type;
+
 const PageLimit = Schema.NumberFromString.pipe(
   Schema.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(200)),
   Schema.withDecodingDefaultTypeKey(Effect.succeed(50)),
@@ -1717,6 +1725,9 @@ const AuthApiGroup = HttpApiGroup.make("auth").add(
     success: HttpApiSchema.NoContent,
     error: [ForbiddenResponse, NotFoundResponse, ValidationResponse] as const,
   }).middleware(AuthMiddleware),
+  HttpApiEndpoint.get("getMe", "/auth/me", {
+    success: Me,
+  }).middleware(AuthMiddleware),
   HttpApiEndpoint.delete("deleteMe", "/auth/me", {
     payload: AccountDeleteRequest,
     success: HttpApiSchema.NoContent,
@@ -2312,6 +2323,7 @@ export const endpointPermissions: { readonly [Name in EndpointName]: Permission 
   getCliLogin: "account",
   approveCliLogin: "account",
   denyCliLogin: "account",
+  getMe: "read",
   deleteMe: "account",
   inviteVaultMember: "account",
   updateVaultMember: "account",

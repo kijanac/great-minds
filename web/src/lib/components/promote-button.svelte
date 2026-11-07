@@ -9,10 +9,12 @@
     sessionId,
     exchangeId,
     role,
+    locked = false,
   }: {
     sessionId: SessionId;
     exchangeId: Uuid;
     role: "owner" | "editor";
+    locked?: boolean;
   } = $props();
 
   const promotion = useExchangePromotion();
@@ -41,8 +43,8 @@
     variant="ghost"
     size="sm"
     onclick={() => promotion.promote(sessionId, exchangeId)}
-    disabled={promotion.pending}
-    class="h-auto gap-1.5 px-0 py-1 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-ghost hover:bg-transparent hover:text-gold"
+    disabled={promotion.pending || locked}
+    class="h-auto gap-1.5 px-0 py-1 font-mono disabled:opacity-45 text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-ghost hover:bg-transparent hover:text-gold"
   >
     <BookmarkPlus size={13} />
     {role === "owner"

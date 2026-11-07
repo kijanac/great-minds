@@ -1100,6 +1100,11 @@ describe("auth HTTP integration", () => {
       "This account isn't sponsored to use this server's models. Ask the person who runs this Great Minds server to sponsor it.";
 
     expect((await api("GET", `/vaults/${home}`, undefined, pair.access_token)).status).toBe(200);
+    expect((await api("GET", "/auth/me", undefined, pair.access_token)).body).toMatchObject({
+      email: "unsponsored@example.com",
+      can_use_models: false,
+      key: null,
+    });
     const search = await api("GET", `/vaults/${home}/search?q=%20`, undefined, pair.access_token);
     expect(search.status).toBe(403);
     expect(search.body).toMatchObject({ detail: refusal });
@@ -1117,6 +1122,25 @@ describe("auth HTTP integration", () => {
     const sponsored = await api("GET", `/vaults/${home}/search?q=%20`, undefined, pair.access_token);
     expect(sponsored.status).toBe(200);
     expect(sponsored.body).toEqual([]);
+    expect((await api("GET", "/auth/me", undefined, pair.access_token)).body).toMatchObject({
+      can_use_models: true,
+    });
+    const keyed = asRecord(
+      (
+        await api(
+          "POST",
+          "/auth/api-keys",
+          { label: "reader", vault_ids: [home], can_ask: false, can_change: false },
+          pair.access_token,
+        )
+      ).body,
+    );
+    expect(
+      (await api("GET", "/auth/me", undefined, asString(keyed.raw_key, "reader key"))).body,
+    ).toMatchObject({
+      can_use_models: true,
+      key: { key_id: keyed.id, vault_ids: [home], can_ask: false, can_change: false },
+    });
   });
 
   it("serves MCP at /v1/mcp to API keys, within each key's vaults and permissions", async () => {

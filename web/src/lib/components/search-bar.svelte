@@ -15,6 +15,7 @@
     recentSessions,
     sessionsLoading = false,
     submissionFailed = false,
+    locked = false,
     onQueryChange,
     onSessionClick,
     onViewAllSessions,
@@ -25,6 +26,7 @@
     recentSessions?: readonly SessionSummary[];
     sessionsLoading?: boolean;
     submissionFailed?: boolean;
+    locked?: boolean;
     onQueryChange?: () => void;
     onSessionClick?: (id: string) => void;
     onViewAllSessions?: () => void;
@@ -33,22 +35,23 @@
   let input: HTMLInputElement | null = $state(null);
   let focused = $state(false);
   const isActive = $derived(phase !== "idle");
+  const inputDisabled = $derived(isActive || locked);
   const showDropdown = $derived(
     focused &&
-      !isActive &&
+      !inputDisabled &&
       !sessionsLoading &&
       !query.trim() &&
       (recentSessions?.length ?? 0) > 0,
   );
 
   $effect(() => {
-    if (!isActive) {
+    if (!inputDisabled) {
       void tick().then(() => input?.focus());
     }
   });
 </script>
 
-<div class={`relative w-full ${isActive ? "" : "max-w-[640px]"}`}>
+<div class={`relative w-full ${isActive ? "" : "max-w-[640px]"} ${locked ? "opacity-45" : ""}`}>
   <div
     class={`flex w-full items-center overflow-hidden border border-input bg-secondary focus-within:border-ring ${
       showDropdown
@@ -61,18 +64,18 @@
       bind:value={query}
       class="h-auto flex-1 rounded-none border-none bg-transparent px-[18px] py-[13px] font-serif text-[length:var(--text-body)] text-foreground caret-gold placeholder:text-input focus-visible:border-none focus-visible:ring-0 disabled:opacity-100 dark:bg-transparent"
       placeholder="Ask a question across the knowledge base..."
-      onkeydown={(event) => event.key === "Enter" && onSubmit()}
+      onkeydown={(event) => event.key === "Enter" && !locked && onSubmit()}
       oninput={onQueryChange}
       onfocus={() => (focused = true)}
       onblur={() => (focused = false)}
-      disabled={isActive}
-      autofocus={!isActive}
+      disabled={inputDisabled}
+      autofocus={!inputDisabled}
     />
 
     {#if !isActive}
       <Button
         onclick={onSubmit}
-        disabled={!query.trim()}
+        disabled={locked || !query.trim()}
         class="h-auto rounded-none bg-gold px-[18px] py-[13px] font-mono text-[length:var(--text-chrome)] font-medium tracking-[0.1em] text-primary-foreground hover:bg-gold-hover disabled:bg-interactive-ghost disabled:text-muted-foreground disabled:opacity-100"
       >
         ask
