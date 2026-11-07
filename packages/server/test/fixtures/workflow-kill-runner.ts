@@ -2,8 +2,8 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Effect, Layer, Schema } from "effect";
-import * as Activity from "effect/unstable/workflow/Activity";
-import * as Workflow from "effect/unstable/workflow/Workflow";
+import * as Activity from "effect/workflow/Activity";
+import * as Workflow from "effect/workflow/Workflow";
 
 import { AppConfigLive } from "../../src/config.ts";
 import { PgClientLive } from "../../src/db.ts";

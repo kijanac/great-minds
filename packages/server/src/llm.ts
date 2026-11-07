@@ -1,5 +1,5 @@
 import { Context, Data, Duration, Effect, Layer, Option, Schedule, Schema, Stream } from "effect";
-import * as Sse from "effect/unstable/encoding/Sse";
+import * as Sse from "effect/encoding/Sse";
 
 import {
   AppConfig,

@@ -1,10 +1,10 @@
 import { AuthMiddleware, GreatMindsApi } from "@great-minds/domain";
 import { Context, Effect } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import type * as HttpClientError from "effect/unstable/http/HttpClientError";
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
-import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
+import { HttpClient, HttpClientRequest } from "effect/http";
+import type * as HttpClientError from "effect/http/HttpClientError";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
+import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
 
 import { TokenStore, type StoredTokens } from "./token-store.ts";
 

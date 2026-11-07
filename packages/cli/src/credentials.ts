@@ -41,7 +41,7 @@ export class Credentials extends Context.Service<Credentials, CredentialsShape>(
 
 const decodeSaved = Schema.decodeUnknownEffect(Schema.fromJsonString(SavedCredentials));
 const encodeSaved = Schema.encodeSync(Schema.fromJsonString(SavedCredentials));
-const setting = (name: string) => Config.option(Config.nonEmptyString(name));
+const setting = (name: string) => Config.option(Config.NonEmptyString(name));
 const localHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const isAllowedUrl = (url: string) => {
   if (!URL.canParse(url)) return false;

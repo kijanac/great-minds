@@ -1,6 +1,6 @@
 import { Database, DatabaseLive } from "@great-minds/database";
 import { Effect, Layer } from "effect";
-import type { WorkflowEngine } from "effect/unstable/workflow/WorkflowEngine";
+import type { WorkflowEngine } from "effect/workflow/WorkflowEngine";
 
 import { AuthService, AuthServiceLive, SignInCodeRetentionLoopLive } from "./auth.ts";
 import { CliLoginRetentionLoopLive, CliLogins, CliLoginsLive } from "./cli-logins.ts";

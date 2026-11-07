@@ -2,7 +2,7 @@ import { Database, DatabaseLive, fileIngestFiles } from "@great-minds/database";
 import { FileFingerprint, Uuid } from "@great-minds/domain";
 import { and, eq } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted, Schema } from "effect";
-import * as Activity from "effect/unstable/workflow/Activity";
+import * as Activity from "effect/workflow/Activity";
 
 import { AppConfig, type AppConfigShape } from "../../src/config.ts";
 import { PgClientLive } from "../../src/db.ts";

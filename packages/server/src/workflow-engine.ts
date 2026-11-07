@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { Layer } from "effect";
-import * as ClusterWorkflowEngine from "effect/unstable/cluster/ClusterWorkflowEngine";
-import * as SingleRunner from "effect/unstable/cluster/SingleRunner";
+import * as ClusterWorkflowEngine from "effect/cluster/ClusterWorkflowEngine";
+import * as SingleRunner from "effect/cluster/SingleRunner";
 
 /** Single-node durable workflow engine backed by the application's Postgres. */
 export const WorkflowEngineLive = ClusterWorkflowEngine.layer.pipe(

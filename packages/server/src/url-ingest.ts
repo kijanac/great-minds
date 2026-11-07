@@ -14,7 +14,7 @@ import {
 } from "@great-minds/domain";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer } from "effect";
-import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
+import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 
 import { backgroundLoop } from "./background-loop.ts";
 import { AppConfig } from "./config.ts";

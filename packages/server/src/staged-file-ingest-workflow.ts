@@ -2,8 +2,8 @@ import { Database, fileIngestBatches, fileIngestFiles, sourceDocuments } from "@
 import { Conflict, FileFingerprint, Uuid } from "@great-minds/domain";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { Cause, Effect, Exit, Schema } from "effect";
-import * as Activity from "effect/unstable/workflow/Activity";
-import * as Workflow from "effect/unstable/workflow/Workflow";
+import * as Activity from "effect/workflow/Activity";
+import * as Workflow from "effect/workflow/Workflow";
 
 import { queueCompile, linkRunToIntent } from "./compile-intents.ts";
 import { stagedFileToMarkdown } from "./conversion.ts";

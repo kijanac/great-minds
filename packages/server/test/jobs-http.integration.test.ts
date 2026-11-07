@@ -19,7 +19,7 @@ import {
 import { Uuid } from "@great-minds/domain";
 import { eq } from "drizzle-orm";
 import { Cause, Channel, Effect, Exit, Layer, Option, Redacted, Schema, Stream } from "effect";
-import * as Sse from "effect/unstable/encoding/Sse";
+import * as Sse from "effect/encoding/Sse";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { makeAppLayer } from "../src/app-layer.ts";

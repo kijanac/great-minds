@@ -5,7 +5,9 @@ import {
   EffectTransactionRollbackError,
 } from "drizzle-orm/effect-core/errors";
 import { Context, Effect, Layer } from "effect";
-import { SqlError } from "effect/unstable/sql/SqlError";
+import { SqlError } from "effect/sql/SqlError";
+
+import { drizzleCodecs } from "./pg-types.ts";
 
 export type DrizzleClient = Effect.Success<ReturnType<typeof PgDrizzle.makeWithDefaults>>;
 export type TransactionClient = Parameters<Parameters<DrizzleClient["transaction"]>[0]>[0];
@@ -45,7 +47,7 @@ export class Database extends Context.Service<Database, DatabaseShape>()(
 
 export const DatabaseLive = Layer.effect(
   Database,
-  PgDrizzle.makeWithDefaults().pipe(
+  PgDrizzle.makeWithDefaults({ codecs: drizzleCodecs }).pipe(
     Effect.map((client) => ({
       query: <A, E, R>(f: (db: DrizzleClient) => Effect.Effect<A, E, R>) =>
         stripInfraErrors(f(client)),

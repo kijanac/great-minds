@@ -8,9 +8,9 @@ import {
 import { Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, isNotNull, isNull, notExists, or, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
-import * as Activity from "effect/unstable/workflow/Activity";
-import * as Workflow from "effect/unstable/workflow/Workflow";
-import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
+import * as Activity from "effect/workflow/Activity";
+import * as Workflow from "effect/workflow/Workflow";
+import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 
 import { backgroundLoop } from "./background-loop.ts";
 import { ClockService } from "./clock.ts";

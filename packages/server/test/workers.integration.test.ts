@@ -17,7 +17,7 @@ import * as PgClient from "@effect/sql-pg/PgClient";
 import { Uuid, type FileFingerprint } from "@great-minds/domain";
 import { eq, inArray, sql } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
-import type * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
+import type * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -605,7 +605,7 @@ describe("M4.2 durable workers", () => {
     if (timeout._tag === "Failure") {
       expect(phaseFailure("ingest", timeout.failure)).toMatchObject({
         errorType: "TimeoutError",
-        message: "Operation timed out",
+        message: expect.stringContaining("timed out"),
       });
     }
     expect(

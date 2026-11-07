@@ -1,4 +1,4 @@
-import * as Sse from "effect/unstable/encoding/Sse";
+import * as Sse from "effect/encoding/Sse";
 import { Effect, Exit, Stream } from "effect";
 import { describe, expect, it, vi } from "vitest";
 

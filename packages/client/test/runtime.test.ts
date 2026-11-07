@@ -1,6 +1,6 @@
 import { FileFingerprint, Forbidden, SessionId, Unauthorized, Uuid } from "@great-minds/domain";
 import { Effect, Fiber, Layer, Schema, Semaphore, Stream } from "effect";
-import { HttpClientRequest } from "effect/unstable/http";
+import { HttpClientRequest } from "effect/http";
 import { describe, expect, it } from "vitest";
 
 import { ApiError, makeApi } from "../src/runtime.ts";

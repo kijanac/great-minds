@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { errorMessage } from "@great-minds/client";
 import { Cause, Effect, Layer } from "effect";
-import { CliError } from "effect/unstable/cli";
+import { CliError } from "effect/cli";
 
 import { runGm } from "./cli.ts";
 import { CliFetch } from "./connection.ts";

@@ -1,5 +1,5 @@
 import { Cause, Effect, Stream } from "effect";
-import type { EventEncoded } from "effect/unstable/encoding/Sse";
+import type { EventEncoded } from "effect/encoding/Sse";
 
 type Snapshot = {
   readonly version: string | number;
