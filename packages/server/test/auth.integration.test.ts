@@ -103,7 +103,6 @@ const testConfig = (url: string, dataDir: string): AppConfigShape => ({
   corsOrigins: ["http://localhost:5173"],
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",
-  suppressAuth: false,
   clientIpHeader: Option.none(),
   allowPrivateUrlFetch: false,
   serverHost: "127.0.0.1",
