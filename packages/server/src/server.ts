@@ -6,6 +6,8 @@ import {
   BadRequest,
   CurrentAuth,
   endpointPermissions,
+  type EndpointName,
+  modelEndpoints,
   Forbidden,
   GreatMindsApi,
   type Permission,
@@ -31,7 +33,7 @@ import { HttpApiBuilder } from "effect/http-api";
 import { HttpApiSchemaError } from "effect/http-api/HttpApiError";
 
 import { AppLayerLive, type AppLayerServices } from "./app-layer.ts";
-import { AuthService, keyRefusal } from "./auth.ts";
+import { AuthService, keyRefusal, modelRefusal } from "./auth.ts";
 import { CliLogins } from "./cli-logins.ts";
 import { Mailer } from "./mailer.ts";
 import { AppConfig, missingModelKey, notConfiguredDetail } from "./config.ts";
@@ -202,7 +204,11 @@ const AuthMiddlewareLive = Layer.effect(
     bearer: (httpEffect, { credential, endpoint }) =>
       Effect.gen(function* () {
         const current = yield* auth.authenticateBearer(Redacted.value(credential));
-        const refusal = keyRefusal(current, permissions.get(endpoint.identifier) ?? "account");
+        const refusal =
+          keyRefusal(current, permissions.get(endpoint.identifier) ?? "account") ??
+          (modelEndpoints.has(endpoint.identifier as EndpointName)
+            ? modelRefusal(current)
+            : undefined);
         if (refusal !== undefined) return yield* new Forbidden({ detail: refusal });
         return yield* Effect.provideService(httpEffect, CurrentAuth, current);
       }),

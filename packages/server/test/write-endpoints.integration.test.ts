@@ -470,10 +470,15 @@ const seedBase = async (): Promise<Fixture> => {
       yield* db
         .query((d) =>
           d.insert(users).values([
-            { id: id.alice, email: "alice@example.com", createdAt: initialTime },
-            { id: id.bob, email: "bob@example.com", createdAt: initialTime },
-            { id: id.carol, email: "carol@example.com", createdAt: initialTime },
-            { id: id.mallory, email: "mallory@example.com", createdAt: initialTime },
+            { id: id.alice, email: "alice@example.com", createdAt: initialTime, sponsored: true },
+            { id: id.bob, email: "bob@example.com", createdAt: initialTime, sponsored: true },
+            { id: id.carol, email: "carol@example.com", createdAt: initialTime, sponsored: true },
+            {
+              id: id.mallory,
+              email: "mallory@example.com",
+              createdAt: initialTime,
+              sponsored: true,
+            },
           ]),
         )
         .pipe(Effect.orDie);

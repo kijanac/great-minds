@@ -149,8 +149,8 @@ const seed = () =>
       yield* db.query((d) => d
         .insert(users)
         .values([
-          { id: ids.alice, email: "jobs-alice@example.test", createdAt: now },
-          { id: ids.bob, email: "jobs-bob@example.test", createdAt: now },
+          { id: ids.alice, email: "jobs-alice@example.test", createdAt: now, sponsored: true },
+          { id: ids.bob, email: "jobs-bob@example.test", createdAt: now, sponsored: true },
         ]))
         .pipe(Effect.orDie);
       yield* db.transaction((tx) =>

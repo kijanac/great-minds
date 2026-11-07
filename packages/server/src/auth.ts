@@ -54,6 +54,10 @@ type AuthServiceShape = {
   ) => Effect.Effect<ApiKeyWithSecret>;
   readonly ensureUser: (email: Email) => Effect.Effect<Uuid, Unauthorized>;
   readonly findUser: (email: Email) => Effect.Effect<Option.Option<Uuid>>;
+  readonly setSponsored: (userId: Uuid, sponsored: boolean) => Effect.Effect<void>;
+  readonly listUsers: () => Effect.Effect<
+    ReadonlyArray<{ readonly email: string; readonly sponsored: boolean; readonly createdAt: Date }>
+  >;
   readonly listApiKeys: (userId: Uuid) => Effect.Effect<readonly ApiKey[]>;
   readonly revokeApiKey: (userId: Uuid, keyId: Uuid) => Effect.Effect<void, NotFound>;
   readonly purgeSignInCodesOnce: () => Effect.Effect<number>;
@@ -227,6 +231,7 @@ export const AuthServiceLive = Layer.effect(
               vaultIds: apiKeys.vaultIds,
               canAsk: apiKeys.canAsk,
               canChange: apiKeys.canChange,
+              sponsored: users.sponsored,
               expiresAt: apiKeys.expiresAt,
               lastUsedAt: apiKeys.lastUsedAt,
             })
@@ -496,6 +501,7 @@ export const AuthServiceLive = Layer.effect(
                 user_id: user.id,
                 email: asEmail(user.email),
                 credential_kind: "jwt",
+                sponsored: user.sponsored,
                 key_scope: null,
               };
             }
@@ -521,6 +527,7 @@ export const AuthServiceLive = Layer.effect(
               user_id: apiKeyUser.id,
               email: asEmail(apiKeyUser.email),
               credential_kind: "api_key",
+              sponsored: apiKeyUser.sponsored,
               key_scope: {
                 key_id: apiKeyUser.keyId,
                 vault_ids: apiKeyUser.vaultIds,
@@ -533,6 +540,20 @@ export const AuthServiceLive = Layer.effect(
         }),
       createApiKey,
       ensureUser,
+      setSponsored: (userId, sponsored) =>
+        db
+          .query((d) => d.update(users).set({ sponsored }).where(eq(users.id, userId)))
+          .pipe(Effect.asVoid, Effect.orDie),
+      listUsers: () =>
+        db
+          .query((d) =>
+            d
+              .select({ email: users.email, sponsored: users.sponsored, createdAt: users.createdAt })
+              .from(users)
+              .where(isNull(users.deletedAt))
+              .orderBy(asc(users.email)),
+          )
+          .pipe(Effect.orDie),
       findUser,
       listApiKeys: (userId) =>
         db
@@ -599,3 +620,8 @@ export const keyRefusal = (current: AuthContext, permission: Permission) => {
     return "This API key can't add documents or make changes.";
   return undefined;
 };
+
+export const modelRefusal = (current: AuthContext) =>
+  current.sponsored
+    ? undefined
+    : "This account isn't sponsored to use this server's models. Ask the person who runs this Great Minds server to sponsor it.";
