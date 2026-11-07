@@ -891,6 +891,44 @@ export const ThinkingSource = Schema.Struct({
 });
 export type ThinkingSource = typeof ThinkingSource.Type;
 
+export const Citation = Schema.Struct({
+  n: Schema.Int,
+  label: Schema.String,
+  href: Schema.String,
+  path: Schema.String,
+  kind: Schema.Literals(["article", "source"] as const),
+});
+export type Citation = typeof Citation.Type;
+
+const LINK = /\[([^\]]+)\]\(((?:raw|wiki)\/[^)\s]+)\)/g;
+
+export const citationPath = (href: string) => {
+  const hash = href.indexOf("#");
+  const path = hash === -1 ? href : href.slice(0, hash);
+  try {
+    return decodeURI(path);
+  } catch {
+    return path;
+  }
+};
+
+export const citationsOf = (markdown: string): Citation[] => {
+  const seen = new Map<string, Citation>();
+  for (const match of markdown.matchAll(LINK)) {
+    const href = match[2] ?? "";
+    const path = citationPath(href);
+    if (seen.has(path)) continue;
+    seen.set(path, {
+      n: seen.size + 1,
+      label: (match[1] ?? "").trim(),
+      href,
+      path,
+      kind: path.startsWith("wiki/") ? "article" : "source",
+    });
+  }
+  return [...seen.values()];
+};
+
 export const ThinkingBlock = Schema.Struct({
   sources: Schema.Array(ThinkingSource).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
 });
@@ -937,6 +975,7 @@ export const SessionExchangeEvent = Schema.Struct({
   query: Schema.String,
   thinking: Schema.Array(ThinkingBlock).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
   answer: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
+  citations: Schema.Array(Citation).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
   ts: Schema.NullOr(IsoDateTime),
 });
 export type SessionExchangeEvent = typeof SessionExchangeEvent.Type;
@@ -1221,6 +1260,21 @@ export const ChunkRangeQuery = Schema.Struct({
 });
 export type ChunkRangeQuery = typeof ChunkRangeQuery.Type;
 
+export const SearchQuery = Schema.Struct({
+  q: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(2000))),
+  path: Schema.optionalKey(Schema.String),
+});
+export type SearchQuery = typeof SearchQuery.Type;
+
+export const SearchHit = Schema.Struct({
+  path: Schema.String,
+  chunk_index: Schema.Number,
+  heading: Schema.String,
+  text: Schema.String,
+  score: Schema.Number,
+});
+export type SearchHit = typeof SearchHit.Type;
+
 export const Chunk = Schema.Struct({
   path: Schema.String,
   chunk_index: Schema.Number,
@@ -1350,6 +1404,7 @@ export const ReplySnapshot = Schema.Struct({
   session_id: SessionId,
   status: ReplyStatus,
   answer: Schema.String,
+  citations: Schema.Array(Citation),
   sources: Schema.Array(ReplySource),
   error: Schema.NullOr(Schema.String),
   version: Schema.Number,
@@ -1994,6 +2049,12 @@ const DocumentsApiGroup = HttpApiGroup.make("documents").add(
     success: DocResponse,
     error: DocumentErrors,
   }).middleware(AuthMiddleware),
+  HttpApiEndpoint.get("searchVault", "/vaults/:vault_id/search", {
+    params: VaultIdParams,
+    query: SearchQuery,
+    success: Schema.Array(SearchHit),
+    error: [ForbiddenResponse, ServiceUnavailableResponse, ValidationResponse] as const,
+  }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("readChunks", "/vaults/:vault_id/chunks", {
     params: VaultIdParams,
     query: ChunkRangeQuery,
@@ -2241,6 +2302,7 @@ export const endpointPermissions: { readonly [Name in EndpointName]: Permission 
   getVaultCosts: "read",
   resolveDocument: "read",
   readChunks: "read",
+  searchVault: "read",
   readLinks: "read",
   listSessions: "read",
   listSessionsByOrigin: "read",

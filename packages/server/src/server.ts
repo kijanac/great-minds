@@ -651,6 +651,23 @@ const DocumentsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "docume
         documents.readDocument(userId, params.vault_id, query.path),
       ),
     )
+    .handle("searchVault", ({ params, query }) =>
+      Effect.gen(function* () {
+        const current = yield* CurrentAuth;
+        const access = yield* VaultAccessService;
+        yield* access.requireMember(current.user_id, params.vault_id);
+        const queries = yield* QueryService;
+        return yield* queries
+          .search(current.user_id, params.vault_id, query.q, query.path)
+          .pipe(
+            Effect.catchTag("EmbeddingBatchFailed", (error) =>
+              Effect.fail(
+                new ServiceUnavailable({ detail: `Search is unavailable: ${error.message}` }),
+              ),
+            ),
+          );
+      }),
+    )
     .handle("readChunks", ({ params, query }) =>
       asUser(DocumentsService, (documents, userId) =>
         documents.readChunks(userId, params.vault_id, query),

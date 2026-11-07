@@ -1,5 +1,10 @@
 import type { replies } from "@great-minds/database";
-import type { ReplySnapshot, SessionEvent, SessionExchangeEvent } from "@great-minds/domain";
+import {
+  citationsOf,
+  type ReplySnapshot,
+  type SessionEvent,
+  type SessionExchangeEvent,
+} from "@great-minds/domain";
 import type { ConversationHistory } from "./history.ts";
 
 export const projectSession = (history: ConversationHistory): readonly SessionEvent[] => [
@@ -28,6 +33,7 @@ export const projectSession = (history: ConversationHistory): readonly SessionEv
         query: accepted.question,
         thinking: sources.length === 0 ? [] : [{ sources }],
         answer: settlement?.answer ?? "",
+        citations: citationsOf(settlement?.answer ?? ""),
         ts: timestamp === null ? null : new Date(timestamp),
       },
     ];
@@ -39,6 +45,7 @@ export const replySnapshot = (row: typeof replies.$inferSelect): ReplySnapshot =
   session_id: row.sessionId,
   status: row.status,
   answer: row.answer,
+  citations: citationsOf(row.answer),
   sources: row.sources,
   error: row.error,
   version: row.version,
