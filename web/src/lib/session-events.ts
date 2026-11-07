@@ -10,6 +10,7 @@ export const replayExchanges = (events: readonly SessionEvent[]): Exchange[] =>
       query: event.query,
       thinking: event.thinking,
       answer: event.answer,
+      citations: event.citations,
       btws: [],
       replyId: event.reply_id,
       status: event.status,

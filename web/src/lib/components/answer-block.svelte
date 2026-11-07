@@ -11,7 +11,7 @@
   import { assignBlockRefIds, stripBlockRefMarkers } from "$lib/block-refs";
   import AnswerCitations from "$lib/components/answer-citations.svelte";
   import BtwThread from "$lib/components/btw-thread.svelte";
-  import { citationsOf, numberCitations, type Citation } from "$lib/citations";
+  import { numberCitations, type Citation } from "$lib/citations";
   import FootnoteNotes, {
     type MarginDot,
   } from "$lib/components/footnote-notes.svelte";
@@ -46,8 +46,10 @@
     expandedThreads = null,
     onToggleThread,
     onCitation,
+    citations = [],
   }: {
     text: string;
+    citations?: readonly Citation[];
     documentTitle?: string | null;
     header?: Snippet<[showTitle: boolean]>;
     exchangeId: Uuid;
@@ -77,7 +79,6 @@
   const displayText = $derived(
     stripBlockRefs ? stripBlockRefMarkers(text) : text,
   );
-  const citations = $derived(onCitation ? citationsOf(displayText) : []);
   const split = $derived(
     streaming ? splitStreamingMarkdown(displayText) : null,
   );
@@ -373,7 +374,7 @@
     if (stripBlockRefs && resolveBlockRefs) {
       assignBlockRefIds(tree, text);
     }
-    return onCitation ? numberCitations(tree, displayText) : tree;
+    return onCitation ? numberCitations(tree, citations) : tree;
   }
 
   function handleSelect(event: MouseEvent, offset: number): void {

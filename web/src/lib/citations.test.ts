@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { citationsOf, numberCitations, outlineOf } from "./citations";
+import { citationsOf } from "@great-minds/domain";
+
+import { numberCitations, outlineOf } from "./citations";
 import { parseMarkdown } from "./markdown";
 import type { HastNode } from "./markdown-plugins";
 
@@ -41,7 +43,7 @@ describe("answer citations", () => {
   });
 
   it("marks every link to a cited document with its number, repeats included", () => {
-    expect(citedNumbers(numberCitations(parseMarkdown(answer), answer))).toEqual([
+    expect(citedNumbers(numberCitations(parseMarkdown(answer), citationsOf(answer)))).toEqual([
       "1",
       "2",
       "1",

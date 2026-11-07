@@ -1,4 +1,3 @@
-export { citationPath, citationsOf, type Citation } from "./citations.ts";
 export { domainErrorDetail, errorMessage } from "./errors.ts";
 export { newUuid } from "./ids.ts";
 export { allVaults, followJob, followReply, replyRequest } from "./operations.ts";

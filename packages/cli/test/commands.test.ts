@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { NodeServices } from "@effect/platform-node";
-import { Uuid } from "@great-minds/domain";
+import { citationsOf, Uuid } from "@great-minds/domain";
 import {
   Cause,
   ConfigProvider,
@@ -19,7 +19,16 @@ import {
 } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { add, ask, listRuns, login, logout, update } from "../src/commands.ts";
+import {
+  add,
+  ask,
+  callApi,
+  listRuns,
+  login,
+  logout,
+  readDocument,
+  update,
+} from "../src/commands.ts";
 import { CliFetch } from "../src/connection.ts";
 import { Credentials, CredentialsLive } from "../src/credentials.ts";
 
@@ -338,6 +347,7 @@ describe("gm ask", () => {
     session_id: "session-1",
     status,
     answer,
+    citations: citationsOf(answer),
     sources,
     error: null,
     version: 1,
@@ -546,6 +556,66 @@ describe("gm update", () => {
     ).toHaveLength(2);
     expect(requests.some((request) => request.path.endsWith("/commit"))).toBe(true);
     expect(stdout).toEqual(["Update finished."]);
+  });
+});
+
+describe("reading", () => {
+  it("gm read prints a document's text and says when it is archived", async () => {
+    await saveCredentials({
+      api_url: apiUrl,
+      api_key: "gm_saved",
+      api_key_id: oldKeyId,
+      vault_id: vaultId,
+    });
+    route = (request) => {
+      if (request.path === `/v1/vaults/${vaultId}`) return vaultDetail();
+      if (request.path === `/v1/vaults/${vaultId}/doc`)
+        return json(200, {
+          article: {
+            kind: "wiki",
+            id: vaultId,
+            vault_id: vaultId,
+            topic_id: vaultId,
+            file_path: "archive/x/old.md",
+            body_hash: "hash",
+            title: "Old",
+            precis: "",
+            tags: [],
+            created_at: now,
+            updated_at: now,
+            slug: "old",
+          },
+          body: "# Old\n\nText.",
+          archived: true,
+          superseded_by: "wiki/new.md",
+        });
+      return json(404, {});
+    };
+    await run(readDocument({ path: "archive/x/old.md", vault: Option.none(), json: false }));
+    expect(stdout).toEqual(["# Old\n\nText."]);
+    expect(stderr).toEqual(["This article is archived; see wiki/new.md."]);
+  });
+
+  it("gm api sends the method, path and body with the saved key, and fails on an error status", async () => {
+    await saveCredentials({
+      api_url: apiUrl,
+      api_key: "gm_saved",
+      api_key_id: oldKeyId,
+      vault_id: null,
+    });
+    route = (request) =>
+      request.path === "/v1/vaults" ? json(200, { ok: true }) : json(403, { detail: "no" });
+    await run(callApi({ method: "post", path: "/vaults", data: Option.some('{"name":"x"}') }));
+    expect(requests[0]).toMatchObject({
+      method: "POST",
+      path: "/v1/vaults",
+      auth: "Bearer gm_saved",
+      body: '{"name":"x"}',
+    });
+    expect(stdout).toEqual(['{"ok":true}']);
+    expect(
+      await failureTag(callApi({ method: "get", path: "vaults/x", data: Option.none() })),
+    ).toBe("ApiCallFailed");
   });
 });
 

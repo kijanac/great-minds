@@ -50,6 +50,7 @@
             query: exchange.query,
             thinking: [],
             answer: exchange.answer,
+            citations: [],
             btws: [],
             status: "completed",
             version: null,

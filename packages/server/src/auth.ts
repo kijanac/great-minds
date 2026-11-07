@@ -352,9 +352,6 @@ export const AuthServiceLive = Layer.effect(
       requestCode: (emailInput, clientAddress) =>
         Effect.gen(function* () {
           const email = normalizeEmail(emailInput);
-          if (config.suppressAuth) {
-            return;
-          }
           if (!mailer.configured) {
             return yield* new ServiceUnavailable({
               detail: "Email sign-in is not set up on this server",
@@ -396,39 +393,37 @@ export const AuthServiceLive = Layer.effect(
           const now = yield* clock.now;
           const result = yield* db.transaction((tx) =>
             Effect.gen(function* () {
-              if (!config.suppressAuth) {
-                const active = yield* tx
-                  .select()
-                  .from(authCodes)
-                  .where(
-                    and(
-                      eq(authCodes.email, email),
-                      eq(authCodes.used, false),
-                      gt(authCodes.expiresAt, now),
-                    ),
-                  )
-                  .orderBy(desc(authCodes.createdAt))
-                  .limit(1)
-                  .for("update");
-                const current = active[0];
-                if (current === undefined) {
-                  return Result.fail("Invalid or expired code");
-                }
-                if (current.codeHash !== sha256Hex(code)) {
-                  const failedAttempts = current.failedAttempts + 1;
-                  const remaining = signInCodePolicy.wrongGuessesPerCode - failedAttempts;
-                  yield* tx
-                    .update(authCodes)
-                    .set({ failedAttempts, used: remaining <= 0 })
-                    .where(eq(authCodes.id, current.id));
-                  return Result.fail(
-                    remaining <= 0
-                      ? "Too many incorrect attempts. Request a new code."
-                      : `Incorrect code. ${plural(remaining, "attempt")} left.`,
-                  );
-                }
-                yield* tx.update(authCodes).set({ used: true }).where(eq(authCodes.id, current.id));
+              const active = yield* tx
+                .select()
+                .from(authCodes)
+                .where(
+                  and(
+                    eq(authCodes.email, email),
+                    eq(authCodes.used, false),
+                    gt(authCodes.expiresAt, now),
+                  ),
+                )
+                .orderBy(desc(authCodes.createdAt))
+                .limit(1)
+                .for("update");
+              const current = active[0];
+              if (current === undefined) {
+                return Result.fail("Invalid or expired code");
               }
+              if (current.codeHash !== sha256Hex(code)) {
+                const failedAttempts = current.failedAttempts + 1;
+                const remaining = signInCodePolicy.wrongGuessesPerCode - failedAttempts;
+                yield* tx
+                  .update(authCodes)
+                  .set({ failedAttempts, used: remaining <= 0 })
+                  .where(eq(authCodes.id, current.id));
+                return Result.fail(
+                  remaining <= 0
+                    ? "Too many incorrect attempts. Request a new code."
+                    : `Incorrect code. ${plural(remaining, "attempt")} left.`,
+                );
+              }
+              yield* tx.update(authCodes).set({ used: true }).where(eq(authCodes.id, current.id));
 
               return Result.succeed(yield* userIdFor(tx, email));
             }),

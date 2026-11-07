@@ -3,7 +3,6 @@ import { basename, join } from "node:path";
 
 import {
   allVaults,
-  citationsOf,
   errorMessage,
   fingerprint,
   manifestOf,
@@ -29,9 +28,10 @@ import {
 } from "@great-minds/domain";
 import { Console, Effect, FileSystem, Option, Stream } from "effect";
 
-import { connect, type Connection } from "./connection.ts";
+import { CliFetch, connect, type Connection } from "./connection.ts";
 import { Credentials } from "./credentials.ts";
 import {
+  ApiCallFailed,
   KeyNotRevoked,
   LoginCancelled,
   LoginExpired,
@@ -304,7 +304,7 @@ export const ask = (input: {
       return yield* new ReplyNotCompleted({ status: reply.status, error: reply.error });
     if (!input.json) {
       yield* Console.log(reply.answer.trim());
-      const cited = citationsOf(reply.answer);
+      const cited = reply.citations;
       if (cited.length > 0) {
         yield* Console.log("");
         yield* Console.log("Sources:");
@@ -510,4 +510,95 @@ export const add = (input: {
       `Added ${plural(files.length, "file")}; run ${job.id} (gm run ${job.id} to follow it again)`,
     );
     yield* followRun(connection, vaultId, job.id, input.json);
+  });
+
+const shortDate = (date: Date) => date.toISOString().slice(0, 16).replace("T", " ");
+
+export const listSessions = (input: {
+  readonly vault: Option.Option<string>;
+  readonly limit: number;
+  readonly json: boolean;
+}) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const page = yield* connection.use(
+      connection.api.sessions.listSessions({
+        params: { vault_id: vaultId },
+        query: { limit: input.limit, offset: 0 },
+      }),
+    );
+    if (input.json) return yield* printJson(page);
+    if (page.items.length === 0) return yield* Console.log("No sessions yet.");
+    for (const session of page.items)
+      yield* Console.log(`${session.id}  ${shortDate(session.updated_at)}  ${session.query}`);
+    if (page.pagination.total > page.items.length)
+      yield* Console.error(
+        `(${page.items.length} of ${page.pagination.total}; --limit up to 200 shows more)`,
+      );
+  });
+
+export const readSession = (input: {
+  readonly session: SessionId;
+  readonly vault: Option.Option<string>;
+  readonly json: boolean;
+}) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const params = { vault_id: vaultId, session_id: input.session };
+    if (input.json)
+      return yield* printJson(
+        yield* connection.use(connection.api.sessions.readSession({ params })),
+      );
+    yield* Console.log(
+      yield* connection.use(connection.api.sessions.readSessionMarkdown({ params })),
+    );
+  });
+
+export const readDocument = (input: {
+  readonly path: string;
+  readonly vault: Option.Option<string>;
+  readonly json: boolean;
+}) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const document = yield* connection.use(
+      connection.api.documents.resolveDocument({
+        params: { vault_id: vaultId },
+        query: { path: input.path },
+      }),
+    );
+    if (input.json) return yield* printJson(document);
+    if (document.archived)
+      yield* Console.error(
+        document.superseded_by === null
+          ? "This article is archived."
+          : `This article is archived; see ${document.superseded_by}.`,
+      );
+    yield* Console.log(document.body);
+  });
+
+export const callApi = (input: {
+  readonly method: string;
+  readonly path: string;
+  readonly data: Option.Option<string>;
+}) =>
+  Effect.gen(function* () {
+    const credentials = yield* Credentials;
+    const signedIn = yield* credentials.signedIn;
+    const fetch = yield* CliFetch;
+    const url = `${signedIn.apiUrl.replace(/\/$/, "")}/${input.path.replace(/^\//, "")}`;
+    const response = yield* Effect.promise((signal) =>
+      fetch(url, {
+        method: input.method.toUpperCase(),
+        headers: {
+          authorization: `Bearer ${signedIn.apiKey}`,
+          ...(Option.isSome(input.data) ? { "content-type": "application/json" } : {}),
+        },
+        ...(Option.isSome(input.data) ? { body: input.data.value } : {}),
+        signal,
+      }),
+    );
+    const body = yield* Effect.promise(() => response.text());
+    if (!response.ok) return yield* new ApiCallFailed({ status: response.status, body });
+    if (body !== "") yield* Console.log(body);
   });
