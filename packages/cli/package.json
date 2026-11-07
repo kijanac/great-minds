@@ -11,9 +11,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@effect/platform-node": "4.0.0-rc.112",
+    "@effect/platform-node": "4.1.2",
     "@great-minds/client": "workspace:*",
     "@great-minds/domain": "workspace:*",
-    "effect": "4.0.0-rc.112"
+    "effect": "4.1.2"
   }
 }

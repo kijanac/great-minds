@@ -118,7 +118,7 @@ const samplingTemperature = (name: string, fallback: Option.Option<number>) =>
   );
 
 const reasoningEffort = (name: string) =>
-  Config.option(Config.literals(["none", "low", "high", "max"] as const, name));
+  Config.option(Config.Literals(["none", "low", "high", "max"] as const, name));
 
 const validateRedacted = (value: Redacted.Redacted<string>) =>
   Schema.decodeUnknownEffect(Schema.NonEmptyString)(Redacted.value(value)).pipe(
@@ -127,7 +127,7 @@ const validateRedacted = (value: Redacted.Redacted<string>) =>
   );
 
 const redactedNonEmpty = (name: string) =>
-  Config.redacted(name).pipe(Config.mapOrFail(validateRedacted));
+  Config.Redacted(name).pipe(Config.mapEffect(validateRedacted));
 
 const providerName = Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-z][a-z0-9_]*$/)));
 
@@ -135,7 +135,7 @@ const namedProvider = (name: string) =>
   Config.all({
     url: nonEmptyString(`PROVIDER_${name.toUpperCase()}_URL`),
     apiKey: Config.option(redactedNonEmpty(`PROVIDER_${name.toUpperCase()}_KEY`)),
-    kind: Config.literals(
+    kind: Config.Literals(
       ["openai", "openrouter"] as const,
       `PROVIDER_${name.toUpperCase()}_KIND`,
     ).pipe(Config.withDefault<ProviderKind>("openai")),
@@ -145,7 +145,7 @@ const configError = (message: string) =>
   new Config.ConfigError(new Schema.SchemaError(new SchemaIssue.InvalidValue({ message })));
 
 const providerNames = commaList("PROVIDERS", "").pipe(
-  Config.mapOrFail((names) =>
+  Config.mapEffect((names) =>
     Effect.forEach(names, (name) =>
       Schema.decodeUnknownEffect(providerName)(name).pipe(
         Effect.mapError((error) => new Config.ConfigError(error)),
@@ -157,7 +157,7 @@ const providerNames = commaList("PROVIDERS", "").pipe(
 const PRICE_ENTRY = /^(.+)=(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)$/;
 
 const modelPrices = commaList("MODEL_PRICES", "").pipe(
-  Config.mapOrFail((entries) =>
+  Config.mapEffect((entries) =>
     Effect.forEach(entries, (entry) => {
       const match = PRICE_ENTRY.exec(entry);
       return match === null
@@ -187,7 +187,7 @@ const appConfig = Config.all({
   resendApiKey: Config.option(redactedNonEmpty("RESEND_API_KEY")),
   resendFromEmail: Config.option(nonEmptyString("RESEND_FROM_EMAIL")),
   dataDir: nonEmptyString("DATA_DIR").pipe(Config.withDefault("/data")),
-  storageBackend: Config.literals(["local", "r2"] as const, "STORAGE_BACKEND").pipe(
+  storageBackend: Config.Literals(["local", "r2"] as const, "STORAGE_BACKEND").pipe(
     Config.withDefault("local" as const),
   ),
   r2AccountId: Config.option(nonEmptyString("R2_ACCOUNT_ID")),
@@ -220,7 +220,7 @@ const appConfig = Config.all({
   extractReasoningEffort: reasoningEffort("EXTRACT_REASONING_EFFORT"),
   mapReasoningEffort: reasoningEffort("MAP_REASONING_EFFORT"),
   reduceReasoningEffort: reasoningEffort("REDUCE_REASONING_EFFORT"),
-  renderReasoningEffort: Config.literals(
+  renderReasoningEffort: Config.Literals(
     ["none", "low", "high", "max"] as const,
     "RENDER_REASONING_EFFORT",
   ).pipe(Config.withDefault<ReasoningEffort>("high"), Config.map(Option.some)),
@@ -236,19 +236,19 @@ const appConfig = Config.all({
   ),
   embeddingProviders: commaList("EMBEDDING_PROVIDERS", "deepinfra,nebius"),
   corsOrigins: commaList("CORS_ORIGINS", "http://localhost:5173"),
-  publicWebUrl: Config.url("PUBLIC_WEB_URL").pipe(
+  publicWebUrl: Config.URL("PUBLIC_WEB_URL").pipe(
     Config.withDefault(new URL("http://localhost:5173")),
   ),
   typstBinary: nonEmptyString("TYPST_BINARY").pipe(Config.withDefault("typst")),
-  suppressAuth: Config.boolean("SUPPRESS_AUTH").pipe(Config.withDefault(false)),
+  suppressAuth: Config.Boolean("SUPPRESS_AUTH").pipe(Config.withDefault(false)),
   clientIpHeader: Config.option(
     nonEmptyString("CLIENT_IP_HEADER").pipe(Config.map((name) => name.trim().toLowerCase())),
   ),
-  allowPrivateUrlFetch: Config.boolean("ALLOW_PRIVATE_URL_FETCH").pipe(Config.withDefault(false)),
+  allowPrivateUrlFetch: Config.Boolean("ALLOW_PRIVATE_URL_FETCH").pipe(Config.withDefault(false)),
   serverHost: nonEmptyString("HOST").pipe(Config.withDefault("0.0.0.0")),
-  serverPort: Config.port("PORT").pipe(Config.withDefault(8787)),
+  serverPort: Config.Port("PORT").pipe(Config.withDefault(8787)),
 }).pipe(
-  Config.mapOrFail((config) => {
+  Config.mapEffect((config) => {
     if (config.webauthnOrigins.length === 0) {
       return Effect.fail(configError("WEBAUTHN_ORIGINS must contain at least one origin"));
     }

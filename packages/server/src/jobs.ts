@@ -12,7 +12,7 @@ import {
 } from "@great-minds/domain";
 import { and, count, desc, eq, inArray, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer, Schema, Stream } from "effect";
-import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
+import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 
 import { cancelCompileWorkflow, linkRunToIntent, queueCompile } from "./compile-intents.ts";
 import { FileIngestBatches } from "./file-ingest-batches.ts";

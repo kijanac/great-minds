@@ -1,5 +1,5 @@
 import { SessionId, Uuid } from "@great-minds/domain";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/cli";
 
 import {
   add,
@@ -13,18 +13,18 @@ import {
   useVault,
 } from "./commands.ts";
 
-const vaultFlag = Flag.string("vault").pipe(
+const vaultFlag = Flag.String("vault").pipe(
   Flag.withDescription("Vault name or id (default: gm vault use, GM_VAULT, or your only vault)"),
   Flag.optional,
 );
-const jsonFlag = Flag.boolean("json").pipe(
+const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Print machine-readable JSON instead of text"),
   Flag.withDefault(false),
 );
 
 const loginCommand = Command.make(
   "login",
-  { url: Flag.string("url").pipe(Flag.withDescription("API base URL"), Flag.optional) },
+  { url: Flag.String("url").pipe(Flag.withDescription("API base URL"), Flag.optional) },
   login,
 ).pipe(
   Command.withDescription("Sign in by approving this computer in your browser; saves an API key"),
@@ -40,7 +40,7 @@ const vaultsCommand = Command.make("vaults", { json: jsonFlag }, listVaults).pip
 
 const vaultUseCommand = Command.make(
   "use",
-  { vault: Argument.string("vault").pipe(Argument.withDescription("Vault name or id")) },
+  { vault: Argument.String("vault").pipe(Argument.withDescription("Vault name or id")) },
   useVault,
 ).pipe(Command.withDescription("Set the default vault for later commands"));
 
@@ -52,8 +52,8 @@ const vaultCommand = Command.make("vault").pipe(
 const askCommand = Command.make(
   "ask",
   {
-    question: Argument.string("question").pipe(Argument.withDescription("Your question")),
-    session: Flag.string("session").pipe(
+    question: Argument.String("question").pipe(Argument.withDescription("Your question")),
+    session: Flag.String("session").pipe(
       Flag.withSchema(SessionId),
       Flag.withDescription("Continue an earlier session (its id is printed after each answer)"),
       Flag.optional,
@@ -71,7 +71,7 @@ const askCommand = Command.make(
 const addCommand = Command.make(
   "add",
   {
-    paths: Argument.path("path", { mustExist: true }).pipe(
+    paths: Argument.Path("path", { mustExist: true }).pipe(
       Argument.withDescription("Files or folders to add (folders are read recursively)"),
       Argument.atLeast(1),
     ),
@@ -93,7 +93,7 @@ const runsCommand = Command.make(
   "runs",
   {
     vault: vaultFlag,
-    limit: Flag.integer("limit").pipe(
+    limit: Flag.Int("limit").pipe(
       Flag.filter(
         (limit) => limit >= 1 && limit <= 200,
         (limit) => `--limit must be between 1 and 200 (got ${limit})`,
@@ -109,7 +109,7 @@ const runsCommand = Command.make(
 const runCommand = Command.make(
   "run",
   {
-    run: Argument.string("id").pipe(
+    run: Argument.String("id").pipe(
       Argument.withSchema(Uuid),
       Argument.withDescription("Run id (from gm runs)"),
     ),

@@ -1,9 +1,9 @@
 import { GreatMindsApi, type DomainError } from "@great-minds/domain";
 import { Data, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
-import { HttpClient } from "effect/unstable/http";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import type * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import { HttpClient } from "effect/http";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import type * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import { AuthClient, AuthMiddlewareClientLive, makeAuthenticate } from "./auth-middleware.ts";
 import type { StreamFailure } from "./sse.ts";

@@ -27,7 +27,7 @@ import {
 import { and, eq, sql } from "drizzle-orm";
 import { Deferred, Effect, Layer, Option, Redacted, Result, Schema, Stream } from "effect";
 import { afterEach, assert, describe, expect, it, vi } from "vitest";
-import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine";
+import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 
 import { makeAppLayer } from "../src/app-layer.ts";
 import { ClockService, makeTestClock } from "../src/clock.ts";

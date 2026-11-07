@@ -1,6 +1,6 @@
 # Effect style
 
-Effect version: `4.0.0-rc` family (`effect`, `@effect/sql-pg`, `@effect/platform-node`, `@effect/ai-*`), pinned in lockstep. Every snippet below compiles against the pinned version. v3-era APIs (`Effect.Service`, `Context.GenericTag`, `Context.Tag`, `Effect.catchAll`, `Effect.zipRight`, `Schema.TaggedErrorClass`, the `yield* _(…)` adapter) do not exist here.
+Effect version: `4.1` (`effect`, `@effect/sql-pg`, `@effect/platform-node`), pinned in lockstep. Modules once under `effect/unstable/*` are plain paths (`effect/http-api`, `effect/cli`, `effect/ai`, …). Every snippet below compiles against the pinned version. v3-era APIs (`Effect.Service`, `Context.GenericTag`, `Context.Tag`, `Effect.catchAll`, `Effect.zipRight`, `Schema.TaggedErrorClass`, the `yield* _(…)` adapter) do not exist here.
 
 ## The one test
 

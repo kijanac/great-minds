@@ -1,11 +1,15 @@
 import { readFileSync } from "node:fs";
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
-import * as PgClient from "@effect/sql-pg/PgClient";
-import { DatabaseLive, logMigrationResult, migrateDatabase } from "@great-minds/database";
+import {
+  DatabaseLive,
+  layerPgClient,
+  logMigrationResult,
+  migrateDatabase,
+} from "@great-minds/database";
 import { Email, Uuid } from "@great-minds/domain";
 import { Cause, Config, Console, Data, Effect, Exit, Layer, Option, type Redacted } from "effect";
-import { Argument, CliError, Command, Flag } from "effect/unstable/cli";
+import { Argument, CliError, Command, Flag } from "effect/cli";
 
 import { makeAppLayers } from "./app-layer.ts";
 import { AuthService, AuthServiceLive } from "./auth.ts";
@@ -36,7 +40,7 @@ const logEvent = (body: Record<string, unknown>) =>
 
 const migrate = (databaseUrl: Redacted.Redacted<string>) =>
   migrateDatabase.pipe(
-    Effect.provide(DatabaseLive.pipe(Layer.provide(PgClient.layer({ url: databaseUrl })))),
+    Effect.provide(DatabaseLive.pipe(Layer.provide(layerPgClient({ url: databaseUrl })))),
     Effect.tap((result) => Effect.sync(() => logMigrationResult(result))),
   );
 
@@ -88,7 +92,7 @@ const existingUser = (email: Email) =>
     ),
   );
 
-const emailFlag = Flag.string("email").pipe(
+const emailFlag = Flag.String("email").pipe(
   Flag.withSchema(Email),
   Flag.withDescription("The user's email address"),
 );
@@ -98,7 +102,7 @@ const serveCommand = Command.make("serve", {}, () => serve).pipe(
 );
 
 const migrateCommand = Command.make("migrate", {}, () =>
-  Effect.flatMap(Config.redacted("DATABASE_URL"), migrate),
+  Effect.flatMap(Config.Redacted("DATABASE_URL"), migrate),
 ).pipe(Command.withDescription("Apply database migrations and exit (needs only DATABASE_URL)"));
 
 const usersCreateCommand = Command.make("create", { email: emailFlag }, ({ email }) =>
@@ -127,7 +131,7 @@ const keysCreateCommand = Command.make(
   "create",
   {
     email: emailFlag,
-    label: Flag.string("label").pipe(
+    label: Flag.String("label").pipe(
       Flag.withDescription("Name shown in Settings"),
       Flag.withDefault("created on the server"),
     ),
@@ -158,7 +162,7 @@ const keysRevokeCommand = Command.make(
   "revoke",
   {
     email: emailFlag,
-    key: Argument.string("id").pipe(Argument.withSchema(Uuid), Argument.withDescription("Key id")),
+    key: Argument.String("id").pipe(Argument.withSchema(Uuid), Argument.withDescription("Key id")),
   },
   ({ email, key }) =>
     Effect.gen(function* () {

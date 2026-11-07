@@ -1,5 +1,5 @@
 import * as PgClient from "@effect/sql-pg/PgClient";
-import { Database, DatabaseLive } from "@great-minds/database";
+import { Database, DatabaseLive, layerPgClient } from "@great-minds/database";
 import { Effect, Layer, Redacted, type Scope } from "effect";
 
 const databaseUrl = process.env.REPLY_HISTORY_TEST_DATABASE_URL;
@@ -9,7 +9,7 @@ if (databaseUrl === undefined || new URL(databaseUrl).hostname !== "127.0.0.1") 
 export const replyHistoryTestDatabaseUrl = databaseUrl;
 
 const TestDatabase = DatabaseLive.pipe(
-  Layer.provideMerge(PgClient.layer({ url: Redacted.make(databaseUrl) })),
+  Layer.provideMerge(layerPgClient({ url: Redacted.make(databaseUrl) })),
 );
 
 export const runHistoryDatabase = <Value, Error>(

@@ -23,12 +23,13 @@ import {
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as Multipart from "effect/unstable/http/Multipart";
-import * as HttpServerError from "effect/unstable/http/HttpServerError";
-import { HttpApiBuilder } from "effect/unstable/httpapi";
-import { HttpApiSchemaError } from "effect/unstable/httpapi/HttpApiError";
+} from "effect/http";
+import { NetAddress } from "effect/net";
+import * as HttpBody from "effect/http/HttpBody";
+import * as Multipart from "effect/http/Multipart";
+import * as HttpServerError from "effect/http/HttpServerError";
+import { HttpApiBuilder } from "effect/http-api";
+import { HttpApiSchemaError } from "effect/http-api/HttpApiError";
 
 import { AppLayerLive, type AppLayerServices } from "./app-layer.ts";
 import { AuthService } from "./auth.ts";
@@ -877,14 +878,15 @@ const ServerLive = (nodeServer: Server, options: StartServerOptions) => {
   ) as Layer.Layer<RuntimeServices, unknown, never>;
 };
 
-const formatUrl = (address: HttpServer.Address) => {
-  if (address._tag === "UnixAddress") {
-    return `unix://${address.path}`;
-  }
-  const host =
-    address.hostname === "0.0.0.0" || address.hostname === "::" ? "127.0.0.1" : address.hostname;
-  return `http://${host}:${address.port}`;
-};
+const formatUrl = (address: NetAddress.SocketAddress) =>
+  NetAddress.formatUrlUnsafe(
+    address._tag !== "UnixPathAddress" && NetAddress.isUnspecified(address.address)
+      ? NetAddress.inetAddressUnsafe(
+          address._tag === "InetAddressV4" ? NetAddress.ipv4Loopback : NetAddress.ipv6Loopback,
+          address.port,
+        )
+      : address,
+  );
 
 export const openServer = (options: StartServerOptions = {}) =>
   Effect.gen(function* () {

@@ -1,7 +1,7 @@
 import type { DomainError } from "@great-minds/domain";
 import { Data, Duration, Effect, Schema, Stream } from "effect";
-import type * as Sse from "effect/unstable/encoding/Sse";
-import type * as HttpClientError from "effect/unstable/http/HttpClientError";
+import type * as Sse from "effect/encoding/Sse";
+import type * as HttpClientError from "effect/http/HttpClientError";
 
 export type StreamFailure =
   | DomainError

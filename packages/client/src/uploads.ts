@@ -4,7 +4,7 @@ import {
   type FileIngestUploadTarget,
 } from "@great-minds/domain";
 import { Data, Effect } from "effect";
-import { HttpBody, HttpClientRequest } from "effect/unstable/http";
+import { HttpBody, HttpClientRequest } from "effect/http";
 
 import type { makeApi } from "./runtime.ts";
 
