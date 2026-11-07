@@ -1093,6 +1093,118 @@ describe("auth HTTP integration", () => {
     expect(asRecord(expired.body).status).toBe("expired");
   });
 
+  it("serves MCP at /v1/mcp to API keys, within each key's vaults and permissions", async () => {
+    const pair = await signIn("mcp@example.com");
+    const vaultList = asRecord((await api("GET", "/vaults", undefined, pair.access_token)).body);
+    const home = asString(asRecord(asArray(vaultList.items)[0]).id, "vault id");
+    const other = asString(
+      asRecord((await api("POST", "/vaults", { name: "Other" }, pair.access_token)).body).id,
+      "other vault id",
+    );
+    const readerKey = asString(
+      asRecord(
+        (
+          await api(
+            "POST",
+            "/auth/api-keys",
+            { label: "assistant", vault_ids: [home], can_ask: false, can_change: false },
+            pair.access_token,
+          )
+        ).body,
+      ).raw_key,
+      "reader key",
+    );
+
+    const post = (body: unknown, headers: Record<string, string>) =>
+      fetch(`${currentState().started.url}/v1/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          ...headers,
+        },
+        body: JSON.stringify(body),
+      });
+    const messageOf = async (response: Response) => {
+      const text = await response.text();
+      if (!(response.headers.get("content-type") ?? "").includes("event-stream"))
+        return asRecord(JSON.parse(text));
+      const data = text
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .filter((line) => line !== "");
+      return asRecord(JSON.parse(data[data.length - 1] ?? "{}"));
+    };
+
+    expect((await post({ jsonrpc: "2.0", id: 1, method: "tools/list" }, {})).status).toBe(401);
+    const foreign = await post(
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      { authorization: `Bearer ${readerKey}`, origin: "https://elsewhere.example" },
+    );
+    expect(foreign.status).toBe(403);
+
+    const auth = { authorization: `Bearer ${readerKey}` };
+    const opened = await post(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "test", version: "0" },
+        },
+      },
+      auth,
+    );
+    expect(opened.status).toBe(200);
+    const sessionId = opened.headers.get("mcp-session-id") ?? "";
+    expect(asRecord((await messageOf(opened)).result).protocolVersion).toBe("2025-06-18");
+    const session = { ...auth, "mcp-session-id": sessionId, "mcp-protocol-version": "2025-06-18" };
+    await post({ jsonrpc: "2.0", method: "notifications/initialized" }, session);
+    let nextId = 2;
+    const call = async (name: string, args: Record<string, unknown>) =>
+      messageOf(
+        await post(
+          { jsonrpc: "2.0", id: nextId++, method: "tools/call", params: { name, arguments: args } },
+          session,
+        ),
+      );
+
+    const listed = asRecord(
+      (await messageOf(await post({ jsonrpc: "2.0", id: nextId++, method: "tools/list" }, session)))
+        .result,
+    );
+    const tools = asArray(listed.tools).map(asRecord);
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "list_vaults",
+      "search_vault",
+      "read_document",
+      "list_articles",
+      "list_sessions",
+      "read_session",
+      "ask",
+    ]);
+    expect(tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);
+
+    const vaults = asRecord((await call("list_vaults", {})).result);
+    expect(asRecord(vaults.structuredContent)).toEqual({
+      vaults: [{ id: home, name: expect.any(String) }],
+    });
+    const articles = asRecord((await call("list_articles", { vault_id: home })).result);
+    expect(articles.isError).not.toBe(true);
+    expect(asRecord(articles.structuredContent)).toEqual({ total: 0, articles: [] });
+
+    const elsewhere = asRecord((await call("list_articles", { vault_id: other })).result);
+    expect(elsewhere).toMatchObject({
+      isError: true,
+      content: [{ type: "text", text: expect.stringContaining("can't reach this vault") }],
+    });
+    const asked = await call("ask", { vault_id: home, question: "What is here?" });
+    expect(asked.error).toMatchObject({ code: -32003, message: "This API key can't ask questions." });
+  });
+
   it("limits an API key to its vaults, its permissions and its lifetime", async () => {
     const pair = await signIn("scoped@example.com");
     const vaultList = asRecord((await api("GET", "/vaults", undefined, pair.access_token)).body);

@@ -16,7 +16,6 @@ import {
   update,
   useVault,
 } from "./commands.ts";
-import { serveMcp } from "./mcp.ts";
 
 const vaultFlag = Flag.String("vault").pipe(
   Flag.withDescription("Vault name or id (default: gm vault use, GM_VAULT, or your only vault)"),
@@ -124,7 +123,7 @@ const runCommand = Command.make(
   followExistingRun,
 ).pipe(Command.withDescription("Follow a run until it ends and show what it changed"));
 
-const limitFlag = Flag.integer("limit").pipe(
+const limitFlag = Flag.Int("limit").pipe(
   Flag.filter(
     (limit) => limit >= 1 && limit <= 200,
     (limit) => `--limit must be between 1 and 200 (got ${limit})`,
@@ -142,7 +141,7 @@ const sessionsCommand = Command.make(
 const sessionCommand = Command.make(
   "session",
   {
-    session: Argument.string("id").pipe(
+    session: Argument.String("id").pipe(
       Argument.withSchema(SessionId),
       Argument.withDescription("Session id (from gm sessions or gm ask)"),
     ),
@@ -155,7 +154,7 @@ const sessionCommand = Command.make(
 const readCommand = Command.make(
   "read",
   {
-    path: Argument.string("path").pipe(
+    path: Argument.String("path").pipe(
       Argument.withDescription("Document path, e.g. wiki/liquidationism.md or raw/docs/…md"),
     ),
     vault: vaultFlag,
@@ -167,22 +166,16 @@ const readCommand = Command.make(
 const apiCommand = Command.make(
   "api",
   {
-    method: Argument.choice("method", ["get", "post", "put", "patch", "delete"]).pipe(
+    method: Argument.Literals("method", ["get", "post", "put", "patch", "delete"]).pipe(
       Argument.withDescription("HTTP method"),
     ),
-    path: Argument.string("path").pipe(
+    path: Argument.String("path").pipe(
       Argument.withDescription("Path under the API base, e.g. vaults or vaults/<id>/wiki"),
     ),
-    data: Flag.string("data").pipe(Flag.withDescription("JSON request body"), Flag.optional),
+    data: Flag.String("data").pipe(Flag.withDescription("JSON request body"), Flag.optional),
   },
   callApi,
 ).pipe(Command.withDescription("Call any API endpoint with your key and print the response"));
-
-const mcpCommand = Command.make("mcp", { vault: vaultFlag }, serveMcp).pipe(
-  Command.withDescription(
-    "Serve this vault to an AI assistant over MCP (stdio): search, read, list and ask",
-  ),
-);
 
 const gm = Command.make("gm").pipe(
   Command.withDescription("Great Minds from the command line"),
@@ -200,7 +193,6 @@ const gm = Command.make("gm").pipe(
     sessionCommand,
     readCommand,
     apiCommand,
-    mcpCommand,
   ]),
 );
 

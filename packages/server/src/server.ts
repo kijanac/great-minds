@@ -8,7 +8,6 @@ import {
   endpointPermissions,
   Forbidden,
   GreatMindsApi,
-  type AuthContext,
   type Permission,
   ServiceUnavailable,
   Validation,
@@ -32,7 +31,7 @@ import { HttpApiBuilder } from "effect/http-api";
 import { HttpApiSchemaError } from "effect/http-api/HttpApiError";
 
 import { AppLayerLive, type AppLayerServices } from "./app-layer.ts";
-import { AuthService } from "./auth.ts";
+import { AuthService, keyRefusal } from "./auth.ts";
 import { CliLogins } from "./cli-logins.ts";
 import { Mailer } from "./mailer.ts";
 import { AppConfig, missingModelKey, notConfiguredDetail } from "./config.ts";
@@ -44,6 +43,7 @@ import { IngestService } from "./ingest.ts";
 import { JobsService } from "./jobs.ts";
 import { LintService } from "./lint.ts";
 import { StructuredLogger } from "./logging.ts";
+import { McpRoutesLive } from "./mcp.ts";
 import { PasskeysService } from "./passkeys.ts";
 import { ProposalsService } from "./proposals.ts";
 import { QueryService } from "./query.ts";
@@ -195,17 +195,6 @@ const handleHttpCause = (cause: Cause.Cause<unknown>) =>
   });
 
 const permissions = new Map<string, Permission>(Object.entries(endpointPermissions));
-
-const keyRefusal = (current: AuthContext, permission: Permission) => {
-  const scope = current.key_scope;
-  if (scope === null) return undefined;
-  if (permission === "account")
-    return "API keys can't do this. Sign in to Great Minds in a browser instead.";
-  if (permission === "ask" && !scope.can_ask) return "This API key can't ask questions.";
-  if (permission === "change" && !scope.can_change)
-    return "This API key can't add documents or make changes.";
-  return undefined;
-};
 
 const AuthMiddlewareLive = Layer.effect(
   AuthMiddleware,
@@ -852,6 +841,7 @@ const AppRoutesLive = Layer.mergeAll(
   HttpRouter.add("GET", "/health", healthResponse),
   HttpRouter.add("GET", "/", healthResponse),
   ApiLive,
+  McpRoutesLive,
 );
 
 const ServerLive = (nodeServer: Server, options: StartServerOptions) => {
