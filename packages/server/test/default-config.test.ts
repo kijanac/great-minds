@@ -4,6 +4,10 @@ import { readFile, readdir } from "node:fs/promises";
 import { ConfigProvider, Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { PlacementAnswer, SameEntryAnswer } from "../src/compile-articles.ts";
+import { Check, MentionList, Pick } from "../src/compile-links.ts";
+import { ProposalAnswer, SameTopicAnswer, responseFormat } from "../src/compile-themes.ts";
+import { WrittenArticle } from "../src/compile-write.ts";
 import { AppConfig, AppConfigLive } from "../src/config.ts";
 import {
   draftHintSystem,
@@ -180,5 +184,33 @@ describe("default prompts", () => {
       const prompt = await readFile(new URL(name, directory), "utf8");
       expect(sha256(prompt), name).toBe(expected[name as keyof typeof expected]);
     }
+  });
+});
+
+describe("model reply formats", () => {
+  it("keeps every reply format byte-exact", () => {
+    const formats = {
+      article: responseFormat("article", WrittenArticle),
+      article_mentions: responseFormat("article_mentions", MentionList),
+      document_topics: responseFormat("document_topics", ProposalAnswer),
+      link_check: responseFormat("link_check", Check),
+      link_pick: responseFormat("link_pick", Pick),
+      same_entry: responseFormat("topic_relation", SameEntryAnswer),
+      same_topic: responseFormat("topic_relation", SameTopicAnswer),
+      theme_attach: responseFormat("theme_attach", PlacementAnswer),
+    };
+    const hashes = Object.fromEntries(
+      Object.entries(formats).map(([name, format]) => [name, sha256(JSON.stringify(format))]),
+    );
+    expect(hashes).toEqual({
+      article: "48e173bb26359162dd580341f667336809b7bcc95d32309a0589e261667522bd",
+      article_mentions: "e5deb18e783d51aefc42de4427dba50a295884bb5a1784ab3e837a0286c15695",
+      document_topics: "a370bb923c9c4756eacf6b901a2a9029aff4632b9972d6b72e4f025bf177604d",
+      link_check: "5e029fe9e5cb4cdcc2cd12ba25d57ee2a81877659662268abbcb48660a74ea7a",
+      link_pick: "19d1d2d25b94eb0ace0d4d9c45dc62cd1e2732155e006b47ee88f0074c4f8ed3",
+      same_entry: "a336dea96570573a839e3e4cd989b429786cb245949a9f261684a106c41143d1",
+      same_topic: "a336dea96570573a839e3e4cd989b429786cb245949a9f261684a106c41143d1",
+      theme_attach: "c63bcbb8110a2905777dda3e752e172ffb0a4d33cf003a375e09ebd419dfe6be",
+    });
   });
 });
