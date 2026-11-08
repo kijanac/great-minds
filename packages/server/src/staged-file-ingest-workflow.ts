@@ -286,7 +286,15 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
           });
         }
 
-        if (failed > 0) {
+        const nothingAdded = failed > 0 && ingested + skipped === 0;
+        if (failed > 0 && !nothingAdded)
+          yield* pipeline.recordWarning(runId, {
+            phase: "read_files",
+            message: `of ${total} files could not be added`,
+            count: failed,
+            items: failures.map((failure) => `${failure.name}: ${failure.error}`).toSorted(),
+          });
+        if (nothingAdded) {
           const error = `${failed} of ${total} files could not be ingested`;
           const detail = failures
             .map((failure) => `${failure.name}: ${failure.error}`)
@@ -341,8 +349,8 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         yield* db.query((d) => d
           .update(fileIngestBatches)
           .set({
-            status: failed > 0 ? "failed" : "completed",
-            error: failed > 0 ? `${failed} of ${total} files could not be ingested` : null,
+            status: nothingAdded ? "failed" : "completed",
+            error: nothingAdded ? `${failed} of ${total} files could not be ingested` : null,
             completedAt: sql`now()`,
             updatedAt: sql`now()`,
           })
