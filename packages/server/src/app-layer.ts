@@ -4,6 +4,7 @@ import type { WorkflowEngine } from "effect/workflow/WorkflowEngine";
 
 import { AuthService, AuthServiceLive, SignInCodeRetentionLoopLive } from "./auth.ts";
 import { CliLoginRetentionLoopLive, CliLogins, CliLoginsLive } from "./cli-logins.ts";
+import { RunSettlementLoopLive } from "./run-settlement.ts";
 import {
   CompileIntentReconcilerLive,
   CompileIntentReconcilerLoopLive,
@@ -229,6 +230,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
 
   const ReconcilerLoopLive = Layer.mergeAll(
     CompileIntentReconcilerLoopLive,
+    RunSettlementLoopLive,
     FileIngestBatchReconcilerLoopLive,
     UrlIngestReconcilerLoopLive,
     ReplyReconcilerLoopLive,

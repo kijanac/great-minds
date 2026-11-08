@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { Layer } from "effect";
 import * as ClusterWorkflowEngine from "effect/cluster/ClusterWorkflowEngine";
@@ -10,10 +8,3 @@ export const WorkflowEngineLive = ClusterWorkflowEngine.layer.pipe(
   Layer.provide(SingleRunner.layer({ runnerStorage: "memory" })),
   Layer.provide(NodeCrypto.layer),
 );
-
-/** Mirrors Effect Workflow's private execution-id derivation from an idempotency key. */
-export const workflowExecutionId = (workflowName: string, idempotencyKey: string) =>
-  createHash("sha256")
-    .update(`${workflowName}-${idempotencyKey}`)
-    .digest("hex")
-    .slice(0, 32);

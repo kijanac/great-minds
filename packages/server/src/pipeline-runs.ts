@@ -7,7 +7,7 @@ import {
   wikiArticles,
 } from "@great-minds/database";
 import type { PipelineProgressStep, PipelineWarning, Uuid } from "@great-minds/domain";
-import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
 type PipelineRunsServiceShape = {
@@ -24,7 +24,9 @@ type PipelineRunsServiceShape = {
   readonly recordWarning: (runId: Uuid, warning: PipelineWarning) => Effect.Effect<void>;
   readonly failPreservingProgress: (runId: Uuid, error: string) => Effect.Effect<void>;
   readonly fail: (runId: Uuid, error: string) => Effect.Effect<void>;
-  readonly recoverZombies: (olderThan: Date) => Effect.Effect<number>;
+  readonly runOfIntent: (
+    intentId: Uuid,
+  ) => Effect.Effect<{ readonly id: Uuid; readonly vaultId: Uuid } | undefined>;
   readonly recordOutcome: (runId: Uuid) => Effect.Effect<void>;
 };
 
@@ -278,82 +280,15 @@ export const PipelineRunsServiceLive = Layer.effect(
           ))
           .pipe(Effect.andThen(recordOutcome(runId))),
       fail: (runId, error) => updateProgress(runId, "source_ingest", "failed", [], error),
-      recoverZombies: (olderThan) =>
-        Effect.gen(function* () {
-          const rows = yield* db.query((d) => d
-            .update(pipelineRuns)
-            .set({
-              status: "failed",
-              phaseStatus: "failed",
-              error: "Pipeline interrupted — server may have restarted during processing.",
-              completedAt: sql`now()`,
-              updatedAt: sql`now()`,
-            })
-            .where(
-              and(
-                inArray(pipelineRuns.status, ["pending", "running"]),
-                lt(pipelineRuns.updatedAt, olderThan),
-                sql`(
-                  (
-                    ${pipelineRuns.activeTaskId} IS NULL
-                    AND NOT EXISTS (
-                      SELECT 1
-                      FROM compile_intents intent
-                      WHERE intent.pipeline_run_id = ${pipelineRuns.id}
-                        AND intent.satisfied_at IS NULL
-                    )
-                    AND NOT EXISTS (
-                      SELECT 1
-                      FROM file_ingest_batches batch
-                      WHERE batch.id = ${pipelineRuns.id}
-                        AND batch.status = 'uploading'
-                    )
-                  )
-                  OR
-                  (
-                    ${pipelineRuns.activeTaskId} IS NOT NULL
-                    AND NOT EXISTS (
-                      SELECT 1
-                      FROM file_ingest_batches batch
-                      WHERE batch.id = ${pipelineRuns.id}
-                        AND batch.status = 'processing'
-                    )
-                    AND NOT EXISTS (
-                      SELECT 1
-                      FROM cluster_messages message
-                      -- entity_type is 'Workflow/' + the Workflow.make tag; renaming a
-                      -- workflow tag must update this list or zombie recovery goes blind
-                      WHERE ((
-                        ${pipelineRuns.activeTaskType} = 'staged_file_ingest'
-                        AND message.entity_type = 'Workflow/StagedFileIngest'
-                        AND message.payload::jsonb ->> 'pipelineRunId' = ${pipelineRuns.id}::text
-                      ) OR (
-                        ${pipelineRuns.activeTaskType} = 'url_ingest'
-                        AND message.entity_type = 'Workflow/UrlIngest'
-                        AND message.payload::jsonb ->> 'pipelineRunId' = ${pipelineRuns.id}::text
-                      ) OR (
-                        ${pipelineRuns.activeTaskType} = 'compile'
-                        AND message.entity_type = 'Workflow/CompileTask'
-                        AND message.payload::jsonb ->> 'intentId' = ${pipelineRuns.activeTaskId}::text
-                      ))
-                      AND (
-                        NOT message.processed
-                        OR EXISTS (
-                          SELECT 1
-                          FROM cluster_replies reply
-                          WHERE reply.id = message.last_reply_id
-                            AND reply.payload::jsonb -> 'value' ->> '_tag' = 'Suspended'
-                        )
-                      )
-                    )
-                  )
-                )`,
-              ),
-            )
-            .returning({ id: pipelineRuns.id }));
-          yield* Effect.forEach(rows, (row) => recordOutcome(row.id));
-          return rows.length;
-        }),
+      runOfIntent: (intentId) =>
+        db
+          .query((d) => d
+            .select({ id: pipelineRuns.id, vaultId: pipelineRuns.vaultId })
+            .from(pipelineRuns)
+            .innerJoin(compileIntents, eq(compileIntents.pipelineRunId, pipelineRuns.id))
+            .where(eq(compileIntents.id, intentId))
+            .limit(1))
+          .pipe(Effect.map((rows) => rows[0])),
       recordOutcome,
     } satisfies PipelineRunsServiceShape;
   }),

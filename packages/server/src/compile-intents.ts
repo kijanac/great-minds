@@ -7,13 +7,12 @@ import {
 } from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, isNotNull, isNull, notExists, or, sql } from "drizzle-orm";
-import { Cause, Context, Effect, Layer, Schema } from "effect";
+import { Cause, Context, Effect, Layer, Option, Schema } from "effect";
 import * as Activity from "effect/workflow/Activity";
 import * as Workflow from "effect/workflow/Workflow";
 import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 
 import { backgroundLoop } from "./background-loop.ts";
-import { ClockService } from "./clock.ts";
 import { AppConfig } from "./config.ts";
 import { formatError } from "./error-details.ts";
 import {
@@ -27,7 +26,6 @@ import {
 import { CompilePhases } from "./compile-phases.ts";
 import { StructuredLogger } from "./logging.ts";
 import { PipelineRunsService } from "./pipeline-runs.ts";
-import { workflowExecutionId } from "./workflow-engine.ts";
 
 export const queueCompile = (tx: TransactionClient, vaultId: Uuid, runId?: Uuid) =>
   Effect.gen(function* () {
@@ -174,9 +172,11 @@ export const cancelCompileWorkflow = (intentId: Uuid) =>
     const pipeline = yield* PipelineRunsService;
     const engine = yield* WorkflowEngine.WorkflowEngine;
     yield* pipeline.cancelCompileIntent(intentId);
+    const run = yield* pipeline.runOfIntent(intentId);
+    if (run === undefined) return;
     yield* engine.interruptUnsafe(
       CompileWorkflow,
-      workflowExecutionId(CompileWorkflow._tag, intentId),
+      yield* CompileWorkflow.executionId({ intentId, vaultId: run.vaultId, pipelineRunId: run.id }),
     );
   });
 
@@ -203,13 +203,15 @@ export const CompileIntentReconcilerLive = Layer.effect(
   CompileIntentReconciler,
   Effect.gen(function* () {
     const db = yield* Database;
-    const pipeline = yield* PipelineRunsService;
     const config = yield* AppConfig;
-    const clock = yield* ClockService;
 
     const markSatisfied = Effect.gen(function* () {
       const terminal = yield* db.query((d) => d
-        .select({ intentId: compileIntents.id })
+        .select({
+          intentId: compileIntents.id,
+          vaultId: compileIntents.vaultId,
+          pipelineRunId: pipelineRuns.id,
+        })
         .from(compileIntents)
         .innerJoin(pipelineRuns, eq(pipelineRuns.id, compileIntents.pipelineRunId))
         .where(
@@ -218,29 +220,26 @@ export const CompileIntentReconcilerLive = Layer.effect(
             isNotNull(compileIntents.dispatchedTaskId),
             isNull(compileIntents.satisfiedAt),
             inArray(pipelineRuns.status, ["completed", "failed", "cancelled"]),
-            sql`EXISTS (
-              SELECT 1
-              FROM cluster_messages message
-              -- 'Workflow/' + the CompileWorkflow tag; a tag rename must update this,
-              -- pipeline-runs zombie recovery, and the parity reconciliation guard
-              WHERE message.entity_type = 'Workflow/CompileTask'
-                AND message.payload::jsonb ->> 'intentId' = ${compileIntents.id}::text
-            )`,
           ),
         )
         .limit(200));
-      if (terminal.length > 0) {
+      const finished: Uuid[] = [];
+      for (const row of terminal) {
+        const executionId = yield* CompileWorkflow.executionId({
+          intentId: row.intentId,
+          vaultId: row.vaultId,
+          pipelineRunId: row.pipelineRunId,
+        });
+        const result = yield* CompileWorkflow.poll(executionId);
+        if (Option.isSome(result) && result.value._tag === "Complete") finished.push(row.intentId);
+      }
+      if (finished.length > 0) {
         yield* db.query((d) => d
           .update(compileIntents)
           .set({ satisfiedAt: sql`now()` })
-          .where(
-            inArray(
-              compileIntents.id,
-              terminal.map((row) => row.intentId),
-            ),
-          ));
+          .where(inArray(compileIntents.id, finished)));
       }
-      return terminal.length;
+      return finished.length;
     });
 
     const pendingDispatches = db
@@ -348,9 +347,6 @@ export const CompileIntentReconcilerLive = Layer.effect(
           const satisfied = yield* markSatisfied;
           const dispatches = yield* pendingDispatches;
           yield* Effect.forEach(dispatches, dispatch, { concurrency: config.pipelineConcurrency });
-          const now = yield* clock.now;
-          const cutoff = new Date(now.getTime() - 120_000);
-          yield* pipeline.recoverZombies(cutoff);
           return { satisfied, dispatched: dispatches.length };
         }),
     } satisfies CompileIntentReconcilerShape;
