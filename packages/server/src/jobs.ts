@@ -24,7 +24,6 @@ import { runTrack } from "./run-track.ts";
 import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
 import { UrlIngestWorkflow } from "./url-ingest-workflow.ts";
 import { VaultAccessService } from "./vaults.ts";
-import { workflowExecutionId } from "./workflow-engine.ts";
 
 const terminalStatuses = new Set(["completed", "failed", "cancelled"]);
 
@@ -172,13 +171,18 @@ export const JobsServiceLive = Layer.effect(
           if (run.activeTaskType === "staged_file_ingest" && run.activeTaskId !== null) {
             yield* workflowEngine.interruptUnsafe(
               StagedFileIngestWorkflow,
-              workflowExecutionId(StagedFileIngestWorkflow._tag, run.activeTaskId),
+              yield* StagedFileIngestWorkflow.executionId({
+                vaultId,
+                batchId: run.activeTaskId,
+                pipelineRunId: run.activeTaskId,
+                files: [],
+              }),
             );
           }
           if (run.activeTaskType === "url_ingest" && run.activeTaskId !== null) {
             yield* workflowEngine.interruptUnsafe(
               UrlIngestWorkflow,
-              workflowExecutionId(UrlIngestWorkflow._tag, run.activeTaskId),
+              yield* UrlIngestWorkflow.executionId({ pipelineRunId: run.activeTaskId }),
             );
           }
           if (run.trigger === "staged_files") {

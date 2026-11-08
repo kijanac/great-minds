@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 
 import * as PgClient from "@effect/sql-pg/PgClient";
 import { Uuid, type FileFingerprint } from "@great-minds/domain";
-import { eq, inArray, sql } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
 import type * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -59,6 +59,7 @@ import {
   StagedFileIngestWorkflowLive,
 } from "../src/staged-file-ingest-workflow.ts";
 import { ContentStorage, StagedStorage, StagedUploadGateway } from "../src/storage.ts";
+import { LOST_RUN_ERROR, settleRuns } from "../src/run-settlement.ts";
 import { VaultAccessServiceLive } from "../src/vaults.ts";
 import { WorkflowEngineLive } from "../src/workflow-engine.ts";
 
@@ -88,6 +89,9 @@ const id = {
   deadCompileIntent: uuid("10000000-0000-4000-8000-000000000023"),
   suspendedCompileRun: uuid("10000000-0000-4000-8000-000000000024"),
   suspendedCompileIntent: uuid("10000000-0000-4000-8000-000000000025"),
+  queuedUrlRun: uuid("10000000-0000-4000-8000-000000000026"),
+  queuedUrlIntent: uuid("10000000-0000-4000-8000-000000000027"),
+  blockingIntent: uuid("10000000-0000-4000-8000-000000000028"),
 } as const;
 
 const resumeRunnerPath = fileURLToPath(
@@ -409,6 +413,7 @@ const run = <A>(
     | FileIngestBatches
     | SourceDocumentsService
     | PipelineRunsService
+    | StructuredLogger
     | WorkflowEngine.WorkflowEngine
   >,
 ) => Effect.runPromise(effect.pipe(Effect.provide(TestLive)));
@@ -669,8 +674,7 @@ describe("M4.2 durable workers", () => {
           }),
         );
 
-        const pipeline = yield* PipelineRunsService;
-        const recovered = yield* pipeline.recoverZombies(new Date());
+        const recovered = yield* settleRuns;
         const batches = yield* FileIngestBatches;
         const reconciled = yield* batches.reconcileOnce();
         const deadline = Date.now() + 5_000;
@@ -689,7 +693,7 @@ describe("M4.2 durable workers", () => {
       }),
     );
 
-    expect(state.recovered).toBe(0);
+    expect(state.recovered).not.toContain(id.ingestRun);
     expect(state.reconciled.dispatched).toBe(1);
     expect(state.batch).toMatchObject({ status: "completed", error: null });
     expect(written.size).toBe(1);
@@ -995,10 +999,22 @@ describe("M4.2 durable workers", () => {
         yield* Effect.promise(() => pause.started);
         const jobs = yield* JobsService;
         yield* jobs.cancelCompile(id.user, id.vault, id.cancelIngestRun);
-        yield* Effect.sleep("250 millis");
+        const executionId = yield* StagedFileIngestWorkflow.executionId({
+          vaultId: id.vault,
+          batchId: id.cancelIngestRun,
+          pipelineRunId: id.cancelIngestRun,
+          files: [],
+        });
+        let stoppedWhilePaused = false;
+        const deadline = Date.now() + 3_000;
+        while (Date.now() < deadline && !stoppedWhilePaused) {
+          stoppedWhilePaused = Option.isSome(yield* StagedFileIngestWorkflow.poll(executionId));
+          if (!stoppedWhilePaused) yield* Effect.sleep("25 millis");
+        }
         yield* Effect.sync(pause.release);
         yield* Effect.sleep("100 millis");
         return {
+          stoppedWhilePaused,
           run: (yield* db.query((d) => d
             .select()
             .from(pipelineRuns)
@@ -1013,6 +1029,7 @@ describe("M4.2 durable workers", () => {
       }),
     );
 
+    expect(state.stoppedWhilePaused).toBe(true);
     expect(state.run).toMatchObject({ status: "cancelled", phaseStatus: "failed" });
     expect(state.documents).toHaveLength(0);
     expect(written.size).toBe(0);
@@ -1363,11 +1380,10 @@ describe("M4.2 durable workers", () => {
           })
           .where(eq(pipelineRuns.id, id.resumeRun)))
           .pipe(Effect.orDie);
-        const pipeline = yield* PipelineRunsService;
-        return yield* pipeline.recoverZombies(new Date(Date.now() - 120_000));
+        return yield* settleRuns;
       }),
     );
-    expect(liveRecovered).toBe(0);
+    expect(liveRecovered).not.toContain(id.resumeRun);
     first.kill("SIGKILL");
     await new Promise<void>((resolve) => first.once("exit", () => resolve()));
 
@@ -1538,7 +1554,7 @@ describe("M4.2 durable workers", () => {
     ]);
   }, 30_000);
 
-  it("keeps queued compile-intent runs out of zombie recovery", async () => {
+  it("leaves a run that is waiting on its queued compile intent alone", async () => {
     const recovered = await run(
       Effect.gen(function* () {
         const db = yield* Database;
@@ -1558,11 +1574,10 @@ describe("M4.2 durable workers", () => {
           .insert(compileIntents)
           .values({ id: id.queuedIntent, vaultId: id.vault, pipelineRunId: id.queuedRun }))
           .pipe(Effect.orDie);
-        const pipeline = yield* PipelineRunsService;
-        return yield* pipeline.recoverZombies(new Date(Date.now() - 120_000));
+        return yield* settleRuns;
       }),
     );
-    expect(recovered).toBe(0);
+    expect(recovered).not.toContain(id.queuedRun);
 
     const rows = await run(
       Effect.gen(function* () {
@@ -1577,8 +1592,8 @@ describe("M4.2 durable workers", () => {
     expect(rows[0]?.status).toBe("pending");
   });
 
-  it("fails a stale active run when enqueue never reached the workflow journal", async () => {
-    const recovered = await run(
+  it("fails a run whose work record is gone with a clear lost message", async () => {
+    const settled = await run(
       Effect.gen(function* () {
         const db = yield* Database;
         yield* db.query((d) => d
@@ -1592,18 +1607,57 @@ describe("M4.2 durable workers", () => {
             phaseStatus: "started",
             activeTaskId: id.zombieRun,
             activeTaskType: "staged_file_ingest",
+          }))
+          .pipe(Effect.orDie);
+        return yield* settleRuns;
+      }),
+    );
+    expect(settled).toContain(id.zombieRun);
+    const rows = await run(
+      Effect.flatMap(Database, (db) =>
+        db.query((d) => d.select().from(pipelineRuns).where(eq(pipelineRuns.id, id.zombieRun)))
+          .pipe(Effect.orDie)),
+    );
+    expect(rows[0]).toMatchObject({ status: "failed", error: LOST_RUN_ERROR });
+  });
+
+  it("leaves a run whose compile waits behind another compile in its vault alone", async () => {
+    const settled = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db.query((d) => d
+          .insert(pipelineRuns)
+          .values({
+            id: id.queuedUrlRun,
+            vaultId: id.vault,
+            trigger: "url",
+            status: "running",
+            currentPhase: "source_ingest",
+            phaseStatus: "completed",
+            compileIntentId: id.queuedUrlIntent,
+            activeTaskId: id.queuedUrlIntent,
+            activeTaskType: "compile",
             updatedAt: new Date(0),
           }))
           .pipe(Effect.orDie);
-        const pipeline = yield* PipelineRunsService;
-        return yield* pipeline.recoverZombies(new Date(Date.now() - 120_000));
+        yield* db.query((d) => d
+          .insert(compileIntents)
+          .values({ id: id.queuedUrlIntent, vaultId: id.vault, pipelineRunId: id.queuedUrlRun }))
+          .pipe(Effect.orDie);
+        return yield* settleRuns;
       }),
     );
-    expect(recovered).toBe(1);
+    expect(settled).not.toContain(id.queuedUrlRun);
+    const rows = await run(
+      Effect.flatMap(Database, (db) =>
+        db.query((d) => d.select().from(pipelineRuns).where(eq(pipelineRuns.id, id.queuedUrlRun)))
+          .pipe(Effect.orDie)),
+    );
+    expect(rows[0]?.status).toBe("running");
   });
 
-  it("does not let a completed ingest journal mask a missing active compile request", async () => {
-    const recovered = await run(
+  it("dispatches a compile again when its workflow left no record", async () => {
+    const state = await run(
       Effect.gen(function* () {
         const db = yield* Database;
         yield* db.query((d) => d
@@ -1611,14 +1665,13 @@ describe("M4.2 durable workers", () => {
           .values({
             id: id.maskedCompileRun,
             vaultId: id.vault,
-            trigger: "staged_files",
+            trigger: "manual",
             status: "running",
-            currentPhase: "source_ingest",
-            phaseStatus: "completed",
+            currentPhase: "ingest",
+            phaseStatus: "progress",
             compileIntentId: id.maskedCompileIntent,
             activeTaskId: id.maskedCompileIntent,
             activeTaskType: "compile",
-            updatedAt: new Date(0),
           }))
           .pipe(Effect.orDie);
         yield* db.query((d) => d
@@ -1631,145 +1684,75 @@ describe("M4.2 durable workers", () => {
             dispatchedTaskId: id.maskedCompileIntent,
           }))
           .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .execute(sql`
-          INSERT INTO cluster_messages (
-            id,
-            message_id,
-            shard_id,
-            entity_type,
-            entity_id,
-            kind,
-            tag,
-            payload,
-            processed,
-            request_id
-          ) VALUES (
-            900000000000000001,
-            'Workflow/StagedFileIngest/old-ingest/run/',
-            'default:1',
-            'Workflow/StagedFileIngest',
-            'old-ingest',
-            0,
-            'run',
-            ${JSON.stringify({ pipelineRunId: id.maskedCompileRun })},
-            true,
-            900000000000000001
-          )
-        `))
-          .pipe(Effect.orDie);
-        const pipeline = yield* PipelineRunsService;
-        return yield* pipeline.recoverZombies(new Date(Date.now() - 120_000));
+        const settled = yield* settleRuns;
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+          const [row] = yield* db.query((d) => d
+            .select()
+            .from(pipelineRuns)
+            .where(eq(pipelineRuns.id, id.maskedCompileRun)))
+            .pipe(Effect.orDie);
+          if (row?.status !== "running" && row?.status !== "pending") return { settled, row };
+          yield* Effect.sleep("50 millis");
+        }
+        throw new Error("redispatched compile did not finish");
       }),
     );
-    expect(recovered).toBe(1);
+    expect(state.settled).not.toContain(id.maskedCompileRun);
+    expect(state.row).toMatchObject({ status: "completed", error: null });
+  }, 30_000);
 
-    const rows = await run(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        return yield* db.query((d) => d
-          .select()
-          .from(pipelineRuns)
-          .where(eq(pipelineRuns.id, id.maskedCompileRun)))
-          .pipe(Effect.orDie);
-      }),
-    );
-    expect(rows[0]).toMatchObject({
-      status: "failed",
-      phaseStatus: "failed",
-      error: "Pipeline interrupted — server may have restarted during processing.",
-    });
-  });
-
-  it("fails a stale run whose compile workflow ended without recording it, and keeps a suspended one", async () => {
-    const seed = (
-      runId: Uuid,
-      intentId: Uuid,
-      requestId: bigint,
-      replyValue: Record<string, unknown>,
-    ) =>
-      Effect.gen(function* () {
-        const db = yield* Database;
-        yield* db.query((d) => d
+  it("fails a run whose compile workflow ended in failure without recording it", async () => {
+    await run(
+      Effect.flatMap(Database, (db) =>
+        db.query((d) => d
           .insert(pipelineRuns)
           .values({
-            id: runId,
+            id: id.deadCompileRun,
             vaultId: id.vault,
             trigger: "manual",
-            status: "running",
-            currentPhase: "ingest",
-            phaseStatus: "progress",
-            compileIntentId: intentId,
-            activeTaskId: intentId,
-            activeTaskType: "compile",
-            updatedAt: new Date(0),
+            status: "pending",
+            currentPhase: "",
+            phaseStatus: "",
           }))
-          .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(compileIntents)
-          .values({
-            id: intentId,
-            vaultId: id.vault,
-            pipelineRunId: runId,
-            dispatchedAt: new Date(0),
-            dispatchedTaskId: intentId,
-          }))
-          .pipe(Effect.orDie);
-        const replyId = requestId + 1n;
-        yield* db.query((d) => d
-          .execute(sql`
-          INSERT INTO cluster_messages (
-            id, message_id, shard_id, entity_type, entity_id, kind, tag, payload, processed,
-            request_id, last_reply_id
-          ) VALUES (
-            ${requestId}, ${`Workflow/CompileTask/${intentId}/run/`}, 'default:1',
-            'Workflow/CompileTask', ${intentId}, 0, 'run',
-            ${JSON.stringify({ intentId, vaultId: id.vault, pipelineRunId: runId })}, true,
-            ${requestId}, ${replyId}
-          )
-        `))
-          .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .execute(sql`
-          INSERT INTO cluster_replies (id, kind, request_id, payload, sequence, acked)
-          VALUES (
-            ${replyId}, 0, ${requestId},
-            ${JSON.stringify({ _tag: "Success", value: replyValue })}, NULL, false
-          )
-        `))
-          .pipe(Effect.orDie);
-      });
-    const recovered = await run(
-      Effect.gen(function* () {
-        yield* seed(id.deadCompileRun, id.deadCompileIntent, 900000000000000101n, {
-          _tag: "Complete",
-          exit: { _tag: "Failure", cause: [{ _tag: "Die", defect: "Connection terminated" }] },
-        });
-        yield* seed(id.suspendedCompileRun, id.suspendedCompileIntent, 900000000000000201n, {
-          _tag: "Suspended",
-        });
-        const pipeline = yield* PipelineRunsService;
-        return yield* pipeline.recoverZombies(new Date(Date.now() - 120_000));
-      }),
+          .pipe(Effect.orDie)),
     );
-    expect(recovered).toBe(1);
-    const rows = await run(
+    await Effect.runPromise(
+      Effect.result(
+        CompileWorkflow.execute({
+          intentId: id.deadCompileIntent,
+          vaultId: id.vault,
+          pipelineRunId: id.deadCompileRun,
+        }),
+      ).pipe(Effect.provide(RenderFailureLive)),
+    );
+    const settled = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select({ id: pipelineRuns.id, status: pipelineRuns.status })
-          .from(pipelineRuns)
-          .where(inArray(pipelineRuns.id, [id.deadCompileRun, id.suspendedCompileRun])))
+        yield* db.query((d) => d
+          .update(pipelineRuns)
+          .set({
+            status: "running",
+            phaseStatus: "progress",
+            error: null,
+            completedAt: null,
+            activeTaskId: id.deadCompileIntent,
+            activeTaskType: "compile",
+          })
+          .where(eq(pipelineRuns.id, id.deadCompileRun)))
           .pipe(Effect.orDie);
+        return yield* settleRuns;
       }),
     );
-    expect(new Map(rows.map((row) => [row.id, row.status]))).toEqual(
-      new Map([
-        [id.deadCompileRun, "failed"],
-        [id.suspendedCompileRun, "running"],
-      ]),
+    expect(settled).toContain(id.deadCompileRun);
+    const rows = await run(
+      Effect.flatMap(Database, (db) =>
+        db.query((d) => d.select().from(pipelineRuns).where(eq(pipelineRuns.id, id.deadCompileRun)))
+          .pipe(Effect.orDie)),
     );
-  });
+    expect(rows[0]).toMatchObject({ status: "failed" });
+    expect(rows[0]?.error).toContain("forced render seam");
+  }, 30_000);
 
   it("does not satisfy a terminal run without a compile workflow journal entry", async () => {
     const satisfied = await run(
