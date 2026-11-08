@@ -154,7 +154,12 @@ describe("saved model questions", () => {
     expect(JSON.stringify(cut)).toContain("truncated");
     expect(JSON.stringify(malformed)).toContain("malformed");
     const state = await rows();
-    expect(state.saved).toHaveLength(0);
+    expect(state.saved.filter((row) => !row.phase.startsWith("failed:"))).toHaveLength(0);
+    expect(state.saved.filter((row) => row.phase.startsWith("failed:"))).toEqual([
+      expect.objectContaining({
+        value: expect.objectContaining({ attempts: 2, reason: "malformed" }),
+      }),
+    ]);
     expect(state.costs).toHaveLength(2);
     expect(calls).toHaveLength(2);
   });

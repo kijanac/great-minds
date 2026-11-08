@@ -28,6 +28,12 @@ import { formatUuid7, type RandomBytesService } from "./random.ts";
 import type { SourceDocumentsService } from "./source-documents.ts";
 import { READ_CONCURRENCY, type ContentStorage } from "./storage.ts";
 import {
+  failedAttempts,
+  recordFailure,
+  SET_ASIDE_AFTER,
+  SET_ASIDE_MESSAGE,
+} from "./failure-ledger.ts";
+import {
   defaultVaultConfigFile,
   readVaultConfig,
   type EnrichedField,
@@ -371,6 +377,7 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
       const ready: { readonly document: SourceRow; readonly card: SourceCard }[] = [];
       let documentsCompleted = 0;
       const unread: string[] = [];
+      const setAside: string[] = [];
       yield* Effect.forEach(
         documents,
         (document) =>
@@ -385,6 +392,12 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
                 );
                 let cached = yield* getCache(vaultId, cacheKey);
                 if (cached === undefined) {
+                  if (
+                    (yield* failedAttempts(db, vaultId, "extract", cacheKey)) >= SET_ASIDE_AFTER
+                  ) {
+                    setAside.push(document.title ?? document.filePath);
+                    return undefined;
+                  }
                   const source = yield* sourceRegistry.readCurrent(document);
                   if (source === undefined) return;
                   const body = source.body;
@@ -402,7 +415,16 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
                     responseFormat,
                     schema: ExtractResponse,
                     logFields: { document_id: document.id, path: document.filePath },
-                  });
+                  }).pipe(
+                    Effect.tapError((error) =>
+                      error instanceof MalformedLlmOutput
+                        ? recordFailure(db, vaultId, "extract", cacheKey, {
+                            reason: "malformed",
+                            message: error.message,
+                          })
+                        : Effect.void,
+                    ),
+                  );
                   const card = yield* buildSourceCard(
                     data,
                     document.id,
@@ -456,6 +478,14 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
           message: `of ${documents.length} documents could not be read`,
           count: unread.length,
           items: unread.toSorted(),
+        });
+      }
+      if (setAside.length > 0) {
+        yield* pipeline.recordWarning(runId, {
+          phase: "extract",
+          message: `documents could not be read: ${SET_ASIDE_MESSAGE}`,
+          count: setAside.length,
+          items: setAside.toSorted(),
         });
       }
 

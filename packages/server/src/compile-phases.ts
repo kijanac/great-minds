@@ -49,6 +49,12 @@ import { liveArticleConditions } from "./wiki-articles.ts";
 import { ContentStorage, READ_CONCURRENCY, vaultOwner } from "./storage.ts";
 import { append } from "./collections.ts";
 import { RandomBytesService } from "./random.ts";
+import {
+  failedAttempts,
+  recordFailure,
+  SET_ASIDE_AFTER,
+  SET_ASIDE_MESSAGE,
+} from "./failure-ledger.ts";
 
 const SEARCH_WRITE_BATCH = 200;
 const START_HERE = 8;
@@ -188,6 +194,7 @@ export const CompilePhasesLive = Layer.effect(
 
         const indexedPaths: string[] = [];
         const timedOut: string[] = [];
+        const setAsideSearch: string[] = [];
         let indexedChunks = 0;
         for (let start = 0; start < files.length; start += 100) {
           const batch = files.slice(start, start + 100);
@@ -259,6 +266,26 @@ export const CompilePhasesLive = Layer.effect(
           type Piece = { readonly document: Indexed; readonly chunks: readonly SearchChunk[] };
           const rows = new Map<Indexed, PgInsertValue<typeof searchIndex>[]>();
           const unindexed = new Set<Indexed>();
+          const failureKey = (document: Indexed) =>
+            contentHash(
+              document.file.path,
+              ...document.changed.map((chunk) => chunk.contentHash),
+              `model=${config.embeddingModel}`,
+              `chars=${config.embeddingRequestChars}`,
+              `timeout=${config.embeddingTimeoutSeconds}`,
+            );
+          const embeddable: Indexed[] = [];
+          for (const document of documents) {
+            if (
+              document.changed.length > 0 &&
+              (yield* failedAttempts(db, vaultId, "embed:search", failureKey(document))) >=
+                SET_ASIDE_AFTER
+            ) {
+              unindexed.add(document);
+              setAsideSearch.push(document.file.path);
+            } else embeddable.push(document);
+          }
+          const recordedFailures = new Set<Indexed>();
           const embedPieces = (group: readonly Piece[]) =>
             Effect.result(
               embeddings.embed(
@@ -268,7 +295,7 @@ export const CompilePhasesLive = Layer.effect(
             );
           const groups: Piece[][] = [];
           let passages = 50;
-          for (const document of documents) {
+          for (const document of embeddable) {
             for (let offset = 0; offset < document.changed.length;) {
               if (passages === 50) {
                 groups.push([]);
@@ -313,6 +340,13 @@ export const CompilePhasesLive = Layer.effect(
                 error: details.message,
               });
               unindexed.add(piece.document);
+              if (!recordedFailures.has(piece.document)) {
+                recordedFailures.add(piece.document);
+                yield* recordFailure(db, vaultId, "embed:search", failureKey(piece.document), {
+                  reason: "timeout",
+                  message: details.message,
+                });
+              }
               continue;
             }
             let position = 0;
@@ -338,7 +372,8 @@ export const CompilePhasesLive = Layer.effect(
               rows.set(document, documentRows);
             }
           }
-          for (const document of unindexed) timedOut.push(document.file.path);
+          for (const document of unindexed)
+            if (!setAsideSearch.includes(document.file.path)) timedOut.push(document.file.path);
 
           for (const document of documents) {
             const { file, indexes } = document;
@@ -418,6 +453,13 @@ export const CompilePhasesLive = Layer.effect(
               "documents not yet searchable (embedding timed out); the next Update retries them",
             count: timedOut.length,
             items: timedOut,
+          });
+        if (setAsideSearch.length > 0)
+          yield* pipeline.recordWarning(runId, {
+            phase: scope === "raw" ? "ingest" : "publish",
+            message: `documents not searchable (embedding timed out): ${SET_ASIDE_MESSAGE}`,
+            count: setAsideSearch.length,
+            items: setAsideSearch.toSorted(),
           });
         return indexedChunks;
       });

@@ -7,6 +7,7 @@ import { append } from "./collections.ts";
 import type { AskRunner, Progress } from "./compile-asks.ts";
 import type { ReasoningEffort } from "./config.ts";
 import { responseFormat } from "./compile-themes.ts";
+import { sortedFailures } from "./failure-ledger.ts";
 
 const ArticleBody = Schema.String.pipe(
   Schema.check(
@@ -37,6 +38,8 @@ export type WriterSettings = {
   readonly concurrency: number;
   readonly progress: Progress;
 };
+
+type FailedArticle = { readonly failedTitle: string; readonly setAside: boolean };
 
 export type PublishedArticle = {
   readonly id: Uuid;
@@ -198,12 +201,17 @@ export const writeArticles = (
             answer: WrittenArticle,
           })
           .pipe(
-            Effect.map((answer): PublishedArticle | string => ({
+            Effect.map((answer): PublishedArticle | FailedArticle => ({
               id: article.id,
               markdown: withFootnotes(answer.body, numbered),
               tags: normalizeTags(answer.tags),
             })),
-            Effect.catchTag("AskFailed", () => Effect.succeed(article.title)),
+            Effect.catchTag("AskFailed", (error) =>
+              Effect.succeed<FailedArticle>({
+                failedTitle: article.title,
+                setAside: error.reason === "set_aside",
+              }),
+            ),
             Effect.tap(() =>
               Effect.suspend(() => {
                 writtenCount += 1;
@@ -214,9 +222,14 @@ export const writeArticles = (
       },
       { concurrency: settings.concurrency },
     );
-    const published = written.flatMap((article) => (typeof article === "string" ? [] : [article]));
-    const failedArticles = written.flatMap((article) =>
-      typeof article === "string" ? [article] : [],
-    );
-    return { articles: published, failedArticles: failedArticles.toSorted() };
+    const published = written.flatMap((article) => ("failedTitle" in article ? [] : [article]));
+    const failedArticles = sortedFailures({
+      failed: written.flatMap((article) =>
+        "failedTitle" in article && !article.setAside ? [article.failedTitle] : [],
+      ),
+      setAside: written.flatMap((article) =>
+        "failedTitle" in article && article.setAside ? [article.failedTitle] : [],
+      ),
+    });
+    return { articles: published, failedArticles };
   });

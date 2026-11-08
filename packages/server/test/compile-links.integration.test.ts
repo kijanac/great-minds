@@ -145,7 +145,7 @@ describe("links between articles", () => {
     expect(result.linksOf.get(id.split)).toEqual([
       { phrase: "the liquidators", target: id.liquidators },
     ]);
-    expect(result.failedQuestions).toEqual([]);
+    expect(result.failedQuestions).toEqual({ failed: [], setAside: [] });
     const pickPrompts = calls
       .map((call) => String(call.messages[0]?.content))
       .filter((content) => content.includes("Library articles:"));

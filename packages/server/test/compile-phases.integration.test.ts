@@ -793,7 +793,12 @@ describe("M4.3a deterministic compile phases", () => {
       const cached = await run(
         Effect.flatMap(Database, (db) => db.query((d) => d.select().from(compileCacheEntries))),
       );
-      expect(cached).toHaveLength(kind === "fenced" ? 1 : 0);
+      expect(cached.filter((row) => row.phase === "extract")).toHaveLength(
+        kind === "fenced" ? 1 : 0,
+      );
+      expect(cached.filter((row) => row.phase === "failed:extract")).toHaveLength(
+        kind === "fenced" ? 0 : 1,
+      );
       expect(logEvents.filter((entry) => entry.event === "doc_failed")).toHaveLength(
         kind === "fenced" ? 0 : 1,
       );
@@ -1200,6 +1205,65 @@ describe("M4.3a deterministic compile phases", () => {
     expect(warnings[0]?.warnings).toEqual([
       expect.objectContaining({ phase: "ingest", count: 1, items: ["raw/docs/slow.md"] }),
     ]);
+  });
+
+  it("ingest sets aside a document whose embedding keeps timing out, until its passages change", async () => {
+    const path = "raw/docs/source.md";
+    files.set(path, `---\nsource_id: ${id.source}\ntitle: Slow\n---\n# Heading\n\nBody\n`);
+    etags.set(path, "etag-one");
+    await run(
+      Effect.flatMap(Database, (db) =>
+        db
+          .transaction((tx) =>
+            seedLegacySources(tx, {
+              id: id.source,
+              vaultId: id.vault,
+              filePath: path,
+              fileHash: "file",
+              bodyHash: "body",
+              sourceType: "document",
+            }),
+          )
+          .pipe(Effect.orDie),
+      ),
+    );
+    let attempts = 0;
+    embed = async () => {
+      attempts += 1;
+      throw new DOMException("embedding timed out", "TimeoutError");
+    };
+    for (const _attempt of [0, 1, 2])
+      await run(Effect.flatMap(CompilePhases, (phases) => phases.ingest(id.vault, id.run)));
+    expect(attempts).toBe(3);
+
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.ingest(id.vault, id.run)));
+    expect(attempts).toBe(3);
+    const warnings = await run(
+      Effect.flatMap(Database, (db) =>
+        db
+          .query((d) =>
+            d
+              .select({ warnings: pipelineRuns.warnings })
+              .from(pipelineRuns)
+              .where(eq(pipelineRuns.id, id.run)),
+          )
+          .pipe(Effect.orDie),
+      ),
+    );
+    expect(warnings[0]?.warnings).toContainEqual(
+      expect.objectContaining({
+        phase: "ingest",
+        message: expect.stringContaining("set aside after 3 failed attempts"),
+        items: [path],
+      }),
+    );
+
+    files.set(path, `---\nsource_id: ${id.source}\ntitle: Slow\n---\n# Heading\n\nRevised body\n`);
+    etags.set(path, "etag-two");
+    embed = defaultEmbed;
+    embeddingRequests.length = 0;
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.ingest(id.vault, id.run)));
+    expect(embeddingRequests).toHaveLength(1);
   });
 
   it("ingest fails loudly on a non-timeout embedding error", async () => {

@@ -16,6 +16,7 @@ import type { ReasoningEffort } from "./config.ts";
 import { askKey, type AskRunner, type Progress } from "./compile-asks.ts";
 import { contentHash } from "./crypto.ts";
 import type { EmbeddingsService } from "./embeddings.ts";
+import { noFailures, sortedFailures } from "./failure-ledger.ts";
 
 const SAME_TOPIC_SIMILARITY = 0.75;
 const PAIRING_BATCH = 500;
@@ -299,8 +300,12 @@ export const proposeTopics = (
               return ideaIds.length === 0 ? [] : [{ ...topic, ideaIds }];
             }),
           })),
-          Effect.catchTag("AskFailed", () =>
-            Effect.succeed({ documentId: document.id, failed: true as const }),
+          Effect.catchTag("AskFailed", (error) =>
+            Effect.succeed({
+              documentId: document.id,
+              failed: true as const,
+              setAside: error.reason === "set_aside",
+            }),
           ),
           Effect.tap(() => tick),
         );
@@ -370,7 +375,18 @@ export const proposeTopics = (
     }
     return {
       documents: answered.length,
-      failedDocuments: failedDocuments.map((id) => documentTitle.get(id) ?? id).toSorted(),
+      failedDocuments: sortedFailures({
+        failed: asked.flatMap((answer) =>
+          "failed" in answer && !answer.setAside
+            ? [documentTitle.get(answer.documentId) ?? answer.documentId]
+            : [],
+        ),
+        setAside: asked.flatMap((answer) =>
+          "failed" in answer && answer.setAside
+            ? [documentTitle.get(answer.documentId) ?? answer.documentId]
+            : [],
+        ),
+      }),
       newTopics: fresh.length,
     };
   });
@@ -496,7 +512,7 @@ export const groupThemes = (
     );
     const permits = yield* Semaphore.make(settings.concurrency);
     const proposalTitle = new Map(proposals.map((proposal) => [proposal.id, proposal.title]));
-    const failedJudgments: string[] = [];
+    const failedJudgments = noFailures();
     yield* runner.preloadKind("same_topic");
     const judge = (pivot: Uuid, open: readonly Uuid[]) =>
       Effect.forEach(
@@ -524,9 +540,12 @@ export const groupThemes = (
               Effect.map((answer): readonly Uuid[] =>
                 answer.relation === "same" ? [candidate] : [],
               ),
-              Effect.catchTag("AskFailed", () =>
+              Effect.catchTag("AskFailed", (error) =>
                 Effect.sync((): readonly Uuid[] => {
-                  failedJudgments.push(
+                  (error.reason === "set_aside"
+                    ? failedJudgments.setAside
+                    : failedJudgments.failed
+                  ).push(
                     `"${proposalTitle.get(pivot) ?? pivot}" / "${proposalTitle.get(candidate) ?? candidate}"`,
                   );
                   return [];
@@ -575,5 +594,5 @@ export const groupThemes = (
         ideaIds: [...new Set(memberRows.flatMap((row) => row.ideaIds))],
       };
     });
-    return { themes, failedJudgments: failedJudgments.toSorted() };
+    return { themes, failedJudgments: sortedFailures(failedJudgments) };
   });

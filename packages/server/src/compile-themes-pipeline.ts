@@ -29,6 +29,7 @@ import { progressSteps, type PipelineRunsService } from "./pipeline-runs.ts";
 import { loadPrompt } from "./prompts.ts";
 import type { ContentStorage } from "./storage.ts";
 import { defaultVaultConfigFile, readVaultConfig } from "./vault-config.ts";
+import { type Failures, SET_ASIDE_MESSAGE } from "./failure-ledger.ts";
 
 const PIVOTS_IN_FLIGHT = 120;
 
@@ -79,10 +80,23 @@ export const makeThemesPipeline = (options: {
   });
   const runnerFor = (vaultId: Uuid, runId: Uuid) =>
     makeAskRunner({ db, languageModel, logger }, { vaultId, runId });
-  const warn = (runId: Uuid, phase: string, items: readonly string[], message: string) =>
-    items.length === 0
-      ? Effect.void
-      : pipeline.recordWarning(runId, { phase, message, count: items.length, items });
+  const warn = (runId: Uuid, phase: string, failures: Failures, message: string) =>
+    Effect.gen(function* () {
+      if (failures.failed.length > 0)
+        yield* pipeline.recordWarning(runId, {
+          phase,
+          message,
+          count: failures.failed.length,
+          items: failures.failed,
+        });
+      if (failures.setAside.length > 0)
+        yield* pipeline.recordWarning(runId, {
+          phase,
+          message: `${message}: ${SET_ASIDE_MESSAGE}`,
+          count: failures.setAside.length,
+          items: failures.setAside,
+        });
+    });
   const promptsFor = (vaultId: Uuid) =>
     Effect.gen(function* () {
       const vaultConfig = yield* readVaultConfig(storage, vaultId).pipe(
@@ -190,7 +204,10 @@ export const makeThemesPipeline = (options: {
       yield* warn(
         runId,
         "build_articles",
-        [...grouped.failedJudgments, ...built.failedQuestions],
+        {
+          failed: [...grouped.failedJudgments.failed, ...built.failedQuestions.failed],
+          setAside: [...grouped.failedJudgments.setAside, ...built.failedQuestions.setAside],
+        },
         "grouping questions failed",
       );
 

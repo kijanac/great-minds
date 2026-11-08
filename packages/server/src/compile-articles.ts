@@ -8,6 +8,7 @@ import type { ReasoningEffort } from "./config.ts";
 import { append } from "./collections.ts";
 import { type Blocks, pivotGroups, responseFormat, type Theme } from "./compile-themes.ts";
 import { contentHash } from "./crypto.ts";
+import { noFailures, sortedFailures } from "./failure-ledger.ts";
 
 const ARTICLE_MIN_DOCUMENTS = 5;
 const MERGE_MAX_DISTANCE = 0.35;
@@ -149,7 +150,7 @@ export const buildArticles = (
     }
 
     const permits = yield* Semaphore.make(settings.concurrency);
-    const failedQuestions: string[] = [];
+    const failedQuestions = noFailures();
     yield* runner.preloadKind("same_entry");
     yield* runner.preloadKind("place_in_article");
     const sameEntry = (pivot: Uuid, candidate: Uuid) =>
@@ -173,9 +174,12 @@ export const buildArticles = (
         .pipe(
           Semaphore.withPermit(permits),
           Effect.map((answer) => answer.relation === "same"),
-          Effect.catchTag("AskFailed", () =>
+          Effect.catchTag("AskFailed", (error) =>
             Effect.sync(() => {
-              failedQuestions.push(
+              (error.reason === "set_aside"
+                ? failedQuestions.setAside
+                : failedQuestions.failed
+              ).push(
                 `"${themeById.get(pivot)?.title ?? pivot}" / "${themeById.get(candidate)?.title ?? candidate}"`,
               );
               return false;
@@ -299,11 +303,12 @@ export const buildArticles = (
               })
               .pipe(
                 Semaphore.withPermit(permits),
-                Effect.catchTag("AskFailed", () =>
+                Effect.catchTag("AskFailed", (error) =>
                   Effect.sync(() => {
-                    failedQuestions.push(
-                      `"${theme.title}" in "${heads.get(article)?.title ?? article}"`,
-                    );
+                    (error.reason === "set_aside"
+                      ? failedQuestions.setAside
+                      : failedQuestions.failed
+                    ).push(`"${theme.title}" in "${heads.get(article)?.title ?? article}"`);
                     return undefined;
                   }),
                 ),
@@ -343,6 +348,6 @@ export const buildArticles = (
       articles: articles.toSorted((left, right) => byOrder(left.id, right.id)),
       placedThemes: placements.filter((placement) => placement !== undefined).length,
       unplacedThemes: placements.filter((placement) => placement === undefined).length,
-      failedQuestions: failedQuestions.toSorted(),
+      failedQuestions: sortedFailures(failedQuestions),
     };
   });
