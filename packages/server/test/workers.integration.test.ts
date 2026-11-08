@@ -1663,13 +1663,11 @@ describe("M4.2 durable workers", () => {
           .pipe(Effect.orDie);
         yield* db
           .query((d) =>
-            d
-              .insert(compileIntents)
-              .values({
-                id: id.queuedUrlIntent,
-                vaultId: id.vault,
-                pipelineRunId: id.queuedUrlRun,
-              }),
+            d.insert(compileIntents).values({
+              id: id.queuedUrlIntent,
+              vaultId: id.vault,
+              pipelineRunId: id.queuedUrlRun,
+            }),
           )
           .pipe(Effect.orDie);
         return yield* settleRuns;
