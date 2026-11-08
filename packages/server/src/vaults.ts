@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   Database,
+  pipelineRuns,
   sessions,
   shares,
   type TransactionClient,
@@ -30,7 +31,18 @@ import {
   type VaultPage,
   type VaultRename,
 } from "@great-minds/domain";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, notExists, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  notExists,
+  type SQL,
+  sql,
+} from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Option, Schema } from "effect";
 import { parseDocument } from "yaml";
 
@@ -401,6 +413,18 @@ export const VaultsServiceLive = Layer.effect(
         }),
       );
 
+    const cancelActiveRuns = (tx: TransactionClient, inVaults: SQL) =>
+      tx
+        .update(pipelineRuns)
+        .set({
+          status: "cancelled",
+          phaseStatus: "failed",
+          error: "Vault deleted",
+          completedAt: sql`now()`,
+          updatedAt: sql`now()`,
+        })
+        .where(and(inVaults, inArray(pipelineRuns.status, ["pending", "running"])));
+
     const finishVaultDeletion = (vaultId: Uuid) =>
       Effect.gen(function* () {
         yield* storage.clear(vaultOwner(vaultId));
@@ -538,6 +562,10 @@ export const VaultsServiceLive = Layer.effect(
                 .update(vaults)
                 .set({ deletedAt: sql`coalesce(${vaults.deletedAt}, now())` })
                 .where(eq(vaults.ownerId, userId));
+              yield* cancelActiveRuns(
+                tx,
+                sql`${pipelineRuns.vaultId} in (select ${vaults.id} from ${vaults} where ${vaults.ownerId} = ${userId})`,
+              );
             }),
           );
           yield* finishAccountDeletion(userId).pipe(
@@ -867,6 +895,7 @@ export const VaultsServiceLive = Layer.effect(
                 .update(vaults)
                 .set({ deletedAt: sql`coalesce(${vaults.deletedAt}, now())` })
                 .where(eq(vaults.id, vaultId));
+              yield* cancelActiveRuns(tx, eq(pipelineRuns.vaultId, vaultId));
             }),
           );
           yield* finishVaultDeletion(vaultId).pipe(
