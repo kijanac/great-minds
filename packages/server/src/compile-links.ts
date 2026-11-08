@@ -16,11 +16,11 @@ const CANDIDATES = 5;
 const RRF_K = 60;
 const EMBEDDING_BATCH = 50;
 
-const MentionList = Schema.Struct({
+export const MentionList = Schema.Struct({
   mentions: Schema.Array(Schema.Struct({ phrase: Schema.String, about: Schema.String })),
 });
-const Pick = Schema.Struct({ choice: Schema.Int });
-const Check = Schema.Struct({ verdict: Schema.Literals(["yes", "no"] as const) });
+export const Pick = Schema.Struct({ choice: Schema.Int });
+export const Check = Schema.Struct({ verdict: Schema.Literals(["yes", "no"] as const) });
 
 export type LinkSettings = {
   readonly pickModel: string;
