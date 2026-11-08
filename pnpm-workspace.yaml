@@ -8,6 +8,8 @@ allowBuilds:
   esbuild: true
   msgpackr-extract: true
   msw: false
+  # OCR engine bundled with officeparser 8; OCR is not enabled, so its install script isn't needed.
+  tesseract.js: false
 
 # Hooks and CI run without a TTY; stale module directories should be purged
 # without prompting when the workspace shape changes.
@@ -18,3 +20,12 @@ confirmModulesPurge: false
 minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   - 'fast-check@4.9.0'
+
+# Security floors for transitive dependencies whose parents' ranges allow the fix but
+# whose lockfile entries were stuck below it. Scoped to the current major. Remove an entry
+# once its parent's own range requires the fixed version.
+overrides:
+  "@xmldom/xmldom@^0.9": "^0.9.12"
+  "postcss@^8": "^8.5.23"
+  "nanoid@^3": "^3.3.18"
+  "source-map-js@^1": "^1.2.2"

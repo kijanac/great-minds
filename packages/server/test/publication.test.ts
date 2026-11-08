@@ -4,7 +4,7 @@ import type {
   SessionResponse,
 } from "@great-minds/domain";
 import { Effect, Result } from "effect";
-import { parseOfficeAsync } from "officeparser";
+import { OfficeParser } from "officeparser";
 import { describe, expect, it } from "vitest";
 
 import { publicationExchanges } from "../src/conversation-history/presentation.ts";
@@ -168,7 +168,8 @@ describe("conversation publication", () => {
     );
     expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe("%PDF-");
     expect(new TextDecoder().decode(bytes.subarray(-20))).toContain("%%EOF");
-    const text = await parseOfficeAsync(Buffer.from(bytes), { outputErrorToConsole: false });
+    const parsed = await OfficeParser.parseOffice(Buffer.from(bytes), { allowRemoteAssets: false });
+    const text = (await parsed.to("text")).value;
     for (const marker of [
       "PROSEMARKER",
       "LISTMARKER",
