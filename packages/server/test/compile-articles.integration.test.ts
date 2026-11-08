@@ -200,7 +200,7 @@ describe("articles from themes", () => {
     expect(liquidationism?.documentIds).toHaveLength(11);
     expect(result.placedThemes).toBe(1);
     expect(result.unplacedThemes).toBe(1);
-    expect(result.failedQuestions).toEqual([]);
+    expect(result.failedQuestions).toEqual({ failed: [], setAside: [] });
     expect(calls).toHaveLength(4);
   });
 
@@ -247,7 +247,7 @@ describe("articles from themes", () => {
           left.join() < right.join() ? -1 : 1,
         ),
       );
-      expect(result.failedQuestions).toEqual([]);
+      expect(result.failedQuestions).toEqual({ failed: [], setAside: [] });
     });
 
     it("builds the same articles whatever order the themes arrive in, and asks nothing again", async () => {

@@ -172,8 +172,12 @@ beforeEach(async () => {
 describe("themes from per-document topics", () => {
   it("proposes topics per document, pairs only similar topics from different documents, and joins the same ones", async () => {
     const first = await build(id.run);
-    expect(first.proposed).toEqual({ documents: 3, failedDocuments: [], newTopics: 3 });
-    expect(first.failedJudgments).toEqual([]);
+    expect(first.proposed).toEqual({
+      documents: 3,
+      failedDocuments: { failed: [], setAside: [] },
+      newTopics: 3,
+    });
+    expect(first.failedJudgments).toEqual({ failed: [], setAside: [] });
     expect(first.candidates).toHaveLength(1);
     expect(first.themes).toHaveLength(2);
     const joined = first.themes.find((theme) => theme.members.length === 2);

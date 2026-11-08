@@ -10,6 +10,7 @@ import { contentHash } from "./crypto.ts";
 import type { ArticleContent } from "./compile-write.ts";
 import { responseFormat } from "./compile-themes.ts";
 import type { EmbeddingsService } from "./embeddings.ts";
+import { noFailures, sortedFailures } from "./failure-ledger.ts";
 
 const CANDIDATES = 5;
 const RRF_K = 60;
@@ -127,12 +128,14 @@ export const findLinks = (
     yield* runner.preloadKind("pick_link_target");
     yield* runner.preloadKind("check_link");
     yield* runner.preloadKind("embed");
-    const failedQuestions: string[] = [];
+    const failedQuestions = noFailures();
     const counted = <A>(effect: Effect.Effect<A, AskFailed>, fallback: A, item: string) =>
       effect.pipe(
-        Effect.catchTag("AskFailed", () =>
+        Effect.catchTag("AskFailed", (error) =>
           Effect.sync(() => {
-            failedQuestions.push(item);
+            (error.reason === "set_aside" ? failedQuestions.setAside : failedQuestions.failed).push(
+              item,
+            );
             return fallback;
           }),
         ),
@@ -342,6 +345,6 @@ export const findLinks = (
       linksOf,
       mentions: mentioned.length,
       links: found.length,
-      failedQuestions: failedQuestions.toSorted(),
+      failedQuestions: sortedFailures(failedQuestions),
     };
   });

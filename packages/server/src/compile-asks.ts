@@ -6,6 +6,7 @@ import { Effect, Schema } from "effect";
 import type { ReasoningEffort } from "./config.ts";
 import { contentHash } from "./crypto.ts";
 import { errorDetails } from "./error-details.ts";
+import { failedAttempts, recordFailure, SET_ASIDE_AFTER } from "./failure-ledger.ts";
 import { type LanguageModel, type LlmMessage, stripJsonFence } from "./llm.ts";
 import type { StructuredLogger } from "./logging.ts";
 
@@ -21,7 +22,7 @@ export type AskRequest<A, I> = {
 
 export class AskFailed extends Schema.TaggedError<AskFailed>()("AskFailed", {
   kind: Schema.String,
-  reason: Schema.Literals(["provider", "truncated", "malformed"] as const),
+  reason: Schema.Literals(["provider", "truncated", "malformed", "set_aside"] as const),
   message: Schema.String,
 }) {}
 
@@ -154,6 +155,13 @@ export const makeAskRunner = (
         const key = askKey(request);
         const reused = yield* saved(phase, key, request.answer);
         if (reused !== undefined) return reused;
+        const attempts = yield* failedAttempts(db, scope.vaultId, phase, key);
+        if (attempts >= SET_ASIDE_AFTER)
+          return yield* new AskFailed({
+            kind: request.kind,
+            reason: "set_aside",
+            message: `set aside after ${attempts} failed attempts on this input`,
+          });
         const completion = yield* languageModel
           .complete({
             model: request.model,
@@ -190,18 +198,28 @@ export const makeAskRunner = (
             generationId: completion.generationId ?? null,
           }),
         );
-        if (completion.finishReason === "length")
-          return yield* new AskFailed({
+        if (completion.finishReason === "length") {
+          const failure = new AskFailed({
             kind: request.kind,
             reason: "truncated",
             message: `${request.model} stopped at its output limit`,
           });
+          yield* recordFailure(db, scope.vaultId, phase, key, failure);
+          return yield* failure;
+        }
         const answer = yield* Schema.decodeEffect(Schema.fromJsonString(request.answer))(
           stripJsonFence(completion.text.trim()),
         ).pipe(
-          Effect.mapError(
-            (error) =>
-              new AskFailed({ kind: request.kind, reason: "malformed", message: error.message }),
+          Effect.catchTag("SchemaError", (error) =>
+            Effect.gen(function* () {
+              const failure = new AskFailed({
+                kind: request.kind,
+                reason: "malformed",
+                message: error.message,
+              });
+              yield* recordFailure(db, scope.vaultId, phase, key, failure);
+              return yield* failure;
+            }),
           ),
         );
         yield* keep(request.kind, key, request.answer, answer);

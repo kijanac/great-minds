@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { Article } from "../src/compile-articles.ts";
 import { makeAskRunner } from "../src/compile-asks.ts";
 import { writeArticles } from "../src/compile-write.ts";
-import type { CompleteInput, ModelCompletion } from "../src/llm.ts";
+import { type CompleteInput, type ModelCompletion, ModelProviderError } from "../src/llm.ts";
 import { seedLegacySources } from "./fixtures/source-documents.ts";
 import { runHistoryDatabase } from "./fixtures/reply-history-database.ts";
 
@@ -161,7 +161,7 @@ describe("writing articles", () => {
     expect(prompt).not.toContain("raw/liquidators.md");
     expect(prompt).not.toContain("wiki/");
     expect(calls[0]?.reasoningEffort).toBe("high");
-    expect(result.failedArticles).toEqual([]);
+    expect(result.failedArticles).toEqual({ failed: [], setAside: [] });
     expect(result.articles[0]?.tags).toEqual(["liquidationism", "rsdlp-1908"]);
     expect(result.articles[0]?.markdown).toBe(
       [
@@ -200,10 +200,76 @@ describe("writing articles", () => {
   it("does not save a reply without a heading, so the next run asks again", async () => {
     nextBody = "Just prose, no heading.";
     const failed = await write(runs[2] ?? id.article);
-    expect(failed).toEqual({ articles: [], failedArticles: ["Struggle against liquidationism"] });
+    expect(failed).toEqual({
+      articles: [],
+      failedArticles: { failed: ["Struggle against liquidationism"], setAside: [] },
+    });
     nextBody = "# Liquidationism\n\nFixed [^1].";
     const retried = await write(runs[3] ?? id.article);
     expect(calls).toHaveLength(2);
-    expect(retried.failedArticles).toEqual([]);
+    expect(retried.failedArticles).toEqual({ failed: [], setAside: [] });
+  });
+
+  it("sets an article aside after three failed attempts on the same input, until it changes", async () => {
+    nextBody = "Just prose, no heading.";
+    for (const attempt of [0, 1, 2]) {
+      const failed = await write(runs[attempt] ?? id.article);
+      expect(failed.failedArticles).toEqual({
+        failed: ["Struggle against liquidationism"],
+        setAside: [],
+      });
+    }
+    expect(calls).toHaveLength(3);
+
+    nextBody = "# Liquidationism\n\nFixed [^1].";
+    const skipped = await write(runs[3] ?? id.article);
+    expect(calls).toHaveLength(3);
+    expect(skipped.failedArticles).toEqual({
+      failed: [],
+      setAside: ["Struggle against liquidationism"],
+    });
+
+    const changed = await runHistoryDatabase(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        const runner = yield* makeAskRunner(
+          { db, languageModel, logger },
+          { vaultId: id.vault, runId: runs[3] ?? id.article },
+        );
+        return yield* writeArticles(
+          { db, runner },
+          id.vault,
+          [{ ...article, description: "The fight to keep the illegal party, revised." }],
+          settings,
+        );
+      }),
+    );
+    expect(calls).toHaveLength(4);
+    expect(changed.failedArticles).toEqual({ failed: [], setAside: [] });
+  });
+
+  it("does not count provider errors toward setting an article aside", async () => {
+    const failing = {
+      streamChat: () => Stream.empty,
+      complete: () => Effect.fail(new ModelProviderError({ message: "provider down" })),
+    };
+    for (const attempt of [0, 1, 2, 3]) {
+      const result = await runHistoryDatabase(
+        Effect.gen(function* () {
+          const db = yield* Database;
+          const runner = yield* makeAskRunner(
+            { db, languageModel: failing, logger },
+            { vaultId: id.vault, runId: runs[attempt] ?? id.article },
+          );
+          return yield* writeArticles({ db, runner }, id.vault, [article], settings);
+        }),
+      );
+      expect(result.failedArticles).toEqual({
+        failed: ["Struggle against liquidationism"],
+        setAside: [],
+      });
+    }
+    const recovered = await write(runs[0] ?? id.article);
+    expect(recovered.failedArticles).toEqual({ failed: [], setAside: [] });
   });
 });
