@@ -5,13 +5,7 @@ import {
   type UserSuggestionResult,
 } from "@great-minds/domain";
 import { Effect } from "effect";
-import {
-  errorMessage,
-  fingerprint,
-  manifestOf,
-  newUuid,
-  uploadTarget,
-} from "@great-minds/client";
+import { errorMessage, fingerprint, manifestOf, newUuid, uploadTarget } from "@great-minds/client";
 
 import { api, connection, run } from "./app";
 import { selectedVault } from "./selected-vault";

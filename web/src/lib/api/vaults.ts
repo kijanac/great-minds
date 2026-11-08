@@ -25,10 +25,7 @@ export const isAssignableRole = Schema.is(AssignableMemberRole);
 const firstPage = { limit: 50, offset: 0 } as const;
 
 export function fetchVaults(signal?: AbortSignal): Promise<readonly VaultOverview[]> {
-  return run(
-    allVaults(api).pipe(Effect.map((vaults) => vaults.items)),
-    { signal },
-  );
+  return run(allVaults(api).pipe(Effect.map((vaults) => vaults.items)), { signal });
 }
 
 export function createVault(input: CreateVaultInput): Promise<VaultOverview> {

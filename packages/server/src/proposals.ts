@@ -474,11 +474,16 @@ export const ProposalsServiceLive = Layer.effect(
           const where =
             query.status === undefined
               ? eq(sourceProposals.vaultId, vaultId)
-              : and(eq(sourceProposals.vaultId, vaultId), eq(sourceProposals.status, statusToDb(query.status)));
-          const countRows = yield* db.query((d) => d
-            .select({ total: sql<number>`count(*)::int` })
-            .from(sourceProposals)
-            .where(where));
+              : and(
+                  eq(sourceProposals.vaultId, vaultId),
+                  eq(sourceProposals.status, statusToDb(query.status)),
+                );
+          const countRows = yield* db.query((d) =>
+            d
+              .select({ total: sql<number>`count(*)::int` })
+              .from(sourceProposals)
+              .where(where),
+          );
           const rows = yield* db.query((d) =>
             d
               .select({ proposal: sourceProposals, sourceDeletedAt: sourceIncarnations.deletedAt })

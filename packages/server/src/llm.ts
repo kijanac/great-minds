@@ -246,7 +246,8 @@ export const priceCost = (
 ) =>
   price === undefined || promptTokens === undefined || completionTokens === undefined
     ? undefined
-    : (promptTokens * price.inputPerMillion + completionTokens * price.outputPerMillion) / 1_000_000;
+    : (promptTokens * price.inputPerMillion + completionTokens * price.outputPerMillion) /
+      1_000_000;
 
 const usageFrom = (
   usage: typeof WireUsage.Type | null | undefined,
@@ -280,11 +281,7 @@ export const responseDetail = (response: Response) =>
     Effect.map((text) => {
       const retryAfter = response.headers.get("retry-after");
       const body = text.slice(0, 500);
-      return [
-        String(response.status),
-        retryAfter === null ? "" : `retry-after ${retryAfter}`,
-        body,
-      ]
+      return [String(response.status), retryAfter === null ? "" : `retry-after ${retryAfter}`, body]
         .filter((part) => part !== "")
         .join(": ");
     }),
@@ -395,46 +392,48 @@ const emptyTrailer: StreamTrailer = {
   usage: undefined,
 };
 
-const foldStreamFrame = (price: ModelPrice | undefined, keepGenerationId: boolean) => (
-  trailer: StreamTrailer,
-  data: string,
-): Effect.Effect<readonly [StreamTrailer, readonly ModelStreamPart[]], ModelProviderError> =>
-  Effect.gen(function* () {
-    if (data.length === 0 || data === "[DONE]") {
-      return [trailer, []] as const;
-    }
-    const chunk = yield* decodeWireStreamChunk(data).pipe(
-      Effect.mapError(
-        (error) =>
-          new ModelProviderError({
-            message: "model provider sent a malformed stream frame",
-            issue: error.issue,
-          }),
-      ),
-    );
-    const choice = chunk.choices?.[0];
-    if (chunk.error != null || choice?.finish_reason === "error") {
-      return yield* new ModelProviderError({ message: "model provider failed while streaming" });
-    }
-    const next: StreamTrailer = {
-      finishReason: choice?.finish_reason ?? trailer.finishReason,
-      generationId: keepGenerationId ? (chunk.id ?? trailer.generationId) : undefined,
-      usage: usageFrom(chunk.usage, price) ?? trailer.usage,
-    };
-    const parts: ModelStreamPart[] = [];
-    const reasoning = choice?.delta?.reasoning_content;
-    if (reasoning !== undefined && reasoning !== null && reasoning.length > 0) {
-      parts.push({ type: "reasoning", text: reasoning });
-    }
-    const content = choice?.delta?.content;
-    if (content !== undefined && content !== null && content.length > 0) {
-      parts.push({ type: "token", text: content });
-    }
-    for (const delta of toolCallDeltas(choice?.delta?.tool_calls)) {
-      parts.push({ type: "tool_call_delta", delta });
-    }
-    return [next, parts] as const;
-  });
+const foldStreamFrame =
+  (price: ModelPrice | undefined, keepGenerationId: boolean) =>
+  (
+    trailer: StreamTrailer,
+    data: string,
+  ): Effect.Effect<readonly [StreamTrailer, readonly ModelStreamPart[]], ModelProviderError> =>
+    Effect.gen(function* () {
+      if (data.length === 0 || data === "[DONE]") {
+        return [trailer, []] as const;
+      }
+      const chunk = yield* decodeWireStreamChunk(data).pipe(
+        Effect.mapError(
+          (error) =>
+            new ModelProviderError({
+              message: "model provider sent a malformed stream frame",
+              issue: error.issue,
+            }),
+        ),
+      );
+      const choice = chunk.choices?.[0];
+      if (chunk.error != null || choice?.finish_reason === "error") {
+        return yield* new ModelProviderError({ message: "model provider failed while streaming" });
+      }
+      const next: StreamTrailer = {
+        finishReason: choice?.finish_reason ?? trailer.finishReason,
+        generationId: keepGenerationId ? (chunk.id ?? trailer.generationId) : undefined,
+        usage: usageFrom(chunk.usage, price) ?? trailer.usage,
+      };
+      const parts: ModelStreamPart[] = [];
+      const reasoning = choice?.delta?.reasoning_content;
+      if (reasoning !== undefined && reasoning !== null && reasoning.length > 0) {
+        parts.push({ type: "reasoning", text: reasoning });
+      }
+      const content = choice?.delta?.content;
+      if (content !== undefined && content !== null && content.length > 0) {
+        parts.push({ type: "token", text: content });
+      }
+      for (const delta of toolCallDeltas(choice?.delta?.tool_calls)) {
+        parts.push({ type: "tool_call_delta", delta });
+      }
+      return [next, parts] as const;
+    });
 
 const finishPart = (trailer: StreamTrailer): readonly ModelStreamPart[] => [
   {

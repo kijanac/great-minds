@@ -1,17 +1,7 @@
 import { posix } from "node:path";
 
-import {
-  Database,
-  pipelineRuns,
-  urlIngestRequests,
-} from "@great-minds/database";
-import {
-  BadRequest,
-  Forbidden,
-  type JobResponse,
-  NotFound,
-  type Uuid,
-} from "@great-minds/domain";
+import { Database, pipelineRuns, urlIngestRequests } from "@great-minds/database";
+import { BadRequest, Forbidden, type JobResponse, NotFound, type Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer } from "effect";
 import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
@@ -48,10 +38,9 @@ type UrlIngestServiceShape = {
   readonly reconcileOnce: () => Effect.Effect<number>;
 };
 
-export class UrlIngestService extends Context.Service<
-  UrlIngestService,
-  UrlIngestServiceShape
->()("@great-minds/server/UrlIngestService") {}
+export class UrlIngestService extends Context.Service<UrlIngestService, UrlIngestServiceShape>()(
+  "@great-minds/server/UrlIngestService",
+) {}
 
 type PersistedRequest = {
   readonly id: Uuid;
@@ -73,18 +62,19 @@ export const UrlIngestServiceLive = Layer.effect(
 
     const dispatch = (request: PersistedRequest) =>
       Effect.gen(function* () {
-        yield* UrlIngestWorkflow.execute(
-          { pipelineRunId: request.id },
-          { discard: true },
-        ).pipe(Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine));
-        yield* db.query((d) => d
-          .update(urlIngestRequests)
-          .set({
-            dispatchedAt: sql`coalesce(${urlIngestRequests.dispatchedAt}, now())`,
-            dispatchedTaskId: request.id,
-            updatedAt: sql`now()`,
-          })
-          .where(eq(urlIngestRequests.id, request.id)));
+        yield* UrlIngestWorkflow.execute({ pipelineRunId: request.id }, { discard: true }).pipe(
+          Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine),
+        );
+        yield* db.query((d) =>
+          d
+            .update(urlIngestRequests)
+            .set({
+              dispatchedAt: sql`coalesce(${urlIngestRequests.dispatchedAt}, now())`,
+              dispatchedTaskId: request.id,
+              updatedAt: sql`now()`,
+            })
+            .where(eq(urlIngestRequests.id, request.id)),
+        );
       });
 
     const dispatchBestEffort = (request: PersistedRequest) =>
@@ -212,29 +202,33 @@ export const UrlIngestServiceLive = Layer.effect(
           if (previousRunId === nextRunId) {
             return yield* new BadRequest({ detail: "Retry requires a new job ID" });
           }
-          const rows = yield* db.query((d) => d
-            .select({
-              request: {
-                id: urlIngestRequests.id,
-                createdBy: urlIngestRequests.createdBy,
-                canonicalUrl: urlIngestRequests.canonicalUrl,
-                origin: urlIngestRequests.origin,
-              },
-              run: {
-                vaultId: pipelineRuns.vaultId,
-                status: pipelineRuns.status,
-              },
-            })
-            .from(urlIngestRequests)
-            .innerJoin(pipelineRuns, eq(pipelineRuns.id, urlIngestRequests.id))
-            .where(eq(urlIngestRequests.id, previousRunId))
-            .limit(1));
+          const rows = yield* db.query((d) =>
+            d
+              .select({
+                request: {
+                  id: urlIngestRequests.id,
+                  createdBy: urlIngestRequests.createdBy,
+                  canonicalUrl: urlIngestRequests.canonicalUrl,
+                  origin: urlIngestRequests.origin,
+                },
+                run: {
+                  vaultId: pipelineRuns.vaultId,
+                  status: pipelineRuns.status,
+                },
+              })
+              .from(urlIngestRequests)
+              .innerJoin(pipelineRuns, eq(pipelineRuns.id, urlIngestRequests.id))
+              .where(eq(urlIngestRequests.id, previousRunId))
+              .limit(1),
+          );
           const previous = rows[0];
           if (previous === undefined || previous.run.vaultId !== vaultId) {
             return yield* new NotFound({ detail: "URL ingest job not found" });
           }
           if (previous.run.status !== "failed" && previous.run.status !== "cancelled") {
-            return yield* new BadRequest({ detail: "Only failed or cancelled URL ingests can retry" });
+            return yield* new BadRequest({
+              detail: "Only failed or cancelled URL ingests can retry",
+            });
           }
           const canonicalUrl = yield* parseCanonicalSourceUrl(previous.request.canonicalUrl).pipe(
             Effect.orDie,
@@ -247,30 +241,30 @@ export const UrlIngestServiceLive = Layer.effect(
         }),
       reconcileOnce: () =>
         Effect.gen(function* () {
-          const rows = yield* db.query((d) => d
-            .select({
-              id: urlIngestRequests.id,
-              vaultId: pipelineRuns.vaultId,
-              createdBy: urlIngestRequests.createdBy,
-              canonicalUrl: urlIngestRequests.canonicalUrl,
-              origin: urlIngestRequests.origin,
-              dispatchedAt: urlIngestRequests.dispatchedAt,
-            })
-            .from(urlIngestRequests)
-            .innerJoin(pipelineRuns, eq(pipelineRuns.id, urlIngestRequests.id))
-            .where(
-              and(
-                isNull(urlIngestRequests.dispatchedAt),
-                inArray(pipelineRuns.status, ["pending", "running"]),
-              ),
-            )
-            .orderBy(asc(urlIngestRequests.createdAt))
-            .limit(100));
-          yield* Effect.forEach(
-            rows as PersistedRequest[],
-            dispatchBestEffort,
-            { concurrency: config.pipelineConcurrency },
+          const rows = yield* db.query((d) =>
+            d
+              .select({
+                id: urlIngestRequests.id,
+                vaultId: pipelineRuns.vaultId,
+                createdBy: urlIngestRequests.createdBy,
+                canonicalUrl: urlIngestRequests.canonicalUrl,
+                origin: urlIngestRequests.origin,
+                dispatchedAt: urlIngestRequests.dispatchedAt,
+              })
+              .from(urlIngestRequests)
+              .innerJoin(pipelineRuns, eq(pipelineRuns.id, urlIngestRequests.id))
+              .where(
+                and(
+                  isNull(urlIngestRequests.dispatchedAt),
+                  inArray(pipelineRuns.status, ["pending", "running"]),
+                ),
+              )
+              .orderBy(asc(urlIngestRequests.createdAt))
+              .limit(100),
           );
+          yield* Effect.forEach(rows as PersistedRequest[], dispatchBestEffort, {
+            concurrency: config.pipelineConcurrency,
+          });
           return rows.length;
         }),
     } satisfies UrlIngestServiceShape;
@@ -283,5 +277,6 @@ export const UrlIngestReconcilerLoopLive = Layer.effectDiscard(
       failureEvent: "url_ingest_reconciler_tick_failed",
       interval: "5 seconds",
       tick: service.reconcileOnce(),
-    })),
+    }),
+  ),
 );

@@ -89,49 +89,51 @@ export const JobsServiceLive = Layer.effect(
     const pollIntervalMs = 100;
 
     const readRun = (vaultId: Uuid, jobId: Uuid) =>
-      db.query((d) => d
-        .select()
-        .from(pipelineRuns)
-        .where(and(eq(pipelineRuns.id, jobId), eq(pipelineRuns.vaultId, vaultId)))
-        .limit(1))
+      db
+        .query((d) =>
+          d
+            .select()
+            .from(pipelineRuns)
+            .where(and(eq(pipelineRuns.id, jobId), eq(pipelineRuns.vaultId, vaultId)))
+            .limit(1),
+        )
         .pipe(Effect.map((rows) => rows[0]));
 
     const requestCompile = (vaultId: Uuid, jobId: Uuid) =>
-      db
-        .transaction((tx) =>
-          Effect.gen(function* () {
-            const insertedRuns = yield* tx
-              .insert(pipelineRuns)
-              .values({
-                id: jobId,
-                vaultId,
-                trigger: "manual",
-                status: "pending",
-                currentPhase: "",
-                phaseStatus: "",
-              })
-              .onConflictDoNothing({ target: pipelineRuns.id })
-              .returning({ id: pipelineRuns.id });
-            const insertedRun = insertedRuns.length === 1;
+      db.transaction((tx) =>
+        Effect.gen(function* () {
+          const insertedRuns = yield* tx
+            .insert(pipelineRuns)
+            .values({
+              id: jobId,
+              vaultId,
+              trigger: "manual",
+              status: "pending",
+              currentPhase: "",
+              phaseStatus: "",
+            })
+            .onConflictDoNothing({ target: pipelineRuns.id })
+            .returning({ id: pipelineRuns.id });
+          const insertedRun = insertedRuns.length === 1;
 
-            const intent = yield* queueCompile(tx, vaultId, jobId);
-            const runId = intent.runId ?? jobId;
-            yield* linkRunToIntent(tx, runId, intent.id);
-            if (insertedRun && runId !== jobId) {
-              yield* tx.delete(pipelineRuns).where(eq(pipelineRuns.id, jobId));
-            }
-            const rows = yield* tx
-              .select()
-              .from(pipelineRuns)
-              .where(and(eq(pipelineRuns.id, runId), eq(pipelineRuns.vaultId, vaultId)))
-              .limit(1);
-            const run = rows[0];
-            if (run === undefined) {
-              throw new Error(`compile pipeline run missing for vault ${vaultId}, job ${jobId}`);
-            }
-            return jobResponse(run);
-          }),
-        );
+          const intent = yield* queueCompile(tx, vaultId, jobId);
+          const runId = intent.runId ?? jobId;
+          yield* linkRunToIntent(tx, runId, intent.id);
+          if (insertedRun && runId !== jobId) {
+            yield* tx.delete(pipelineRuns).where(eq(pipelineRuns.id, jobId));
+          }
+          const rows = yield* tx
+            .select()
+            .from(pipelineRuns)
+            .where(and(eq(pipelineRuns.id, runId), eq(pipelineRuns.vaultId, vaultId)))
+            .limit(1);
+          const run = rows[0];
+          if (run === undefined) {
+            throw new Error(`compile pipeline run missing for vault ${vaultId}, job ${jobId}`);
+          }
+          return jobResponse(run);
+        }),
+      );
 
     return {
       requestCompile: (userId, vaultId, jobId) =>
@@ -142,22 +144,24 @@ export const JobsServiceLive = Layer.effect(
       cancelCompile: (userId, vaultId, runId) =>
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
-          const rows = yield* db.query((d) => d
-            .select({
-              trigger: pipelineRuns.trigger,
-              compileIntentId: pipelineRuns.compileIntentId,
-              activeTaskId: pipelineRuns.activeTaskId,
-              activeTaskType: pipelineRuns.activeTaskType,
-            })
-            .from(pipelineRuns)
-            .where(
-              and(
-                eq(pipelineRuns.id, runId),
-                eq(pipelineRuns.vaultId, vaultId),
-                inArray(pipelineRuns.status, ["pending", "running"]),
-              ),
-            )
-            .limit(1));
+          const rows = yield* db.query((d) =>
+            d
+              .select({
+                trigger: pipelineRuns.trigger,
+                compileIntentId: pipelineRuns.compileIntentId,
+                activeTaskId: pipelineRuns.activeTaskId,
+                activeTaskType: pipelineRuns.activeTaskType,
+              })
+              .from(pipelineRuns)
+              .where(
+                and(
+                  eq(pipelineRuns.id, runId),
+                  eq(pipelineRuns.vaultId, vaultId),
+                  inArray(pipelineRuns.status, ["pending", "running"]),
+                ),
+              )
+              .limit(1),
+          );
           const run = rows[0];
           if (run === undefined) return;
           if (run.compileIntentId !== null) {
@@ -199,17 +203,18 @@ export const JobsServiceLive = Layer.effect(
             conditions.push(eq(pipelineRuns.status, query.status));
           }
           const where = and(...conditions);
-          const totals = yield* db.query((d) => d
-            .select({ total: count() })
-            .from(pipelineRuns)
-            .where(where));
-          const rows = yield* db.query((d) => d
-            .select()
-            .from(pipelineRuns)
-            .where(where)
-            .orderBy(desc(pipelineRuns.createdAt))
-            .limit(query.limit)
-            .offset(query.offset));
+          const totals = yield* db.query((d) =>
+            d.select({ total: count() }).from(pipelineRuns).where(where),
+          );
+          const rows = yield* db.query((d) =>
+            d
+              .select()
+              .from(pipelineRuns)
+              .where(where)
+              .orderBy(desc(pipelineRuns.createdAt))
+              .limit(query.limit)
+              .offset(query.offset),
+          );
           return pageEnvelope(rows.map(jobResponse), query, oneTotal(totals));
         }),
       get: (userId, vaultId, jobId) =>

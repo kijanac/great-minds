@@ -16,7 +16,7 @@ type TokenServiceShape = {
 };
 
 export class TokenService extends Context.Service<TokenService, TokenServiceShape>()(
-  "@great-minds/server/TokenService"
+  "@great-minds/server/TokenService",
 ) {}
 
 const secretKey = (secret: Redacted.Redacted<string>) => encoder.encode(Redacted.value(secret));

@@ -28,19 +28,12 @@ import { eq, sql } from "drizzle-orm";
 import { Effect, Exit, Layer, Option, Redacted, Schema, Stream } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import {
-  type ValidatedTopic,
-} from "../src/compile-contract.ts";
+import { type ValidatedTopic } from "../src/compile-contract.ts";
 import { CompilePhases, CompilePhasesLive } from "../src/compile-phases.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { DEFAULT_RENDER_MODEL } from "../src/config.ts";
 import { ClockLive } from "../src/clock.ts";
-import {
-  bodyContentHash,
-  contentHash,
-  fileContentHash,
-  promptContentHash,
-} from "../src/crypto.ts";
+import { bodyContentHash, contentHash, fileContentHash, promptContentHash } from "../src/crypto.ts";
 import { PgClientLive } from "../src/db.ts";
 import { EmbeddingBatchFailed, EmbeddingsService } from "../src/embeddings.ts";
 import {
@@ -244,9 +237,8 @@ const seedBase = () =>
     Effect.gen(function* () {
       const db = yield* Database;
       yield* db.query((d) => d.delete(users)).pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(users)
-        .values({ id: id.user, email: "phases@example.com" }))
+      yield* db
+        .query((d) => d.insert(users).values({ id: id.user, email: "phases@example.com" }))
         .pipe(Effect.orDie);
       yield* db.transaction((tx) =>
         Effect.gen(function* () {
@@ -258,16 +250,17 @@ const seedBase = () =>
             .values({ id: id.membership, vaultId: id.vault, userId: id.user, role: "EDITOR" });
         }),
       );
-      yield* db.query((d) => d
-        .insert(pipelineRuns)
-        .values({
-          id: id.run,
-          vaultId: id.vault,
-          trigger: "manual",
-          status: "pending",
-          currentPhase: "",
-          phaseStatus: "",
-        }))
+      yield* db
+        .query((d) =>
+          d.insert(pipelineRuns).values({
+            id: id.run,
+            vaultId: id.vault,
+            trigger: "manual",
+            status: "pending",
+            currentPhase: "",
+            phaseStatus: "",
+          }),
+        )
         .pipe(Effect.orDie);
     }),
   );
@@ -407,8 +400,9 @@ describe("M4.3a deterministic compile phases", () => {
         const db = yield* Database;
         return {
           events: yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie),
-          prompts: yield* db.query((d) =>
-            d.select().from(prompts).where(eq(prompts.hash, promptHash))).pipe(Effect.orDie),
+          prompts: yield* db
+            .query((d) => d.select().from(prompts).where(eq(prompts.hash, promptHash)))
+            .pipe(Effect.orDie),
           ideas: yield* db.query((d) => d.select().from(ideas)).pipe(Effect.orDie),
         };
       }),
@@ -838,8 +832,7 @@ describe("M4.3a deterministic compile phases", () => {
   });
 
   it("ingest indexes path-sorted metadata/body chunks and skips an unchanged ETag replay", async () => {
-    const content =
-      `---\nsource_id: ${id.source}\ntitle: Source title\nprecis: Source precis\nauthor: Author\n---\n# Heading\n\nFirst paragraph ^p0\n\nSecond paragraph ^p1\n`;
+    const content = `---\nsource_id: ${id.source}\ntitle: Source title\nprecis: Source precis\nauthor: Author\n---\n# Heading\n\nFirst paragraph ^p0\n\nSecond paragraph ^p1\n`;
     files.set("raw/docs/source.md", content);
     etags.set("raw/docs/source.md", "etag-one");
     await run(
@@ -864,16 +857,19 @@ describe("M4.3a deterministic compile phases", () => {
     const rows = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select({
-            path: searchIndex.path,
-            chunkIndex: searchIndex.chunkIndex,
-            heading: searchIndex.heading,
-            body: searchIndex.body,
-            contentHash: searchIndex.contentHash,
-          })
-          .from(searchIndex)
-          .orderBy(searchIndex.chunkIndex))
+        return yield* db
+          .query((d) =>
+            d
+              .select({
+                path: searchIndex.path,
+                chunkIndex: searchIndex.chunkIndex,
+                heading: searchIndex.heading,
+                body: searchIndex.body,
+                contentHash: searchIndex.contentHash,
+              })
+              .from(searchIndex)
+              .orderBy(searchIndex.chunkIndex),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -907,7 +903,10 @@ describe("M4.3a deterministic compile phases", () => {
   });
 
   it("ingest indexes every chunk of a document longer than one search write", async () => {
-    const paragraphs = Array.from({ length: 450 }, (_unused, index) => `Paragraph ${index} ^p${index}`);
+    const paragraphs = Array.from(
+      { length: 450 },
+      (_unused, index) => `Paragraph ${index} ^p${index}`,
+    );
     files.set(
       "raw/docs/long.md",
       `---\nsource_id: ${id.source}\ntitle: Long\n---\n${paragraphs.join("\n\n")}\n`,
@@ -922,7 +921,11 @@ describe("M4.3a deterministic compile phases", () => {
       inFlight -= 1;
       return texts.map((text) => {
         const paragraph = /Paragraph (\d+)/.exec(text);
-        return [1, paragraph === null ? -1 : Number(paragraph[1]), ...Array.from({ length: 1022 }, () => 0)];
+        return [
+          1,
+          paragraph === null ? -1 : Number(paragraph[1]),
+          ...Array.from({ length: 1022 }, () => 0),
+        ];
       });
     };
     const indexed = await run(
@@ -958,9 +961,9 @@ describe("M4.3a deterministic compile phases", () => {
       -1,
       ...paragraphs.map((_paragraph, index) => index),
     ]);
-    expect(indexed.every((row) => row.marker === (row.chunkIndex === -1 ? -1 : row.chunkIndex))).toBe(
-      true,
-    );
+    expect(
+      indexed.every((row) => row.marker === (row.chunkIndex === -1 ? -1 : row.chunkIndex)),
+    ).toBe(true);
     expect(mostInFlight).toBeGreaterThan(1);
     expect(mostInFlight).toBeLessThanOrEqual(config.compileEmbedConcurrency);
   });
@@ -989,11 +992,16 @@ describe("M4.3a deterministic compile phases", () => {
     const extract = Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run));
     const registry = () =>
       run(
-        Effect.flatMap(Database, (db) => db.query((d) => d
-          .select({ etag: sourceDocuments.etag, updatedAt: sourceDocuments.updatedAt })
-          .from(sourceDocuments)
-          .where(eq(sourceDocuments.id, id.source)))
-          .pipe(Effect.orDie)),
+        Effect.flatMap(Database, (db) =>
+          db
+            .query((d) =>
+              d
+                .select({ etag: sourceDocuments.etag, updatedAt: sourceDocuments.updatedAt })
+                .from(sourceDocuments)
+                .where(eq(sourceDocuments.id, id.source)),
+            )
+            .pipe(Effect.orDie),
+        ),
       );
 
     await run(ingest);
@@ -1012,7 +1020,9 @@ describe("M4.3a deterministic compile phases", () => {
     const anchorVersions = () =>
       run(
         Effect.flatMap(Database, (db) =>
-          db.query((d) => d.select({ version: sql<string>`xmin::text` }).from(anchors)).pipe(Effect.orDie),
+          db
+            .query((d) => d.select({ version: sql<string>`xmin::text` }).from(anchors))
+            .pipe(Effect.orDie),
         ),
       );
     const versions = await anchorVersions();
@@ -1060,19 +1070,29 @@ describe("M4.3a deterministic compile phases", () => {
 
     const indexed = () =>
       run(
-        Effect.flatMap(Database, (db) => db.query((d) => d
-          .select({ chunkIndex: searchIndex.chunkIndex })
-          .from(searchIndex)
-          .orderBy(searchIndex.chunkIndex))
-          .pipe(Effect.orDie)),
+        Effect.flatMap(Database, (db) =>
+          db
+            .query((d) =>
+              d
+                .select({ chunkIndex: searchIndex.chunkIndex })
+                .from(searchIndex)
+                .orderBy(searchIndex.chunkIndex),
+            )
+            .pipe(Effect.orDie),
+        ),
       );
     const storedEtag = () =>
       run(
-        Effect.flatMap(Database, (db) => db.query((d) => d
-          .select({ etag: sourceDocuments.etag })
-          .from(sourceDocuments)
-          .where(eq(sourceDocuments.id, id.source)))
-          .pipe(Effect.orDie)),
+        Effect.flatMap(Database, (db) =>
+          db
+            .query((d) =>
+              d
+                .select({ etag: sourceDocuments.etag })
+                .from(sourceDocuments)
+                .where(eq(sourceDocuments.id, id.source)),
+            )
+            .pipe(Effect.orDie),
+        ),
       );
     expect(await indexed()).toEqual([]);
     expect(await storedEtag()).toEqual([{ etag: null }]);
@@ -1086,11 +1106,16 @@ describe("M4.3a deterministic compile phases", () => {
       }),
     });
     const warnings = await run(
-      Effect.flatMap(Database, (db) => db.query((d) => d
-        .select({ warnings: pipelineRuns.warnings })
-        .from(pipelineRuns)
-        .where(eq(pipelineRuns.id, id.run)))
-        .pipe(Effect.orDie)),
+      Effect.flatMap(Database, (db) =>
+        db
+          .query((d) =>
+            d
+              .select({ warnings: pipelineRuns.warnings })
+              .from(pipelineRuns)
+              .where(eq(pipelineRuns.id, id.run)),
+          )
+          .pipe(Effect.orDie),
+      ),
     );
     expect(warnings[0]?.warnings).toEqual([
       expect.objectContaining({ phase: "ingest", count: 1, items: ["raw/docs/source.md"] }),
@@ -1148,19 +1173,29 @@ describe("M4.3a deterministic compile phases", () => {
     await run(Effect.flatMap(CompilePhases, (phases) => phases.ingest(id.vault, id.run)));
 
     const indexedPaths = await run(
-      Effect.flatMap(Database, (db) => db.query((d) => d
-        .selectDistinct({ path: searchIndex.path })
-        .from(searchIndex)
-        .orderBy(searchIndex.path))
-        .pipe(Effect.orDie)),
+      Effect.flatMap(Database, (db) =>
+        db
+          .query((d) =>
+            d
+              .selectDistinct({ path: searchIndex.path })
+              .from(searchIndex)
+              .orderBy(searchIndex.path),
+          )
+          .pipe(Effect.orDie),
+      ),
     );
     expect(indexedPaths).toEqual([{ path: "raw/docs/fast.md" }]);
     const warnings = await run(
-      Effect.flatMap(Database, (db) => db.query((d) => d
-        .select({ warnings: pipelineRuns.warnings })
-        .from(pipelineRuns)
-        .where(eq(pipelineRuns.id, id.run)))
-        .pipe(Effect.orDie)),
+      Effect.flatMap(Database, (db) =>
+        db
+          .query((d) =>
+            d
+              .select({ warnings: pipelineRuns.warnings })
+              .from(pipelineRuns)
+              .where(eq(pipelineRuns.id, id.run)),
+          )
+          .pipe(Effect.orDie),
+      ),
     );
     expect(warnings[0]?.warnings).toEqual([
       expect.objectContaining({ phase: "ingest", count: 1, items: ["raw/docs/slow.md"] }),
@@ -1223,28 +1258,30 @@ describe("M4.3a deterministic compile phases", () => {
             }),
           )
           .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(ideas)
-          .values({
-            ideaId: id.ideaA,
-            vaultId: id.vault,
-            documentId: id.source,
-            kind: "concept",
-            label: "Stable idea",
-            description: "Must retain the source ID relationship",
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(ideas).values({
+              ideaId: id.ideaA,
+              vaultId: id.vault,
+              documentId: id.source,
+              kind: "concept",
+              label: "Stable idea",
+              description: "Must retain the source ID relationship",
+            }),
+          )
           .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(searchIndex)
-          .values({
-            vaultId: id.vault,
-            path: oldPath,
-            chunkIndex: 0,
-            heading: "Original",
-            body: "Old indexed body",
-            contentHash: "old-chunk-hash",
-            tsv: sql`to_tsvector('english', 'Old indexed body')`,
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(searchIndex).values({
+              vaultId: id.vault,
+              path: oldPath,
+              chunkIndex: 0,
+              heading: "Original",
+              body: "Old indexed body",
+              contentHash: "old-chunk-hash",
+              tsv: sql`to_tsvector('english', 'Old indexed body')`,
+            }),
+          )
           .pipe(Effect.orDie);
 
         const phases = yield* CompilePhases;
@@ -1317,17 +1354,18 @@ describe("M4.3a deterministic compile phases", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(topics)
-          .values(
-            validated.map((topic) => ({
-              topicId: topic.topicId,
-              vaultId: id.vault,
-              slug: topic.slug,
-              title: topic.title,
-              description: topic.description,
-            })),
-          ))
+        yield* db
+          .query((d) =>
+            d.insert(topics).values(
+              validated.map((topic) => ({
+                topicId: topic.topicId,
+                vaultId: id.vault,
+                slug: topic.slug,
+                title: topic.title,
+                description: topic.description,
+              })),
+            ),
+          )
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.derive(id.vault, id.run, validated);
@@ -1368,45 +1406,47 @@ describe("M4.3a deterministic compile phases", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(topics)
-          .values([
-            {
-              topicId: id.topicA,
-              vaultId: id.vault,
-              slug: "alpha",
-              title: "Alpha",
-              description: "A",
-              articleStatus: "rendered",
-            },
-            {
-              topicId: id.topicB,
-              vaultId: id.vault,
-              slug: "beta",
-              title: "Beta",
-              description: "B",
-            },
-            {
-              topicId: id.topicC,
-              vaultId: id.vault,
-              slug: "no-file",
-              title: "No File",
-              description: "C",
-            },
-          ]))
+        yield* db
+          .query((d) =>
+            d.insert(topics).values([
+              {
+                topicId: id.topicA,
+                vaultId: id.vault,
+                slug: "alpha",
+                title: "Alpha",
+                description: "A",
+                articleStatus: "rendered",
+              },
+              {
+                topicId: id.topicB,
+                vaultId: id.vault,
+                slug: "beta",
+                title: "Beta",
+                description: "B",
+              },
+              {
+                topicId: id.topicC,
+                vaultId: id.vault,
+                slug: "no-file",
+                title: "No File",
+                description: "C",
+              },
+            ]),
+          )
           .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(wikiArticles)
-          .values({
-            id: id.articleA,
-            vaultId: id.vault,
-            topicId: id.topicA,
-            filePath: "wiki/alpha.md",
-            fileHash: "file",
-            bodyHash: "body",
-            title: "Alpha",
-            precis: "A",
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(wikiArticles).values({
+              id: id.articleA,
+              vaultId: id.vault,
+              topicId: id.topicA,
+              filePath: "wiki/alpha.md",
+              fileHash: "file",
+              bodyHash: "body",
+              title: "Alpha",
+              precis: "A",
+            }),
+          )
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.archiveTransitions(id.vault, id.run, [
@@ -1420,14 +1460,17 @@ describe("M4.3a deterministic compile phases", () => {
     const archived = await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select({
-            id: topics.topicId,
-            status: topics.articleStatus,
-            successor: topics.supersededBy,
-          })
-          .from(topics)
-          .where(eq(topics.articleStatus, "archived")))
+        return yield* db
+          .query((d) =>
+            d
+              .select({
+                id: topics.topicId,
+                status: topics.articleStatus,
+                successor: topics.supersededBy,
+              })
+              .from(topics)
+              .where(eq(topics.articleStatus, "archived")),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -1449,49 +1492,53 @@ describe("M4.3a deterministic compile phases", () => {
     await run(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(topics)
-          .values(
-            validated.map((topic) => ({
-              topicId: topic.topicId,
-              vaultId: id.vault,
-              slug: topic.slug,
-              title: topic.title,
-              description: topic.description,
-              articleStatus: "rendered",
-              compiledFromHash: "same",
-              renderedFromHash: "same",
-            })),
-          ))
-          .pipe(Effect.orDie);
-        yield* db.query((d) => d
-          .insert(wikiArticles)
-          .values([
-            {
-              id: id.articleA,
-              vaultId: id.vault,
-              topicId: id.topicA,
-              filePath: "wiki/alpha.md",
-              fileHash: "a",
-              bodyHash: "a",
-              title: "Alpha",
-              precis: "Alpha description",
-            },
-            {
-              id: id.articleB,
-              vaultId: id.vault,
-              topicId: id.topicB,
-              filePath: "wiki/beta.md",
-              fileHash: "b",
-              bodyHash: "b",
-              title: "Beta",
-              precis: "Beta description",
-            },
-          ]))
+        yield* db
+          .query((d) =>
+            d.insert(topics).values(
+              validated.map((topic) => ({
+                topicId: topic.topicId,
+                vaultId: id.vault,
+                slug: topic.slug,
+                title: topic.title,
+                description: topic.description,
+                articleStatus: "rendered",
+                compiledFromHash: "same",
+                renderedFromHash: "same",
+              })),
+            ),
+          )
           .pipe(Effect.orDie);
         yield* db
           .query((d) =>
-            d.insert(backlinks).values({ sourceArticleId: id.articleA, targetArticleId: id.articleB }),
+            d.insert(wikiArticles).values([
+              {
+                id: id.articleA,
+                vaultId: id.vault,
+                topicId: id.topicA,
+                filePath: "wiki/alpha.md",
+                fileHash: "a",
+                bodyHash: "a",
+                title: "Alpha",
+                precis: "Alpha description",
+              },
+              {
+                id: id.articleB,
+                vaultId: id.vault,
+                topicId: id.topicB,
+                filePath: "wiki/beta.md",
+                fileHash: "b",
+                bodyHash: "b",
+                title: "Beta",
+                precis: "Beta description",
+              },
+            ]),
+          )
+          .pipe(Effect.orDie);
+        yield* db
+          .query((d) =>
+            d
+              .insert(backlinks)
+              .values({ sourceArticleId: id.articleA, targetArticleId: id.articleB }),
           )
           .pipe(Effect.orDie);
         const phases = yield* CompilePhases;

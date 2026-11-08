@@ -12,14 +12,14 @@ type CountRow = {
 export const pageEnvelope = <A>(
   items: readonly A[],
   params: PageParams,
-  total: number
+  total: number,
 ): PageEnvelope<A> => ({
   items,
   pagination: {
     limit: params.limit,
     offset: params.offset,
-    total
-  }
+    total,
+  },
 });
 
 export const oneTotal = (rows: readonly CountRow[]) => {

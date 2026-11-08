@@ -5,7 +5,7 @@ import {
   type Uuid,
   type WikiArticleOverview,
   type WikiArticlePage,
-  type WikiListQuery
+  type WikiListQuery,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
@@ -19,17 +19,17 @@ type WikiServiceShape = {
   readonly listArticles: (
     userId: Uuid,
     vaultId: Uuid,
-    query: WikiListQuery
+    query: WikiListQuery,
   ) => Effect.Effect<WikiArticlePage, Forbidden>;
   readonly listRecent: (
     userId: Uuid,
     vaultId: Uuid,
-    params: PageParams
+    params: PageParams,
   ) => Effect.Effect<WikiArticlePage, Forbidden>;
 };
 
 export class WikiService extends Context.Service<WikiService, WikiServiceShape>()(
-  "@great-minds/server/WikiService"
+  "@great-minds/server/WikiService",
 ) {}
 
 const articleOverview = (row: typeof wikiArticles.$inferSelect): WikiArticleOverview => {
@@ -49,7 +49,7 @@ const listedArticleConditions = (vaultId: Uuid, query: WikiListQuery) => {
     const pattern = `%${query.contains}%`;
     const containsCondition = or(
       ilike(wikiArticles.title, pattern),
-      ilike(wikiArticles.precis, pattern)
+      ilike(wikiArticles.precis, pattern),
     );
     if (containsCondition !== undefined) {
       conditions.push(containsCondition);
@@ -57,7 +57,7 @@ const listedArticleConditions = (vaultId: Uuid, query: WikiListQuery) => {
   }
   if (query.tag !== undefined && query.tag !== "") {
     conditions.push(
-      sql`exists (select 1 from unnest(${wikiArticles.tags}) as tag_value where lower(tag_value) = lower(${query.tag}))`
+      sql`exists (select 1 from unnest(${wikiArticles.tags}) as tag_value where lower(tag_value) = lower(${query.tag}))`,
     );
   }
   return conditions;
@@ -72,17 +72,21 @@ export const WikiServiceLive = Layer.effect(
     const listPage = (params: PageParams, conditions: readonly SQL[], orderBy: SQL) =>
       Effect.gen(function* () {
         const where = and(...conditions);
-        const countRows = yield* db.query((d) => d
-          .select({ total: sql<number>`count(*)::int` })
-          .from(wikiArticles)
-          .where(where));
-        const rows = yield* db.query((d) => d
-          .select()
-          .from(wikiArticles)
-          .where(where)
-          .orderBy(orderBy, wikiArticles.id)
-          .limit(params.limit)
-          .offset(params.offset));
+        const countRows = yield* db.query((d) =>
+          d
+            .select({ total: sql<number>`count(*)::int` })
+            .from(wikiArticles)
+            .where(where),
+        );
+        const rows = yield* db.query((d) =>
+          d
+            .select()
+            .from(wikiArticles)
+            .where(where)
+            .orderBy(orderBy, wikiArticles.id)
+            .limit(params.limit)
+            .offset(params.offset),
+        );
         return pageEnvelope(rows.map(articleOverview), params, oneTotal(countRows));
       });
 
@@ -104,7 +108,7 @@ export const WikiServiceLive = Layer.effect(
           return yield* listPage(
             params,
             liveArticleConditions(vaultId),
-            desc(wikiArticles.updatedAt)
+            desc(wikiArticles.updatedAt),
           );
         }),
     } satisfies WikiServiceShape;

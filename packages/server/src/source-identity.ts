@@ -63,7 +63,12 @@ export const slugify = (text: string, maxLen = 80) =>
     .slice(0, maxLen);
 
 export const sourceIdForKey = (vaultId: Uuid, key: string): Uuid => {
-  const bytes = createHash("sha256").update(vaultId).update("\0").update(key).digest().subarray(0, 16);
+  const bytes = createHash("sha256")
+    .update(vaultId)
+    .update("\0")
+    .update(key)
+    .digest()
+    .subarray(0, 16);
   bytes[6] = (bytes[6]! & 0x0f) | 0x50;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = bytes.toString("hex");

@@ -148,12 +148,13 @@ const seed = () =>
       const db = yield* Database;
       yield* db.query((d) => d.delete(authCodes)).pipe(Effect.orDie);
       yield* db.query((d) => d.delete(users)).pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(users)
-        .values([
-          { id: ids.alice, email: "jobs-alice@example.test", createdAt: now, sponsored: true },
-          { id: ids.bob, email: "jobs-bob@example.test", createdAt: now, sponsored: true },
-        ]))
+      yield* db
+        .query((d) =>
+          d.insert(users).values([
+            { id: ids.alice, email: "jobs-alice@example.test", createdAt: now, sponsored: true },
+            { id: ids.bob, email: "jobs-bob@example.test", createdAt: now, sponsored: true },
+          ]),
+        )
         .pipe(Effect.orDie);
       yield* db.transaction((tx) =>
         Effect.gen(function* () {
@@ -179,93 +180,102 @@ const seed = () =>
           ]);
         }),
       );
-      yield* db.query((d) => d
-        .insert(topics)
-        .values([
-          {
-            topicId: ids.topicAlpha,
-            vaultId: ids.vault,
-            slug: "alpha",
-            title: "Alpha",
-            description: "Alpha topic",
-            articleStatus: "rendered",
-            compiledFromHash: "new-alpha",
-            renderedFromHash: "old-alpha",
-          },
-          {
-            topicId: ids.topicBeta,
-            vaultId: ids.vault,
-            slug: "beta",
-            title: "Beta",
-            description: "Beta topic",
-            articleStatus: "rendered",
-            compiledFromHash: "same-beta",
-            renderedFromHash: "same-beta",
-          },
-        ]))
+      yield* db
+        .query((d) =>
+          d.insert(topics).values([
+            {
+              topicId: ids.topicAlpha,
+              vaultId: ids.vault,
+              slug: "alpha",
+              title: "Alpha",
+              description: "Alpha topic",
+              articleStatus: "rendered",
+              compiledFromHash: "new-alpha",
+              renderedFromHash: "old-alpha",
+            },
+            {
+              topicId: ids.topicBeta,
+              vaultId: ids.vault,
+              slug: "beta",
+              title: "Beta",
+              description: "Beta topic",
+              articleStatus: "rendered",
+              compiledFromHash: "same-beta",
+              renderedFromHash: "same-beta",
+            },
+          ]),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(wikiArticles)
-        .values([
-          {
-            id: ids.articleAlpha,
-            vaultId: ids.vault,
-            topicId: ids.topicAlpha,
-            filePath: "wiki/alpha.md",
-            fileHash: "file-alpha",
-            bodyHash: "body-alpha",
-            title: "Alpha",
-            precis: "Alpha precis",
-            createdAt: now,
-            updatedAt: now,
-          },
-          {
-            id: ids.articleBeta,
-            vaultId: ids.vault,
-            topicId: ids.topicBeta,
-            filePath: "wiki/beta.md",
-            fileHash: "file-beta",
-            bodyHash: "body-beta",
-            title: "Beta",
-            precis: "Beta precis",
-            createdAt: now,
-            updatedAt: now,
-          },
-        ]))
+      yield* db
+        .query((d) =>
+          d.insert(wikiArticles).values([
+            {
+              id: ids.articleAlpha,
+              vaultId: ids.vault,
+              topicId: ids.topicAlpha,
+              filePath: "wiki/alpha.md",
+              fileHash: "file-alpha",
+              bodyHash: "body-alpha",
+              title: "Alpha",
+              precis: "Alpha precis",
+              createdAt: now,
+              updatedAt: now,
+            },
+            {
+              id: ids.articleBeta,
+              vaultId: ids.vault,
+              topicId: ids.topicBeta,
+              filePath: "wiki/beta.md",
+              fileHash: "file-beta",
+              bodyHash: "body-beta",
+              title: "Beta",
+              precis: "Beta precis",
+              createdAt: now,
+              updatedAt: now,
+            },
+          ]),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(backlinks)
-        .values({ sourceArticleId: ids.articleAlpha, targetArticleId: ids.articleBeta }))
+      yield* db
+        .query((d) =>
+          d
+            .insert(backlinks)
+            .values({ sourceArticleId: ids.articleAlpha, targetArticleId: ids.articleBeta }),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(topicLinks)
-        .values({ sourceTopicId: ids.topicBeta, targetTopicId: ids.topicAlpha }))
+      yield* db
+        .query((d) =>
+          d
+            .insert(topicLinks)
+            .values({ sourceTopicId: ids.topicBeta, targetTopicId: ids.topicAlpha }),
+        )
         .pipe(Effect.orDie);
-      yield* db.query((d) => d
-        .insert(llmCostEvents)
-        .values([
-          {
-            userId: ids.alice,
-            vaultId: ids.vault,
-            eventType: "compile",
-            costUsd: "1.000000",
-            createdAt: new Date("2026-07-10T12:00:00Z"),
-          },
-          {
-            userId: ids.alice,
-            vaultId: ids.otherVault,
-            eventType: "query",
-            costUsd: "2.000000",
-            createdAt: new Date("2026-07-11T12:00:00Z"),
-          },
-          {
-            userId: ids.bob,
-            vaultId: ids.vault,
-            eventType: "render",
-            costUsd: "3.000000",
-            createdAt: new Date("2026-07-12T12:00:00Z"),
-          },
-        ]))
+      yield* db
+        .query((d) =>
+          d.insert(llmCostEvents).values([
+            {
+              userId: ids.alice,
+              vaultId: ids.vault,
+              eventType: "compile",
+              costUsd: "1.000000",
+              createdAt: new Date("2026-07-10T12:00:00Z"),
+            },
+            {
+              userId: ids.alice,
+              vaultId: ids.otherVault,
+              eventType: "query",
+              costUsd: "2.000000",
+              createdAt: new Date("2026-07-11T12:00:00Z"),
+            },
+            {
+              userId: ids.bob,
+              vaultId: ids.vault,
+              eventType: "render",
+              costUsd: "3.000000",
+              createdAt: new Date("2026-07-12T12:00:00Z"),
+            },
+          ]),
+        )
         .pipe(Effect.orDie);
     }),
   );
@@ -382,16 +392,17 @@ describe("compile and job HTTP routes", () => {
   it("cancels idempotently without clobbering terminal state or revealing foreign runs", async () => {
     await run(
       Effect.flatMap(Database, (db) =>
-        db.query((d) => d
-          .insert(pipelineRuns)
-          .values({
-            id: ids.run,
-            vaultId: ids.vault,
-            trigger: "manual",
-            status: "pending",
-            currentPhase: "",
-            phaseStatus: "",
-          }))
+        db
+          .query((d) =>
+            d.insert(pipelineRuns).values({
+              id: ids.run,
+              vaultId: ids.vault,
+              trigger: "manual",
+              status: "pending",
+              currentPhase: "",
+              phaseStatus: "",
+            }),
+          )
           .pipe(Effect.orDie),
       ),
     );
@@ -415,7 +426,9 @@ describe("compile and job HTTP routes", () => {
     expect(missing.status).toBe(204);
     const row = await run(
       Effect.flatMap(Database, (db) =>
-        db.query((d) => d.select().from(pipelineRuns).where(eq(pipelineRuns.id, ids.run))).pipe(Effect.orDie),
+        db
+          .query((d) => d.select().from(pipelineRuns).where(eq(pipelineRuns.id, ids.run)))
+          .pipe(Effect.orDie),
       ),
     );
     expect(row[0]?.status).toBe("cancelled");
@@ -514,12 +527,21 @@ describe("job progress SSE", () => {
       new TextDecoder().decode(jobSseHeartbeatChunk(new TextEncoder().encode(encodedEmpty))),
     ).toBe(": heartbeat\n\n");
 
-    const events = pollingSse("test", Effect.succeed("one"), (data) => ({
-      version: 1, data, terminal: true,
-    }), 100);
+    const events = pollingSse(
+      "test",
+      Effect.succeed("one"),
+      (data) => ({
+        version: 1,
+        data,
+        terminal: true,
+      }),
+      100,
+    );
     const encoded = Stream.fromChannel(
       Channel.pipeTo(
-        Stream.toChannel(events.pipe(Stream.map((event) => ({ ...event, id: event.id, _tag: "Event" as const })))),
+        Stream.toChannel(
+          events.pipe(Stream.map((event) => ({ ...event, id: event.id, _tag: "Event" as const }))),
+        ),
         Sse.encode<never, void>(),
       ),
     );
@@ -533,9 +555,16 @@ describe("job progress SSE", () => {
 
   it("preserves polling database defects", async () => {
     const defect = new Error("mid-stream database defect");
-    const events = pollingSse("test", Effect.die(defect), () => ({
-      version: 1, data: "", terminal: false,
-    }), 100);
+    const events = pollingSse(
+      "test",
+      Effect.die(defect),
+      () => ({
+        version: 1,
+        data: "",
+        terminal: false,
+      }),
+      100,
+    );
     const exit = await Effect.runPromiseExit(Stream.runCollect(events));
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
@@ -548,18 +577,19 @@ describe("job progress SSE", () => {
   it("streams current-state transitions through terminal in exact protocol order", async () => {
     await run(
       Effect.flatMap(Database, (db) =>
-        db.query((d) => d
-          .insert(pipelineRuns)
-          .values({
-            id: ids.run,
-            vaultId: ids.vault,
-            trigger: "manual",
-            status: "pending",
-            currentPhase: "",
-            phaseStatus: "",
-            createdAt: now,
-            updatedAt: now,
-          }))
+        db
+          .query((d) =>
+            d.insert(pipelineRuns).values({
+              id: ids.run,
+              vaultId: ids.vault,
+              trigger: "manual",
+              status: "pending",
+              currentPhase: "",
+              phaseStatus: "",
+              createdAt: now,
+              updatedAt: now,
+            }),
+          )
           .pipe(Effect.orDie),
       ),
     );
@@ -574,33 +604,39 @@ describe("job progress SSE", () => {
     await wait(180);
     await run(
       Effect.flatMap(Database, (db) =>
-        db.query((d) => d
-          .update(pipelineRuns)
-          .set({
-            status: "running",
-            currentPhase: "ingest",
-            phaseStatus: "progress",
-            stages: [ingestStage],
-            updatedAt: new Date("2026-07-12T12:00:01Z"),
-          })
-          .where(eq(pipelineRuns.id, ids.run)))
+        db
+          .query((d) =>
+            d
+              .update(pipelineRuns)
+              .set({
+                status: "running",
+                currentPhase: "ingest",
+                phaseStatus: "progress",
+                stages: [ingestStage],
+                updatedAt: new Date("2026-07-12T12:00:01Z"),
+              })
+              .where(eq(pipelineRuns.id, ids.run)),
+          )
           .pipe(Effect.orDie),
       ),
     );
     await wait(180);
     await run(
       Effect.flatMap(Database, (db) =>
-        db.query((d) => d
-          .update(pipelineRuns)
-          .set({
-            status: "completed",
-            currentPhase: "publish",
-            phaseStatus: "completed",
-            stages: [ingestStage, publishStage],
-            updatedAt: new Date("2026-07-12T12:00:02Z"),
-            completedAt: new Date("2026-07-12T12:00:02Z"),
-          })
-          .where(eq(pipelineRuns.id, ids.run)))
+        db
+          .query((d) =>
+            d
+              .update(pipelineRuns)
+              .set({
+                status: "completed",
+                currentPhase: "publish",
+                phaseStatus: "completed",
+                stages: [ingestStage, publishStage],
+                updatedAt: new Date("2026-07-12T12:00:02Z"),
+                completedAt: new Date("2026-07-12T12:00:02Z"),
+              })
+              .where(eq(pipelineRuns.id, ids.run)),
+          )
           .pipe(Effect.orDie),
       ),
     );
@@ -623,18 +659,19 @@ describe("job progress SSE", () => {
   it("reconnects to a terminal run with snapshot-first one-shot closure", async () => {
     await run(
       Effect.flatMap(Database, (db) =>
-        db.query((d) => d
-          .insert(pipelineRuns)
-          .values({
-            id: ids.run,
-            vaultId: ids.vault,
-            trigger: "manual",
-            status: "failed",
-            currentPhase: "extract",
-            phaseStatus: "failed",
-            error: "extract seam unavailable",
-            completedAt: now,
-          }))
+        db
+          .query((d) =>
+            d.insert(pipelineRuns).values({
+              id: ids.run,
+              vaultId: ids.vault,
+              trigger: "manual",
+              status: "failed",
+              currentPhase: "extract",
+              phaseStatus: "failed",
+              error: "extract seam unavailable",
+              completedAt: now,
+            }),
+          )
           .pipe(Effect.orDie),
       ),
     );

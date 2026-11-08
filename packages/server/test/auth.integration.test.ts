@@ -26,7 +26,10 @@ import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { startServer } from "../src/server.ts";
 import { makeAppLayer } from "../src/app-layer.ts";
-import { replyHistoryTestDatabaseUrl, runHistoryDatabase } from "./fixtures/reply-history-database.ts";
+import {
+  replyHistoryTestDatabaseUrl,
+  runHistoryDatabase,
+} from "./fixtures/reply-history-database.ts";
 
 const initialTime = new Date("2026-07-09T12:00:00.000Z");
 
@@ -116,7 +119,10 @@ const buildTestState = async () => {
   const mailer = makeTestMailer();
   await runHistoryDatabase(Effect.void);
   const storageRoot = await mkdtemp(join(tmpdir(), "great-minds-auth-"));
-  const configLayer = Layer.succeed(AppConfig, testConfig(replyHistoryTestDatabaseUrl, storageRoot));
+  const configLayer = Layer.succeed(
+    AppConfig,
+    testConfig(replyHistoryTestDatabaseUrl, storageRoot),
+  );
   const appLayer = makeAppLayer({
     config: configLayer,
     clock: clock.layer,
@@ -185,17 +191,24 @@ const raceCredential = async (
   await Promise.race([Effect.runPromise(Deferred.await(locked)), holder]);
   const responses = [request(), request()];
   try {
-    await expect.poll(
-      () => runDb(Effect.gen(function* () {
-        const db = yield* Database;
-        const rows = yield* db.query((d) => d
-          .select({ total: sql<number>`count(*)::int` })
-          .from(sql`pg_stat_activity`)
-          .where(sql`datname = current_database() and wait_event_type = 'Lock'`));
-        return rows[0]?.total;
-      })),
-      { timeout: 5_000 },
-    ).toBe(2);
+    await expect
+      .poll(
+        () =>
+          runDb(
+            Effect.gen(function* () {
+              const db = yield* Database;
+              const rows = yield* db.query((d) =>
+                d
+                  .select({ total: sql<number>`count(*)::int` })
+                  .from(sql`pg_stat_activity`)
+                  .where(sql`datname = current_database() and wait_event_type = 'Lock'`),
+              );
+              return rows[0]?.total;
+            }),
+          ),
+        { timeout: 5_000 },
+      )
+      .toBe(2);
   } finally {
     await Effect.runPromise(Deferred.succeed(release, undefined));
     await holder;
@@ -330,11 +343,8 @@ const userByEmail = (email: string) =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      const rows = yield* db.query((d) => d
-        .select()
-        .from(users)
-        .where(eq(users.email, email))
-        .limit(1))
+      const rows = yield* db
+        .query((d) => d.select().from(users).where(eq(users.email, email)).limit(1))
         .pipe(Effect.orDie);
       return firstRow(rows, `user ${email}`);
     }),
@@ -344,7 +354,9 @@ const ownedVaults = (userId: Uuid) =>
   runDb(
     Effect.gen(function* () {
       const db = yield* Database;
-      return yield* db.query((d) => d.select().from(vaults).where(eq(vaults.ownerId, userId))).pipe(Effect.orDie);
+      return yield* db
+        .query((d) => d.select().from(vaults).where(eq(vaults.ownerId, userId)))
+        .pipe(Effect.orDie);
     }),
   );
 
@@ -393,11 +405,14 @@ describe("auth HTTP integration", () => {
     const rows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select()
-          .from(authCodes)
-          .where(eq(authCodes.email, "person@example.com"))
-          .orderBy(desc(authCodes.createdAt)))
+        return yield* db
+          .query((d) =>
+            d
+              .select()
+              .from(authCodes)
+              .where(eq(authCodes.email, "person@example.com"))
+              .orderBy(desc(authCodes.createdAt)),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -436,7 +451,10 @@ describe("auth HTTP integration", () => {
     const email = Schema.decodeUnknownSync(Email)("operator@example.com");
     const code = await runDb(Effect.flatMap(AuthService, (auth) => auth.issueSignInCode(email)));
     expect(currentState().mailer.sent).toHaveLength(0);
-    const verified = await api("POST", "/auth/verify-code", { email: "operator@example.com", code });
+    const verified = await api("POST", "/auth/verify-code", {
+      email: "operator@example.com",
+      code,
+    });
     expect(verified.status).toBe(200);
     const reused = await api("POST", "/auth/verify-code", { email: "operator@example.com", code });
     expect(reused.status).toBe(401);
@@ -656,24 +674,35 @@ describe("auth HTTP integration", () => {
     expect(expired.body).toMatchObject({ detail: "Invalid or expired refresh token" });
   });
 
-  it.each(["code", "refresh token"] as const)("consumes a %s once under contended HTTP requests", async (kind) => {
-    const email = "concurrent@example.com";
-    let responses: ApiResponse[];
-    if (kind === "code") {
-      await api("POST", "/auth/request-code", { email });
-      const code = latestCode();
-      responses = await raceCredential(authCodes, () => api("POST", "/auth/verify-code", { email, code }));
-    } else {
-      const pair = await signIn(email);
-      responses = await raceCredential(refreshTokens, () => api("POST", "/auth/refresh", { refresh_token: pair.refresh_token }));
-    }
-    expect(responses.map((response) => response.status).sort()).toEqual([200, 401]);
-    const remaining = await runDb(Effect.gen(function* () {
-      const db = yield* Database;
-      return yield* db.query((d) => d.select().from(refreshTokens).where(eq(refreshTokens.revoked, false)));
-    }));
-    expect(remaining).toHaveLength(1);
-  });
+  it.each(["code", "refresh token"] as const)(
+    "consumes a %s once under contended HTTP requests",
+    async (kind) => {
+      const email = "concurrent@example.com";
+      let responses: ApiResponse[];
+      if (kind === "code") {
+        await api("POST", "/auth/request-code", { email });
+        const code = latestCode();
+        responses = await raceCredential(authCodes, () =>
+          api("POST", "/auth/verify-code", { email, code }),
+        );
+      } else {
+        const pair = await signIn(email);
+        responses = await raceCredential(refreshTokens, () =>
+          api("POST", "/auth/refresh", { refresh_token: pair.refresh_token }),
+        );
+      }
+      expect(responses.map((response) => response.status).sort()).toEqual([200, 401]);
+      const remaining = await runDb(
+        Effect.gen(function* () {
+          const db = yield* Database;
+          return yield* db.query((d) =>
+            d.select().from(refreshTokens).where(eq(refreshTokens.revoked, false)),
+          );
+        }),
+      );
+      expect(remaining).toHaveLength(1);
+    },
+  );
 
   it("authenticates protected routes with JWT and bearer API keys and rejects missing or expired credentials", async () => {
     const pair = await signIn("protected@example.com");
@@ -768,14 +797,15 @@ describe("auth HTTP integration", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(webauthnChallenges)
-          .values({
-            challenge: "expired-challenge",
-            kind: "authentication",
-            userId: null,
-            expiresAt: new Date(initialTime.getTime() - 1),
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(webauthnChallenges).values({
+              challenge: "expired-challenge",
+              kind: "authentication",
+              userId: null,
+              expiresAt: new Date(initialTime.getTime() - 1),
+            }),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -854,27 +884,44 @@ describe("auth HTTP integration", () => {
     const pair = await signIn("passkey-key-boundary@example.com");
     const created = await api("POST", "/auth/api-keys", { label: "automation" }, pair.access_token);
     const key = asString(asRecord(created.body).raw_key, "raw_key");
-    const options = await api("POST", "/auth/passkeys/register-options", undefined, pair.access_token);
+    const options = await api(
+      "POST",
+      "/auth/passkeys/register-options",
+      undefined,
+      pair.access_token,
+    );
     const challenge = asString(asRecord(options.body).challenge, "challenge");
-    const before = await runDb(Effect.gen(function* () {
-      const db = yield* Database;
-      return yield* db.query((d) => d.select().from(webauthnChallenges));
-    }));
+    const before = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db.query((d) => d.select().from(webauthnChallenges));
+      }),
+    );
     const deniedOptions = await api("POST", "/auth/passkeys/register-options", undefined, key);
     const deniedRegister = await api(
-      "POST", "/auth/passkeys/register", failedRegistration(challenge), key,
+      "POST",
+      "/auth/passkeys/register",
+      failedRegistration(challenge),
+      key,
     );
     expect([deniedOptions.status, deniedRegister.status]).toEqual([403, 403]);
-    const after = await runDb(Effect.gen(function* () {
-      const db = yield* Database;
-      return yield* db.query((d) => d.select().from(webauthnChallenges));
-    }));
+    const after = await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return yield* db.query((d) => d.select().from(webauthnChallenges));
+      }),
+    );
     expect(after).toEqual(before);
     const sessionRegister = await api(
-      "POST", "/auth/passkeys/register", failedRegistration(challenge), pair.access_token,
+      "POST",
+      "/auth/passkeys/register",
+      failedRegistration(challenge),
+      pair.access_token,
     );
     expect(sessionRegister.status).toBe(422);
-    expect(sessionRegister.body).toMatchObject({ detail: "Passkey registration could not be verified" });
+    expect(sessionRegister.body).toMatchObject({
+      detail: "Passkey registration could not be verified",
+    });
   });
 
   it("consumes registration challenges once even when cryptographic verification fails", async () => {
@@ -904,10 +951,10 @@ describe("auth HTTP integration", () => {
     const remaining = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select()
-          .from(webauthnChallenges)
-          .where(eq(webauthnChallenges.challenge, challenge)))
+        return yield* db
+          .query((d) =>
+            d.select().from(webauthnChallenges).where(eq(webauthnChallenges.challenge, challenge)),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -939,32 +986,33 @@ describe("auth HTTP integration", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(webauthnCredentials)
-          .values([
-            {
-              id: ownerCredentialId,
-              userId: owner.id,
-              credentialId: "b3duZXItY3JlZGVudGlhbA",
-              publicKey: "AQID",
-              signCount: 3,
-              transports: ["internal", "hybrid"],
-              name: "Owner laptop",
-              createdAt: new Date("2026-07-01T09:00:00.000Z"),
-              lastUsedAt: new Date("2026-07-08T10:00:00.000Z"),
-            },
-            {
-              id: otherCredentialId,
-              userId: other.id,
-              credentialId: "b3RoZXItY3JlZGVudGlhbA",
-              publicKey: "BAUG",
-              signCount: 0,
-              transports: ["usb"],
-              name: "Other key",
-              createdAt: new Date("2026-07-02T09:00:00.000Z"),
-              lastUsedAt: null,
-            },
-          ]))
+        yield* db
+          .query((d) =>
+            d.insert(webauthnCredentials).values([
+              {
+                id: ownerCredentialId,
+                userId: owner.id,
+                credentialId: "b3duZXItY3JlZGVudGlhbA",
+                publicKey: "AQID",
+                signCount: 3,
+                transports: ["internal", "hybrid"],
+                name: "Owner laptop",
+                createdAt: new Date("2026-07-01T09:00:00.000Z"),
+                lastUsedAt: new Date("2026-07-08T10:00:00.000Z"),
+              },
+              {
+                id: otherCredentialId,
+                userId: other.id,
+                credentialId: "b3RoZXItY3JlZGVudGlhbA",
+                publicKey: "BAUG",
+                signCount: 0,
+                transports: ["usb"],
+                name: "Other key",
+                createdAt: new Date("2026-07-02T09:00:00.000Z"),
+                lastUsedAt: null,
+              },
+            ]),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -1058,14 +1106,23 @@ describe("auth HTTP integration", () => {
       undefined,
       pair.access_token,
     );
-    expect(described.body).toMatchObject({ user_code: userCode, computer: "devbox", email: "cli@example.com" });
+    expect(described.body).toMatchObject({
+      user_code: userCode,
+      computer: "devbox",
+      email: "cli@example.com",
+    });
 
     const key = await api("POST", "/auth/api-keys", { label: "script" }, pair.access_token);
     const rawKey = String(asRecord(key.body).raw_key);
     const byKey = await api("POST", "/auth/cli/approve", { user_code: typed }, rawKey);
     expect(byKey.status).toBe(403);
 
-    const approved = await api("POST", "/auth/cli/approve", { user_code: typed }, pair.access_token);
+    const approved = await api(
+      "POST",
+      "/auth/cli/approve",
+      { user_code: typed },
+      pair.access_token,
+    );
     expect(approved.status).toBe(204);
     const granted = asRecord((await poll()).body);
     expect(granted).toMatchObject({ status: "approved", email: "cli@example.com" });
@@ -1083,14 +1140,23 @@ describe("auth HTTP integration", () => {
       pair.access_token,
     );
     expect(denied.status).toBe(204);
-    const refused = await api("POST", "/auth/cli/token", { device_code: String(second.device_code) });
+    const refused = await api("POST", "/auth/cli/token", {
+      device_code: String(second.device_code),
+    });
     expect(asRecord(refused.body).status).toBe("denied");
 
     const third = asRecord((await api("POST", "/auth/cli/start", { computer: "old" })).body);
     currentState().clock.set(new Date(initialTime.getTime() + 11 * 60 * 1000));
-    const late = await api("POST", "/auth/cli/approve", { user_code: String(third.user_code) }, pair.access_token);
+    const late = await api(
+      "POST",
+      "/auth/cli/approve",
+      { user_code: String(third.user_code) },
+      pair.access_token,
+    );
     expect(late.status).toBe(404);
-    const expired = await api("POST", "/auth/cli/token", { device_code: String(third.device_code) });
+    const expired = await api("POST", "/auth/cli/token", {
+      device_code: String(third.device_code),
+    });
     expect(asRecord(expired.body).status).toBe("expired");
   });
 
@@ -1121,7 +1187,12 @@ describe("auth HTTP integration", () => {
 
     const user = await userByEmail("unsponsored@example.com");
     await runDb(Effect.flatMap(AuthService, (auth) => auth.setSponsored(user.id, true)));
-    const sponsored = await api("GET", `/vaults/${home}/search?q=%20`, undefined, pair.access_token);
+    const sponsored = await api(
+      "GET",
+      `/vaults/${home}/search?q=%20`,
+      undefined,
+      pair.access_token,
+    );
     expect(sponsored.status).toBe(200);
     expect(sponsored.body).toEqual([]);
     expect((await api("GET", "/auth/me", undefined, pair.access_token)).body).toMatchObject({
@@ -1255,7 +1326,10 @@ describe("auth HTTP integration", () => {
       content: [{ type: "text", text: expect.stringContaining("can't reach this vault") }],
     });
     const asked = await call("ask", { vault_id: home, question: "What is here?" });
-    expect(asked.error).toMatchObject({ code: -32003, message: "This API key can't ask questions." });
+    expect(asked.error).toMatchObject({
+      code: -32003,
+      message: "This API key can't ask questions.",
+    });
   });
 
   it("limits an API key to its vaults, its permissions and its lifetime", async () => {
@@ -1285,9 +1359,16 @@ describe("auth HTTP integration", () => {
     const elsewhere = await api("GET", `/vaults/${other}`, undefined, readerKey);
     expect(elsewhere.status).toBe(403);
     expect(elsewhere.body).toMatchObject({ detail: "This API key can't reach this vault." });
-    const update = await api("POST", `/vaults/${home}/compile`, { job_id: randomUUID() }, readerKey);
+    const update = await api(
+      "POST",
+      `/vaults/${home}/compile`,
+      { job_id: randomUUID() },
+      readerKey,
+    );
     expect(update.status).toBe(403);
-    expect(update.body).toMatchObject({ detail: "This API key can't add documents or make changes." });
+    expect(update.body).toMatchObject({
+      detail: "This API key can't add documents or make changes.",
+    });
     const newVault = await api("POST", "/vaults", { name: "Nope" }, readerKey);
     expect(newVault.status).toBe(403);
     const moreKeys = await api("POST", "/auth/api-keys", { label: "escalate" }, readerKey);
@@ -1396,15 +1477,18 @@ describe("auth HTTP integration", () => {
     const keyRows = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        return yield* db.query((d) => d
-          .select()
-          .from(apiKeys)
-          .where(
-            and(
-              eq(apiKeys.id, firstKeyId),
-              ne(apiKeys.keyHash, asString(firstKey.raw_key, "raw key")),
-            ),
-          ))
+        return yield* db
+          .query((d) =>
+            d
+              .select()
+              .from(apiKeys)
+              .where(
+                and(
+                  eq(apiKeys.id, firstKeyId),
+                  ne(apiKeys.keyHash, asString(firstKey.raw_key, "raw key")),
+                ),
+              ),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -1423,14 +1507,15 @@ describe("auth HTTP integration", () => {
     await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        yield* db.query((d) => d
-          .insert(vaultMemberships)
-          .values({
-            id: uuid(randomUUID()),
-            vaultId: survivorVault.id,
-            userId: deleteUser.id,
-            role: "VIEWER",
-          }))
+        yield* db
+          .query((d) =>
+            d.insert(vaultMemberships).values({
+              id: uuid(randomUUID()),
+              vaultId: survivorVault.id,
+              userId: deleteUser.id,
+              role: "VIEWER",
+            }),
+          )
           .pipe(Effect.orDie);
       }),
     );
@@ -1450,25 +1535,19 @@ describe("auth HTTP integration", () => {
     const remaining = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
-        const deletedUsers = yield* db.query((d) => d
-          .select()
-          .from(users)
-          .where(eq(users.id, deleteUser.id)))
+        const deletedUsers = yield* db
+          .query((d) => d.select().from(users).where(eq(users.id, deleteUser.id)))
           .pipe(Effect.orDie);
-        const deletedVaults = yield* db.query((d) => d
-          .select()
-          .from(vaults)
-          .where(eq(vaults.id, deleteUserVault.id)))
+        const deletedVaults = yield* db
+          .query((d) => d.select().from(vaults).where(eq(vaults.id, deleteUserVault.id)))
           .pipe(Effect.orDie);
-        const survivorVaults = yield* db.query((d) => d
-          .select()
-          .from(vaults)
-          .where(eq(vaults.id, survivorVault.id)))
+        const survivorVaults = yield* db
+          .query((d) => d.select().from(vaults).where(eq(vaults.id, survivorVault.id)))
           .pipe(Effect.orDie);
-        const deletedMemberships = yield* db.query((d) => d
-          .select()
-          .from(vaultMemberships)
-          .where(eq(vaultMemberships.userId, deleteUser.id)))
+        const deletedMemberships = yield* db
+          .query((d) =>
+            d.select().from(vaultMemberships).where(eq(vaultMemberships.userId, deleteUser.id)),
+          )
           .pipe(Effect.orDie);
         return {
           deletedUsers,

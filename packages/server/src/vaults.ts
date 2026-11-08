@@ -370,11 +370,9 @@ export const VaultsServiceLive = Layer.effect(
 
     const getVaultRow = (vaultId: Uuid) =>
       Effect.gen(function* () {
-        const rows = yield* db.query((d) => d
-          .select()
-          .from(vaults)
-          .where(eq(vaults.id, vaultId))
-          .limit(1));
+        const rows = yield* db.query((d) =>
+          d.select().from(vaults).where(eq(vaults.id, vaultId)).limit(1),
+        );
         return rows[0];
       });
 
@@ -389,14 +387,15 @@ export const VaultsServiceLive = Layer.effect(
             .from(sessions)
             .where(eq(sessions.vaultId, vaultId));
           if (sessionRows.length > 0) {
-            yield* tx
-              .delete(shares)
-              .where(
-                and(
-                  eq(shares.subjectKind, "session"),
-                  inArray(shares.subjectId, sessionRows.map((row) => uuidOf(row.id))),
+            yield* tx.delete(shares).where(
+              and(
+                eq(shares.subjectKind, "session"),
+                inArray(
+                  shares.subjectId,
+                  sessionRows.map((row) => uuidOf(row.id)),
                 ),
-              );
+              ),
+            );
           }
           yield* tx.delete(vaults).where(and(eq(vaults.id, vaultId), isNotNull(vaults.deletedAt)));
         }),
@@ -468,14 +467,18 @@ export const VaultsServiceLive = Layer.effect(
     const ensureUser = (emailInput: Email) =>
       Effect.gen(function* () {
         const email = normalizeEmail(emailInput);
-        const inserted = yield* db.query((d) => d
-          .insert(users)
-          .values({ id: Uuid.make(randomUUID(), { disableChecks: true }), email })
-          .onConflictDoNothing({ target: users.email })
-          .returning());
+        const inserted = yield* db.query((d) =>
+          d
+            .insert(users)
+            .values({ id: Uuid.make(randomUUID(), { disableChecks: true }), email })
+            .onConflictDoNothing({ target: users.email })
+            .returning(),
+        );
         const row =
           inserted[0] ??
-          (yield* db.query((d) => d.select().from(users).where(eq(users.email, email)).limit(1)))[0];
+          (yield* db.query((d) =>
+            d.select().from(users).where(eq(users.email, email)).limit(1),
+          ))[0];
         if (row === undefined) {
           throw new Error(`user ${email} was not created or found`);
         }
@@ -637,19 +640,19 @@ export const VaultsServiceLive = Layer.effect(
       getVaultDetail: (userId, vaultId) =>
         Effect.gen(function* () {
           const scope = yield* access.requireMember(userId, vaultId, "Not a member of this vault");
-          const rows = yield* db.query((d) => d
-            .select()
-            .from(vaults)
-            .where(eq(vaults.id, vaultId))
-            .limit(1));
+          const rows = yield* db.query((d) =>
+            d.select().from(vaults).where(eq(vaults.id, vaultId)).limit(1),
+          );
           const vault = rows[0];
           if (vault === undefined) {
             return yield* new Forbidden({ detail: "Not a member of this vault" });
           }
-          const memberCounts = yield* db.query((d) => d
-            .select({ total: sql<number>`count(*)::int` })
-            .from(vaultMemberships)
-            .where(eq(vaultMemberships.vaultId, vaultId)));
+          const memberCounts = yield* db.query((d) =>
+            d
+              .select({ total: sql<number>`count(*)::int` })
+              .from(vaultMemberships)
+              .where(eq(vaultMemberships.vaultId, vaultId)),
+          );
           const articleCounts = yield* db.query((d) =>
             d
               .select({ total: sql<number>`count(*)::int` })
@@ -684,10 +687,12 @@ export const VaultsServiceLive = Layer.effect(
       listMembers: (userId, vaultId, params) =>
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
-          const countRows = yield* db.query((d) => d
-            .select({ total: sql<number>`count(*)::int` })
-            .from(vaultMemberships)
-            .where(eq(vaultMemberships.vaultId, vaultId)));
+          const countRows = yield* db.query((d) =>
+            d
+              .select({ total: sql<number>`count(*)::int` })
+              .from(vaultMemberships)
+              .where(eq(vaultMemberships.vaultId, vaultId)),
+          );
           const rows = yield* db.query((d) =>
             d
               .select({
@@ -713,26 +718,26 @@ export const VaultsServiceLive = Layer.effect(
           if (vault === undefined) {
             return yield* new Forbidden({ detail: "Only vault owners can perform this action" });
           }
-          const inviterRows = yield* db.query((d) => d
-            .select({ email: users.email })
-            .from(users)
-            .where(eq(users.id, userId))
-            .limit(1));
+          const inviterRows = yield* db.query((d) =>
+            d.select({ email: users.email }).from(users).where(eq(users.id, userId)).limit(1),
+          );
           const inviterEmail = inviterRows[0]?.email ?? "";
           const role = input.role ?? "editor";
           const target = yield* ensureUser(input.email);
           if (target.deletedAt !== null) return yield* accountBeingDeleted();
-          yield* db.query((d) => d
-            .insert(vaultMemberships)
-            .values({
-              id: Uuid.make(randomUUID(), { disableChecks: true }),
-              vaultId,
-              userId: target.id,
-              role: roleToDb(role),
-            })
-            .onConflictDoNothing({
-              target: [vaultMemberships.vaultId, vaultMemberships.userId],
-            }));
+          yield* db.query((d) =>
+            d
+              .insert(vaultMemberships)
+              .values({
+                id: Uuid.make(randomUUID(), { disableChecks: true }),
+                vaultId,
+                userId: target.id,
+                role: roleToDb(role),
+              })
+              .onConflictDoNothing({
+                target: [vaultMemberships.vaultId, vaultMemberships.userId],
+              }),
+          );
           yield* mailer
             .send({
               to: target.email,

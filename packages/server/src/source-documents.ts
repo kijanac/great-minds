@@ -989,5 +989,6 @@ export const SourceDeletionReconcilerLoopLive = Layer.effectDiscard(
       failureEvent: "source_deletion.reconciler_tick_failed",
       interval: "1 minute",
       tick: service.reconcileDeletionsOnce(),
-    })),
+    }),
+  ),
 );

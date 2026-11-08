@@ -257,7 +257,7 @@ export class Session {
     this.#updateExchange(exchangeId, {
       thinking: [],
       answer: "",
-        citations: [],
+      citations: [],
       status: "running",
       version: null,
       error: null,

@@ -51,11 +51,11 @@ const WorkflowLayer = KernelAcceptanceWorkflow.toLayer((payload, executionId) =>
     }),
   });
   return Effect.gen(function* () {
-      console.log(`KERNEL execution=${executionId}`);
-      const prepared = yield* prepare;
-      const finished = yield* finish;
-      return `${prepared}+${finished}`;
-    });
+    console.log(`KERNEL execution=${executionId}`);
+    const prepared = yield* prepare;
+    const finished = yield* finish;
+    return `${prepared}+${finished}`;
+  });
 });
 
 const MainLive = WorkflowLayer.pipe(

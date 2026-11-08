@@ -495,7 +495,11 @@
         : "add sources"}
     onclick={expanded || locked ? undefined : handleCircleClick}
     onkeydown={(event) => {
-      if (!expanded && !locked && (event.key === "Enter" || event.key === " ")) {
+      if (
+        !expanded &&
+        !locked &&
+        (event.key === "Enter" || event.key === " ")
+      ) {
         event.preventDefault();
         handleCircleClick();
       }

@@ -101,21 +101,25 @@ export const UserDocumentsServiceLive = Layer.effect(
     const storage = yield* ContentStorage;
 
     const getByUrl = (userId: Uuid, url: string) =>
-      db.query((d) => d
-        .select()
-        .from(userDocuments)
-        .where(and(eq(userDocuments.userId, userId), eq(userDocuments.url, url)))
-        .limit(1))
+      db
+        .query((d) =>
+          d
+            .select()
+            .from(userDocuments)
+            .where(and(eq(userDocuments.userId, userId), eq(userDocuments.url, url)))
+            .limit(1),
+        )
         .pipe(Effect.map((rows) => rows[0]));
 
     const getByPath = (userId: Uuid, filePath: string) =>
-      db.query((d) => d
-        .select()
-        .from(userDocuments)
-        .where(
-          and(eq(userDocuments.userId, userId), eq(userDocuments.filePath, filePath)),
+      db
+        .query((d) =>
+          d
+            .select()
+            .from(userDocuments)
+            .where(and(eq(userDocuments.userId, userId), eq(userDocuments.filePath, filePath)))
+            .limit(1),
         )
-        .limit(1))
         .pipe(Effect.map((rows) => rows[0]));
 
     const validatePath = (path: string) => {
@@ -210,17 +214,21 @@ export const UserDocumentsServiceLive = Layer.effect(
         }),
       list: (userId, params) =>
         Effect.gen(function* () {
-          const countRows = yield* db.query((d) => d
-            .select({ total: sql<number>`count(*)::int` })
-            .from(userDocuments)
-            .where(eq(userDocuments.userId, userId)));
-          const rows = yield* db.query((d) => d
-            .select()
-            .from(userDocuments)
-            .where(eq(userDocuments.userId, userId))
-            .orderBy(desc(userDocuments.createdAt), desc(userDocuments.id))
-            .limit(params.limit)
-            .offset(params.offset));
+          const countRows = yield* db.query((d) =>
+            d
+              .select({ total: sql<number>`count(*)::int` })
+              .from(userDocuments)
+              .where(eq(userDocuments.userId, userId)),
+          );
+          const rows = yield* db.query((d) =>
+            d
+              .select()
+              .from(userDocuments)
+              .where(eq(userDocuments.userId, userId))
+              .orderBy(desc(userDocuments.createdAt), desc(userDocuments.id))
+              .limit(params.limit)
+              .offset(params.offset),
+          );
           return pageEnvelope(rows.map(referenceOverview), params, oneTotal(countRows));
         }),
       locate,
@@ -236,10 +244,12 @@ export const UserDocumentsServiceLive = Layer.effect(
         }),
       delete: (userId, referenceId) =>
         Effect.gen(function* () {
-          const rows = yield* db.query((d) => d
-            .delete(userDocuments)
-            .where(and(eq(userDocuments.userId, userId), eq(userDocuments.id, referenceId)))
-            .returning({ filePath: userDocuments.filePath }));
+          const rows = yield* db.query((d) =>
+            d
+              .delete(userDocuments)
+              .where(and(eq(userDocuments.userId, userId), eq(userDocuments.id, referenceId)))
+              .returning({ filePath: userDocuments.filePath }),
+          );
           const deleted = rows[0];
           if (deleted === undefined) {
             return yield* new NotFound({ detail: "Reference not found" });
@@ -253,11 +263,13 @@ export const UserDocumentsServiceLive = Layer.effect(
           // user_documents row is touched.
           const trimmed = input.title?.trim() ?? null;
           const title = trimmed === "" ? null : trimmed;
-          const rows = yield* db.query((d) => d
-            .update(userDocuments)
-            .set({ title, updatedAt: sql`now()` })
-            .where(and(eq(userDocuments.userId, userId), eq(userDocuments.id, referenceId)))
-            .returning());
+          const rows = yield* db.query((d) =>
+            d
+              .update(userDocuments)
+              .set({ title, updatedAt: sql`now()` })
+              .where(and(eq(userDocuments.userId, userId), eq(userDocuments.id, referenceId)))
+              .returning(),
+          );
           const row = rows[0];
           if (row === undefined) {
             return yield* new NotFound({ detail: "Reference not found" });

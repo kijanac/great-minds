@@ -118,10 +118,7 @@ export const CompileWorkflowLive = CompileWorkflow.toLayer((payload) => {
               error_type: failure.errorType,
               error_message: failure.message,
             });
-            yield* pipeline.failPreservingProgress(
-              payload.pipelineRunId,
-              formatted,
-            );
+            yield* pipeline.failPreservingProgress(payload.pipelineRunId, formatted);
             return yield* Effect.fail(failure);
           });
         }),
@@ -206,23 +203,25 @@ export const CompileIntentReconcilerLive = Layer.effect(
     const config = yield* AppConfig;
 
     const markSatisfied = Effect.gen(function* () {
-      const terminal = yield* db.query((d) => d
-        .select({
-          intentId: compileIntents.id,
-          vaultId: compileIntents.vaultId,
-          pipelineRunId: pipelineRuns.id,
-        })
-        .from(compileIntents)
-        .innerJoin(pipelineRuns, eq(pipelineRuns.id, compileIntents.pipelineRunId))
-        .where(
-          and(
-            isNotNull(compileIntents.dispatchedAt),
-            isNotNull(compileIntents.dispatchedTaskId),
-            isNull(compileIntents.satisfiedAt),
-            inArray(pipelineRuns.status, ["completed", "failed", "cancelled"]),
-          ),
-        )
-        .limit(200));
+      const terminal = yield* db.query((d) =>
+        d
+          .select({
+            intentId: compileIntents.id,
+            vaultId: compileIntents.vaultId,
+            pipelineRunId: pipelineRuns.id,
+          })
+          .from(compileIntents)
+          .innerJoin(pipelineRuns, eq(pipelineRuns.id, compileIntents.pipelineRunId))
+          .where(
+            and(
+              isNotNull(compileIntents.dispatchedAt),
+              isNotNull(compileIntents.dispatchedTaskId),
+              isNull(compileIntents.satisfiedAt),
+              inArray(pipelineRuns.status, ["completed", "failed", "cancelled"]),
+            ),
+          )
+          .limit(200),
+      );
       const finished: Uuid[] = [];
       for (const row of terminal) {
         const executionId = yield* CompileWorkflow.executionId({
@@ -234,82 +233,83 @@ export const CompileIntentReconcilerLive = Layer.effect(
         if (Option.isSome(result) && result.value._tag === "Complete") finished.push(row.intentId);
       }
       if (finished.length > 0) {
-        yield* db.query((d) => d
-          .update(compileIntents)
-          .set({ satisfiedAt: sql`now()` })
-          .where(inArray(compileIntents.id, finished)));
+        yield* db.query((d) =>
+          d
+            .update(compileIntents)
+            .set({ satisfiedAt: sql`now()` })
+            .where(inArray(compileIntents.id, finished)),
+        );
       }
       return finished.length;
     });
 
-    const pendingDispatches = db
-      .transaction((tx) =>
-        Effect.gen(function* () {
-          const pending = yield* tx
-            .select({
-              id: compileIntents.id,
-              vaultId: compileIntents.vaultId,
-              pipelineRunId: compileIntents.pipelineRunId,
-            })
-            .from(compileIntents)
+    const pendingDispatches = db.transaction((tx) =>
+      Effect.gen(function* () {
+        const pending = yield* tx
+          .select({
+            id: compileIntents.id,
+            vaultId: compileIntents.vaultId,
+            pipelineRunId: compileIntents.pipelineRunId,
+          })
+          .from(compileIntents)
+          .where(
+            and(
+              isNull(compileIntents.dispatchedAt),
+              notExists(
+                tx
+                  .select({ id: vaults.id })
+                  .from(vaults)
+                  .where(and(eq(vaults.id, compileIntents.vaultId), isNotNull(vaults.deletedAt))),
+              ),
+            ),
+          )
+          .orderBy(asc(compileIntents.createdAt))
+          .limit(100)
+          .for("update", { skipLocked: true });
+        const dispatches: Dispatch[] = [];
+        for (const intent of pending) {
+          const active = yield* tx
+            .select({ id: pipelineRuns.id })
+            .from(pipelineRuns)
             .where(
               and(
-                isNull(compileIntents.dispatchedAt),
-                notExists(
-                  tx
-                    .select({ id: vaults.id })
-                    .from(vaults)
-                    .where(and(eq(vaults.id, compileIntents.vaultId), isNotNull(vaults.deletedAt))),
-                ),
+                eq(pipelineRuns.vaultId, intent.vaultId),
+                eq(pipelineRuns.activeTaskType, "compile"),
+                inArray(pipelineRuns.status, ["pending", "running"]),
               ),
             )
-            .orderBy(asc(compileIntents.createdAt))
-            .limit(100)
-            .for("update", { skipLocked: true });
-          const dispatches: Dispatch[] = [];
-          for (const intent of pending) {
-            const active = yield* tx
-              .select({ id: pipelineRuns.id })
-              .from(pipelineRuns)
-              .where(
-                and(
-                  eq(pipelineRuns.vaultId, intent.vaultId),
-                  eq(pipelineRuns.activeTaskType, "compile"),
-                  inArray(pipelineRuns.status, ["pending", "running"]),
-                ),
-              )
-              .limit(1);
-            if (active.length > 0) {
-              continue;
-            }
-            const runId = intent.pipelineRunId ?? intent.id;
-            if (intent.pipelineRunId === null) {
-              yield* tx
-                .insert(pipelineRuns)
-                .values({
-                  id: runId,
-                  vaultId: intent.vaultId,
-                  trigger: "manual",
-                  status: "pending",
-                  currentPhase: "",
-                  phaseStatus: "",
-                  compileIntentId: intent.id,
-                })
-                .onConflictDoNothing({ target: pipelineRuns.id });
-              yield* tx
-                .update(compileIntents)
-                .set({ pipelineRunId: runId })
-                .where(eq(compileIntents.id, intent.id));
-            }
-            dispatches.push({
-              intentId: intent.id,
-              vaultId: intent.vaultId,
-              pipelineRunId: runId,
-            });
+            .limit(1);
+          if (active.length > 0) {
+            continue;
           }
-          return dispatches;
-        }),
-      );
+          const runId = intent.pipelineRunId ?? intent.id;
+          if (intent.pipelineRunId === null) {
+            yield* tx
+              .insert(pipelineRuns)
+              .values({
+                id: runId,
+                vaultId: intent.vaultId,
+                trigger: "manual",
+                status: "pending",
+                currentPhase: "",
+                phaseStatus: "",
+                compileIntentId: intent.id,
+              })
+              .onConflictDoNothing({ target: pipelineRuns.id });
+            yield* tx
+              .update(compileIntents)
+              .set({ pipelineRunId: runId })
+              .where(eq(compileIntents.id, intent.id));
+          }
+          dispatches.push({
+            intentId: intent.id,
+            vaultId: intent.vaultId,
+            pipelineRunId: runId,
+          });
+        }
+        return dispatches;
+      }),
+    );
 
     const dispatch = (item: Dispatch) =>
       Effect.gen(function* () {
@@ -321,24 +321,28 @@ export const CompileIntentReconcilerLive = Layer.effect(
           },
           { discard: true },
         );
-        yield* db.query((d) => d
-          .update(compileIntents)
-          .set({ dispatchedAt: sql`now()`, dispatchedTaskId: item.intentId })
-          .where(eq(compileIntents.id, item.intentId)));
-        yield* db.query((d) => d
-          .update(pipelineRuns)
-          .set({
-            compileTaskId: item.intentId,
-            activeTaskId: item.intentId,
-            activeTaskType: "compile",
-            updatedAt: sql`now()`,
-          })
-          .where(
-            or(
-              eq(pipelineRuns.id, item.pipelineRunId),
-              eq(pipelineRuns.compileIntentId, item.intentId),
+        yield* db.query((d) =>
+          d
+            .update(compileIntents)
+            .set({ dispatchedAt: sql`now()`, dispatchedTaskId: item.intentId })
+            .where(eq(compileIntents.id, item.intentId)),
+        );
+        yield* db.query((d) =>
+          d
+            .update(pipelineRuns)
+            .set({
+              compileTaskId: item.intentId,
+              activeTaskId: item.intentId,
+              activeTaskType: "compile",
+              updatedAt: sql`now()`,
+            })
+            .where(
+              or(
+                eq(pipelineRuns.id, item.pipelineRunId),
+                eq(pipelineRuns.compileIntentId, item.intentId),
+              ),
             ),
-          ));
+        );
       });
 
     return {
@@ -359,5 +363,6 @@ export const CompileIntentReconcilerLoopLive = Layer.effectDiscard(
       failureEvent: "intent_reconciler_tick_failed",
       interval: "5 seconds",
       tick: reconciler.reconcileOnce(),
-    })),
+    }),
+  ),
 );

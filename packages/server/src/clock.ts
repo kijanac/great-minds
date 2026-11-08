@@ -5,21 +5,21 @@ type ClockServiceShape = {
 };
 
 export class ClockService extends Context.Service<ClockService, ClockServiceShape>()(
-  "@great-minds/server/ClockService"
+  "@great-minds/server/ClockService",
 ) {}
 
 export const ClockLive = Layer.succeed(ClockService, {
-  now: Effect.sync(() => new Date())
+  now: Effect.sync(() => new Date()),
 });
 
 export const makeTestClock = (initial: Date) => {
   let current = initial;
   return {
     layer: Layer.succeed(ClockService, {
-      now: Effect.sync(() => current)
+      now: Effect.sync(() => current),
     }),
     set: (next: Date) => {
       current = next;
-    }
+    },
   };
 };

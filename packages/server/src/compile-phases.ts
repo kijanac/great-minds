@@ -1,4 +1,3 @@
-
 import {
   backlinks,
   Database,
@@ -192,22 +191,24 @@ export const CompilePhasesLive = Layer.effect(
         let indexedChunks = 0;
         for (let start = 0; start < files.length; start += 100) {
           const batch = files.slice(start, start + 100);
-          const indexed = yield* db.query((d) => d
-            .select({
-              path: searchIndex.path,
-              chunkIndex: searchIndex.chunkIndex,
-              contentHash: searchIndex.contentHash,
-            })
-            .from(searchIndex)
-            .where(
-              and(
-                eq(searchIndex.vaultId, vaultId),
-                inArray(
-                  searchIndex.path,
-                  batch.map((file) => file.path),
+          const indexed = yield* db.query((d) =>
+            d
+              .select({
+                path: searchIndex.path,
+                chunkIndex: searchIndex.chunkIndex,
+                contentHash: searchIndex.contentHash,
+              })
+              .from(searchIndex)
+              .where(
+                and(
+                  eq(searchIndex.vaultId, vaultId),
+                  inArray(
+                    searchIndex.path,
+                    batch.map((file) => file.path),
+                  ),
                 ),
               ),
-            ));
+          );
           const existing = new Map<string, Map<number, string>>();
           for (const row of indexed) {
             const hashes = existing.get(row.path) ?? new Map<number, string>();
@@ -268,7 +269,7 @@ export const CompilePhasesLive = Layer.effect(
           const groups: Piece[][] = [];
           let passages = 50;
           for (const document of documents) {
-            for (let offset = 0; offset < document.changed.length; ) {
+            for (let offset = 0; offset < document.changed.length;) {
               if (passages === 50) {
                 groups.push([]);
                 passages = 0;
@@ -413,7 +414,8 @@ export const CompilePhasesLive = Layer.effect(
         if (timedOut.length > 0)
           yield* pipeline.recordWarning(runId, {
             phase: scope === "raw" ? "ingest" : "publish",
-            message: "documents not yet searchable (embedding timed out); the next Update retries them",
+            message:
+              "documents not yet searchable (embedding timed out); the next Update retries them",
             count: timedOut.length,
             items: timedOut,
           });
@@ -439,16 +441,16 @@ export const CompilePhasesLive = Layer.effect(
         }
         const path = `wiki/${topic.slug}.md`;
         const precis = openingSentence(output.body) || topic.description;
-        const previousRows = yield* db.query((d) => d
-          .select({
-            filePath: wikiArticles.filePath,
-            bodyHash: wikiArticles.bodyHash,
-            archived: wikiArticles.archived,
-          })
-          .from(wikiArticles)
-          .where(
-            and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.topicId, topic.topicId)),
-          ));
+        const previousRows = yield* db.query((d) =>
+          d
+            .select({
+              filePath: wikiArticles.filePath,
+              bodyHash: wikiArticles.bodyHash,
+              archived: wikiArticles.archived,
+            })
+            .from(wikiArticles)
+            .where(and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.topicId, topic.topicId))),
+        );
         const previous = previousRows[0];
         const previousPath = previous?.filePath;
         const bodyHash = bodyContentHash(output.body);
@@ -464,25 +466,13 @@ export const CompilePhasesLive = Layer.effect(
           output.body,
         );
         yield* storage.writeText(vaultOwner(vaultId), path, content);
-        yield* db.query((d) => d
-          .insert(wikiArticles)
-          .values({
-            id: Uuid.make(crypto.randomUUID(), { disableChecks: true }),
-            vaultId,
-            topicId: topic.topicId,
-            filePath: path,
-            fileHash: fileContentHash(content),
-            bodyHash,
-            title: topic.title,
-            precis,
-            tags,
-            renderRunId: runId,
-            addedRunId: runId,
-            archived: false,
-          })
-          .onConflictDoUpdate({
-            target: wikiArticles.topicId,
-            set: {
+        yield* db.query((d) =>
+          d
+            .insert(wikiArticles)
+            .values({
+              id: Uuid.make(crypto.randomUUID(), { disableChecks: true }),
+              vaultId,
+              topicId: topic.topicId,
               filePath: path,
               fileHash: fileContentHash(content),
               bodyHash,
@@ -490,24 +480,44 @@ export const CompilePhasesLive = Layer.effect(
               precis,
               tags,
               renderRunId: runId,
-              ...(added ? { addedRunId: runId, archivedRunId: null } : {}),
-              ...(changed ? { changedRunId: runId } : {}),
+              addedRunId: runId,
               archived: false,
-              updatedAt: sql`now()`,
-            },
-          }));
+            })
+            .onConflictDoUpdate({
+              target: wikiArticles.topicId,
+              set: {
+                filePath: path,
+                fileHash: fileContentHash(content),
+                bodyHash,
+                title: topic.title,
+                precis,
+                tags,
+                renderRunId: runId,
+                ...(added ? { addedRunId: runId, archivedRunId: null } : {}),
+                ...(changed ? { changedRunId: runId } : {}),
+                archived: false,
+                updatedAt: sql`now()`,
+              },
+            }),
+        );
         // A carried topic can change slug; drop the article file at its old path.
-        if (previousPath !== undefined && previousPath !== path && previousPath.startsWith("wiki/")) {
+        if (
+          previousPath !== undefined &&
+          previousPath !== path &&
+          previousPath.startsWith("wiki/")
+        ) {
           yield* storage.deletePath(vaultOwner(vaultId), previousPath);
         }
-        yield* db.query((d) => d
-          .update(topics)
-          .set({
-            articleStatus: "rendered",
-            renderedFromHash: topicContentHash(topic),
-            updatedAt: sql`now()`,
-          })
-          .where(eq(topics.topicId, topic.topicId)));
+        yield* db.query((d) =>
+          d
+            .update(topics)
+            .set({
+              articleStatus: "rendered",
+              renderedFromHash: topicContentHash(topic),
+              updatedAt: sql`now()`,
+            })
+            .where(eq(topics.topicId, topic.topicId)),
+        );
       });
 
     const applyArchiveTransitions = (
@@ -517,14 +527,16 @@ export const CompilePhasesLive = Layer.effect(
     ) =>
       Effect.gen(function* () {
         for (const transition of transitions) {
-          yield* db.query((d) => d
-            .update(topics)
-            .set({
-              articleStatus: "archived",
-              supersededBy: transition.supersededBy,
-              updatedAt: sql`now()`,
-            })
-            .where(eq(topics.topicId, transition.topicId)));
+          yield* db.query((d) =>
+            d
+              .update(topics)
+              .set({
+                articleStatus: "archived",
+                supersededBy: transition.supersededBy,
+                updatedAt: sql`now()`,
+              })
+              .where(eq(topics.topicId, transition.topicId)),
+          );
           const wikiPath = `wiki/${transition.slug}.md`;
           const content = yield* Effect.result(storage.readText(vaultOwner(vaultId), wikiPath));
           if (content._tag === "Failure") continue;
@@ -543,17 +555,22 @@ export const CompilePhasesLive = Layer.effect(
             serializeFrontmatter(frontmatter, parsed.body),
           );
           yield* storage.deletePath(vaultOwner(vaultId), wikiPath);
-          yield* db.query((d) => d
-            .update(wikiArticles)
-            .set({
-              filePath: archivePath,
-              archived: true,
-              archivedRunId: runId,
-              updatedAt: sql`now()`,
-            })
-            .where(
-              and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.topicId, transition.topicId)),
-            ));
+          yield* db.query((d) =>
+            d
+              .update(wikiArticles)
+              .set({
+                filePath: archivePath,
+                archived: true,
+                archivedRunId: runId,
+                updatedAt: sql`now()`,
+              })
+              .where(
+                and(
+                  eq(wikiArticles.vaultId, vaultId),
+                  eq(wikiArticles.topicId, transition.topicId),
+                ),
+              ),
+          );
         }
       });
 
@@ -754,10 +771,9 @@ export const CompilePhasesLive = Layer.effect(
             "progress",
             progressSteps(PUBLISH_STEP_LABELS, "publish_wiki"),
           );
-          const documents = yield* db.query((d) => d
-            .select()
-            .from(sourceDocuments)
-            .where(eq(sourceDocuments.vaultId, vaultId)));
+          const documents = yield* db.query((d) =>
+            d.select().from(sourceDocuments).where(eq(sourceDocuments.vaultId, vaultId)),
+          );
           yield* pipeline.updateProgress(
             runId,
             "publish",

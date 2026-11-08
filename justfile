@@ -24,7 +24,11 @@ lint-web:
 
 # Lint TypeScript packages with oxlint
 lint-packages:
-    pnpm exec oxlint packages/domain/src packages/database/src packages/server/src packages/server/scripts packages/server/test
+    pnpm exec oxlint packages/domain/src packages/database/src packages/client/src packages/client/test packages/cli/src packages/cli/test packages/server/src packages/server/scripts packages/server/test
+
+# Check TypeScript package formatting (read-only)
+format-packages:
+    pnpm exec oxfmt --check packages/domain/src packages/database/src packages/client/src packages/client/test packages/cli/src packages/cli/test packages/server/src packages/server/scripts packages/server/test packages/server/vitest.config.ts
 
 # Test the custom oxlint boundary rules
 test-lint-plugin:
@@ -47,6 +51,15 @@ types-packages:
 test-web:
     pnpm --prefix web exec vitest run --config vite.config.ts
 
+# Build the frontend
+build-web:
+    pnpm --prefix web run build
+
+# Run client and CLI package tests (no external services)
+test-clients:
+    cd packages/client && pnpm exec vitest run
+    cd packages/cli && pnpm exec vitest run
+
 # Run TypeScript package integration tests against scratch Postgres
 test-packages:
     pnpm test:history-settlement --all
@@ -56,7 +69,7 @@ test-packages:
 # ---------------------------------------------------------------------------
 
 # Run fast CI checks
-ci: lint-web format-web types-web test-web lint-packages test-lint-plugin types-packages
+ci: lint-web format-web types-web test-web build-web lint-packages format-packages test-lint-plugin types-packages test-clients
 
 # Run full CI checks, including hermetic TypeScript package integration
 ci-full: ci test-packages
@@ -73,9 +86,14 @@ review: ci-full
 # Auto-format frontend
 format-web-fix:
     pnpm --prefix web exec oxfmt --write src
+    pnpm --prefix web exec prettier --write "src/**/*.svelte" --log-level warn
+
+# Auto-format TypeScript packages
+format-packages-fix:
+    pnpm exec oxfmt --write packages/domain/src packages/database/src packages/client/src packages/client/test packages/cli/src packages/cli/test packages/server/src packages/server/scripts packages/server/test packages/server/vitest.config.ts
 
 # Fix everything auto-fixable
-fix: format-web-fix
+fix: format-web-fix format-packages-fix
 
 # Fix, verify types, show what changed
 fix-check: fix types-web types-packages

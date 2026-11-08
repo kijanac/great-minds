@@ -1,4 +1,9 @@
-import { Database, fileIngestBatches, fileIngestFiles, sourceDocuments } from "@great-minds/database";
+import {
+  Database,
+  fileIngestBatches,
+  fileIngestFiles,
+  sourceDocuments,
+} from "@great-minds/database";
 import { Conflict, FileFingerprint, Uuid } from "@great-minds/domain";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { Cause, Effect, Exit, Schema } from "effect";
@@ -73,10 +78,12 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
       const runId = payload.pipelineRunId;
       const total = payload.files.length;
 
-      const existingRows = yield* db.query((d) => d
-        .select({ path: sourceDocuments.filePath, hash: sourceDocuments.fileHash })
-        .from(sourceDocuments)
-        .where(eq(sourceDocuments.vaultId, vaultId)));
+      const existingRows = yield* db.query((d) =>
+        d
+          .select({ path: sourceDocuments.filePath, hash: sourceDocuments.fileHash })
+          .from(sourceDocuments)
+          .where(eq(sourceDocuments.vaultId, vaultId)),
+      );
       const existingHashes = new Map(existingRows.map((row) => [row.path, row.hash]));
       const admittedFiles = yield* db.query((d) =>
         d
@@ -218,35 +225,39 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         .filter((file) => !failedHashes.has(file.hash))
         .map((file) => file.hash);
       if (completedHashes.length > 0) {
-        yield* db.query((d) => d
-          .update(fileIngestFiles)
-          .set({ status: "completed", completedAt: sql`now()`, updatedAt: sql`now()` })
-          .where(
-            and(
-              eq(fileIngestFiles.batchId, batchId),
-              inArray(fileIngestFiles.hash, completedHashes),
-              eq(fileIngestFiles.status, "processing"),
+        yield* db.query((d) =>
+          d
+            .update(fileIngestFiles)
+            .set({ status: "completed", completedAt: sql`now()`, updatedAt: sql`now()` })
+            .where(
+              and(
+                eq(fileIngestFiles.batchId, batchId),
+                inArray(fileIngestFiles.hash, completedHashes),
+                eq(fileIngestFiles.status, "processing"),
+              ),
             ),
-          ));
+        );
       }
       yield* Effect.forEach(
         failures,
         (failure) =>
-          db.query((d) => d
-            .update(fileIngestFiles)
-            .set({
-              status: "failed",
-              error: failure.error,
-              completedAt: sql`now()`,
-              updatedAt: sql`now()`,
-            })
-            .where(
-              and(
-                eq(fileIngestFiles.batchId, batchId),
-                eq(fileIngestFiles.hash, failure.hash),
-                eq(fileIngestFiles.status, "processing"),
+          db.query((d) =>
+            d
+              .update(fileIngestFiles)
+              .set({
+                status: "failed",
+                error: failure.error,
+                completedAt: sql`now()`,
+                updatedAt: sql`now()`,
+              })
+              .where(
+                and(
+                  eq(fileIngestFiles.batchId, batchId),
+                  eq(fileIngestFiles.hash, failure.hash),
+                  eq(fileIngestFiles.status, "processing"),
+                ),
               ),
-            )),
+          ),
         { concurrency: 4 },
       );
 
@@ -296,9 +307,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
           });
         if (nothingAdded) {
           const error = `${failed} of ${total} files could not be ingested`;
-          const detail = failures
-            .map((failure) => `${failure.name}: ${failure.error}`)
-            .join("; ");
+          const detail = failures.map((failure) => `${failure.name}: ${failure.error}`).join("; ");
           yield* pipeline.updateProgress(
             runId,
             "source_ingest",
@@ -315,13 +324,12 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
             error,
           );
         } else if (ingested > 0) {
-          yield* db
-            .transaction((tx) =>
-              Effect.gen(function* () {
-                const intent = yield* queueCompile(tx, vaultId, runId);
-                yield* linkRunToIntent(tx, runId, intent.id);
-              }),
-            );
+          yield* db.transaction((tx) =>
+            Effect.gen(function* () {
+              const intent = yield* queueCompile(tx, vaultId, runId);
+              yield* linkRunToIntent(tx, runId, intent.id);
+            }),
+          );
           yield* pipeline.updateProgress(
             runId,
             "source_ingest",
@@ -346,20 +354,19 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
             },
           ]);
         }
-        yield* db.query((d) => d
-          .update(fileIngestBatches)
-          .set({
-            status: nothingAdded ? "failed" : "completed",
-            error: nothingAdded ? `${failed} of ${total} files could not be ingested` : null,
-            completedAt: sql`now()`,
-            updatedAt: sql`now()`,
-          })
-          .where(
-            and(
-              eq(fileIngestBatches.id, batchId),
-              eq(fileIngestBatches.status, "processing"),
+        yield* db.query((d) =>
+          d
+            .update(fileIngestBatches)
+            .set({
+              status: nothingAdded ? "failed" : "completed",
+              error: nothingAdded ? `${failed} of ${total} files could not be ingested` : null,
+              completedAt: sql`now()`,
+              updatedAt: sql`now()`,
+            })
+            .where(
+              and(eq(fileIngestBatches.id, batchId), eq(fileIngestBatches.status, "processing")),
             ),
-          ));
+        );
         return { ingested, skipped, failed };
       }),
     });
@@ -388,34 +395,38 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
         }),
         formatted,
       );
-      yield* db.query((d) => d
-        .update(fileIngestBatches)
-        .set({
-          status: "failed",
-          error: formatted,
-          completedAt: sql`now()`,
-          updatedAt: sql`now()`,
-        })
-        .where(
-          and(
-            eq(fileIngestBatches.id, payload.batchId),
-            eq(fileIngestBatches.status, "processing"),
+      yield* db.query((d) =>
+        d
+          .update(fileIngestBatches)
+          .set({
+            status: "failed",
+            error: formatted,
+            completedAt: sql`now()`,
+            updatedAt: sql`now()`,
+          })
+          .where(
+            and(
+              eq(fileIngestBatches.id, payload.batchId),
+              eq(fileIngestBatches.status, "processing"),
+            ),
           ),
-        ));
-      yield* db.query((d) => d
-        .update(fileIngestFiles)
-        .set({
-          status: "failed",
-          error: formatted,
-          completedAt: sql`now()`,
-          updatedAt: sql`now()`,
-        })
-        .where(
-          and(
-            eq(fileIngestFiles.batchId, payload.batchId),
-            eq(fileIngestFiles.status, "processing"),
+      );
+      yield* db.query((d) =>
+        d
+          .update(fileIngestFiles)
+          .set({
+            status: "failed",
+            error: formatted,
+            completedAt: sql`now()`,
+            updatedAt: sql`now()`,
+          })
+          .where(
+            and(
+              eq(fileIngestFiles.batchId, payload.batchId),
+              eq(fileIngestFiles.status, "processing"),
+            ),
           ),
-        ));
+      );
       return yield* Effect.failCause(cause);
     });
 
