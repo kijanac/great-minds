@@ -1,0 +1,2 @@
+# Prompts are pinned byte-for-byte (default-config.test.ts) and keyed into compile caches.
+packages/server/src/default_prompts/

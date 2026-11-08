@@ -39,9 +39,9 @@ format-web:
     pnpm --prefix web exec oxfmt --check src
     pnpm --prefix web exec prettier --check "src/**/*.svelte" --log-level warn
 
-# Type-check frontend with svelte-check
+# Type-check frontend with svelte-check (after svelte-kit sync)
 types-web:
-    pnpm --prefix web exec svelte-check
+    pnpm --prefix web run check
 
 # Type-check TypeScript packages with tsc
 types-packages:
