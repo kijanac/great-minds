@@ -2,7 +2,7 @@
   import type { SessionId } from "@great-minds/domain";
   import { QueryClient, setQueryClientContext } from "@tanstack/svelte-query";
   import { onMount } from "svelte";
-  import SessionExport from "$lib/components/session-export.svelte";
+  import SessionExport from "#lib/components/session-export.svelte";
   import { useLinkedVault } from "./use-linked-vault.svelte";
   import { useSessionExport } from "./use-session-export.svelte";
   import { activeVault } from "./use-vault.svelte";

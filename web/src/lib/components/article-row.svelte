@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { WikiArticleOverview } from "$lib/types";
+  import type { WikiArticleOverview } from "#lib/types.ts";
 
   let {
     article,

@@ -3,10 +3,10 @@
   import FileX from "@lucide/svelte/icons/file-x";
   import Trash2 from "@lucide/svelte/icons/trash-2";
 
-  import type { SourceDocumentSummary } from "$lib/api/sources";
-  import { Button } from "$lib/components/ui/button";
-  import * as AlertDialog from "$lib/components/ui/alert-dialog";
-  import { POPOVER_SURFACE_CLASS } from "$lib/control-styles";
+  import type { SourceDocumentSummary } from "#lib/api/sources.ts";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import * as AlertDialog from "#lib/components/ui/alert-dialog/index.ts";
+  import { POPOVER_SURFACE_CLASS } from "#lib/control-styles.ts";
 
   let {
     item,

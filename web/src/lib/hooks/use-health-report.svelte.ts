@@ -1,7 +1,7 @@
 import { createQuery } from "@tanstack/svelte-query";
 
-import { fetchLintResults } from "$lib/api/lint";
-import { activeVault } from "$lib/hooks/use-vault.svelte";
+import { fetchLintResults } from "#lib/api/lint.ts";
+import { activeVault } from "#lib/hooks/use-vault.svelte.ts";
 
 export type HealthReportStatus = "loading" | "ready" | "unavailable";
 

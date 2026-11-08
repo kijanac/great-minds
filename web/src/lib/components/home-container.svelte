@@ -2,11 +2,14 @@
   import { afterNavigate, goto } from "$app/navigation";
   import type { SessionId } from "@great-minds/domain";
 
-  import HomeContent from "$lib/components/home-content.svelte";
-  import { ErrorState, LoadingState } from "$lib/components/ui/feedback";
-  import { useSavedSession } from "$lib/hooks/use-saved-session.svelte";
-  import { useVaults } from "$lib/hooks/use-vault.svelte";
-  import { sessionOriginHref } from "$lib/session-origin";
+  import HomeContent from "#lib/components/home-content.svelte";
+  import {
+    ErrorState,
+    LoadingState,
+  } from "#lib/components/ui/feedback/index.ts";
+  import { useSavedSession } from "#lib/hooks/use-saved-session.svelte.ts";
+  import { useVaults } from "#lib/hooks/use-vault.svelte.ts";
+  import { sessionOriginHref } from "#lib/session-origin.ts";
 
   let {
     sessionId,
@@ -22,14 +25,16 @@
   const saved = useSavedSession(() => sessionId ?? null);
   let visit = $state(0);
   let mounted = false;
-  afterNavigate(() => {
+
+  afterNavigate(({ shallow, type }) => {
+    if (shallow && type === "goto") return;
     if (mounted) visit += 1;
     mounted = true;
   });
 
   $effect(() => {
     if (vaults.isSuccess && !sessionId && vaults.data.length === 0) {
-      void goto("/vaults/new", { replaceState: true });
+      void goto("/vaults/new", { replace: true });
     }
   });
 
@@ -38,7 +43,7 @@
     const origin = data?.events.find((event) => event.type === "meta")?.origin;
     if (sessionId && data?.kind === "btw" && origin) {
       void goto(sessionOriginHref(origin, sessionId), {
-        replaceState: true,
+        replace: true,
       });
     }
   });

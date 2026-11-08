@@ -9,15 +9,15 @@
   } from "@simplewebauthn/browser";
   import { onMount } from "svelte";
 
-  import { api, run } from "$lib/api/app";
+  import { api, run } from "#lib/api/app.ts";
   import {
     loginWithCode,
     loginWithTokenPair,
     requestCode,
-  } from "$lib/api/auth";
+  } from "#lib/api/auth.ts";
   import { domainErrorDetail } from "@great-minds/client";
-  import { Alert, AlertDescription } from "$lib/components/ui/alert";
-  import { Label } from "$lib/components/ui/label";
+  import { Alert, AlertDescription } from "#lib/components/ui/alert/index.ts";
+  import { Label } from "#lib/components/ui/label/index.ts";
 
   type Step = "email" | "code";
 

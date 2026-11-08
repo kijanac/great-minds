@@ -3,8 +3,8 @@
 
   import VaultConfigForm, {
     type VaultConfigFormSubmit,
-  } from "$lib/components/vault-config-form.svelte";
-  import { useCreateVault, useVaults } from "$lib/hooks/use-vault.svelte";
+  } from "#lib/components/vault-config-form.svelte";
+  import { useCreateVault, useVaults } from "#lib/hooks/use-vault.svelte.ts";
 
   const vaults = useVaults();
   const createVault = useCreateVault();

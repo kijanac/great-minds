@@ -1,9 +1,9 @@
 <script lang="ts">
   import type { PublicationPaper } from "@great-minds/domain";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
-  import { Button } from "$lib/components/ui/button";
-  import { LoadingState } from "$lib/components/ui/feedback";
-  import type { PreparedExport } from "$lib/hooks/use-session-export.svelte";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { LoadingState } from "#lib/components/ui/feedback/index.ts";
+  import type { PreparedExport } from "#lib/hooks/use-session-export.svelte.ts";
 
   let {
     pending,

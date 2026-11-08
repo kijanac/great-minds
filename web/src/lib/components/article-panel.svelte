@@ -2,12 +2,12 @@
   import Maximize2 from "@lucide/svelte/icons/maximize-2";
   import X from "@lucide/svelte/icons/x";
 
-  import { Button } from "$lib/components/ui/button";
-  import { Skeleton } from "$lib/components/ui/skeleton";
-  import MarkdownView from "$lib/components/markdown-view.svelte";
-  import type { PanelContent } from "$lib/panel-content";
-  import type { SourceRef } from "$lib/types";
-  import { displayTitle } from "$lib/utils";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { Skeleton } from "#lib/components/ui/skeleton/index.ts";
+  import MarkdownView from "#lib/components/markdown-view.svelte";
+  import type { PanelContent } from "#lib/panel-content.ts";
+  import type { SourceRef } from "#lib/types.ts";
+  import { displayTitle } from "#lib/utils.ts";
 
   let {
     card,

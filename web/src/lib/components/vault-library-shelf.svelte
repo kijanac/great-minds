@@ -1,16 +1,19 @@
 <script lang="ts">
   import type { Uuid } from "@great-minds/domain";
 
-  import ArticleRow from "$lib/components/article-row.svelte";
-  import SourceRow from "$lib/components/source-row.svelte";
-  import { Button } from "$lib/components/ui/button";
-  import { Skeleton } from "$lib/components/ui/skeleton";
+  import ArticleRow from "#lib/components/article-row.svelte";
+  import SourceRow from "#lib/components/source-row.svelte";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { Skeleton } from "#lib/components/ui/skeleton/index.ts";
   import {
     LIBRARY_ALL,
     LIBRARY_ARTICLES,
     type LibraryView,
-  } from "$lib/hooks/use-library.svelte";
-  import type { SourceDocumentSummary, WikiArticleOverview } from "$lib/types";
+  } from "#lib/hooks/use-library.svelte.ts";
+  import type {
+    SourceDocumentSummary,
+    WikiArticleOverview,
+  } from "#lib/types.ts";
 
   let {
     library,

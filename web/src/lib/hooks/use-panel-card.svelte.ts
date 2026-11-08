@@ -1,7 +1,7 @@
 import { goto } from "$app/navigation";
-import type { DocumentScope } from "$lib/api/doc";
-import { createLinkInterceptor } from "$lib/hooks/use-link-interceptor";
-import type { SourceDocumentSummary, SourceRef, WikiArticleOverview } from "$lib/types";
+import type { DocumentScope } from "#lib/api/doc.ts";
+import { createLinkInterceptor } from "#lib/hooks/use-link-interceptor.ts";
+import type { SourceDocumentSummary, SourceRef, WikiArticleOverview } from "#lib/types.ts";
 
 export function usePanelCard(scope: DocumentScope = "vault") {
   let selectedCard = $state<SourceRef | null>(null);

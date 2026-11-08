@@ -2,9 +2,9 @@
   import Globe from "@lucide/svelte/icons/globe";
   import Search from "@lucide/svelte/icons/search";
 
-  import { Badge } from "$lib/components/ui/badge";
-  import type { SourceRef } from "$lib/types";
-  import { displayTitle } from "$lib/utils";
+  import { Badge } from "#lib/components/ui/badge/index.ts";
+  import type { SourceRef } from "#lib/types.ts";
+  import { displayTitle } from "#lib/utils.ts";
 
   let { source }: { source: SourceRef } = $props();
   const web = $derived(source.scope === "web");

@@ -1,7 +1,7 @@
 import { createQuery } from "@tanstack/svelte-query";
 
-import { listJobs } from "$lib/api/jobs";
-import { activeVault } from "$lib/hooks/use-vault.svelte";
+import { listJobs } from "#lib/api/jobs.ts";
+import { activeVault } from "#lib/hooks/use-vault.svelte.ts";
 
 const ACTIVE_STATUSES = new Set(["pending", "running"]);
 

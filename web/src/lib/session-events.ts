@@ -1,6 +1,6 @@
 import type { SessionEvent } from "@great-minds/domain";
 
-import type { Exchange } from "$lib/types";
+import type { Exchange } from "#lib/types.ts";
 
 export const replayExchanges = (events: readonly SessionEvent[]): Exchange[] =>
   events

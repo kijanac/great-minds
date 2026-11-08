@@ -2,7 +2,7 @@ import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import { unified } from "unified";
 
-import { rehypeFootnoteSeparators, remarkPlugins, type HastNode } from "$lib/markdown-plugins";
+import { rehypeFootnoteSeparators, remarkPlugins, type HastNode } from "#lib/markdown-plugins.ts";
 
 const processor = unified()
   .use(remarkParse)

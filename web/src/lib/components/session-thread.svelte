@@ -5,26 +5,26 @@
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
   import type { crossfade } from "svelte/transition";
 
-  import AnswerBlock from "$lib/components/answer-block.svelte";
-  import AnswerSteps from "$lib/components/answer-steps.svelte";
-  import { outlineOf } from "$lib/citations";
-  import FollowUpBar from "$lib/components/follow-up-bar.svelte";
+  import AnswerBlock from "#lib/components/answer-block.svelte";
+  import AnswerSteps from "#lib/components/answer-steps.svelte";
+  import { outlineOf } from "#lib/citations.ts";
+  import FollowUpBar from "#lib/components/follow-up-bar.svelte";
   import OnboardingHint, {
     dismissOnboardingHint,
     onboardingHintSeen,
-  } from "$lib/components/onboarding-hint.svelte";
-  import PromoteButton from "$lib/components/promote-button.svelte";
-  import ReplyInterrupted from "$lib/components/reply-interrupted.svelte";
-  import SelectionPopover from "$lib/components/selection-popover.svelte";
-  import SessionPassage from "$lib/components/session-passage.svelte";
-  import ThreadSurface from "$lib/components/thread-surface.svelte";
-  import { Button } from "$lib/components/ui/button";
-  import { unsponsoredNotice, useMe } from "$lib/hooks/use-me.svelte";
-  import type { Session } from "$lib/session.svelte";
-  import { sessionOriginHref } from "$lib/session-origin";
-  import { passageMark, revealPassage } from "$lib/passage-navigation";
-  import type { SourceRef } from "$lib/types";
-  import { docDisplayName } from "$lib/utils";
+  } from "#lib/components/onboarding-hint.svelte";
+  import PromoteButton from "#lib/components/promote-button.svelte";
+  import ReplyInterrupted from "#lib/components/reply-interrupted.svelte";
+  import SelectionPopover from "#lib/components/selection-popover.svelte";
+  import SessionPassage from "#lib/components/session-passage.svelte";
+  import ThreadSurface from "#lib/components/thread-surface.svelte";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { unsponsoredNotice, useMe } from "#lib/hooks/use-me.svelte.ts";
+  import type { Session } from "#lib/session.svelte.ts";
+  import { sessionOriginHref } from "#lib/session-origin.ts";
+  import { passageMark, revealPassage } from "#lib/passage-navigation.ts";
+  import type { SourceRef } from "#lib/types.ts";
+  import { docDisplayName } from "#lib/utils.ts";
 
   let {
     session,

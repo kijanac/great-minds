@@ -8,7 +8,7 @@ export type {
   WithoutChild,
   WithoutChildren,
   WithoutChildrenOrChild,
-} from "$lib/components/ui/types";
+} from "#lib/components/ui/types.ts";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));

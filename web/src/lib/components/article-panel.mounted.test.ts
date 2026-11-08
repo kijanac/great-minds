@@ -2,8 +2,8 @@ import { goto } from "$app/navigation";
 import { flushSync, mount, unmount } from "svelte";
 import { expect, it, vi } from "vitest";
 
-import { usePanelCard } from "$lib/hooks/use-panel-card.svelte";
-import type { PanelContent } from "$lib/panel-content";
+import { usePanelCard } from "#lib/hooks/use-panel-card.svelte.ts";
+import type { PanelContent } from "#lib/panel-content.ts";
 import ArticlePanel from "./article-panel.svelte";
 
 vi.mock("$app/navigation", () => ({ goto: vi.fn() }));
@@ -48,7 +48,10 @@ it.each(["doc", "chunks"] as const)(
       flushSync();
       const link = target.querySelector("a");
       expect(link?.textContent).toBe("Cited source");
-      const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+      const event = new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+      });
       link!.dispatchEvent(event);
       expect(event.defaultPrevented).toBe(true);
       expect(card.selectedCard).toMatchObject({

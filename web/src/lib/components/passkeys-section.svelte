@@ -11,14 +11,14 @@
     useQueryClient,
   } from "@tanstack/svelte-query";
 
-  import { api, run } from "$lib/api/app";
+  import { api, run } from "#lib/api/app.ts";
   import { errorMessage } from "@great-minds/client";
-  import { registerPasskey } from "$lib/api/passkeys";
-  import { Alert, AlertDescription } from "$lib/components/ui/alert";
-  import * as AlertDialog from "$lib/components/ui/alert-dialog";
-  import { Button } from "$lib/components/ui/button";
-  import { POPOVER_SURFACE_CLASS } from "$lib/control-styles";
-  import { formatShortDate } from "$lib/utils";
+  import { registerPasskey } from "#lib/api/passkeys.ts";
+  import { Alert, AlertDescription } from "#lib/components/ui/alert/index.ts";
+  import * as AlertDialog from "#lib/components/ui/alert-dialog/index.ts";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { POPOVER_SURFACE_CLASS } from "#lib/control-styles.ts";
+  import { formatShortDate } from "#lib/utils.ts";
 
   const queryClient = useQueryClient();
   const passkeysQuery = createQuery(() => ({

@@ -4,42 +4,42 @@
   import type { Uuid } from "@great-minds/domain";
   import { onDestroy, tick, untrack } from "svelte";
 
-  import type { DocumentScope } from "$lib/api/doc";
+  import type { DocumentScope } from "#lib/api/doc.ts";
   import {
     postUserSuggestion,
     type UserSuggestionResult,
-  } from "$lib/api/ingest";
-  import { auth } from "$lib/auth.svelte";
-  import { DocThreads } from "$lib/doc-threads.svelte";
-  import ArticleChrome from "$lib/components/article-chrome.svelte";
-  import ArticlePanel from "$lib/components/article-panel.svelte";
-  import ArticleView from "$lib/components/article-view.svelte";
+  } from "#lib/api/ingest.ts";
+  import { auth } from "#lib/auth.svelte.ts";
+  import { DocThreads } from "#lib/doc-threads.svelte.ts";
+  import ArticleChrome from "#lib/components/article-chrome.svelte";
+  import ArticlePanel from "#lib/components/article-panel.svelte";
+  import ArticleView from "#lib/components/article-view.svelte";
   import OnboardingHint, {
     dismissOnboardingHint,
     onboardingHintSeen,
-  } from "$lib/components/onboarding-hint.svelte";
-  import PanelHost from "$lib/components/panel-host.svelte";
-  import SelectionPopover from "$lib/components/selection-popover.svelte";
+  } from "#lib/components/onboarding-hint.svelte";
+  import PanelHost from "#lib/components/panel-host.svelte";
+  import SelectionPopover from "#lib/components/selection-popover.svelte";
   import SuggestionForm, {
     type SuggestionPayload,
-  } from "$lib/components/suggestion-form.svelte";
-  import { Skeleton } from "$lib/components/ui/skeleton";
-  import { useReferencePromotion } from "$lib/hooks/use-reference-promotion.svelte";
+  } from "#lib/components/suggestion-form.svelte";
+  import { Skeleton } from "#lib/components/ui/skeleton/index.ts";
+  import { useReferencePromotion } from "#lib/hooks/use-reference-promotion.svelte.ts";
   import {
     activeVault,
     useVaultDetail,
     useVaults,
-  } from "$lib/hooks/use-vault.svelte";
+  } from "#lib/hooks/use-vault.svelte.ts";
   import {
     useArticleLinks,
     useDocument,
     usePersonalDocument,
     useSourceDocument,
-  } from "$lib/hooks/use-document.svelte";
-  import { usePanelCard } from "$lib/hooks/use-panel-card.svelte";
-  import { usePanelContent } from "$lib/hooks/use-panel-content.svelte";
-  import type { SelectionInfo } from "$lib/types";
-  import { displayTitle } from "$lib/utils";
+  } from "#lib/hooks/use-document.svelte.ts";
+  import { usePanelCard } from "#lib/hooks/use-panel-card.svelte.ts";
+  import { usePanelContent } from "#lib/hooks/use-panel-content.svelte.ts";
+  import type { SelectionInfo } from "#lib/types.ts";
+  import { displayTitle } from "#lib/utils.ts";
 
   let {
     path = null,

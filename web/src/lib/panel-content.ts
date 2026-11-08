@@ -7,8 +7,8 @@ import {
   type DocumentScope,
   type DocChunk,
   type LinkedArticles,
-} from "$lib/api/doc";
-import type { SourceRef } from "$lib/types";
+} from "#lib/api/doc.ts";
+import type { SourceRef } from "#lib/types.ts";
 
 export type PanelContent =
   | { mode: "doc"; body: string }

@@ -6,16 +6,16 @@
   import CornerUpRight from "@lucide/svelte/icons/corner-up-right";
   import { tick } from "svelte";
 
-  import ArticleBadge from "$lib/components/article-badge.svelte";
-  import FilterBadge from "$lib/components/filter-badge.svelte";
-  import MarkdownView from "$lib/components/markdown-view.svelte";
-  import ReplyInterrupted from "$lib/components/reply-interrupted.svelte";
-  import SearchBadge from "$lib/components/search-badge.svelte";
-  import ThreadSurface from "$lib/components/thread-surface.svelte";
-  import ThreadTurn from "$lib/components/thread-turn.svelte";
-  import * as Collapsible from "$lib/components/ui/collapsible";
-  import { Button } from "$lib/components/ui/button";
-  import type { ThreadLike } from "$lib/types";
+  import ArticleBadge from "#lib/components/article-badge.svelte";
+  import FilterBadge from "#lib/components/filter-badge.svelte";
+  import MarkdownView from "#lib/components/markdown-view.svelte";
+  import ReplyInterrupted from "#lib/components/reply-interrupted.svelte";
+  import SearchBadge from "#lib/components/search-badge.svelte";
+  import ThreadSurface from "#lib/components/thread-surface.svelte";
+  import ThreadTurn from "#lib/components/thread-turn.svelte";
+  import * as Collapsible from "#lib/components/ui/collapsible/index.ts";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import type { ThreadLike } from "#lib/types.ts";
 
   let {
     btw,

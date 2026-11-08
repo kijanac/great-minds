@@ -16,12 +16,12 @@ import {
   deleteSourceDocument,
   fetchSourceDocuments,
   requestSourceDeletion,
-} from "$lib/api/sources";
-import { requestCompile } from "$lib/api/jobs";
-import { fetchAllWikiArticles, fetchWikiArticles } from "$lib/api/wiki";
-import { usePanelContent } from "$lib/hooks/use-panel-content.svelte";
-import { activeVault, useVaultDetail } from "$lib/hooks/use-vault.svelte";
-import type { SourceRef } from "$lib/types";
+} from "#lib/api/sources.ts";
+import { requestCompile } from "#lib/api/jobs.ts";
+import { fetchAllWikiArticles, fetchWikiArticles } from "#lib/api/wiki.ts";
+import { usePanelContent } from "#lib/hooks/use-panel-content.svelte.ts";
+import { activeVault, useVaultDetail } from "#lib/hooks/use-vault.svelte.ts";
+import type { SourceRef } from "#lib/types.ts";
 
 const PAGE_SIZE = 50;
 export const LIBRARY_ALL = "all";
@@ -73,7 +73,7 @@ export function useLibrary(
     const timeout = window.setTimeout(() => {
       const normalized = value.trim();
       if (normalized === (page.url.searchParams.get("q") ?? "")) return;
-      const params = new URLSearchParams(page.url.searchParams);
+      const params = new URLSearchParams(page.url.search);
       if (normalized) params.set("q", normalized);
       else params.delete("q");
       replaceLibraryUrl(params);
@@ -107,7 +107,9 @@ export function useLibrary(
   const update = createMutation(() => ({
     mutationFn: () => requestCompile(),
     onSuccess: async (job) => {
-      await queryClient.invalidateQueries({ queryKey: ["vault", activeVault.id, "active-job"] });
+      await queryClient.invalidateQueries({
+        queryKey: ["vault", activeVault.id, "active-job"],
+      });
       await goto(`/pipeline/runs/${job.id}`);
     },
   }));
@@ -175,9 +177,8 @@ export function useLibrary(
   function replaceLibraryUrl(params: URLSearchParams) {
     const query = params.toString();
     void goto(`/library${query ? `?${query}` : ""}`, {
-      replaceState: true,
-      keepFocus: true,
-      noScroll: true,
+      replace: true,
+      reset: false,
     });
   }
 
@@ -186,7 +187,7 @@ export function useLibrary(
   }
 
   function chooseType(value: string) {
-    const params = new URLSearchParams(page.url.searchParams);
+    const params = new URLSearchParams(page.url.search);
     if (!value || value === LIBRARY_ALL) params.delete("type");
     else params.set("type", value);
     replaceLibraryUrl(params);

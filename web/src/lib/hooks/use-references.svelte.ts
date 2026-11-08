@@ -1,12 +1,12 @@
 import type { Uuid } from "@great-minds/domain";
 import { createInfiniteQuery, createMutation, useQueryClient } from "@tanstack/svelte-query";
 
-import { api, run } from "$lib/api/app";
-import type { PersonalDocumentResponse } from "$lib/api/doc";
+import { api, run } from "#lib/api/app.ts";
+import type { PersonalDocumentResponse } from "#lib/api/doc.ts";
 import { errorMessage } from "@great-minds/client";
 import { nextPageOffset } from "@great-minds/client";
-import { renameReference } from "$lib/api/references";
-import { personalDocumentKey } from "$lib/hooks/use-document.svelte";
+import { renameReference } from "#lib/api/references.ts";
+import { personalDocumentKey } from "#lib/hooks/use-document.svelte.ts";
 
 const PAGE_SIZE = 50;
 
@@ -15,7 +15,11 @@ export function useReferences() {
   const references = createInfiniteQuery(() => ({
     queryKey: ["me", "refs"],
     queryFn: ({ pageParam }) =>
-      run(api.refs.listReferences({ query: { limit: PAGE_SIZE, offset: pageParam } })),
+      run(
+        api.refs.listReferences({
+          query: { limit: PAGE_SIZE, offset: pageParam },
+        }),
+      ),
     initialPageParam: 0,
     getNextPageParam: (lastPage) => nextPageOffset(lastPage),
   }));
@@ -59,7 +63,11 @@ export function useReferenceRename() {
     onSuccess: async (reference) => {
       queryClient.setQueryData<PersonalDocumentResponse>(
         personalDocumentKey(reference.file_path),
-        (response) => response && { ...response, article: { kind: "reference", ...reference } },
+        (response) =>
+          response && {
+            ...response,
+            article: { kind: "reference", ...reference },
+          },
       );
       await queryClient.invalidateQueries({ queryKey: ["me", "refs"] });
     },

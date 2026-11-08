@@ -1,7 +1,7 @@
 <script lang="ts">
   import ListFilter from "@lucide/svelte/icons/list-filter";
 
-  import { Badge } from "$lib/components/ui/badge";
+  import { Badge } from "#lib/components/ui/badge/index.ts";
 
   let {
     summary,

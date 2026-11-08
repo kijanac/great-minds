@@ -2,8 +2,8 @@
   import { plural } from "@great-minds/client";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
 
-  import type { SourceRef, ThinkingBlock } from "$lib/types";
-  import { displayTitle } from "$lib/utils";
+  import type { SourceRef, ThinkingBlock } from "#lib/types.ts";
+  import { displayTitle } from "#lib/utils.ts";
 
   let {
     blocks,

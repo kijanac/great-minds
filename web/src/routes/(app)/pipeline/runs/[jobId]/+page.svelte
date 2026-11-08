@@ -3,7 +3,7 @@
   import { Uuid } from "@great-minds/domain";
   import { Option, Schema } from "effect";
 
-  import PipelineContainer from "$lib/components/pipeline-container.svelte";
+  import PipelineContainer from "#lib/components/pipeline-container.svelte";
 
   const decodeJobId = Schema.decodeOption(Uuid);
   const routeJobId = $derived(

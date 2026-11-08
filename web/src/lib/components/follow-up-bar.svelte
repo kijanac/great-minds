@@ -3,9 +3,9 @@
   import Square from "@lucide/svelte/icons/square";
   import X from "@lucide/svelte/icons/x";
 
-  import ReplySubmissionError from "$lib/components/reply-submission-error.svelte";
-  import { Badge } from "$lib/components/ui/badge";
-  import { Button } from "$lib/components/ui/button";
+  import ReplySubmissionError from "#lib/components/reply-submission-error.svelte";
+  import { Badge } from "#lib/components/ui/badge/index.ts";
+  import { Button } from "#lib/components/ui/button/index.ts";
 
   let {
     value = $bindable(),

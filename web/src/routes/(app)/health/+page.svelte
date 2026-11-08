@@ -1,13 +1,13 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
 
-  import { auth } from "$lib/auth.svelte";
-  import ArticlePanel from "$lib/components/article-panel.svelte";
-  import HealthContent from "$lib/components/health-content.svelte";
-  import PageHeader from "$lib/components/page-header.svelte";
-  import PanelHost from "$lib/components/panel-host.svelte";
-  import { useHealth } from "$lib/hooks/use-health.svelte";
-  import { usePanelCard } from "$lib/hooks/use-panel-card.svelte";
+  import { auth } from "#lib/auth.svelte.ts";
+  import ArticlePanel from "#lib/components/article-panel.svelte";
+  import HealthContent from "#lib/components/health-content.svelte";
+  import PageHeader from "#lib/components/page-header.svelte";
+  import PanelHost from "#lib/components/panel-host.svelte";
+  import { useHealth } from "#lib/hooks/use-health.svelte.ts";
+  import { usePanelCard } from "#lib/hooks/use-panel-card.svelte.ts";
 
   const card = usePanelCard();
   const health = useHealth(() => card.selectedCard);

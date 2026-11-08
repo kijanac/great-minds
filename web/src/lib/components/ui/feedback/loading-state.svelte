@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Spinner } from "$lib/components/ui/spinner";
+  import { Spinner } from "#lib/components/ui/spinner/index.ts";
 
   let { label = "Loading…" }: { label?: string } = $props();
 </script>

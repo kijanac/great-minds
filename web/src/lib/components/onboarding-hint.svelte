@@ -1,5 +1,5 @@
 <script module lang="ts">
-  import { browser } from "$app/environment";
+  import { browser } from "$app/env";
 
   const STORAGE_KEY = "onboarding-hint-seen";
   let seen = $state(browser && localStorage.getItem(STORAGE_KEY) === "true");
@@ -18,8 +18,8 @@
   import X from "@lucide/svelte/icons/x";
   import type { Snippet } from "svelte";
 
-  import { Badge } from "$lib/components/ui/badge";
-  import { Button } from "$lib/components/ui/button";
+  import { Badge } from "#lib/components/ui/badge/index.ts";
+  import { Button } from "#lib/components/ui/button/index.ts";
 
   let { children }: { children: Snippet } = $props();
 </script>

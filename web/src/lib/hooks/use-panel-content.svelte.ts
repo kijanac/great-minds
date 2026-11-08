@@ -1,9 +1,9 @@
 import { createQuery } from "@tanstack/svelte-query";
 
-import type { DocumentScope } from "$lib/api/doc";
-import { activeVault } from "$lib/hooks/use-vault.svelte";
-import { loadPanelContent } from "$lib/panel-content";
-import type { SourceRef } from "$lib/types";
+import type { DocumentScope } from "#lib/api/doc.ts";
+import { activeVault } from "#lib/hooks/use-vault.svelte.ts";
+import { loadPanelContent } from "#lib/panel-content.ts";
+import type { SourceRef } from "#lib/types.ts";
 
 export function usePanelContent(
   selectedCard: () => SourceRef | null,

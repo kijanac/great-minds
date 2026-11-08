@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { browser } from "$app/environment";
+  import { browser } from "$app/env";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
 
-  import { auth } from "$lib/auth.svelte";
-  import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
-  import { clearVaultId, storeVaultId } from "$lib/vault-selection";
+  import { auth } from "#lib/auth.svelte.ts";
+  import { activeVault, useVaults } from "#lib/hooks/use-vault.svelte.ts";
+  import { clearVaultId, storeVaultId } from "#lib/vault-selection.ts";
 
   let { children } = $props();
 
@@ -17,7 +17,7 @@
       void goto(
         next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`,
         {
-          replaceState: true,
+          replace: true,
         },
       );
     }

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Alert, AlertDescription } from "$lib/components/ui/alert";
-  import { Button } from "$lib/components/ui/button";
+  import { Alert, AlertDescription } from "#lib/components/ui/alert/index.ts";
+  import { Button } from "#lib/components/ui/button/index.ts";
 
   let {
     message = "Something went wrong.",

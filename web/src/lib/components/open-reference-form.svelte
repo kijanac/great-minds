@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Button } from "$lib/components/ui/button";
-  import { Input } from "$lib/components/ui/input";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { Input } from "#lib/components/ui/input/index.ts";
 
   let {
     pending,

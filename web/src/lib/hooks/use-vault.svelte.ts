@@ -7,10 +7,10 @@ import {
   getVaultDetail,
   renameVault,
   type CreateVaultInput,
-} from "$lib/api/vaults";
-import { auth } from "$lib/auth.svelte";
-import { getVaultId, storeVaultId } from "$lib/vault-selection";
-import { windowSync } from "$lib/window-sync";
+} from "#lib/api/vaults.ts";
+import { auth } from "#lib/auth.svelte.ts";
+import { getVaultId, storeVaultId } from "#lib/vault-selection.ts";
+import { windowSync } from "#lib/window-sync.ts";
 
 class ActiveVaultSelection {
   id = $state<Uuid | null>(null);
@@ -58,7 +58,9 @@ export function useRenameVault() {
     mutationFn: ({ vaultId, name }: { vaultId: Uuid; name: string }) => renameVault(vaultId, name),
     onSuccess: async (_, { vaultId }) => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["vault", vaultId, "detail"] }),
+        queryClient.invalidateQueries({
+          queryKey: ["vault", vaultId, "detail"],
+        }),
         queryClient.invalidateQueries({ queryKey: ["vaults"] }),
       ]);
     },

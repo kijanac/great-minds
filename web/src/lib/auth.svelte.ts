@@ -1,9 +1,9 @@
 import { decodeJwt } from "jose";
 
-import { logout } from "$lib/api/auth";
-import { readStoredTokens } from "$lib/api/token-store";
-import { queryClient } from "$lib/query-client";
-import { windowSync } from "$lib/window-sync";
+import { logout } from "#lib/api/auth.ts";
+import { readStoredTokens } from "#lib/api/token-store.ts";
+import { queryClient } from "#lib/query-client.ts";
+import { windowSync } from "#lib/window-sync.ts";
 
 function isTokenValid(token: string | null): boolean {
   if (!token) return false;

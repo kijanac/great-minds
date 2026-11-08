@@ -2,9 +2,9 @@
   import Home from "@lucide/svelte/icons/home";
   import type { Snippet } from "svelte";
 
-  import { Button } from "$lib/components/ui/button";
-  import { Input } from "$lib/components/ui/input";
-  import { useMe } from "$lib/hooks/use-me.svelte";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { Input } from "#lib/components/ui/input/index.ts";
+  import { useMe } from "#lib/hooks/use-me.svelte.ts";
 
   let {
     label,

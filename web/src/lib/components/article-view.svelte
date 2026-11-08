@@ -1,15 +1,15 @@
 <script lang="ts">
   import type { Uuid } from "@great-minds/domain";
 
-  import type { Article, DocumentScope, LinkItem } from "$lib/api/doc";
-  import AnswerBlock from "$lib/components/answer-block.svelte";
-  import DocHeader from "$lib/components/doc-header.svelte";
-  import { Button } from "$lib/components/ui/button";
+  import type { Article, DocumentScope, LinkItem } from "#lib/api/doc.ts";
+  import AnswerBlock from "#lib/components/answer-block.svelte";
+  import DocHeader from "#lib/components/doc-header.svelte";
+  import { Button } from "#lib/components/ui/button/index.ts";
   import type {
     ReferencePromotionAction,
     SelectionInfo,
     ThreadLike,
-  } from "$lib/types";
+  } from "#lib/types.ts";
 
   let {
     document,

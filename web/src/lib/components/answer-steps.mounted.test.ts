@@ -1,7 +1,7 @@
 import { flushSync, mount, unmount } from "svelte";
 import { expect, it } from "vitest";
 
-import type { SourceRef } from "$lib/types";
+import type { SourceRef } from "#lib/types.ts";
 import AnswerSteps from "./answer-steps.svelte";
 
 const step = (source: Partial<SourceRef> & Pick<SourceRef, "type" | "label">): SourceRef => ({
@@ -32,7 +32,10 @@ const blocks = [
 it("shows the current step while answering and what it rests on once done", () => {
   const target = document.createElement("div");
   document.body.append(target);
-  const live = mount(AnswerSteps, { target, props: { blocks, streaming: true, onOpen: () => {} } });
+  const live = mount(AnswerSteps, {
+    target,
+    props: { blocks, streaming: true, onOpen: () => {} },
+  });
   flushSync();
   expect(target.textContent?.replace(/\s+/g, " ").trim()).toBe(
     "read source Letter to Martov 5 steps · 2 read so far",

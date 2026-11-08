@@ -1,11 +1,11 @@
 import { createMutation, useQueryClient } from "@tanstack/svelte-query";
 
-import { requestCompile } from "$lib/api/jobs";
-import { useActiveJob } from "$lib/hooks/use-active-job.svelte";
-import { useHealthReport } from "$lib/hooks/use-health-report.svelte";
-import { usePanelContent } from "$lib/hooks/use-panel-content.svelte";
-import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
-import type { SourceRef } from "$lib/types";
+import { requestCompile } from "#lib/api/jobs.ts";
+import { useActiveJob } from "#lib/hooks/use-active-job.svelte.ts";
+import { useHealthReport } from "#lib/hooks/use-health-report.svelte.ts";
+import { usePanelContent } from "#lib/hooks/use-panel-content.svelte.ts";
+import { activeVault, useVaults } from "#lib/hooks/use-vault.svelte.ts";
+import type { SourceRef } from "#lib/types.ts";
 
 export function useHealth(selectedCard: () => SourceRef | null) {
   const queryClient = useQueryClient();

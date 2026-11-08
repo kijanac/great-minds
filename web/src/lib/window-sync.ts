@@ -1,4 +1,4 @@
-import { browser } from "$app/environment";
+import { browser } from "$app/env";
 
 export function windowSync(events: readonly string[], sync: () => void): () => () => void {
   let listening = false;

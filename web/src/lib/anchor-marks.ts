@@ -1,5 +1,5 @@
-import { uniqueQuoteSpan } from "$lib/anchor";
-import type { HastNode } from "$lib/markdown-plugins";
+import { uniqueQuoteSpan } from "#lib/anchor.ts";
+import type { HastNode } from "#lib/markdown-plugins.ts";
 
 export interface AnchorMark {
   threadId: string;

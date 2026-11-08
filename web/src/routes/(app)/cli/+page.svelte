@@ -3,7 +3,7 @@
   import { domainErrorDetail } from "@great-minds/client";
   import type { CliLoginRequest } from "@great-minds/domain";
 
-  import { api, run } from "$lib/api/app";
+  import { api, run } from "#lib/api/app.ts";
 
   type View =
     | { kind: "enter" }

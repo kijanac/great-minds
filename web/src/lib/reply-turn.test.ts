@@ -1,7 +1,7 @@
 import { SessionId, Uuid, type ReplySnapshot } from "@great-minds/domain";
 import { describe, expect, it } from "vitest";
-import { applyReplySnapshot, replyActivity } from "$lib/reply-turn";
-import type { Exchange } from "$lib/types";
+import { applyReplySnapshot, replyActivity } from "#lib/reply-turn.ts";
+import type { Exchange } from "#lib/types.ts";
 
 const replyId = Uuid.make("00000000-0000-4000-8000-000000000001");
 const retryId = Uuid.make("00000000-0000-4000-8000-000000000002");
@@ -64,8 +64,15 @@ describe("reply observation merge", () => {
         error: saved.error,
         version: 99,
       });
-      expect(replyActivity(progress, merged)).toEqual({ reply_id: replyId, status: "settling" });
-      const terminal = snapshot({ status: "completed", version: 100, answer: "Different cache" });
+      expect(replyActivity(progress, merged)).toEqual({
+        reply_id: replyId,
+        status: "settling",
+      });
+      const terminal = snapshot({
+        status: "completed",
+        version: 100,
+        answer: "Different cache",
+      });
       expect(applyReplySnapshot(merged, terminal)).toMatchObject({
         status,
         answer: "Recorded answer",
@@ -77,10 +84,20 @@ describe("reply observation merge", () => {
   it("keeps settling nonterminal and separates it from the answer outcome", () => {
     const progress = snapshot({ status: "settling" });
     const merged = applyReplySnapshot(exchange(), progress)!;
-    expect(merged).toMatchObject({ status: "running", answer: "New partial", version: 8 });
-    expect(replyActivity(progress, merged)).toEqual({ reply_id: replyId, status: "settling" });
+    expect(merged).toMatchObject({
+      status: "running",
+      answer: "New partial",
+      version: 8,
+    });
+    expect(replyActivity(progress, merged)).toEqual({
+      reply_id: replyId,
+      status: "settling",
+    });
     const terminal = snapshot({ status: "completed", version: 9, answer: "" });
-    expect(applyReplySnapshot(merged, terminal)).toMatchObject({ status: "completed", answer: "" });
+    expect(applyReplySnapshot(merged, terminal)).toMatchObject({
+      status: "completed",
+      answer: "",
+    });
     expect(replyActivity(terminal, merged)).toBeNull();
   });
 });

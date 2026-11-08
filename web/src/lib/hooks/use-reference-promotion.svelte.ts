@@ -2,8 +2,8 @@ import type { Uuid } from "@great-minds/domain";
 import { createMutation, useQueryClient } from "@tanstack/svelte-query";
 
 import { errorMessage } from "@great-minds/client";
-import { promoteReference } from "$lib/api/references";
-import { invalidateSourceLists } from "$lib/hooks/use-library.svelte";
+import { promoteReference } from "#lib/api/references.ts";
+import { invalidateSourceLists } from "#lib/hooks/use-library.svelte.ts";
 
 export function useReferencePromotion() {
   const queryClient = useQueryClient();

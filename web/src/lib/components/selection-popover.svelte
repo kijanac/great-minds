@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Button } from "$lib/components/ui/button";
-  import type { SelectionInfo } from "$lib/types";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import type { SelectionInfo } from "#lib/types.ts";
 
   let {
     info,
