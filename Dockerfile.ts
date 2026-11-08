@@ -35,6 +35,12 @@ RUN rm -f package.json pnpm-lock.yaml pnpm-workspace.yaml packages/*/tsconfig.js
 
 FROM node:24-slim AS runtime
 
+# The server runs with node alone; drop the package managers bundled in the base image so
+# their dependencies (and vulnerabilities) don't ship.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+    /usr/local/bin/yarn /usr/local/bin/yarnpkg /usr/local/bin/pnpm /usr/local/bin/pnpx
+
 RUN groupadd --system --gid 999 app
 RUN useradd --system --gid 999 --uid 999 --create-home app
 RUN mkdir -p /data

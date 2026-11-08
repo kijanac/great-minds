@@ -1,7 +1,7 @@
 import { Defuddle } from "defuddle/node";
 import { JSDOM } from "jsdom";
 import { uploadKind } from "@great-minds/domain";
-import { parseOfficeAsync } from "officeparser";
+import { OfficeParser } from "officeparser";
 
 const compactMarkdown = (markdown: string) =>
   markdown
@@ -54,12 +54,12 @@ export const stagedFileToMarkdown = async (
     return markdownWithTitle(converted.title, converted.markdown);
   }
   if (kind === "office") {
-    return parseOfficeAsync(Buffer.from(rawBytes), {
+    const parsed = await OfficeParser.parseOffice(Buffer.from(rawBytes), {
       newlineDelimiter: "\n",
       ignoreNotes: false,
-      putNotesAtLast: false,
-      outputErrorToConsole: false,
+      allowRemoteAssets: false,
     });
+    return (await parsed.to("text")).value;
   }
   throw new Error(`Unsupported staged upload: ${filename}`);
 };

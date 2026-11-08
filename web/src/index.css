@@ -1,6 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import "./shadcn-tailwind.css";
 /* Self-declared @font-face with font-display: block to prevent FOUT.
    Files sourced from @fontsource packages; only the display strategy differs. */
 
