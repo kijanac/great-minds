@@ -1,0 +1,2 @@
+ALTER TABLE "file_ingest_files" DROP CONSTRAINT "file_ingest_files_source_incarnation_id_fkey", ADD CONSTRAINT "file_ingest_files_source_incarnation_id_fkey" FOREIGN KEY ("source_incarnation_id") REFERENCES "source_incarnations"("id") ON DELETE CASCADE;--> statement-breakpoint
+ALTER TABLE "url_ingest_requests" DROP CONSTRAINT "url_ingest_requests_source_incarnation_id_fkey", ADD CONSTRAINT "url_ingest_requests_source_incarnation_id_fkey" FOREIGN KEY ("source_incarnation_id") REFERENCES "source_incarnations"("id") ON DELETE CASCADE;

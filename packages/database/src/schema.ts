@@ -380,6 +380,7 @@ export const fileIngestFiles = pgTable(
       table.sourceIncarnationId,
       sourceIncarnations.id,
       "file_ingest_files_source_incarnation_id_fkey",
+      "cascade",
     ),
     primaryKey({ columns: [table.batchId, table.hash] }),
     unique("uq_file_ingest_files_batch_position").on(table.batchId, table.position),
@@ -410,6 +411,7 @@ export const urlIngestRequests = pgTable(
       table.sourceIncarnationId,
       sourceIncarnations.id,
       "url_ingest_requests_source_incarnation_id_fkey",
+      "cascade",
     ),
     index("ix_url_ingest_requests_pending")
       .on(table.createdAt)

@@ -89,6 +89,8 @@ const id = {
   session: decodeSessionId("00000000-0000-4000-8000-000000011201"),
   sessionShare: decodeUuid("00000000-0000-4000-8000-000000011301"),
   referenceShare: decodeUuid("00000000-0000-4000-8000-000000011302"),
+  deleteUploadRun: decodeUuid("00000000-0000-4000-8000-000000011501"),
+  deleteUrlRun: decodeUuid("00000000-0000-4000-8000-000000011502"),
   reference: decodeUuid("00000000-0000-4000-8000-000000011401"),
   m32SourceA: decodeUuid("00000000-0000-4000-8000-000000013001"),
   m32SourceB: decodeUuid("00000000-0000-4000-8000-000000013002"),
@@ -3355,7 +3357,7 @@ describe("M3.1 write endpoint integration", () => {
     expect(emptyAnswer.body).toMatchObject({ detail: "Exchange has no answer yet" });
   });
 
-  it("deletes vault DB cascades and local storage, including auth-owned vault cleanup", async () => {
+  it("deletes vault DB cascades, uploads and link imports included, and local storage", async () => {
     const { aliceToken } = currentFixture();
     await seedSourceGraph();
     await writeVaultFile(id.vault, "wiki/capital.md", "# Capital\n");
@@ -3379,6 +3381,67 @@ describe("M3.1 write endpoint integration", () => {
             d.insert(compileIntents).values({ vaultId: id.vault, pipelineRunId: id.run }),
           )
           .pipe(Effect.orDie);
+        yield* db
+          .query((d) =>
+            d.insert(pipelineRuns).values([
+              {
+                id: id.deleteUploadRun,
+                vaultId: id.vault,
+                trigger: "staged_files",
+                status: "completed",
+                currentPhase: "publish",
+                phaseStatus: "completed",
+              },
+              {
+                id: id.deleteUrlRun,
+                vaultId: id.vault,
+                trigger: "url",
+                status: "completed",
+                currentPhase: "publish",
+                phaseStatus: "completed",
+              },
+            ]),
+          )
+          .pipe(Effect.orDie);
+        yield* db.transaction((tx) =>
+          Effect.gen(function* () {
+            const uploaded = yield* admitSource(
+              tx,
+              id.vault,
+              sourceIdForKey(id.vault, "upload:deleted-vault"),
+              "raw/docs/uploaded.md",
+            );
+            yield* tx.insert(fileIngestBatches).values({
+              id: id.deleteUploadRun,
+              createdBy: id.alice,
+              status: "completed",
+              expiresAt: initialTime,
+            });
+            yield* tx.insert(fileIngestFiles).values({
+              batchId: id.deleteUploadRun,
+              position: 0,
+              hash: rawFileHash(Buffer.from("uploaded")),
+              name: "uploaded.md",
+              size: 8,
+              mimetype: "text/markdown",
+              needsCompile: true,
+              status: "completed",
+              sourceIncarnationId: uploaded.incarnationId,
+            });
+            const linked = yield* admitSource(
+              tx,
+              id.vault,
+              sourceIdForKey(id.vault, "url:https://example.test/deleted-vault"),
+              "raw/docs/linked.md",
+            );
+            yield* tx.insert(urlIngestRequests).values({
+              id: id.deleteUrlRun,
+              createdBy: id.alice,
+              canonicalUrl: "https://example.test/deleted-vault",
+              sourceIncarnationId: linked.incarnationId,
+            });
+          }),
+        );
         yield* db
           .query((d) =>
             d.insert(compileCacheEntries).values({
@@ -3460,6 +3523,9 @@ describe("M3.1 write endpoint integration", () => {
     expect(await countTable(sourceProposals)).toBe(0);
     expect(await countTable(compileIntents)).toBe(0);
     expect(await countTable(pipelineRuns)).toBe(0);
+    expect(await countTable(fileIngestFiles)).toBe(0);
+    expect(await countTable(urlIngestRequests)).toBe(0);
+    expect(await countTable(sourceIncarnations)).toBe(0);
     expect(await countTable(searchIndex)).toBe(0);
     expect(await countTable(compileCacheEntries)).toBe(0);
     expect(await countTable(llmCostEvents)).toBe(0);
