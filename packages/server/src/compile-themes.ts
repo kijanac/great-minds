@@ -311,6 +311,9 @@ export const proposeTopics = (
     const failedDocuments = asked.flatMap((answer) =>
       "failed" in answer ? [answer.documentId] : [],
     );
+    const documentTitle = new Map(
+      documents.map((document) => [document.id, document.title ?? document.id]),
+    );
     const keys = answered.map((answer) => answer.key);
     yield* db.query((d) =>
       d
@@ -367,7 +370,7 @@ export const proposeTopics = (
     }
     return {
       documents: answered.length,
-      failedDocuments: failedDocuments.length,
+      failedDocuments: failedDocuments.map((id) => documentTitle.get(id) ?? id).toSorted(),
       newTopics: fresh.length,
     };
   });
@@ -492,7 +495,8 @@ export const groupThemes = (
       ]),
     );
     const permits = yield* Semaphore.make(settings.concurrency);
-    let failedJudgments = 0;
+    const proposalTitle = new Map(proposals.map((proposal) => [proposal.id, proposal.title]));
+    const failedJudgments: string[] = [];
     yield* runner.preloadKind("same_topic");
     const judge = (pivot: Uuid, open: readonly Uuid[]) =>
       Effect.forEach(
@@ -522,7 +526,9 @@ export const groupThemes = (
               ),
               Effect.catchTag("AskFailed", () =>
                 Effect.sync((): readonly Uuid[] => {
-                  failedJudgments += 1;
+                  failedJudgments.push(
+                    `"${proposalTitle.get(pivot) ?? pivot}" / "${proposalTitle.get(candidate) ?? candidate}"`,
+                  );
                   return [];
                 }),
               ),
@@ -569,5 +575,5 @@ export const groupThemes = (
         ideaIds: [...new Set(memberRows.flatMap((row) => row.ideaIds))],
       };
     });
-    return { themes, failedJudgments };
+    return { themes, failedJudgments: failedJudgments.toSorted() };
   });

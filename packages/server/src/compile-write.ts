@@ -198,12 +198,12 @@ export const writeArticles = (
             answer: WrittenArticle,
           })
           .pipe(
-            Effect.map((answer): PublishedArticle | undefined => ({
+            Effect.map((answer): PublishedArticle | string => ({
               id: article.id,
               markdown: withFootnotes(answer.body, numbered),
               tags: normalizeTags(answer.tags),
             })),
-            Effect.catchTag("AskFailed", () => Effect.succeed(undefined)),
+            Effect.catchTag("AskFailed", () => Effect.succeed(article.title)),
             Effect.tap(() =>
               Effect.suspend(() => {
                 writtenCount += 1;
@@ -214,6 +214,9 @@ export const writeArticles = (
       },
       { concurrency: settings.concurrency },
     );
-    const published = written.flatMap((article) => (article === undefined ? [] : [article]));
-    return { articles: published, failedArticles: written.length - published.length };
+    const published = written.flatMap((article) => (typeof article === "string" ? [] : [article]));
+    const failedArticles = written.flatMap((article) =>
+      typeof article === "string" ? [article] : [],
+    );
+    return { articles: published, failedArticles: failedArticles.toSorted() };
   });

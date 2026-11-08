@@ -60,6 +60,8 @@ export type AppConfigShape = {
   readonly pipelineConcurrency: number;
   readonly embeddingModel: string;
   readonly embeddingProviders: readonly string[];
+  readonly embeddingRequestChars: number;
+  readonly embeddingTimeoutSeconds: number;
   readonly corsOrigins: readonly string[];
   readonly publicWebUrl: URL;
   readonly typstBinary: string;
@@ -234,6 +236,8 @@ const appConfig = Config.all({
     Config.withDefault("qwen/qwen3-embedding-8b"),
   ),
   embeddingProviders: commaList("EMBEDDING_PROVIDERS", "deepinfra,nebius"),
+  embeddingRequestChars: positiveInt("EMBEDDING_REQUEST_CHARS").pipe(Config.withDefault(40_000)),
+  embeddingTimeoutSeconds: positiveInt("EMBEDDING_TIMEOUT_SECONDS").pipe(Config.withDefault(300)),
   corsOrigins: commaList("CORS_ORIGINS", "http://localhost:5173"),
   publicWebUrl: Config.URL("PUBLIC_WEB_URL").pipe(
     Config.withDefault(new URL("http://localhost:5173")),

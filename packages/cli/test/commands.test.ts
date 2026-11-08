@@ -418,7 +418,12 @@ describe("gm update", () => {
     steps: [],
     warnings: [],
   });
-  const snapshot = (status: string, track: readonly unknown[], outcome: unknown) => ({
+  const snapshot = (
+    status: string,
+    track: readonly unknown[],
+    outcome: unknown,
+    warnings: readonly unknown[] = [],
+  ) => ({
     id: runId,
     vault_id: vaultId,
     trigger: "manual",
@@ -426,7 +431,7 @@ describe("gm update", () => {
     phase: status === "completed" ? "publish" : "render",
     phase_status: status === "completed" ? "completed" : "progress",
     stages: [],
-    warnings: [],
+    warnings,
     track,
     outcome,
     created_at: now,
@@ -450,7 +455,7 @@ describe("gm update", () => {
       stream_url: "",
     });
 
-  it("follows the stages and lists what changed, including merges", async () => {
+  it("follows the stages and lists what changed, including merges and what was left out", async () => {
     await saveCredentials({
       api_url: apiUrl,
       api_key: "gm_saved",
@@ -464,19 +469,31 @@ describe("gm update", () => {
       if (request.path === `/v1/vaults/${vaultId}/jobs/${runId}/stream`)
         return events([
           snapshot("running", [stage("running")], null),
-          snapshot("completed", [stage("completed")], {
-            sources: 0,
-            added: [],
-            changed: [{ title: "Liquidationism", file_path: "wiki/liquidationism.md" }],
-            removed: [
+          snapshot(
+            "completed",
+            [stage("completed")],
+            {
+              sources: 0,
+              added: [],
+              changed: [{ title: "Liquidationism", file_path: "wiki/liquidationism.md" }],
+              removed: [
+                {
+                  title: "Liquidationism Debate",
+                  file_path: "archive/x/liquidationism-debate.md",
+                  merged_into: { title: "Liquidationism", file_path: "wiki/liquidationism.md" },
+                },
+              ],
+              unchanged: 380,
+            },
+            [
               {
-                title: "Liquidationism Debate",
-                file_path: "archive/x/liquidationism-debate.md",
-                merged_into: { title: "Liquidationism", file_path: "wiki/liquidationism.md" },
+                phase: "write_articles",
+                message: "of 509 articles could not be written",
+                count: 1,
+                items: ["Peat Extraction"],
               },
             ],
-            unchanged: 380,
-          }),
+          ),
         ]);
       return json(404, {});
     };
@@ -486,6 +503,8 @@ describe("gm update", () => {
       `Update ${runId} (gm run ${runId} to follow it again)`,
       "… Writing articles",
       "✓ Writing articles",
+      "Left out: 1 of 509 articles could not be written",
+      "  Peat Extraction",
     ]);
     expect(stdout).toEqual([
       "1 updated, 1 removed.",

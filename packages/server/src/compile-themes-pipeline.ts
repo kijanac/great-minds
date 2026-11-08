@@ -79,8 +79,10 @@ export const makeThemesPipeline = (options: {
   });
   const runnerFor = (vaultId: Uuid, runId: Uuid) =>
     makeAskRunner({ db, languageModel, logger }, { vaultId, runId });
-  const warn = (runId: Uuid, phase: string, count: number, message: string) =>
-    count === 0 ? Effect.void : pipeline.recordWarning(runId, { phase, message, count, items: [] });
+  const warn = (runId: Uuid, phase: string, items: readonly string[], message: string) =>
+    items.length === 0
+      ? Effect.void
+      : pipeline.recordWarning(runId, { phase, message, count: items.length, items });
   const promptsFor = (vaultId: Uuid) =>
     Effect.gen(function* () {
       const vaultConfig = yield* readVaultConfig(storage, vaultId).pipe(
@@ -188,7 +190,7 @@ export const makeThemesPipeline = (options: {
       yield* warn(
         runId,
         "build_articles",
-        grouped.failedJudgments + built.failedQuestions,
+        [...grouped.failedJudgments, ...built.failedQuestions],
         "grouping questions failed",
       );
 
@@ -292,6 +294,7 @@ export const makeThemesPipeline = (options: {
         },
       );
       yield* steps.start("link_articles");
+      const titleOf = new Map(validated.map((topic) => [topic.topicId, topic.title]));
       const linked = yield* findLinks(
         { embeddings: embeddingsFor(vaultId, runId, "embed:links"), runner },
         validated.map((topic) => ({
@@ -299,7 +302,11 @@ export const makeThemesPipeline = (options: {
           title: topic.title,
           description: topic.description,
         })),
-        written.articles.map((article) => ({ id: article.id, body: article.markdown })),
+        written.articles.map((article) => ({
+          id: article.id,
+          title: titleOf.get(article.id) ?? article.id,
+          body: article.markdown,
+        })),
         {
           pickModel: config.mapModel,
           checkModel: config.reduceModel,

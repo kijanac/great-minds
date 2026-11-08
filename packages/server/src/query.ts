@@ -691,6 +691,13 @@ export const QueryServiceLive = Layer.effect(
           };
         }
         const outline = yield* sectionOutline(context.vaultId, path);
+        if (outline.length === 0)
+          return {
+            content:
+              `# ${path} [${context.vaultLabel}]\n\n` +
+              `This document is large (${content.length.toLocaleString("en-US")} chars) and is not searchable yet: indexing it for search has not completed, so search_in_document and expand_context cannot reach its text. Tell the user it is not searchable yet rather than treating it as empty.`,
+            source,
+          };
         const lines = outline.map(
           (section) =>
             `- chunks ${section.start}-${section.end}: ${section.heading || "(no heading)"}`,

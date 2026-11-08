@@ -104,6 +104,8 @@ const config: AppConfigShape = {
   pipelineConcurrency: 1,
   embeddingModel: "qwen/qwen3-embedding-8b",
   embeddingProviders: [],
+  embeddingRequestChars: 40_000,
+  embeddingTimeoutSeconds: 300,
   corsOrigins: [],
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",

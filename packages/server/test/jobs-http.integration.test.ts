@@ -114,6 +114,8 @@ const config = (dataDir: string): AppConfigShape => ({
   pipelineConcurrency: 1,
   embeddingModel: "embedding/test",
   embeddingProviders: [],
+  embeddingRequestChars: 40_000,
+  embeddingTimeoutSeconds: 300,
   corsOrigins: ["http://localhost:5173"],
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",

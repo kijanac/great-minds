@@ -161,7 +161,7 @@ describe("writing articles", () => {
     expect(prompt).not.toContain("raw/liquidators.md");
     expect(prompt).not.toContain("wiki/");
     expect(calls[0]?.reasoningEffort).toBe("high");
-    expect(result.failedArticles).toBe(0);
+    expect(result.failedArticles).toEqual([]);
     expect(result.articles[0]?.tags).toEqual(["liquidationism", "rsdlp-1908"]);
     expect(result.articles[0]?.markdown).toBe(
       [
@@ -200,10 +200,10 @@ describe("writing articles", () => {
   it("does not save a reply without a heading, so the next run asks again", async () => {
     nextBody = "Just prose, no heading.";
     const failed = await write(runs[2] ?? id.article);
-    expect(failed).toEqual({ articles: [], failedArticles: 1 });
+    expect(failed).toEqual({ articles: [], failedArticles: ["Struggle against liquidationism"] });
     nextBody = "# Liquidationism\n\nFixed [^1].";
     const retried = await write(runs[3] ?? id.article);
     expect(calls).toHaveLength(2);
-    expect(retried.failedArticles).toBe(0);
+    expect(retried.failedArticles).toEqual([]);
   });
 });
