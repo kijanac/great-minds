@@ -136,7 +136,10 @@ export const openingSentence = (body: string) => {
 };
 
 const shortened = (text: string) =>
-  `${text.slice(0, OPENING_LIMIT).replace(/\s+\S*$/, "").replace(/[,;:—–-]$/, "")}…`;
+  `${text
+    .slice(0, OPENING_LIMIT)
+    .replace(/\s+\S*$/, "")
+    .replace(/[,;:—–-]$/, "")}…`;
 
 const stringifyRuamelFrontmatter = (frontmatter: Record<string, unknown>) => {
   const yaml = stringifyYaml(frontmatter, {
@@ -223,4 +226,5 @@ export const buildSessionExchangeDocument = (
   sessionId: string,
   exchange: SessionExchangeEvent,
   sessionOrigin: SessionOrigin | null,
-) => buildDocument(exchange.answer, sessionExchangeDocumentInput(sessionId, exchange, sessionOrigin));
+) =>
+  buildDocument(exchange.answer, sessionExchangeDocumentInput(sessionId, exchange, sessionOrigin));

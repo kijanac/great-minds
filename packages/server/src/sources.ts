@@ -9,7 +9,7 @@ import {
   type SourceListQuery,
   type SourceQuery,
   type SourceQueryPage,
-  type Uuid
+  type Uuid,
 } from "@great-minds/domain";
 import { and, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
@@ -27,27 +27,27 @@ type SourcesServiceShape = {
   readonly listSources: (
     userId: Uuid,
     vaultId: Uuid,
-    query: SourceListQuery
+    query: SourceListQuery,
   ) => Effect.Effect<SourceDocumentPage, Forbidden>;
   readonly querySources: (
     userId: Uuid,
     vaultId: Uuid,
-    query: SourceQuery
+    query: SourceQuery,
   ) => Effect.Effect<SourceQueryPage, BadRequest | Forbidden>;
   readonly deleteSource: (
     userId: Uuid,
     vaultId: Uuid,
-    sourceId: Uuid
+    sourceId: Uuid,
   ) => Effect.Effect<void, BadRequest | Forbidden | NotFound>;
   readonly requestSourceDeletion: (
     userId: Uuid,
     vaultId: Uuid,
-    sourceId: Uuid
+    sourceId: Uuid,
   ) => Effect.Effect<Proposal, BadRequest | Conflict | Forbidden | NotFound>;
 };
 
 export class SourcesService extends Context.Service<SourcesService, SourcesServiceShape>()(
-  "@great-minds/server/SourcesService"
+  "@great-minds/server/SourcesService",
 ) {}
 
 const sourceConditions = (vaultId: Uuid, query: SourceListQuery) => {
@@ -59,7 +59,7 @@ const sourceConditions = (vaultId: Uuid, query: SourceListQuery) => {
     const pattern = `%${query.search}%`;
     const searchCondition = or(
       ilike(sourceDocuments.title, pattern),
-      ilike(sourceDocuments.author, pattern)
+      ilike(sourceDocuments.author, pattern),
     );
     if (searchCondition !== undefined) {
       conditions.push(searchCondition);
@@ -85,32 +85,36 @@ export const SourcesServiceLive = Layer.effect(
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
           const where = and(...sourceConditions(vaultId, query));
-          const countRows = yield* db.query((d) => d
-            .select({ total: sql<number>`count(*)::int` })
-            .from(sourceDocuments)
-            .where(where));
-          const rows = yield* db.query((d) => d
-            .select()
-            .from(sourceDocuments)
-            .where(where)
-            .orderBy(desc(sourceDocuments.updatedAt), sourceDocuments.id)
-            .limit(query.limit)
-            .offset(query.offset));
+          const countRows = yield* db.query((d) =>
+            d
+              .select({ total: sql<number>`count(*)::int` })
+              .from(sourceDocuments)
+              .where(where),
+          );
+          const rows = yield* db.query((d) =>
+            d
+              .select()
+              .from(sourceDocuments)
+              .where(where)
+              .orderBy(desc(sourceDocuments.updatedAt), sourceDocuments.id)
+              .limit(query.limit)
+              .offset(query.offset),
+          );
           const facetWhere = and(
             eq(sourceDocuments.vaultId, vaultId),
-            ...(query.tag !== undefined && query.tag !== ""
-              ? [tagCondition(query.tag)]
-              : [])
+            ...(query.tag !== undefined && query.tag !== "" ? [tagCondition(query.tag)] : []),
           );
-          const facetRows = yield* db.query((d) => d
-            .select({
-              value: sourceDocuments.sourceType,
-              count: sql<number>`count(*)::int`
-            })
-            .from(sourceDocuments)
-            .where(facetWhere)
-            .groupBy(sourceDocuments.sourceType)
-            .orderBy(desc(sql`count(*)`)));
+          const facetRows = yield* db.query((d) =>
+            d
+              .select({
+                value: sourceDocuments.sourceType,
+                count: sql<number>`count(*)::int`,
+              })
+              .from(sourceDocuments)
+              .where(facetWhere)
+              .groupBy(sourceDocuments.sourceType)
+              .orderBy(desc(sql`count(*)`)),
+          );
 
           return {
             ...pageEnvelope(
@@ -127,13 +131,13 @@ export const SourcesServiceLive = Layer.effect(
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
           const config = yield* readVaultConfig(storage, vaultId).pipe(
-            Effect.catchTag("VaultConfigMalformed", () => Effect.succeed(defaultVaultConfigFile))
+            Effect.catchTag("VaultConfigMalformed", () => Effect.succeed(defaultVaultConfigFile)),
           );
           const page = yield* querySourceRows(db, vaultId, config, query, 50);
           return pageEnvelope(
             yield* Effect.forEach(page.rows, readSourceSummary),
             { limit: page.limit, offset: page.offset },
-            page.total
+            page.total,
           );
         }),
       deleteSource: (userId, vaultId, sourceId) =>

@@ -94,14 +94,15 @@ export const makeScriptedLanguageModel = (options: {
         ? parts
         : Stream.concat(parts, Stream.fail(script.errorAfterParts));
     },
-    complete: (input: CompleteInput) => Effect.suspend(() => {
-      completeCalls.push(input);
-      const script = completionScripts.shift();
-      if (script === undefined) {
-        return Effect.die(new Error("No scripted completion response"));
-      }
-      return Effect.isEffect(script) ? script : Effect.succeed(script);
-    }),
+    complete: (input: CompleteInput) =>
+      Effect.suspend(() => {
+        completeCalls.push(input);
+        const script = completionScripts.shift();
+        if (script === undefined) {
+          return Effect.die(new Error("No scripted completion response"));
+        }
+        return Effect.isEffect(script) ? script : Effect.succeed(script);
+      }),
   };
   return {
     streamCalls,
@@ -128,16 +129,17 @@ export const makeEmbeddings = (vectors: ReadonlyMap<string, readonly number[]>) 
   return {
     calls,
     layer: Layer.succeed(EmbeddingsService, {
-      embed: (texts: readonly string[]) => Effect.sync(() => {
-        calls.push([...texts]);
-        return texts.map((text) => {
-          const vector = vectors.get(text);
-          if (vector === undefined) {
-            throw new Error(`No embedding stub for ${text}`);
-          }
-          return vector;
-        });
-      }),
+      embed: (texts: readonly string[]) =>
+        Effect.sync(() => {
+          calls.push([...texts]);
+          return texts.map((text) => {
+            const vector = vectors.get(text);
+            if (vector === undefined) {
+              throw new Error(`No embedding stub for ${text}`);
+            }
+            return vector;
+          });
+        }),
     }),
   };
 };
@@ -148,10 +150,11 @@ export const makeParallelSearch = (results: readonly ParallelSearchResult[] = []
     calls,
     layer: Layer.succeed(ParallelSearchService, {
       hasApiKey: true,
-      search: (input: { question: string; query: string }) => Effect.sync(() => {
-        calls.push(input);
-        return results;
-      }),
+      search: (input: { question: string; query: string }) =>
+        Effect.sync(() => {
+          calls.push(input);
+          return results;
+        }),
     }),
   };
 };

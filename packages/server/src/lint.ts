@@ -32,70 +32,76 @@ export const LintServiceLive = Layer.effect(
       report: (userId, vaultId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
-          const orphans = yield* db.query((d) => d
-            .select({
-              filePath: wikiArticles.filePath,
-              title: wikiArticles.title,
-              precis: wikiArticles.precis,
-              updatedAt: wikiArticles.updatedAt,
-            })
-            .from(wikiArticles)
-            .where(
-              and(
-                ...liveArticleConditions(vaultId),
-                sql`NOT EXISTS (
+          const orphans = yield* db.query((d) =>
+            d
+              .select({
+                filePath: wikiArticles.filePath,
+                title: wikiArticles.title,
+                precis: wikiArticles.precis,
+                updatedAt: wikiArticles.updatedAt,
+              })
+              .from(wikiArticles)
+              .where(
+                and(
+                  ...liveArticleConditions(vaultId),
+                  sql`NOT EXISTS (
                   SELECT 1 FROM backlinks backlink
                   WHERE backlink.target_article_id = ${wikiArticles.id}
                 )`,
-              ),
-            )
-            .orderBy(asc(sql`lower(${wikiArticles.title})`)));
+                ),
+              )
+              .orderBy(asc(sql`lower(${wikiArticles.title})`)),
+          );
 
-          const dirty = yield* db.query((d) => d
-            .select({ topicId: topics.topicId })
-            .from(topics)
-            .where(
-              and(
-                eq(topics.vaultId, vaultId),
-                ne(topics.articleStatus, "archived"),
-                isNotNull(topics.compiledFromHash),
-                or(
-                  isNull(topics.renderedFromHash),
-                  ne(topics.renderedFromHash, topics.compiledFromHash),
+          const dirty = yield* db.query((d) =>
+            d
+              .select({ topicId: topics.topicId })
+              .from(topics)
+              .where(
+                and(
+                  eq(topics.vaultId, vaultId),
+                  ne(topics.articleStatus, "archived"),
+                  isNotNull(topics.compiledFromHash),
+                  or(
+                    isNull(topics.renderedFromHash),
+                    ne(topics.renderedFromHash, topics.compiledFromHash),
+                  ),
                 ),
               ),
-            ));
+          );
 
           const sourceTopic = alias(topics, "lint_source_topic");
           const targetTopic = alias(topics, "lint_target_topic");
           const sourceArticle = alias(wikiArticles, "lint_source_article");
           const targetArticle = alias(wikiArticles, "lint_target_article");
-          const unmentioned = yield* db.query((d) => d
-            .select({
-              sourceSlug: sourceTopic.slug,
-              sourceTitle: sourceTopic.title,
-              targetSlug: targetTopic.slug,
-              targetTitle: targetTopic.title,
-            })
-            .from(topicLinks)
-            .innerJoin(sourceTopic, eq(sourceTopic.topicId, topicLinks.sourceTopicId))
-            .innerJoin(targetTopic, eq(targetTopic.topicId, topicLinks.targetTopicId))
-            .innerJoin(sourceArticle, eq(sourceArticle.topicId, sourceTopic.topicId))
-            .innerJoin(targetArticle, eq(targetArticle.topicId, targetTopic.topicId))
-            .where(
-              and(
-                eq(sourceTopic.vaultId, vaultId),
-                eq(sourceTopic.articleStatus, "rendered"),
-                eq(targetTopic.articleStatus, "rendered"),
-                ne(topicLinks.sourceTopicId, topicLinks.targetTopicId),
-                sql`NOT EXISTS (
+          const unmentioned = yield* db.query((d) =>
+            d
+              .select({
+                sourceSlug: sourceTopic.slug,
+                sourceTitle: sourceTopic.title,
+                targetSlug: targetTopic.slug,
+                targetTitle: targetTopic.title,
+              })
+              .from(topicLinks)
+              .innerJoin(sourceTopic, eq(sourceTopic.topicId, topicLinks.sourceTopicId))
+              .innerJoin(targetTopic, eq(targetTopic.topicId, topicLinks.targetTopicId))
+              .innerJoin(sourceArticle, eq(sourceArticle.topicId, sourceTopic.topicId))
+              .innerJoin(targetArticle, eq(targetArticle.topicId, targetTopic.topicId))
+              .where(
+                and(
+                  eq(sourceTopic.vaultId, vaultId),
+                  eq(sourceTopic.articleStatus, "rendered"),
+                  eq(targetTopic.articleStatus, "rendered"),
+                  ne(topicLinks.sourceTopicId, topicLinks.targetTopicId),
+                  sql`NOT EXISTS (
                   SELECT 1 FROM backlinks backlink
                   WHERE backlink.source_article_id = ${sourceArticle.id}
                     AND backlink.target_article_id = ${targetArticle.id}
                 )`,
-              ),
-            )
-            .orderBy(asc(sql`lower(${sourceTopic.slug})`), asc(sql`lower(${targetTopic.slug})`)));
+                ),
+              )
+              .orderBy(asc(sql`lower(${sourceTopic.slug})`), asc(sql`lower(${targetTopic.slug})`)),
+          );
 
           return {
             orphans: orphans.map((row) => ({

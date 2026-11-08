@@ -256,27 +256,34 @@ export const AuthServiceLive = Layer.effect(
           .onConflictDoNothing({ target: users.email })
           .returning();
         const user =
-          created[0] ?? firstUser(yield* tx.select().from(users).where(eq(users.email, email)).limit(1));
+          created[0] ??
+          firstUser(yield* tx.select().from(users).where(eq(users.email, email)).limit(1));
         return user.id;
       });
 
     const createApiKey = (userId: Uuid, label: string, grant: KeyGrant = {}) =>
       Effect.gen(function* () {
         const rawKey = yield* generateApiKey;
-        const rows = yield* db.query((d) => d
-          .insert(apiKeys)
-          .values({
-            id: Uuid.make(randomUUID(), { disableChecks: true }),
-            userId,
-            keyHash: sha256Hex(rawKey),
-            label,
-            revoked: false,
-            vaultIds: grant.vaultIds === undefined || grant.vaultIds === null ? null : [...grant.vaultIds],
-            canAsk: grant.canAsk ?? true,
-            canChange: grant.canChange ?? true,
-            expiresAt: grant.expiresAt ?? null,
-          })
-          .returning())
+        const rows = yield* db
+          .query((d) =>
+            d
+              .insert(apiKeys)
+              .values({
+                id: Uuid.make(randomUUID(), { disableChecks: true }),
+                userId,
+                keyHash: sha256Hex(rawKey),
+                label,
+                revoked: false,
+                vaultIds:
+                  grant.vaultIds === undefined || grant.vaultIds === null
+                    ? null
+                    : [...grant.vaultIds],
+                canAsk: grant.canAsk ?? true,
+                canChange: grant.canChange ?? true,
+                expiresAt: grant.expiresAt ?? null,
+              })
+              .returning(),
+          )
           .pipe(Effect.orDie);
         const row = rows[0];
         if (row === undefined) {
@@ -333,7 +340,13 @@ export const AuthServiceLive = Layer.effect(
         );
       });
 
-    const storeCode = (tx: TransactionClient, email: Email, code: string, now: Date, clientAddress: string | null) =>
+    const storeCode = (
+      tx: TransactionClient,
+      email: Email,
+      code: string,
+      now: Date,
+      clientAddress: string | null,
+    ) =>
       Effect.gen(function* () {
         yield* tx
           .update(authCodes)
@@ -520,7 +533,10 @@ export const AuthServiceLive = Layer.effect(
             )
               yield* db
                 .query((d) =>
-                  d.update(apiKeys).set({ lastUsedAt: now }).where(eq(apiKeys.id, apiKeyUser.keyId)),
+                  d
+                    .update(apiKeys)
+                    .set({ lastUsedAt: now })
+                    .where(eq(apiKeys.id, apiKeyUser.keyId)),
                 )
                 .pipe(Effect.orDie);
             return {
@@ -548,7 +564,11 @@ export const AuthServiceLive = Layer.effect(
         db
           .query((d) =>
             d
-              .select({ email: users.email, sponsored: users.sponsored, createdAt: users.createdAt })
+              .select({
+                email: users.email,
+                sponsored: users.sponsored,
+                createdAt: users.createdAt,
+              })
               .from(users)
               .where(isNull(users.deletedAt))
               .orderBy(asc(users.email)),
@@ -570,11 +590,14 @@ export const AuthServiceLive = Layer.effect(
           ),
       revokeApiKey: (userId, keyId) =>
         Effect.gen(function* () {
-          const rows = yield* db.query((d) => d
-            .update(apiKeys)
-            .set({ revoked: true })
-            .where(and(eq(apiKeys.id, keyId), eq(apiKeys.userId, userId)))
-            .returning({ id: apiKeys.id }))
+          const rows = yield* db
+            .query((d) =>
+              d
+                .update(apiKeys)
+                .set({ revoked: true })
+                .where(and(eq(apiKeys.id, keyId), eq(apiKeys.userId, userId)))
+                .returning({ id: apiKeys.id }),
+            )
             .pipe(Effect.orDie);
           if (rows[0] === undefined) {
             return yield* new NotFound({ detail: "API key not found" });

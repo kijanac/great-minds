@@ -662,8 +662,18 @@ const seedFixtures = async (): Promise<Fixture> => {
       yield* db
         .query((d) =>
           d.insert(topicRelated).values([
-            { topicId: id.topicAlpha, relatedTopicId: id.topicBeta, sharedDocuments: 3, jaccard: 0.5 },
-            { topicId: id.topicAlpha, relatedTopicId: id.topicGamma, sharedDocuments: 1, jaccard: 0.4 },
+            {
+              topicId: id.topicAlpha,
+              relatedTopicId: id.topicBeta,
+              sharedDocuments: 3,
+              jaccard: 0.5,
+            },
+            {
+              topicId: id.topicAlpha,
+              relatedTopicId: id.topicGamma,
+              sharedDocuments: 1,
+              jaccard: 0.4,
+            },
             {
               topicId: id.topicAlpha,
               relatedTopicId: id.topicArchived,
@@ -2412,7 +2422,11 @@ describe("read-only HTTP integration", () => {
     for (const limit of [50, 37]) {
       const ids: unknown[] = [];
       for (let offset = 0; offset < sources.length; offset += limit) {
-        const response = await api("GET", `/vaults/${id.vaultAlpha}/raw/sources?limit=${limit}&offset=${offset}`, aliceToken);
+        const response = await api(
+          "GET",
+          `/vaults/${id.vaultAlpha}/raw/sources?limit=${limit}&offset=${offset}`,
+          aliceToken,
+        );
         expect(response.status).toBe(200);
         const page = asPage(response.body);
         expect(page.pagination).toEqual({ limit, offset, total: sources.length });

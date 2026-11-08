@@ -8,9 +8,7 @@ export const recordPrompt = (db: Database["Service"], hash: string, content: str
   db.query((d) => d.insert(prompts).values({ hash, content }).onConflictDoNothing());
 
 type CostLookupShape = {
-  readonly lookupGenerationCost: (
-    generationId: string,
-  ) => Effect.Effect<number | null, unknown>;
+  readonly lookupGenerationCost: (generationId: string) => Effect.Effect<number | null, unknown>;
 };
 
 export class CostLookupService extends Context.Service<CostLookupService, CostLookupShape>()(

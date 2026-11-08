@@ -34,11 +34,7 @@ const startRunner = (runId: string, mode: "pause" | "complete", sideEffectDir: s
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-const waitForOutput = (
-  child: ReturnType<typeof startRunner>,
-  marker: string,
-  timeoutMs = 20_000,
-) =>
+const waitForOutput = (child: ReturnType<typeof startRunner>, marker: string, timeoutMs = 20_000) =>
   new Promise<string>((resolve, reject) => {
     let output = "";
     const timeout = setTimeout(() => {

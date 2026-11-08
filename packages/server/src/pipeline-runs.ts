@@ -161,57 +161,72 @@ export const PipelineRunsServiceLive = Layer.effect(
       steps,
       error,
     ) =>
-      db.query((d) => d
-        .update(pipelineRuns)
-        .set({
-          currentPhase: phase,
-          phaseStatus,
-          stages: sql`(
+      db
+        .query((d) =>
+          d
+            .update(pipelineRuns)
+            .set({
+              currentPhase: phase,
+              phaseStatus,
+              stages: sql`(
             select coalesce(jsonb_agg(stage order by position), '[]'::jsonb)
             from jsonb_array_elements(${pipelineRuns.stages}) with ordinality as listed(stage, position)
             where stage ->> 'phase' <> ${phase}
           ) || jsonb_build_array(${JSON.stringify({ phase, steps })}::jsonb)`,
-          status:
-            phaseStatus === "failed"
-              ? "failed"
-              : phase === "publish" && phaseStatus === "completed"
-                ? "completed"
-                : "running",
-          error,
-          completedAt:
-            phaseStatus === "failed" || (phase === "publish" && phaseStatus === "completed")
-              ? sql`now()`
-              : undefined,
-          updatedAt: sql`now()`,
-        })
-        .where(
-          and(runOrCompileGroup(runId), inArray(pipelineRuns.status, ["pending", "running"])),
-        ))
+              status:
+                phaseStatus === "failed"
+                  ? "failed"
+                  : phase === "publish" && phaseStatus === "completed"
+                    ? "completed"
+                    : "running",
+              error,
+              completedAt:
+                phaseStatus === "failed" || (phase === "publish" && phaseStatus === "completed")
+                  ? sql`now()`
+                  : undefined,
+              updatedAt: sql`now()`,
+            })
+            .where(
+              and(runOrCompileGroup(runId), inArray(pipelineRuns.status, ["pending", "running"])),
+            ),
+        )
         .pipe(Effect.asVoid);
 
     return {
       isActive: (runId) =>
-        db.query((d) => d
-          .select({ id: pipelineRuns.id })
-          .from(pipelineRuns)
-          .where(
-            and(eq(pipelineRuns.id, runId), inArray(pipelineRuns.status, ["pending", "running"])),
+        db
+          .query((d) =>
+            d
+              .select({ id: pipelineRuns.id })
+              .from(pipelineRuns)
+              .where(
+                and(
+                  eq(pipelineRuns.id, runId),
+                  inArray(pipelineRuns.status, ["pending", "running"]),
+                ),
+              )
+              .limit(1),
           )
-          .limit(1))
           .pipe(Effect.map((rows) => rows.length === 1)),
       cancel: (runId) =>
-        db.query((d) => d
-          .update(pipelineRuns)
-          .set({
-            status: "cancelled",
-            phaseStatus: "failed",
-            error: "Update cancelled",
-            completedAt: sql`now()`,
-            updatedAt: sql`now()`,
-          })
-          .where(
-            and(eq(pipelineRuns.id, runId), inArray(pipelineRuns.status, ["pending", "running"])),
-          ))
+        db
+          .query((d) =>
+            d
+              .update(pipelineRuns)
+              .set({
+                status: "cancelled",
+                phaseStatus: "failed",
+                error: "Update cancelled",
+                completedAt: sql`now()`,
+                updatedAt: sql`now()`,
+              })
+              .where(
+                and(
+                  eq(pipelineRuns.id, runId),
+                  inArray(pipelineRuns.status, ["pending", "running"]),
+                ),
+              ),
+          )
           .pipe(Effect.andThen(recordOutcome(runId))),
       cancelCompileIntent: (intentId) =>
         db
@@ -251,43 +266,51 @@ export const PipelineRunsServiceLive = Layer.effect(
           ),
       updateProgress,
       recordWarning: (runId, warning) =>
-        db.query((d) => d
-          .update(pipelineRuns)
-          .set({
-            warnings: sql`(
+        db
+          .query((d) =>
+            d
+              .update(pipelineRuns)
+              .set({
+                warnings: sql`(
               select coalesce(jsonb_agg(listed order by position), '[]'::jsonb)
               from jsonb_array_elements(${pipelineRuns.warnings}) with ordinality as kept(listed, position)
               where (listed ->> 'phase', listed ->> 'message') <> (${warning.phase}, ${warning.message})
             ) || jsonb_build_array(${JSON.stringify(warning)}::jsonb)`,
-            updatedAt: sql`now()`,
-          })
-          .where(
-            and(runOrCompileGroup(runId), inArray(pipelineRuns.status, ["pending", "running"])),
-          ))
+                updatedAt: sql`now()`,
+              })
+              .where(
+                and(runOrCompileGroup(runId), inArray(pipelineRuns.status, ["pending", "running"])),
+              ),
+          )
           .pipe(Effect.asVoid),
       failPreservingProgress: (runId, error) =>
-        db.query((d) => d
-          .update(pipelineRuns)
-          .set({
-            status: "failed",
-            phaseStatus: "failed",
-            error,
-            completedAt: sql`now()`,
-            updatedAt: sql`now()`,
-          })
-          .where(
-            and(runOrCompileGroup(runId), inArray(pipelineRuns.status, ["pending", "running"])),
-          ))
+        db
+          .query((d) =>
+            d
+              .update(pipelineRuns)
+              .set({
+                status: "failed",
+                phaseStatus: "failed",
+                error,
+                completedAt: sql`now()`,
+                updatedAt: sql`now()`,
+              })
+              .where(
+                and(runOrCompileGroup(runId), inArray(pipelineRuns.status, ["pending", "running"])),
+              ),
+          )
           .pipe(Effect.andThen(recordOutcome(runId))),
       fail: (runId, error) => updateProgress(runId, "source_ingest", "failed", [], error),
       runOfIntent: (intentId) =>
         db
-          .query((d) => d
-            .select({ id: pipelineRuns.id, vaultId: pipelineRuns.vaultId })
-            .from(pipelineRuns)
-            .innerJoin(compileIntents, eq(compileIntents.pipelineRunId, pipelineRuns.id))
-            .where(eq(compileIntents.id, intentId))
-            .limit(1))
+          .query((d) =>
+            d
+              .select({ id: pipelineRuns.id, vaultId: pipelineRuns.vaultId })
+              .from(pipelineRuns)
+              .innerJoin(compileIntents, eq(compileIntents.pipelineRunId, pipelineRuns.id))
+              .where(eq(compileIntents.id, intentId))
+              .limit(1),
+          )
           .pipe(Effect.map((rows) => rows[0])),
       recordOutcome,
     } satisfies PipelineRunsServiceShape;

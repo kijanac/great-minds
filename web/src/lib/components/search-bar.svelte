@@ -51,7 +51,9 @@
   });
 </script>
 
-<div class={`relative w-full ${isActive ? "" : "max-w-[640px]"} ${locked ? "opacity-45" : ""}`}>
+<div
+  class={`relative w-full ${isActive ? "" : "max-w-[640px]"} ${locked ? "opacity-45" : ""}`}
+>
   <div
     class={`flex w-full items-center overflow-hidden border border-input bg-secondary focus-within:border-ring ${
       showDropdown

@@ -134,10 +134,9 @@ type FileIngestBatchesShape = {
   }>;
 };
 
-export class FileIngestBatches extends Context.Service<
-  FileIngestBatches,
-  FileIngestBatchesShape
->()("@great-minds/server/FileIngestBatches") {}
+export class FileIngestBatches extends Context.Service<FileIngestBatches, FileIngestBatchesShape>()(
+  "@great-minds/server/FileIngestBatches",
+) {}
 
 const batchResponse = (
   batch: BatchRecord,
@@ -161,10 +160,7 @@ const batchResponse = (
   targets: [...targets],
 });
 
-const sameManifest = (
-  expected: FileIngestManifest,
-  actual: readonly FileRecord[],
-) =>
+const sameManifest = (expected: FileIngestManifest, actual: readonly FileRecord[]) =>
   expected.length === actual.length &&
   expected.every((file, index) => {
     const row = actual[index];
@@ -191,25 +187,33 @@ export const FileIngestBatchesLive = Layer.effect(
     const logger = yield* StructuredLogger;
 
     const loadBatch = (batchId: Uuid) =>
-      db.query((d) => d
-        .select({
-          id: fileIngestBatches.id,
-          vaultId: pipelineRuns.vaultId,
-          createdBy: fileIngestBatches.createdBy,
-          status: fileIngestBatches.status,
-          error: fileIngestBatches.error,
-          expiresAt: fileIngestBatches.expiresAt,
-        })
-        .from(fileIngestBatches)
-        .innerJoin(pipelineRuns, eq(pipelineRuns.id, fileIngestBatches.id))
-        .where(eq(fileIngestBatches.id, batchId))
-        .limit(1))
+      db
+        .query((d) =>
+          d
+            .select({
+              id: fileIngestBatches.id,
+              vaultId: pipelineRuns.vaultId,
+              createdBy: fileIngestBatches.createdBy,
+              status: fileIngestBatches.status,
+              error: fileIngestBatches.error,
+              expiresAt: fileIngestBatches.expiresAt,
+            })
+            .from(fileIngestBatches)
+            .innerJoin(pipelineRuns, eq(pipelineRuns.id, fileIngestBatches.id))
+            .where(eq(fileIngestBatches.id, batchId))
+            .limit(1),
+        )
         .pipe(
           Effect.map((rows) => {
             const row = rows[0];
             return row === undefined
               ? undefined
-              : ({ ...row, id: row.id, vaultId: row.vaultId, createdBy: row.createdBy } satisfies BatchRecord);
+              : ({
+                  ...row,
+                  id: row.id,
+                  vaultId: row.vaultId,
+                  createdBy: row.createdBy,
+                } satisfies BatchRecord);
           }),
         );
 
@@ -263,15 +267,17 @@ export const FileIngestBatchesLive = Layer.effect(
 
     const uploadProgress = (batchId: Uuid, total: number) =>
       Effect.gen(function* () {
-        const rows = yield* db.query((d) => d
-          .select({ total: count() })
-          .from(fileIngestFiles)
-          .where(
-            and(
-              eq(fileIngestFiles.batchId, batchId),
-              inArray(fileIngestFiles.status, ["uploaded", "processing", "completed"]),
+        const rows = yield* db.query((d) =>
+          d
+            .select({ total: count() })
+            .from(fileIngestFiles)
+            .where(
+              and(
+                eq(fileIngestFiles.batchId, batchId),
+                inArray(fileIngestFiles.status, ["uploaded", "processing", "completed"]),
+              ),
             ),
-          ));
+        );
         const uploaded = rows[0]?.total ?? 0;
         yield* pipeline.updateProgress(
           batchId,
@@ -285,16 +291,18 @@ export const FileIngestBatchesLive = Layer.effect(
 
     const markUploaded = (batch: BatchRecord, hash: FileFingerprint) =>
       Effect.gen(function* () {
-        yield* db.query((d) => d
-          .update(fileIngestFiles)
-          .set({ status: "uploaded", uploadedAt: sql`now()`, updatedAt: sql`now()` })
-          .where(
-            and(
-              eq(fileIngestFiles.batchId, batch.id),
-              eq(fileIngestFiles.hash, hash),
-              eq(fileIngestFiles.status, "pending"),
+        yield* db.query((d) =>
+          d
+            .update(fileIngestFiles)
+            .set({ status: "uploaded", uploadedAt: sql`now()`, updatedAt: sql`now()` })
+            .where(
+              and(
+                eq(fileIngestFiles.batchId, batch.id),
+                eq(fileIngestFiles.hash, hash),
+                eq(fileIngestFiles.status, "pending"),
+              ),
             ),
-          ));
+        );
         const files = yield* loadFiles(batch.id);
         yield* uploadProgress(batch.id, files.length);
       });
@@ -314,18 +322,22 @@ export const FileIngestBatchesLive = Layer.effect(
             ),
           { concurrency: 4 },
         );
-        const arrived = existing.filter((result) => result.exists).map((result) => result.file.hash);
+        const arrived = existing
+          .filter((result) => result.exists)
+          .map((result) => result.file.hash);
         if (arrived.length === 0) return files;
-        yield* db.query((d) => d
-          .update(fileIngestFiles)
-          .set({ status: "uploaded", uploadedAt: sql`now()`, updatedAt: sql`now()` })
-          .where(
-            and(
-              eq(fileIngestFiles.batchId, batch.id),
-              inArray(fileIngestFiles.hash, arrived),
-              eq(fileIngestFiles.status, "pending"),
+        yield* db.query((d) =>
+          d
+            .update(fileIngestFiles)
+            .set({ status: "uploaded", uploadedAt: sql`now()`, updatedAt: sql`now()` })
+            .where(
+              and(
+                eq(fileIngestFiles.batchId, batch.id),
+                inArray(fileIngestFiles.hash, arrived),
+                eq(fileIngestFiles.status, "pending"),
+              ),
             ),
-          ));
+        );
         const refreshed = yield* loadFiles(batch.id);
         yield* uploadProgress(batch.id, refreshed.length);
         return refreshed;
@@ -444,11 +456,9 @@ export const FileIngestBatchesLive = Layer.effect(
         if (batch.status === "processing") {
           yield* dispatch(batch, files);
         }
-        const rows = yield* db.query((d) => d
-          .select()
-          .from(pipelineRuns)
-          .where(eq(pipelineRuns.id, batch.id))
-          .limit(1));
+        const rows = yield* db.query((d) =>
+          d.select().from(pipelineRuns).where(eq(pipelineRuns.id, batch.id)).limit(1),
+        );
         const run = rows[0];
         if (run === undefined) throw new Error(`Pipeline run missing for file ingest ${batch.id}`);
         return jobResponse(run);
@@ -458,34 +468,38 @@ export const FileIngestBatchesLive = Layer.effect(
       Effect.gen(function* () {
         const batch = yield* loadBatch(batchId);
         if (batch === undefined) return;
-        yield* db.query((d) => d
-          .update(fileIngestBatches)
-          .set({
-            status: "cancelled",
-            error: "Update cancelled",
-            completedAt: sql`now()`,
-            updatedAt: sql`now()`,
-          })
-          .where(
-            and(
-              eq(fileIngestBatches.id, batchId),
-              inArray(fileIngestBatches.status, ["uploading", "processing"]),
+        yield* db.query((d) =>
+          d
+            .update(fileIngestBatches)
+            .set({
+              status: "cancelled",
+              error: "Update cancelled",
+              completedAt: sql`now()`,
+              updatedAt: sql`now()`,
+            })
+            .where(
+              and(
+                eq(fileIngestBatches.id, batchId),
+                inArray(fileIngestBatches.status, ["uploading", "processing"]),
+              ),
             ),
-          ));
-        yield* db.query((d) => d
-          .update(fileIngestFiles)
-          .set({
-            status: "cancelled",
-            error: "Update cancelled",
-            completedAt: sql`now()`,
-            updatedAt: sql`now()`,
-          })
-          .where(
-            and(
-              eq(fileIngestFiles.batchId, batchId),
-              inArray(fileIngestFiles.status, ["pending", "uploaded", "processing"]),
+        );
+        yield* db.query((d) =>
+          d
+            .update(fileIngestFiles)
+            .set({
+              status: "cancelled",
+              error: "Update cancelled",
+              completedAt: sql`now()`,
+              updatedAt: sql`now()`,
+            })
+            .where(
+              and(
+                eq(fileIngestFiles.batchId, batchId),
+                inArray(fileIngestFiles.status, ["pending", "uploaded", "processing"]),
+              ),
             ),
-          ));
+        );
         yield* stagedStorage.clearStagedBatch(batch.vaultId, batchId).pipe(
           Effect.catchCause((cause) =>
             logger.warn("file_ingest.cancel_cleanup_failed", {
@@ -500,50 +514,48 @@ export const FileIngestBatchesLive = Layer.effect(
 
     const expireUploads = Effect.gen(function* () {
       const now = yield* clock.now;
-      const expired = yield* db.query((d) => d
-        .select({ id: fileIngestBatches.id, vaultId: pipelineRuns.vaultId })
-        .from(fileIngestBatches)
-        .innerJoin(pipelineRuns, eq(pipelineRuns.id, fileIngestBatches.id))
-        .where(
-          and(
-            eq(fileIngestBatches.status, "uploading"),
-            lt(fileIngestBatches.expiresAt, now),
-          ),
-        )
-        .limit(100));
+      const expired = yield* db.query((d) =>
+        d
+          .select({ id: fileIngestBatches.id, vaultId: pipelineRuns.vaultId })
+          .from(fileIngestBatches)
+          .innerJoin(pipelineRuns, eq(pipelineRuns.id, fileIngestBatches.id))
+          .where(
+            and(eq(fileIngestBatches.status, "uploading"), lt(fileIngestBatches.expiresAt, now)),
+          )
+          .limit(100),
+      );
       let countExpired = 0;
       for (const row of expired) {
-        const changed = yield* db.query((d) => d
-          .update(fileIngestBatches)
-          .set({
-            status: "failed",
-            error: UPLOAD_EXPIRED_ERROR,
-            completedAt: sql`now()`,
-            updatedAt: sql`now()`,
-          })
-          .where(
-            and(
-              eq(fileIngestBatches.id, row.id),
-              eq(fileIngestBatches.status, "uploading"),
-            ),
-          )
-          .returning({ id: fileIngestBatches.id }));
+        const changed = yield* db.query((d) =>
+          d
+            .update(fileIngestBatches)
+            .set({
+              status: "failed",
+              error: UPLOAD_EXPIRED_ERROR,
+              completedAt: sql`now()`,
+              updatedAt: sql`now()`,
+            })
+            .where(and(eq(fileIngestBatches.id, row.id), eq(fileIngestBatches.status, "uploading")))
+            .returning({ id: fileIngestBatches.id }),
+        );
         if (changed.length === 0) continue;
         countExpired += 1;
-        yield* db.query((d) => d
-          .update(fileIngestFiles)
-          .set({
-            status: "failed",
-            error: UPLOAD_EXPIRED_ERROR,
-            completedAt: sql`now()`,
-            updatedAt: sql`now()`,
-          })
-          .where(
-            and(
-              eq(fileIngestFiles.batchId, row.id),
-              inArray(fileIngestFiles.status, ["pending", "uploaded"]),
+        yield* db.query((d) =>
+          d
+            .update(fileIngestFiles)
+            .set({
+              status: "failed",
+              error: UPLOAD_EXPIRED_ERROR,
+              completedAt: sql`now()`,
+              updatedAt: sql`now()`,
+            })
+            .where(
+              and(
+                eq(fileIngestFiles.batchId, row.id),
+                inArray(fileIngestFiles.status, ["pending", "uploaded"]),
+              ),
             ),
-          ));
+        );
         yield* pipeline.updateProgress(
           row.id,
           "source_ingest",
@@ -569,18 +581,20 @@ export const FileIngestBatchesLive = Layer.effect(
     });
 
     const dispatchProcessing = Effect.gen(function* () {
-      const rows = yield* db.query((d) => d
-        .select({ id: fileIngestBatches.id })
-        .from(fileIngestBatches)
-        .innerJoin(pipelineRuns, eq(pipelineRuns.id, fileIngestBatches.id))
-        .where(
-          and(
-            eq(fileIngestBatches.status, "processing"),
-            inArray(pipelineRuns.status, ["pending", "running"]),
-          ),
-        )
-        .orderBy(asc(fileIngestBatches.createdAt))
-        .limit(100));
+      const rows = yield* db.query((d) =>
+        d
+          .select({ id: fileIngestBatches.id })
+          .from(fileIngestBatches)
+          .innerJoin(pipelineRuns, eq(pipelineRuns.id, fileIngestBatches.id))
+          .where(
+            and(
+              eq(fileIngestBatches.status, "processing"),
+              inArray(pipelineRuns.status, ["pending", "running"]),
+            ),
+          )
+          .orderBy(asc(fileIngestBatches.createdAt))
+          .limit(100),
+      );
       yield* Effect.forEach(
         rows,
         (row) =>
@@ -778,5 +792,6 @@ export const FileIngestBatchReconcilerLoopLive = Layer.effectDiscard(
       failureEvent: "file_ingest_reconciler_tick_failed",
       interval: "5 seconds",
       tick: batches.reconcileOnce(),
-    })),
+    }),
+  ),
 );

@@ -44,7 +44,6 @@ class MalformedCompileCache extends Data.TaggedError("MalformedCompileCache")<{
   readonly issue?: Schema.SchemaError["issue"];
 }> {}
 
-
 const errorDetails = (error: unknown): { readonly errorType: string; readonly message: string } => {
   if (
     typeof error === "object" &&
@@ -256,9 +255,8 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
           responseFormat: input.responseFormat,
           requestProfile: "compile",
         });
-        yield* db.query((d) => d
-          .insert(llmCostEvents)
-          .values({
+        yield* db.query((d) =>
+          d.insert(llmCostEvents).values({
             userId: sql`(select ${vaults.ownerId} from ${vaults} where ${vaults.id} = ${input.vaultId})`,
             vaultId: input.vaultId,
             eventType: "compile",
@@ -271,7 +269,8 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
             completionTokens: completion.usage?.completionTokens ?? null,
             costUsd: completion.usage?.cost?.toFixed(6) ?? "0.000000",
             generationId: completion.generationId ?? null,
-          }));
+          }),
+        );
         if (completion.finishReason === "length") {
           return yield* new MalformedLlmOutput({
             message: `${input.model} output hit the token limit (finish_reason=length) and was truncated — the request is too large for a single completion`,
@@ -352,11 +351,13 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
       const promptHash = promptContentHash(renderedTemplate);
       yield* recordPrompt(db, promptHash, renderedTemplate);
       const responseFormat = extractResponseFormat(vaultConfig);
-      const documents = yield* db.query((d) => d
-        .select()
-        .from(sourceDocuments)
-        .where(eq(sourceDocuments.vaultId, vaultId))
-        .orderBy(asc(sourceDocuments.filePath)));
+      const documents = yield* db.query((d) =>
+        d
+          .select()
+          .from(sourceDocuments)
+          .where(eq(sourceDocuments.vaultId, vaultId))
+          .orderBy(asc(sourceDocuments.filePath)),
+      );
 
       yield* pipeline.updateProgress(
         runId,
@@ -735,8 +736,7 @@ const buildSourceCard = (
     }));
     const parsedIdeas: Idea[] = [];
     for (const idea of data.ideas) {
-      const kind =
-        allowedKinds.includes(idea.kind) || idea.kind === "other" ? idea.kind : "other";
+      const kind = allowedKinds.includes(idea.kind) || idea.kind === "other" ? idea.kind : "other";
       const parsedAnchors: Anchor[] = idea.anchors.map((anchor) => {
         const normalizedQuote = normalizePythonWhitespace(anchor.quote);
         return {

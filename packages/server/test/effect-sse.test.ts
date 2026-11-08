@@ -26,9 +26,16 @@ describe("Effect SSE decoder", () => {
 describe("snapshot polling", () => {
   it("deduplicates snapshots and emits the terminal snapshot before done", async () => {
     const rows = [1, 1, 2];
-    const events = pollingSse("reply", Effect.sync(() => rows.shift()), (version) => ({
-      version, data: String(version), terminal: version === 2,
-    }), 1);
+    const events = pollingSse(
+      "reply",
+      Effect.sync(() => rows.shift()),
+      (version) => ({
+        version,
+        data: String(version),
+        terminal: version === 2,
+      }),
+      1,
+    );
     expect(await Effect.runPromise(Stream.runCollect(events))).toEqual([
       { event: "connected", data: '{"id":"reply"}' },
       { event: "message", data: "1" },
@@ -45,9 +52,16 @@ describe("snapshot polling", () => {
         now += 15_000;
         return now >= 60_000 ? 2 : 1;
       });
-      const events = pollingSse("reply", read, (version) => ({
-        version, data: String(version), terminal: version === 2,
-      }), 1);
+      const events = pollingSse(
+        "reply",
+        read,
+        (version) => ({
+          version,
+          data: String(version),
+          terminal: version === 2,
+        }),
+        1,
+      );
       expect(await Effect.runPromise(Stream.runCollect(events))).toEqual([
         { event: "connected", data: '{"id":"reply"}' },
         { event: "message", data: "1" },
@@ -63,14 +77,29 @@ describe("snapshot polling", () => {
   it("interrupts an in-flight read when the stream consumer disconnects", async () => {
     const controller = new AbortController();
     let started!: () => void;
-    const reading = new Promise<void>((resolve) => { started = resolve; });
+    const reading = new Promise<void>((resolve) => {
+      started = resolve;
+    });
     let stopped = false;
     const read = Effect.gen(function* () {
       started();
       return yield* Effect.never;
-    }).pipe(Effect.ensuring(Effect.sync(() => { stopped = true; })));
-    const events = pollingSse("reply", read, () => ({ version: 1, data: "", terminal: false }), 100);
-    const completed = Effect.runPromiseExit(Stream.runCollect(events), { signal: controller.signal });
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          stopped = true;
+        }),
+      ),
+    );
+    const events = pollingSse(
+      "reply",
+      read,
+      () => ({ version: 1, data: "", terminal: false }),
+      100,
+    );
+    const completed = Effect.runPromiseExit(Stream.runCollect(events), {
+      signal: controller.signal,
+    });
     await reading;
     controller.abort();
     expect(Exit.isFailure(await completed)).toBe(true);
