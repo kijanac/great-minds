@@ -1,0 +1,17 @@
+format: table
+exit-code: 1
+
+scan:
+  scanners:
+    - vuln
+  disable-telemetry: true
+  skip-dirs:
+    - .git
+    - .cache
+    - "**/node_modules"
+
+pkg:
+  include-dev-deps: true
+
+vulnerability:
+  ignore-unfixed: false

@@ -1,0 +1,11 @@
+# Images include OS and installed application packages, without lockfile exclusions.
+format: table
+exit-code: 1
+severity: [HIGH, CRITICAL]
+
+scan:
+  scanners: [vuln]
+  disable-telemetry: true
+
+vulnerability:
+  ignore-unfixed: true

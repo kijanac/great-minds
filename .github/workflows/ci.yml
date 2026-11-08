@@ -56,3 +56,8 @@ jobs:
           OPENROUTER_API_KEY: ""
           PARALLEL_API_KEY: ""
           RUN_LIVE_LLM_SMOKE: "0"
+
+  image:
+    uses: ./.github/workflows/image-audit.yml
+    permissions:
+      contents: read

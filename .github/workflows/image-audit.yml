@@ -1,0 +1,32 @@
+name: Container security
+
+on:
+  workflow_call:
+  schedule:
+    - cron: "43 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    name: Build and scan API image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # A fresh build of Dockerfile.ts, not an inspection of Render's running image.
+      - name: Build image (no publishing or deployment)
+        run: docker build --pull --file Dockerfile.ts --tag great-minds-audit .
+
+      - name: Scan OS and installed application packages
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.1
+          scan-type: image
+          scan-ref: great-minds-audit
+          trivy-config: trivy-image.yaml
