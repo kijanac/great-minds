@@ -36,7 +36,7 @@ export type LinkSettings = {
   readonly progress: Progress;
 };
 
-export type ArticleText = { readonly id: Uuid; readonly body: string };
+export type ArticleText = { readonly id: Uuid; readonly title: string; readonly body: string };
 
 export type Link = { readonly phrase: string; readonly target: Uuid };
 
@@ -127,12 +127,12 @@ export const findLinks = (
     yield* runner.preloadKind("pick_link_target");
     yield* runner.preloadKind("check_link");
     yield* runner.preloadKind("embed");
-    let failedQuestions = 0;
-    const counted = <A>(effect: Effect.Effect<A, AskFailed>, fallback: A) =>
+    const failedQuestions: string[] = [];
+    const counted = <A>(effect: Effect.Effect<A, AskFailed>, fallback: A, item: string) =>
       effect.pipe(
         Effect.catchTag("AskFailed", () =>
           Effect.sync(() => {
-            failedQuestions += 1;
+            failedQuestions.push(item);
             return fallback;
           }),
         ),
@@ -183,6 +183,7 @@ export const findLinks = (
               }),
             ),
           [],
+          `mentions in "${text.title}"`,
         ).pipe(Effect.tap(() => checked));
       },
       { concurrency: settings.concurrency },
@@ -301,6 +302,7 @@ export const findLinks = (
               answer: Pick,
             }),
             { choice: 0 },
+            `link target for "${mention.phrase}" in "${articleById.get(mention.source)?.title ?? mention.source}"`,
           );
           const target = candidates[pick.choice - 1];
           const article = target === undefined ? undefined : articleById.get(target);
@@ -325,6 +327,7 @@ export const findLinks = (
               answer: Check,
             }),
             { verdict: "no" as const },
+            `link check for "${mention.phrase}" in "${articleById.get(mention.source)?.title ?? mention.source}"`,
           );
           return check.verdict === "yes"
             ? [{ source: mention.source, link: { phrase: mention.phrase, target } }]
@@ -335,5 +338,10 @@ export const findLinks = (
 
     const linksOf = new Map<Uuid, Link[]>();
     for (const { source, link } of found) append(linksOf, source, link);
-    return { linksOf, mentions: mentioned.length, links: found.length, failedQuestions };
+    return {
+      linksOf,
+      mentions: mentioned.length,
+      links: found.length,
+      failedQuestions: failedQuestions.toSorted(),
+    };
   });

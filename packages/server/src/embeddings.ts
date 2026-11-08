@@ -16,7 +16,6 @@ import {
 } from "./llm.ts";
 
 const embeddingDimensions = 1024;
-const embeddingTimeoutMs = 300_000;
 
 type EmbeddingsShape = {
   readonly embed: (
@@ -149,8 +148,6 @@ export const parseEmbeddingResponse = (
   });
 };
 
-const REQUEST_CHARS = 40_000;
-
 export const embeddingRequestBody = (
   texts: readonly string[],
   model: string,
@@ -164,7 +161,7 @@ export const embeddingRequestBody = (
     : { provider: { order: [...providers], allow_fallbacks: false } }),
 });
 
-export const sizedGroups = (texts: readonly string[], limit = REQUEST_CHARS) => {
+export const sizedGroups = (texts: readonly string[], limit: number) => {
   const groups: string[][] = [];
   let size = 0;
   for (const text of texts) {
@@ -200,7 +197,10 @@ export const EmbeddingsLive = Layer.effect(
                 "content-type": "application/json",
               },
               body: JSON.stringify(embeddingRequestBody(texts, target.model, routing)),
-              signal: AbortSignal.any([signal, AbortSignal.timeout(embeddingTimeoutMs)]),
+              signal: AbortSignal.any([
+                signal,
+                AbortSignal.timeout(config.embeddingTimeoutSeconds * 1000),
+              ]),
             }),
           catch: (cause) =>
             new ModelProviderError({
@@ -265,7 +265,7 @@ export const EmbeddingsLive = Layer.effect(
           ? Effect.fail(
               new EmbeddingBatchFailed({ message: "OpenRouter API key is not configured" }),
             )
-          : Effect.forEach(sizedGroups(texts), (group) =>
+          : Effect.forEach(sizedGroups(texts, config.embeddingRequestChars), (group) =>
               embedGroup(group, apiKey).pipe(
                 Effect.tap((result) => record(scope, result.usage)),
                 Effect.map((result) => result.vectors),

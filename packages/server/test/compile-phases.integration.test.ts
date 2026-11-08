@@ -127,6 +127,8 @@ const config: AppConfigShape = {
   pipelineConcurrency: 1,
   embeddingModel: "qwen/qwen3-embedding-8b",
   embeddingProviders: [],
+  embeddingRequestChars: 40_000,
+  embeddingTimeoutSeconds: 300,
   corsOrigins: [],
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",
@@ -1075,8 +1077,13 @@ describe("M4.3a deterministic compile phases", () => {
     expect(await indexed()).toEqual([]);
     expect(await storedEtag()).toEqual([{ etag: null }]);
     expect(logEvents).toContainEqual({
-      event: "search_index.embed_batch_timeout",
-      fields: expect.objectContaining({ scope: "raw", batch_size: 2, error_type: "TimeoutError" }),
+      event: "search_index.embed_timeout",
+      fields: expect.objectContaining({
+        scope: "raw",
+        path: "raw/docs/source.md",
+        passages: 2,
+        error_type: "TimeoutError",
+      }),
     });
     const warnings = await run(
       Effect.flatMap(Database, (db) => db.query((d) => d
@@ -1095,6 +1102,69 @@ describe("M4.3a deterministic compile phases", () => {
     expect(embeddingRequests).toHaveLength(1);
     expect(await indexed()).toEqual([{ chunkIndex: -1 }, { chunkIndex: 0 }]);
     expect(await storedEtag()).toEqual([{ etag: "etag-one" }]);
+  });
+
+  it("ingest sets aside only the document whose embedding timed out", async () => {
+    files.set(
+      "raw/docs/slow.md",
+      `---\nsource_id: ${id.source}\ntitle: Slow essay\n---\n# Slow\n\nSlow body\n`,
+    );
+    files.set(
+      "raw/docs/fast.md",
+      `---\nsource_id: ${id.sourceB}\ntitle: Fast note\n---\n# Fast\n\nFast body\n`,
+    );
+    await run(
+      Effect.flatMap(Database, (db) =>
+        db
+          .transaction((tx) =>
+            Effect.all([
+              seedLegacySources(tx, {
+                id: id.source,
+                vaultId: id.vault,
+                filePath: "raw/docs/slow.md",
+                fileHash: "file",
+                bodyHash: "body",
+                sourceType: "document",
+              }),
+              seedLegacySources(tx, {
+                id: id.sourceB,
+                vaultId: id.vault,
+                filePath: "raw/docs/fast.md",
+                fileHash: "file-b",
+                bodyHash: "body-b",
+                sourceType: "document",
+              }),
+            ]),
+          )
+          .pipe(Effect.orDie),
+      ),
+    );
+    embed = async (texts) => {
+      if (texts.some((text) => text.includes("Slow")))
+        throw new DOMException("embedding timed out", "TimeoutError");
+      return defaultEmbed(texts);
+    };
+
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.ingest(id.vault, id.run)));
+
+    const indexedPaths = await run(
+      Effect.flatMap(Database, (db) => db.query((d) => d
+        .selectDistinct({ path: searchIndex.path })
+        .from(searchIndex)
+        .orderBy(searchIndex.path))
+        .pipe(Effect.orDie)),
+    );
+    expect(indexedPaths).toEqual([{ path: "raw/docs/fast.md" }]);
+    const warnings = await run(
+      Effect.flatMap(Database, (db) => db.query((d) => d
+        .select({ warnings: pipelineRuns.warnings })
+        .from(pipelineRuns)
+        .where(eq(pipelineRuns.id, id.run)))
+        .pipe(Effect.orDie)),
+    );
+    expect(warnings[0]?.warnings).toEqual([
+      expect.objectContaining({ phase: "ingest", count: 1, items: ["raw/docs/slow.md"] }),
+    ]);
   });
 
   it("ingest fails loudly on a non-timeout embedding error", async () => {

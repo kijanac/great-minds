@@ -190,7 +190,6 @@ export const CompilePhasesLive = Layer.effect(
         const indexedPaths: string[] = [];
         const timedOut: string[] = [];
         let indexedChunks = 0;
-        let embedOffset = 0;
         for (let start = 0; start < files.length; start += 100) {
           const batch = files.slice(start, start + 100);
           const indexed = yield* db.query((d) => d
@@ -255,58 +254,89 @@ export const CompilePhasesLive = Layer.effect(
             });
           }
 
-          const pending = documents.flatMap((document) =>
-            document.changed.map((chunk) => ({ document, chunk })),
-          );
-          const rows = new Map<(typeof documents)[number], PgInsertValue<typeof searchIndex>[]>();
-          const unindexed = new Set<(typeof documents)[number]>();
-          const embeddedBatches = yield* Effect.forEach(
-            Array.from({ length: Math.ceil(pending.length / 50) }, (_unused, index) => index * 50),
-            (offset) =>
-              Effect.result(
-                embeddings.embed(
-                  pending.slice(offset, offset + 50).map(({ chunk }) => chunk.body),
-                  { vaultId, runId, eventType: "compile", phase: `embed:search_${scope}` },
-                ),
-              ).pipe(Effect.map((embedded) => ({ offset, embedded }))),
+          type Indexed = (typeof documents)[number];
+          type Piece = { readonly document: Indexed; readonly chunks: readonly SearchChunk[] };
+          const rows = new Map<Indexed, PgInsertValue<typeof searchIndex>[]>();
+          const unindexed = new Set<Indexed>();
+          const embedPieces = (group: readonly Piece[]) =>
+            Effect.result(
+              embeddings.embed(
+                group.flatMap((piece) => piece.chunks.map((chunk) => chunk.body)),
+                { vaultId, runId, eventType: "compile", phase: `embed:search_${scope}` },
+              ),
+            );
+          const groups: Piece[][] = [];
+          let passages = 50;
+          for (const document of documents) {
+            for (let offset = 0; offset < document.changed.length; ) {
+              if (passages === 50) {
+                groups.push([]);
+                passages = 0;
+              }
+              const chunks = document.changed.slice(offset, offset + 50 - passages);
+              groups.at(-1)?.push({ document, chunks });
+              passages += chunks.length;
+              offset += chunks.length;
+            }
+          }
+          const embedded = yield* Effect.forEach(
+            groups,
+            (group) =>
+              Effect.gen(function* () {
+                const together = yield* embedPieces(group);
+                if (
+                  together._tag === "Success" ||
+                  group.length === 1 ||
+                  !isTimeoutError(together.failure)
+                )
+                  return [{ group, result: together }];
+                return yield* Effect.forEach(group, (piece) =>
+                  embedPieces([piece]).pipe(Effect.map((result) => ({ group: [piece], result }))),
+                );
+              }),
             { concurrency: config.compileEmbedConcurrency },
           );
-          for (const { offset, embedded } of embeddedBatches) {
-            const slice = pending.slice(offset, offset + 50);
-            if (embedded._tag === "Failure") {
-              if (!isTimeoutError(embedded.failure)) return yield* Effect.fail(embedded.failure);
-              const details = errorDetails(embedded.failure.cause);
-              yield* logger.warn("search_index.embed_batch_timeout", {
+          for (const { group, result } of embedded.flat()) {
+            if (result._tag === "Failure") {
+              if (!isTimeoutError(result.failure)) return yield* Effect.fail(result.failure);
+              const details = errorDetails(result.failure.cause);
+              const [piece] = group;
+              if (piece === undefined) continue;
+              yield* logger.warn("search_index.embed_timeout", {
                 vault_id: vaultId,
                 run_id: runId,
                 scope,
-                batch_offset: embedOffset + offset,
-                batch_size: slice.length,
+                path: piece.document.file.path,
+                passages: piece.chunks.length,
                 error_type: details.errorType,
                 error: details.message,
               });
-              for (const { document } of slice) unindexed.add(document);
+              unindexed.add(piece.document);
               continue;
             }
-            for (const [index, { document, chunk }] of slice.entries()) {
-              const embedding = embedded.success[index];
-              if (embedding === undefined) throw new Error(`Embedding ${index} missing from batch`);
+            let position = 0;
+            for (const { document, chunks } of group) {
               const documentRows = rows.get(document) ?? [];
-              documentRows.push({
-                vaultId,
-                path: document.file.path,
-                chunkIndex: chunk.chunkIndex,
-                heading: chunk.heading,
-                body: chunk.body,
-                contentHash: chunk.contentHash,
-                tsv: sql`to_tsvector('english', ${chunk.body})`,
-                embedding: sql`${vectorLiteral(embedding)}::vector`,
-                updatedAt: sql`now()`,
-              });
+              for (const chunk of chunks) {
+                const embedding = result.success[position];
+                position += 1;
+                if (embedding === undefined)
+                  throw new Error(`Embedding ${position - 1} missing from batch`);
+                documentRows.push({
+                  vaultId,
+                  path: document.file.path,
+                  chunkIndex: chunk.chunkIndex,
+                  heading: chunk.heading,
+                  body: chunk.body,
+                  contentHash: chunk.contentHash,
+                  tsv: sql`to_tsvector('english', ${chunk.body})`,
+                  embedding: sql`${vectorLiteral(embedding)}::vector`,
+                  updatedAt: sql`now()`,
+                });
+              }
               rows.set(document, documentRows);
             }
           }
-          embedOffset += pending.length;
           for (const document of unindexed) timedOut.push(document.file.path);
 
           for (const document of documents) {

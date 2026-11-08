@@ -149,10 +149,10 @@ export const buildArticles = (
     }
 
     const permits = yield* Semaphore.make(settings.concurrency);
-    let failedQuestions = 0;
+    const failedQuestions: string[] = [];
     yield* runner.preloadKind("same_entry");
     yield* runner.preloadKind("place_in_article");
-    const sameEntry = (blockA: string, blockB: string) =>
+    const sameEntry = (pivot: Uuid, candidate: Uuid) =>
       runner
         .ask({
           kind: "same_entry",
@@ -161,8 +161,8 @@ export const buildArticles = (
             {
               role: "user",
               content: settings.mergePrompt
-                .replace("{topic_a}", () => blockA)
-                .replace("{topic_b}", () => blockB),
+                .replace("{topic_a}", () => sampleOf.get(pivot) ?? "")
+                .replace("{topic_b}", () => sampleOf.get(candidate) ?? ""),
             },
           ],
           temperature: settings.temperature,
@@ -175,7 +175,9 @@ export const buildArticles = (
           Effect.map((answer) => answer.relation === "same"),
           Effect.catchTag("AskFailed", () =>
             Effect.sync(() => {
-              failedQuestions += 1;
+              failedQuestions.push(
+                `"${themeById.get(pivot)?.title ?? pivot}" / "${themeById.get(candidate)?.title ?? candidate}"`,
+              );
               return false;
             }),
           ),
@@ -185,7 +187,7 @@ export const buildArticles = (
       Effect.forEach(
         open,
         (candidate) =>
-          sameEntry(sampleOf.get(pivot) ?? "", sampleOf.get(candidate) ?? "").pipe(
+          sameEntry(pivot, candidate).pipe(
             Effect.map((same): readonly Uuid[] => (same ? [candidate] : [])),
           ),
         { concurrency: "unbounded" },
@@ -299,7 +301,9 @@ export const buildArticles = (
                 Semaphore.withPermit(permits),
                 Effect.catchTag("AskFailed", () =>
                   Effect.sync(() => {
-                    failedQuestions += 1;
+                    failedQuestions.push(
+                      `"${theme.title}" in "${heads.get(article)?.title ?? article}"`,
+                    );
                     return undefined;
                   }),
                 ),
@@ -339,6 +343,6 @@ export const buildArticles = (
       articles: articles.toSorted((left, right) => byOrder(left.id, right.id)),
       placedThemes: placements.filter((placement) => placement !== undefined).length,
       unplacedThemes: placements.filter((placement) => placement === undefined).length,
-      failedQuestions,
+      failedQuestions: failedQuestions.toSorted(),
     };
   });

@@ -113,7 +113,7 @@ const link = (runId: Uuid) =>
       return yield* findLinks(
         { embeddings, runner },
         catalogue,
-        [{ id: id.split, body }],
+        [{ id: id.split, title: "The 1903 split", body }],
         settings,
       );
     }),
@@ -145,7 +145,7 @@ describe("links between articles", () => {
     expect(result.linksOf.get(id.split)).toEqual([
       { phrase: "the liquidators", target: id.liquidators },
     ]);
-    expect(result.failedQuestions).toBe(0);
+    expect(result.failedQuestions).toEqual([]);
     const pickPrompts = calls
       .map((call) => String(call.messages[0]?.content))
       .filter((content) => content.includes("Library articles:"));

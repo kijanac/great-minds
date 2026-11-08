@@ -186,6 +186,8 @@ const testConfig = (
   pipelineConcurrency: 1,
   embeddingModel: "embedding/test-model",
   embeddingProviders: [],
+  embeddingRequestChars: 40_000,
+  embeddingTimeoutSeconds: 300,
   corsOrigins: ["http://localhost:5173"],
   publicWebUrl: new URL("http://localhost:5173"),
   typstBinary: "typst",
@@ -2032,6 +2034,36 @@ describe("query stream", () => {
     const messages = language.streamCalls[0].messages;
     expect(messages[2]).toMatchObject({ role: "tool" });
     expect(String(messages[2].content)).toContain("---\ntitle: Alpha\n---\nAlpha article body");
+  });
+
+  it("tells the model a large document is not searchable yet when it has no search passages", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        {
+          kind: "parts",
+          parts: [
+            toolCallPart(0, "tc-read-large", "read_document", { path: "raw/texts/unindexed.md" }),
+            finishPart("tool_calls"),
+          ],
+        },
+        { kind: "parts", parts: [tokenPart("Not yet."), finishPart("stop")] },
+      ],
+    });
+    await startHarness({ language });
+    await writeVaultFile(
+      id.vault,
+      "raw/texts/unindexed.md",
+      `---\ntitle: Unindexed essay\n---\n${"A long essay paragraph. ".repeat(1_000)}`,
+    );
+
+    await runReply({ question: "What does the essay argue?" });
+
+    const toolMessage = language.streamCalls[1].messages.find(
+      (message) => message.role === "tool" && message.tool_call_id === "tc-read-large",
+    );
+    const content = String(toolMessage?.content);
+    expect(content).toContain("is not searchable yet");
+    expect(content).not.toContain("Section outline");
   });
 
   it("hybrid search fuses BM25 and vector ranks with deterministic RRF order", async () => {

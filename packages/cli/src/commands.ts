@@ -372,9 +372,14 @@ const followRun = (connection: Connection, vaultId: Uuid, jobId: Uuid, json: boo
       });
     }
     if (run.job_status !== "completed") return yield* new StreamEnded({ what: "run" });
-    if (!json)
+    if (!json) {
       for (const line of run.outcome === null ? ["Update finished."] : outcomeLines(run.outcome))
         yield* Console.log(line);
+      for (const warning of run.warnings) {
+        yield* Console.error(`Left out: ${warning.count} ${warning.message}`);
+        for (const item of warning.items) yield* Console.error(`  ${item}`);
+      }
+    }
   });
 
 export const update = (input: { readonly vault: Option.Option<string>; readonly json: boolean }) =>
