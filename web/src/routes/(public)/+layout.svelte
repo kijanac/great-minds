@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { browser } from "$app/environment";
+  import { browser } from "$app/env";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
 
-  import { auth } from "$lib/auth.svelte";
+  import { auth } from "#lib/auth.svelte.ts";
 
   let { children } = $props();
 
@@ -13,7 +13,7 @@
 
   $effect(() => {
     if (browser && auth.ready && auth.isAuthenticated && !isShareRoute) {
-      void goto("/", { replaceState: true });
+      void goto("/", { replace: true });
     }
   });
 </script>

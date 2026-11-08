@@ -1,9 +1,9 @@
 import type { Citation, ReplySource, SessionExchangeEvent, Uuid } from "@great-minds/domain";
-import type { UnmentionedLink } from "$lib/api/lint";
-import type { SessionSummary } from "$lib/api/sessions";
-import type { SourceDocumentSummary, SourceTypeFacet } from "$lib/api/sources";
-import type { WikiArticleOverview } from "$lib/api/wiki";
-import type { Btw } from "$lib/btw.svelte";
+import type { UnmentionedLink } from "#lib/api/lint.ts";
+import type { SessionSummary } from "#lib/api/sessions.ts";
+import type { SourceDocumentSummary, SourceTypeFacet } from "#lib/api/sources.ts";
+import type { WikiArticleOverview } from "#lib/api/wiki.ts";
+import type { Btw } from "#lib/btw.svelte.ts";
 
 export type SourceRef = ReplySource;
 

@@ -1,4 +1,4 @@
-import type { HastNode } from "$lib/markdown-plugins";
+import type { HastNode } from "#lib/markdown-plugins.ts";
 
 export type FootnoteDefinitions = Record<string, HastNode[]>;
 

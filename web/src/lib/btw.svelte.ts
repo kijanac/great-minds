@@ -1,4 +1,4 @@
-import { browser } from "$app/environment";
+import { browser } from "$app/env";
 import type {
   OriginSessionDetail,
   SessionActivity,
@@ -7,15 +7,15 @@ import type {
   Uuid,
 } from "@great-minds/domain";
 
-import { createReply, retryReply, type CreateReplyPayload } from "$lib/api/replies";
-import { selectedVault } from "$lib/api/selected-vault";
-import { continueAsSession } from "$lib/api/sessions";
+import { createReply, retryReply, type CreateReplyPayload } from "#lib/api/replies.ts";
+import { selectedVault } from "#lib/api/selected-vault.ts";
+import { continueAsSession } from "#lib/api/sessions.ts";
 import { newUuid, replyRequest } from "@great-minds/client";
-import { queryClient } from "$lib/query-client";
-import { LIVE_UPDATES_UNAVAILABLE, tailReply } from "$lib/reply-tail";
-import { replayExchanges } from "$lib/session-events";
-import type { Exchange, ThreadLike } from "$lib/types";
-import { genId, isAbortError } from "$lib/utils";
+import { queryClient } from "#lib/query-client.ts";
+import { LIVE_UPDATES_UNAVAILABLE, tailReply } from "#lib/reply-tail.ts";
+import { replayExchanges } from "#lib/session-events.ts";
+import type { Exchange, ThreadLike } from "#lib/types.ts";
+import { genId, isAbortError } from "#lib/utils.ts";
 
 type BtwSubmission =
   | { kind: "create"; payload: CreateReplyPayload }
@@ -133,7 +133,11 @@ export class Btw implements ThreadLike {
         ? createReply(attempt.payload, this.#controller.signal)
         : retryReply(attempt.previousReplyId, attempt.replyId, this.#controller.signal));
       if (this.#controller.signal.aborted) return;
-      this.conversation ??= { id: created.session_id, kind: "btw", query: previous.query };
+      this.conversation ??= {
+        id: created.session_id,
+        kind: "btw",
+        query: previous.query,
+      };
       this.#attempt = null;
       this.#patchTurn(previous.id, { replyId: created.reply_id });
       this.activity = { reply_id: created.reply_id, status: "running" };
@@ -167,7 +171,12 @@ export class Btw implements ThreadLike {
       originScope: scope,
       conversation: this.conversation
         ? { kind: "existing", id: this.conversation.id }
-        : { kind: "new", conversationKind: "btw", idempotencyKey: this.id, origin: this.origin },
+        : {
+            kind: "new",
+            conversationKind: "btw",
+            idempotencyKey: this.id,
+            origin: this.origin,
+          },
     });
     this.#attempt = { kind: "create", payload };
     this.exchanges = [...this.exchanges, turn];
@@ -184,7 +193,11 @@ export class Btw implements ThreadLike {
     const previous = this.exchanges.at(-1);
     if (this.busy || previous?.id !== turnId || previous.status !== "failed") return;
     if (this.#attempt === null && previous.replyId) {
-      this.#attempt = { kind: "retry", previousReplyId: previous.replyId, replyId: newUuid() };
+      this.#attempt = {
+        kind: "retry",
+        previousReplyId: previous.replyId,
+        replyId: newUuid(),
+      };
     }
     void this.#runReply(previous);
   };
@@ -204,7 +217,9 @@ export class Btw implements ThreadLike {
       await continueAsSession(conversation.id);
       if (this.#controller.signal.aborted) return;
       this.conversation = { ...conversation, kind: "session" };
-      await queryClient.invalidateQueries({ queryKey: ["vault", vaultId, "sessions"] });
+      await queryClient.invalidateQueries({
+        queryKey: ["vault", vaultId, "sessions"],
+      });
       if (!this.#controller.signal.aborted) this.onOpenSession?.(conversation.id);
     } catch (error) {
       if (isAbortError(error) || this.#controller.signal.aborted) return;

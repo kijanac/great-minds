@@ -1,9 +1,9 @@
 <script lang="ts">
   import Waypoints from "@lucide/svelte/icons/waypoints";
 
-  import { Badge } from "$lib/components/ui/badge";
-  import type { SourceRef } from "$lib/types";
-  import { displayTitle } from "$lib/utils";
+  import { Badge } from "#lib/components/ui/badge/index.ts";
+  import type { SourceRef } from "#lib/types.ts";
+  import { displayTitle } from "#lib/utils.ts";
 
   let {
     source,

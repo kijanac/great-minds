@@ -5,14 +5,17 @@
   import Check from "@lucide/svelte/icons/check";
   import Plus from "@lucide/svelte/icons/plus";
 
-  import { Button } from "$lib/components/ui/button";
-  import * as Popover from "$lib/components/ui/popover";
-  import { MENU_ITEM_CLASS, POPOVER_SURFACE_CLASS } from "$lib/control-styles";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import * as Popover from "#lib/components/ui/popover/index.ts";
+  import {
+    MENU_ITEM_CLASS,
+    POPOVER_SURFACE_CLASS,
+  } from "#lib/control-styles.ts";
   import {
     activeVault,
     switchVault,
     useVaults,
-  } from "$lib/hooks/use-vault.svelte";
+  } from "#lib/hooks/use-vault.svelte.ts";
 
   const vaults = useVaults();
   let open = $state(false);

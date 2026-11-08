@@ -1,15 +1,15 @@
 <script lang="ts">
-  import { browser } from "$app/environment";
+  import { browser } from "$app/env";
   import type { Snippet } from "svelte";
   import { tick } from "svelte";
 
-  import HastNodeView from "$lib/components/hast-node.svelte";
+  import HastNodeView from "#lib/components/hast-node.svelte";
   import {
     buildFootnotePresentation,
     type FootnoteDefinitions,
-  } from "$lib/footnote-notes";
-  import type { HastNode } from "$lib/markdown-plugins";
-  import { cn } from "$lib/utils";
+  } from "#lib/footnote-notes.ts";
+  import type { HastNode } from "#lib/markdown-plugins.ts";
+  import { cn } from "#lib/utils.ts";
 
   export interface FootnoteRenderContext {
     footnoteMode: "margin" | "popover";

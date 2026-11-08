@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { beforeNavigate, goto, replaceState } from "$app/navigation";
+  import { beforeNavigate, goto } from "$app/navigation";
   import { page } from "$app/state";
   import type { Uuid } from "@great-minds/domain";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
@@ -18,22 +18,22 @@
     type FileIngestBatch,
     type HashedFile,
     type UploadFailure,
-  } from "$lib/api/ingest";
+  } from "#lib/api/ingest.ts";
   import {
     cancelJob,
     listJobs,
     requestCompile,
     retryUrlJob,
     startUrlJob,
-  } from "$lib/api/jobs";
-  import { auth } from "$lib/auth.svelte";
-  import RunOutcome from "$lib/components/run-outcome.svelte";
-  import RunProgress from "$lib/components/run-progress.svelte";
-  import { Alert, AlertDescription } from "$lib/components/ui/alert";
-  import { Button } from "$lib/components/ui/button";
-  import { useJobSSE } from "$lib/hooks/use-job-sse.svelte";
-  import { useMe } from "$lib/hooks/use-me.svelte";
-  import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
+  } from "#lib/api/jobs.ts";
+  import { auth } from "#lib/auth.svelte.ts";
+  import RunOutcome from "#lib/components/run-outcome.svelte";
+  import RunProgress from "#lib/components/run-progress.svelte";
+  import { Alert, AlertDescription } from "#lib/components/ui/alert/index.ts";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { useJobSSE } from "#lib/hooks/use-job-sse.svelte.ts";
+  import { useMe } from "#lib/hooks/use-me.svelte.ts";
+  import { activeVault, useVaults } from "#lib/hooks/use-vault.svelte.ts";
 
   interface FileUploadState {
     uploadFiles?: readonly HashedFile[];
@@ -59,7 +59,9 @@
   let componentActive = true;
   let navigationEpoch = 0;
 
-  beforeNavigate(() => {
+  beforeNavigate(({ shallow, type }) => {
+    if (shallow && type === "goto") return;
+
     navigationEpoch += 1;
   });
   onDestroy(() => {
@@ -77,11 +79,13 @@
       ? null
       : (fileBatch?.vault_id ?? activeVault.id ?? null),
   );
+
   const canManage = $derived(
     fileBatch
       ? fileBatch.created_by === auth.userId
       : currentVault?.owner_id === auth.userId,
   );
+
   const progress = useJobSSE(
     () => jobId,
     () => jobVaultId,
@@ -189,7 +193,7 @@
           });
           if (!ownsResolver()) return;
           resolvedJobId = run.id;
-          await goto(`/pipeline/runs/${run.id}`, { replaceState: true });
+          await goto(`/pipeline/runs/${run.id}`, { replace: true });
           return;
         }
 
@@ -199,7 +203,7 @@
           const activeJobId = activeJobs.items[0].id;
           resolvedJobId = activeJobId;
           await goto(`/pipeline/runs/${activeJobId}`, {
-            replaceState: true,
+            replace: true,
           });
         } else {
           noJobFound = true;
@@ -245,7 +249,10 @@
           });
           if (ownsRoute()) {
             availableFiles = [];
-            replaceState(`/pipeline/runs/${batch.id}`, {});
+            goto(`/pipeline/runs/${batch.id}`, {
+              shallow: true,
+              replace: true,
+            });
           }
           return;
         }
@@ -318,7 +325,7 @@
         progress.trigger === "url" && progress.backendPhase === "source_ingest"
           ? await retryUrlJob(jobId, nextId, jobVaultId)
           : await requestCompile(nextId, jobVaultId);
-      await goto(`/pipeline/runs/${job.id}`, { replaceState: true });
+      await goto(`/pipeline/runs/${job.id}`, { replace: true });
     } catch (error) {
       actionError = errorMessage(error, "Couldn’t start a new run.");
     }

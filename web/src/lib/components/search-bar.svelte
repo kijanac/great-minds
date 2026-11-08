@@ -1,12 +1,12 @@
 <script lang="ts">
   import { tick } from "svelte";
 
-  import type { SessionSummary } from "$lib/api/sessions";
-  import ReplySubmissionError from "$lib/components/reply-submission-error.svelte";
-  import { Button } from "$lib/components/ui/button";
-  import { Input } from "$lib/components/ui/input";
-  import type { Phase } from "$lib/types";
-  import { formatRelativeDate } from "$lib/utils";
+  import type { SessionSummary } from "#lib/api/sessions.ts";
+  import ReplySubmissionError from "#lib/components/reply-submission-error.svelte";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { Input } from "#lib/components/ui/input/index.ts";
+  import type { Phase } from "#lib/types.ts";
+  import { formatRelativeDate } from "#lib/utils.ts";
 
   let {
     query = $bindable(),

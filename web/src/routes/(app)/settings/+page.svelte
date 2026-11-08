@@ -3,14 +3,14 @@
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import Plus from "@lucide/svelte/icons/plus";
 
-  import ApiKeysSection from "$lib/components/api-keys-section.svelte";
-  import PageHeader from "$lib/components/page-header.svelte";
-  import PasskeysSection from "$lib/components/passkeys-section.svelte";
-  import { Button } from "$lib/components/ui/button";
-  import { ErrorState } from "$lib/components/ui/feedback";
-  import { Skeleton } from "$lib/components/ui/skeleton";
-  import { activeVault, useVaults } from "$lib/hooks/use-vault.svelte";
-  import { formatShortDate } from "$lib/utils";
+  import ApiKeysSection from "#lib/components/api-keys-section.svelte";
+  import PageHeader from "#lib/components/page-header.svelte";
+  import PasskeysSection from "#lib/components/passkeys-section.svelte";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { ErrorState } from "#lib/components/ui/feedback/index.ts";
+  import { Skeleton } from "#lib/components/ui/skeleton/index.ts";
+  import { activeVault, useVaults } from "#lib/hooks/use-vault.svelte.ts";
+  import { formatShortDate } from "#lib/utils.ts";
 
   const vaults = useVaults();
   const list = $derived(vaults.data ?? []);

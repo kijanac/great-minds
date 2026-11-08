@@ -1,10 +1,10 @@
 <script lang="ts">
-  import IngestionFlow from "$lib/components/ingestion-flow.svelte";
-  import HealthArticleRow from "$lib/components/health-article-row.svelte";
-  import { Alert, AlertTitle } from "$lib/components/ui/alert";
-  import { Button } from "$lib/components/ui/button";
-  import { useMe } from "$lib/hooks/use-me.svelte";
-  import { Skeleton } from "$lib/components/ui/skeleton";
+  import IngestionFlow from "#lib/components/ingestion-flow.svelte";
+  import HealthArticleRow from "#lib/components/health-article-row.svelte";
+  import { Alert, AlertTitle } from "#lib/components/ui/alert/index.ts";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { useMe } from "#lib/hooks/use-me.svelte.ts";
+  import { Skeleton } from "#lib/components/ui/skeleton/index.ts";
   import type {
     UnmentionedLink,
     WikiArticleOverview,

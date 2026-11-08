@@ -3,7 +3,7 @@
   import { Uuid } from "@great-minds/domain";
   import { Option, Schema } from "effect";
 
-  import ArticleReader from "$lib/components/article-reader.svelte";
+  import ArticleReader from "#lib/components/article-reader.svelte";
 
   const decodeSourceId = Schema.decodeOption(Uuid);
   const sourceId = $derived(

@@ -1,7 +1,7 @@
 <script lang="ts">
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
-  import { uniqueQuoteSpan } from "$lib/anchor";
-  import { Button } from "$lib/components/ui/button";
+  import { uniqueQuoteSpan } from "#lib/anchor.ts";
+  import { Button } from "#lib/components/ui/button/index.ts";
 
   let {
     quote,

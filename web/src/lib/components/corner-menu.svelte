@@ -6,11 +6,14 @@
   import Sun from "@lucide/svelte/icons/sun";
 
   import { goto } from "$app/navigation";
-  import { auth } from "$lib/auth.svelte";
-  import { Button } from "$lib/components/ui/button";
-  import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
-  import { MENU_ITEM_CLASS, POPOVER_SURFACE_CLASS } from "$lib/control-styles";
-  import { theme } from "$lib/theme.svelte";
+  import { auth } from "#lib/auth.svelte.ts";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import * as DropdownMenu from "#lib/components/ui/dropdown-menu/index.ts";
+  import {
+    MENU_ITEM_CLASS,
+    POPOVER_SURFACE_CLASS,
+  } from "#lib/control-styles.ts";
+  import { theme } from "#lib/theme.svelte.ts";
 </script>
 
 {#if auth.isAuthenticated}

@@ -1,4 +1,4 @@
-import { browser } from "$app/environment";
+import { browser } from "$app/env";
 import type {
   SessionActivity,
   SessionId,
@@ -7,13 +7,13 @@ import type {
   Uuid,
 } from "@great-minds/domain";
 
-import { createReply, retryReply, stopReply, type CreateReplyPayload } from "$lib/api/replies";
-import { Btw } from "$lib/btw.svelte";
-import type { Exchange, Phase, SelectionInfo } from "$lib/types";
+import { createReply, retryReply, stopReply, type CreateReplyPayload } from "#lib/api/replies.ts";
+import { Btw } from "#lib/btw.svelte.ts";
+import type { Exchange, Phase, SelectionInfo } from "#lib/types.ts";
 import { newUuid, replyRequest } from "@great-minds/client";
-import { LIVE_UPDATES_UNAVAILABLE, tailReply } from "$lib/reply-tail";
-import { replayExchanges } from "$lib/session-events";
-import { isAbortError } from "$lib/utils";
+import { LIVE_UPDATES_UNAVAILABLE, tailReply } from "#lib/reply-tail.ts";
+import { replayExchanges } from "#lib/session-events.ts";
+import { isAbortError } from "#lib/utils.ts";
 
 type MainReplyAttempt = {
   exchangeId: Uuid;
@@ -94,6 +94,7 @@ export class Session {
     const pending = this.activity
       ? this.thread.find((exchange) => exchange.replyId === this.activity?.reply_id)
       : this.thread.find((exchange) => exchange.status === "running");
+
     if (this.activity?.status === "settling" || (this.activity && pending?.status !== "running"))
       return "finalizing";
     if (pending?.status === "running") return pending.answer.length > 0 ? "streaming" : "searching";
@@ -347,12 +348,14 @@ export class Session {
   startBtw = (info: SelectionInfo): void => {
     if (!this.sessionId) return;
     const exchange = this.thread.find((item) => item.id === info.exchangeId);
+
     if (
       !exchange ||
       (exchange.status !== "completed" && exchange.status !== "stopped") ||
       this.activity?.reply_id === exchange.replyId
     )
       return;
+
     exchange.btws.push(
       new Btw(
         {

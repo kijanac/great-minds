@@ -1,8 +1,8 @@
 import type { SessionId } from "@great-minds/domain";
 import { createQuery } from "@tanstack/svelte-query";
 
-import { loadSession } from "$lib/api/sessions";
-import { activeVault } from "$lib/hooks/use-vault.svelte";
+import { loadSession } from "#lib/api/sessions.ts";
+import { activeVault } from "#lib/hooks/use-vault.svelte.ts";
 
 export function useSavedSession(sessionId: () => SessionId | null) {
   return createQuery(() => ({

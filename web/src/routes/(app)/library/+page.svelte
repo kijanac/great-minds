@@ -2,19 +2,19 @@
   import { goto } from "$app/navigation";
   import Search from "@lucide/svelte/icons/search";
 
-  import ArticlePanel from "$lib/components/article-panel.svelte";
-  import LibraryContent from "$lib/components/library-content.svelte";
-  import PageHeader from "$lib/components/page-header.svelte";
-  import PanelHost from "$lib/components/panel-host.svelte";
-  import { Input } from "$lib/components/ui/input";
-  import type { ReferenceOverview } from "$lib/api/references";
+  import ArticlePanel from "#lib/components/article-panel.svelte";
+  import LibraryContent from "#lib/components/library-content.svelte";
+  import PageHeader from "#lib/components/page-header.svelte";
+  import PanelHost from "#lib/components/panel-host.svelte";
+  import { Input } from "#lib/components/ui/input/index.ts";
+  import type { ReferenceOverview } from "#lib/api/references.ts";
   import {
     LIBRARY_READING_ROOM,
     useLibrary,
-  } from "$lib/hooks/use-library.svelte";
-  import { usePanelCard } from "$lib/hooks/use-panel-card.svelte";
-  import { useReferences } from "$lib/hooks/use-references.svelte";
-  import { activeVault } from "$lib/hooks/use-vault.svelte";
+  } from "#lib/hooks/use-library.svelte.ts";
+  import { usePanelCard } from "#lib/hooks/use-panel-card.svelte.ts";
+  import { useReferences } from "#lib/hooks/use-references.svelte.ts";
+  import { activeVault } from "#lib/hooks/use-vault.svelte.ts";
 
   const card = usePanelCard();
   const library = useLibrary(

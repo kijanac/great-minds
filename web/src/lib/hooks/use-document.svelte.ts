@@ -1,8 +1,13 @@
 import type { Uuid } from "@great-minds/domain";
 import { createQuery } from "@tanstack/svelte-query";
 
-import { fetchLinks, readDocument, readPersonalDocument, readSourceDocument } from "$lib/api/doc";
-import { activeVault } from "$lib/hooks/use-vault.svelte";
+import {
+  fetchLinks,
+  readDocument,
+  readPersonalDocument,
+  readSourceDocument,
+} from "#lib/api/doc.ts";
+import { activeVault } from "#lib/hooks/use-vault.svelte.ts";
 
 export function useDocument(path: () => string | null) {
   return createQuery(() => ({

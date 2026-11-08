@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
-import { assignBlockRefIds, stripBlockRefMarkers } from "$lib/block-refs";
-import { parseMarkdown } from "$lib/markdown";
-import type { HastNode } from "$lib/markdown-plugins";
+import { assignBlockRefIds, stripBlockRefMarkers } from "#lib/block-refs.ts";
+import { parseMarkdown } from "#lib/markdown.ts";
+import type { HastNode } from "#lib/markdown-plugins.ts";
 
 it("keeps heading and recorded passage destinations distinct and addressable", () => {
   const source =

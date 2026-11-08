@@ -3,7 +3,7 @@
   import { SessionId } from "@great-minds/domain";
   import { Option, Schema } from "effect";
 
-  import HomeContainer from "$lib/components/home-container.svelte";
+  import HomeContainer from "#lib/components/home-container.svelte";
 
   const decodeSessionId = Schema.decodeOption(SessionId);
   const sessionId = $derived(

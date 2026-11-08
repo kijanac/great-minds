@@ -5,7 +5,7 @@
   import { tick } from "svelte";
 
   import { errorMessage } from "@great-minds/client";
-  import { Button } from "$lib/components/ui/button";
+  import { Button } from "#lib/components/ui/button/index.ts";
 
   let {
     name,

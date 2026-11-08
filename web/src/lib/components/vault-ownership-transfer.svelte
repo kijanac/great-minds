@@ -2,14 +2,14 @@
   import type { MemberWithEmail, Uuid } from "@great-minds/domain";
 
   import { errorMessage } from "@great-minds/client";
-  import * as AlertDialog from "$lib/components/ui/alert-dialog";
-  import { Button } from "$lib/components/ui/button";
-  import * as Select from "$lib/components/ui/select";
+  import * as AlertDialog from "#lib/components/ui/alert-dialog/index.ts";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import * as Select from "#lib/components/ui/select/index.ts";
   import {
     POPOVER_SURFACE_CLASS,
     SELECT_CONTENT_CLASS,
     SELECT_ITEM_CLASS,
-  } from "$lib/control-styles";
+  } from "#lib/control-styles.ts";
 
   let {
     members,

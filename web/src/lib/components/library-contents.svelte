@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { Button } from "$lib/components/ui/button";
-  import { useMe } from "$lib/hooks/use-me.svelte";
-  import { Skeleton } from "$lib/components/ui/skeleton";
-  import type { WikiArticleOverview } from "$lib/types";
-  import { formatShortDate } from "$lib/utils";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { useMe } from "#lib/hooks/use-me.svelte.ts";
+  import { Skeleton } from "#lib/components/ui/skeleton/index.ts";
+  import type { WikiArticleOverview } from "#lib/types.ts";
+  import { formatShortDate } from "#lib/utils.ts";
 
   let {
     articles,

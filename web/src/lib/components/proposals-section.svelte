@@ -14,21 +14,21 @@
     listProposals,
     reviewProposal,
     type ProposalStatus,
-  } from "$lib/api/proposals";
+  } from "#lib/api/proposals.ts";
   import { nextPageOffset } from "@great-minds/client";
-  import { Button } from "$lib/components/ui/button";
-  import { useMe } from "$lib/hooks/use-me.svelte";
-  import { Input } from "$lib/components/ui/input";
-  import * as Select from "$lib/components/ui/select";
-  import { Textarea } from "$lib/components/ui/textarea";
-  import * as ToggleGroup from "$lib/components/ui/toggle-group";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { useMe } from "#lib/hooks/use-me.svelte.ts";
+  import { Input } from "#lib/components/ui/input/index.ts";
+  import * as Select from "#lib/components/ui/select/index.ts";
+  import { Textarea } from "#lib/components/ui/textarea/index.ts";
+  import * as ToggleGroup from "#lib/components/ui/toggle-group/index.ts";
   import {
     FILTER_CHIP_CLASS,
     SELECT_CONTENT_CLASS,
     SELECT_ITEM_CLASS,
     SELECT_TRIGGER_CLASS,
-  } from "$lib/control-styles";
-  import { formatShortDate } from "$lib/utils";
+  } from "#lib/control-styles.ts";
+  import { formatShortDate } from "#lib/utils.ts";
 
   let {
     vaultId,

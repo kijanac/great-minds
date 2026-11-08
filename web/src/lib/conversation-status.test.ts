@@ -1,13 +1,17 @@
 import { SessionId, Uuid } from "@great-minds/domain";
 import { render } from "svelte/server";
 import { describe, expect, it, vi } from "vitest";
-import AnswerBlock from "$lib/components/answer-block.svelte";
-import BtwThread from "$lib/components/btw-thread.svelte";
-import type { ThreadLike } from "$lib/types";
+import AnswerBlock from "#lib/components/answer-block.svelte";
+import BtwThread from "#lib/components/btw-thread.svelte";
+import type { ThreadLike } from "#lib/types.ts";
 
 const thread = (overrides: Partial<ThreadLike> = {}): ThreadLike => ({
   id: "saved-note",
-  conversation: { id: SessionId.make("saved-note"), kind: "btw", query: "Question" },
+  conversation: {
+    id: SessionId.make("saved-note"),
+    kind: "btw",
+    query: "Question",
+  },
   anchor: { blockOffset: 0, quote: "Passage", context: "Passage" },
   draft: false,
   createdAt: null,
@@ -32,7 +36,12 @@ const markup = (btw: ThreadLike) =>
 
 describe("conversation status markup", () => {
   it("keeps an unsent BTW reachable when collapsed without exposing saved threads", () => {
-    const draft = thread({ id: "draft-note", conversation: null, draft: true, exchanges: [] });
+    const draft = thread({
+      id: "draft-note",
+      conversation: null,
+      draft: true,
+      exchanges: [],
+    });
     const html = render(AnswerBlock, {
       props: {
         text: "Passage",
@@ -64,7 +73,11 @@ describe("conversation status markup", () => {
 
   it("shows an unavailable note without offering an empty replacement form", () => {
     const html = markup(
-      thread({ unavailable: "History is unavailable.", busy: true, exchanges: [] }),
+      thread({
+        unavailable: "History is unavailable.",
+        busy: true,
+        exchanges: [],
+      }),
     );
     expect(html).toContain("History is unavailable.");
     expect(html).toContain("Try loading this note again");
@@ -78,7 +91,11 @@ describe("conversation status markup", () => {
       ...saved,
       busy: true,
       connectionError: "Live updates are unavailable.",
-      exchanges: saved.exchanges.map((turn) => ({ ...turn, status: "running", answer: "Partial" })),
+      exchanges: saved.exchanges.map((turn) => ({
+        ...turn,
+        status: "running",
+        answer: "Partial",
+      })),
     });
     expect(html).toContain("Reconnect");
     expect(html).toContain("Partial");

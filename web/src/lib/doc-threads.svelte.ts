@@ -1,10 +1,10 @@
 import type { SessionId, Uuid } from "@great-minds/domain";
 
-import { listSessionsByOrigin, type OriginScope } from "$lib/api/sessions";
-import { Btw } from "$lib/btw.svelte";
-import { passageMark, revealPassage } from "$lib/passage-navigation";
-import type { SelectionInfo } from "$lib/types";
-import { isAbortError } from "$lib/utils";
+import { listSessionsByOrigin, type OriginScope } from "#lib/api/sessions.ts";
+import { Btw } from "#lib/btw.svelte.ts";
+import { passageMark, revealPassage } from "#lib/passage-navigation.ts";
+import type { SelectionInfo } from "#lib/types.ts";
+import { isAbortError } from "#lib/utils.ts";
 
 export class DocThreads {
   threads = $state<Btw[]>([]);

@@ -1,10 +1,10 @@
 <script lang="ts">
   import type { Uuid } from "@great-minds/domain";
 
-  import SourceActionButton from "$lib/components/source-action-button.svelte";
-  import type { ReferenceOverview } from "$lib/api/references";
-  import type { SourceDocumentSummary } from "$lib/types";
-  import { displayTitle, formatShortDate } from "$lib/utils";
+  import SourceActionButton from "#lib/components/source-action-button.svelte";
+  import type { ReferenceOverview } from "#lib/api/references.ts";
+  import type { SourceDocumentSummary } from "#lib/types.ts";
+  import { displayTitle, formatShortDate } from "#lib/utils.ts";
 
   let {
     source,

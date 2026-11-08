@@ -10,11 +10,11 @@
     type Uuid,
   } from "@great-minds/domain";
 
-  import { api, run } from "$lib/api/app";
+  import { api, run } from "#lib/api/app.ts";
   import { errorMessage } from "@great-minds/client";
-  import { Button } from "$lib/components/ui/button";
-  import * as AlertDialog from "$lib/components/ui/alert-dialog";
-  import { POPOVER_SURFACE_CLASS } from "$lib/control-styles";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import * as AlertDialog from "#lib/components/ui/alert-dialog/index.ts";
+  import { POPOVER_SURFACE_CLASS } from "#lib/control-styles.ts";
 
   let {
     subjectKind,

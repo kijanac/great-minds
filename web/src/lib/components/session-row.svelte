@@ -1,9 +1,9 @@
 <script lang="ts">
   import CornerUpRight from "@lucide/svelte/icons/corner-up-right";
 
-  import { Button } from "$lib/components/ui/button";
-  import type { SessionSummary } from "$lib/types";
-  import { docDisplayName } from "$lib/utils";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import type { SessionSummary } from "#lib/types.ts";
+  import { docDisplayName } from "#lib/utils.ts";
 
   let {
     session,

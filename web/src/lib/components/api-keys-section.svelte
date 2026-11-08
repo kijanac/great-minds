@@ -11,14 +11,17 @@
     useQueryClient,
   } from "@tanstack/svelte-query";
 
-  import { api, run } from "$lib/api/app";
-  import { Button } from "$lib/components/ui/button";
-  import * as Collapsible from "$lib/components/ui/collapsible";
-  import { Input } from "$lib/components/ui/input";
-  import * as Select from "$lib/components/ui/select";
-  import { SELECT_CONTENT_CLASS, SELECT_ITEM_CLASS } from "$lib/control-styles";
-  import { useVaults } from "$lib/hooks/use-vault.svelte";
-  import { formatShortDate } from "$lib/utils";
+  import { api, run } from "#lib/api/app.ts";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import * as Collapsible from "#lib/components/ui/collapsible/index.ts";
+  import { Input } from "#lib/components/ui/input/index.ts";
+  import * as Select from "#lib/components/ui/select/index.ts";
+  import {
+    SELECT_CONTENT_CLASS,
+    SELECT_ITEM_CLASS,
+  } from "#lib/control-styles.ts";
+  import { useVaults } from "#lib/hooks/use-vault.svelte.ts";
+  import { formatShortDate } from "#lib/utils.ts";
 
   const EXPIRY = [
     { value: "30", label: "In 30 days", days: 30 },

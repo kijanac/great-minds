@@ -1,9 +1,9 @@
 <script lang="ts">
-  import type { UserSuggestionResult } from "$lib/api/ingest";
+  import type { UserSuggestionResult } from "#lib/api/ingest.ts";
   import { errorMessage } from "@great-minds/client";
-  import { Button } from "$lib/components/ui/button";
-  import { Label } from "$lib/components/ui/label";
-  import { Textarea } from "$lib/components/ui/textarea";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { Label } from "#lib/components/ui/label/index.ts";
+  import { Textarea } from "#lib/components/ui/textarea/index.ts";
 
   export interface SuggestionPayload {
     body: string;

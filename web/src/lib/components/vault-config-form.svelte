@@ -6,12 +6,12 @@
 </script>
 
 <script lang="ts">
-  import { draftThematicHint } from "$lib/api/vaults";
-  import { Alert, AlertDescription } from "$lib/components/ui/alert";
-  import { Button } from "$lib/components/ui/button";
-  import { Input } from "$lib/components/ui/input";
-  import { Label } from "$lib/components/ui/label";
-  import { Textarea } from "$lib/components/ui/textarea";
+  import { draftThematicHint } from "#lib/api/vaults.ts";
+  import { Alert, AlertDescription } from "#lib/components/ui/alert/index.ts";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { Input } from "#lib/components/ui/input/index.ts";
+  import { Label } from "#lib/components/ui/label/index.ts";
+  import { Textarea } from "#lib/components/ui/textarea/index.ts";
 
   let {
     mode,

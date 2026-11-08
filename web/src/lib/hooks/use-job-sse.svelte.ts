@@ -2,8 +2,8 @@ import type { JobProgressSnapshot, Uuid } from "@great-minds/domain";
 import { useQueryClient } from "@tanstack/svelte-query";
 
 import { errorMessage } from "@great-minds/client";
-import { followJob } from "$lib/api/jobs";
-import { activeVault } from "$lib/hooks/use-vault.svelte";
+import { followJob } from "#lib/api/jobs.ts";
+import { activeVault } from "#lib/hooks/use-vault.svelte.ts";
 
 export function useJobSSE(
   jobId: () => Uuid | null,
@@ -48,7 +48,9 @@ export function useJobSSE(
       }
       if (controller.signal.aborted) return;
       if (ended && !terminal) streamError = "Progress stream ended before the run finished";
-      void queryClient.invalidateQueries({ queryKey: ["vault", vaultKey, "active-job"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["vault", vaultKey, "active-job"],
+      });
     }
 
     void follow();

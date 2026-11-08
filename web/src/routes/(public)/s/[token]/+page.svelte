@@ -2,10 +2,10 @@
   import { page } from "$app/state";
   import { createQuery } from "@tanstack/svelte-query";
 
-  import { resolveShare } from "$lib/api/shares";
-  import AnswerBlock from "$lib/components/answer-block.svelte";
+  import { resolveShare } from "#lib/api/shares.ts";
+  import AnswerBlock from "#lib/components/answer-block.svelte";
   import { newUuid } from "@great-minds/client";
-  import type { ThreadLike } from "$lib/types";
+  import type { ThreadLike } from "#lib/types.ts";
 
   const token = $derived(page.params.token);
   const shareExchangeId = newUuid();

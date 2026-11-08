@@ -1,9 +1,9 @@
 import type { SessionActivity, SessionId, Uuid } from "@great-minds/domain";
 
-import { streamReply } from "$lib/api/replies";
-import { applyReplySnapshot, replyActivity } from "$lib/reply-turn";
-import type { Exchange } from "$lib/types";
-import { isAbortError } from "$lib/utils";
+import { streamReply } from "#lib/api/replies.ts";
+import { applyReplySnapshot, replyActivity } from "#lib/reply-turn.ts";
+import type { Exchange } from "#lib/types.ts";
+import { isAbortError } from "#lib/utils.ts";
 
 export const LIVE_UPDATES_UNAVAILABLE =
   "Live updates are unavailable. Reconnect to check this response.";

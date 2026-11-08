@@ -1,4 +1,4 @@
-import type { HastNode } from "$lib/markdown-plugins";
+import type { HastNode } from "#lib/markdown-plugins.ts";
 import { citationPath, type Citation } from "@great-minds/domain";
 
 export type { Citation };

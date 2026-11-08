@@ -2,18 +2,21 @@
   import type { Uuid } from "@great-minds/domain";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
 
-  import LibraryContents from "$lib/components/library-contents.svelte";
-  import ReadingRoomShelf from "$lib/components/reading-room-shelf.svelte";
-  import VaultLibraryShelf from "$lib/components/vault-library-shelf.svelte";
-  import type { ReferenceOverview } from "$lib/api/references";
+  import LibraryContents from "#lib/components/library-contents.svelte";
+  import ReadingRoomShelf from "#lib/components/reading-room-shelf.svelte";
+  import VaultLibraryShelf from "#lib/components/vault-library-shelf.svelte";
+  import type { ReferenceOverview } from "#lib/api/references.ts";
   import { errorMessage } from "@great-minds/client";
   import {
     LIBRARY_READING_ROOM,
     LIBRARY_SOURCES,
     type LibraryView,
-  } from "$lib/hooks/use-library.svelte";
-  import type { ReadingRoomView } from "$lib/hooks/use-references.svelte";
-  import type { SourceDocumentSummary, WikiArticleOverview } from "$lib/types";
+  } from "#lib/hooks/use-library.svelte.ts";
+  import type { ReadingRoomView } from "#lib/hooks/use-references.svelte.ts";
+  import type {
+    SourceDocumentSummary,
+    WikiArticleOverview,
+  } from "#lib/types.ts";
 
   type LibraryActions = {
     chooseType: (value: string) => void;

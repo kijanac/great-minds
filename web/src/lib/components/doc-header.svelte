@@ -5,16 +5,20 @@
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import Pencil from "@lucide/svelte/icons/pencil";
 
-  import { articleMeta, type Article, type DocumentScope } from "$lib/api/doc";
+  import {
+    articleMeta,
+    type Article,
+    type DocumentScope,
+  } from "#lib/api/doc.ts";
   import { errorMessage } from "@great-minds/client";
-  import ReferencePromoteAction from "$lib/components/reference-promote-action.svelte";
-  import ShareDialog from "$lib/components/share-dialog.svelte";
-  import * as Collapsible from "$lib/components/ui/collapsible";
-  import { CHIP_BASE, CHIP_INACTIVE } from "$lib/chip";
-  import { useReferenceRename } from "$lib/hooks/use-references.svelte";
-  import type { ThreadLike } from "$lib/types";
-  import { cn, formatShortDate } from "$lib/utils";
-  import type { ReferencePromotionAction as PromotionAction } from "$lib/types";
+  import ReferencePromoteAction from "#lib/components/reference-promote-action.svelte";
+  import ShareDialog from "#lib/components/share-dialog.svelte";
+  import * as Collapsible from "#lib/components/ui/collapsible/index.ts";
+  import { CHIP_BASE, CHIP_INACTIVE } from "#lib/chip.ts";
+  import { useReferenceRename } from "#lib/hooks/use-references.svelte.ts";
+  import type { ThreadLike } from "#lib/types.ts";
+  import { cn, formatShortDate } from "#lib/utils.ts";
+  import type { ReferencePromotionAction as PromotionAction } from "#lib/types.ts";
   import { tick } from "svelte";
 
   let {

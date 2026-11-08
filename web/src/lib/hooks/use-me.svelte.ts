@@ -1,7 +1,7 @@
 import { createQuery } from "@tanstack/svelte-query";
 
-import { fetchMe } from "$lib/api/auth";
-import { auth } from "$lib/auth.svelte";
+import { fetchMe } from "#lib/api/auth.ts";
+import { auth } from "#lib/auth.svelte.ts";
 
 export const unsponsoredNotice =
   "This account can read but can't ask or add documents. Ask whoever runs this Great Minds server to sponsor it.";

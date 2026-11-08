@@ -1,11 +1,11 @@
 import type { PublicationPaper, SessionId } from "@great-minds/domain";
 import { Data, Effect, Fiber } from "effect";
 
-import { fork } from "$lib/api/app";
+import { fork } from "#lib/api/app.ts";
 import { errorMessage } from "@great-minds/client";
-import { prepareSessionExport, readSessionMarkdown } from "$lib/api/sessions";
-import { auth } from "$lib/auth.svelte";
-import { activeVault } from "$lib/hooks/use-vault.svelte";
+import { prepareSessionExport, readSessionMarkdown } from "#lib/api/sessions.ts";
+import { auth } from "#lib/auth.svelte.ts";
+import { activeVault } from "#lib/hooks/use-vault.svelte.ts";
 
 export type PreparedExport = {
   readonly filename: string;
@@ -26,7 +26,10 @@ class DownloadUnavailable extends Data.TaggedError("DownloadUnavailable") {
 
 const objectUrl = (blob: Blob) =>
   Effect.acquireRelease(
-    Effect.try({ try: () => URL.createObjectURL(blob), catch: () => new DownloadUnavailable() }),
+    Effect.try({
+      try: () => URL.createObjectURL(blob),
+      catch: () => new DownloadUnavailable(),
+    }),
     (url) => Effect.sync(() => URL.revokeObjectURL(url)),
   );
 
@@ -74,7 +77,10 @@ export function useSessionExport(sessionId: () => SessionId | null) {
           ? yield* prepareSessionExport(vaultId, id, selectedPaper).pipe(
               Effect.map((value) => ({ ...value, format: "pdf" as const })),
             )
-          : { format: "markdown" as const, markdown: yield* readSessionMarkdown(vaultId, id) };
+          : {
+              format: "markdown" as const,
+              markdown: yield* readSessionMarkdown(vaultId, id),
+            };
       if (revision !== current) return;
       const markdownUrl = yield* objectUrl(
         new Blob([result.markdown], { type: "text/markdown;charset=utf-8" }),

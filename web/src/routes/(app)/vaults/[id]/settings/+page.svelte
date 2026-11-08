@@ -17,32 +17,32 @@
     transferOwnership,
     updateMemberRole,
     updateVaultConfig,
-  } from "$lib/api/vaults";
+  } from "#lib/api/vaults.ts";
   import {
     switchVault,
     useRenameVault,
     useVaultDetail,
-  } from "$lib/hooks/use-vault.svelte";
-  import VaultTitle from "$lib/components/vault-title.svelte";
-  import VaultOwnershipTransfer from "$lib/components/vault-ownership-transfer.svelte";
-  import MemberRow from "$lib/components/member-row.svelte";
-  import PageHeader from "$lib/components/page-header.svelte";
-  import ProposalsSection from "$lib/components/proposals-section.svelte";
-  import { Alert, AlertDescription } from "$lib/components/ui/alert";
-  import * as AlertDialog from "$lib/components/ui/alert-dialog";
-  import { Button } from "$lib/components/ui/button";
-  import { ErrorState } from "$lib/components/ui/feedback";
-  import { Input } from "$lib/components/ui/input";
-  import * as Select from "$lib/components/ui/select";
-  import { Skeleton } from "$lib/components/ui/skeleton";
+  } from "#lib/hooks/use-vault.svelte.ts";
+  import VaultTitle from "#lib/components/vault-title.svelte";
+  import VaultOwnershipTransfer from "#lib/components/vault-ownership-transfer.svelte";
+  import MemberRow from "#lib/components/member-row.svelte";
+  import PageHeader from "#lib/components/page-header.svelte";
+  import ProposalsSection from "#lib/components/proposals-section.svelte";
+  import { Alert, AlertDescription } from "#lib/components/ui/alert/index.ts";
+  import * as AlertDialog from "#lib/components/ui/alert-dialog/index.ts";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { ErrorState } from "#lib/components/ui/feedback/index.ts";
+  import { Input } from "#lib/components/ui/input/index.ts";
+  import * as Select from "#lib/components/ui/select/index.ts";
+  import { Skeleton } from "#lib/components/ui/skeleton/index.ts";
   import VaultConfigForm, {
     type VaultConfigFormSubmit,
-  } from "$lib/components/vault-config-form.svelte";
+  } from "#lib/components/vault-config-form.svelte";
   import {
     POPOVER_SURFACE_CLASS,
     SELECT_CONTENT_CLASS,
     SELECT_ITEM_CLASS,
-  } from "$lib/control-styles";
+  } from "#lib/control-styles.ts";
 
   const decodeVaultId = Schema.decodeOption(Uuid);
   const vaultId = $derived(
@@ -153,7 +153,7 @@
       await deleteVault(vaultId!);
       deleteOpen = false;
       confirmation = "";
-      await goto("/", { replaceState: true });
+      await goto("/", { replace: true });
     } catch (error) {
       deleteError = errorMessage(error, "Failed to delete vault.");
     } finally {

@@ -1,8 +1,8 @@
 <script lang="ts">
-  import * as Popover from "$lib/components/ui/popover";
-  import type { FootnoteDefinitions } from "$lib/footnote-notes";
-  import type { HastNode } from "$lib/markdown-plugins";
-  import { cn } from "$lib/utils";
+  import * as Popover from "#lib/components/ui/popover/index.ts";
+  import type { FootnoteDefinitions } from "#lib/footnote-notes.ts";
+  import type { HastNode } from "#lib/markdown-plugins.ts";
+  import { cn } from "#lib/utils.ts";
   import HastNodeView from "./hast-node.svelte";
 
   type Variant = "panel" | "article" | "answer" | "btw";

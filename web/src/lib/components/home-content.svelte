@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { goto, replaceState } from "$app/navigation";
+  import { goto } from "$app/navigation";
   import type { SessionId, SessionResponse } from "@great-minds/domain";
   import Download from "@lucide/svelte/icons/download";
   import Home from "@lucide/svelte/icons/home";
@@ -8,30 +8,30 @@
   import { cubicOut } from "svelte/easing";
   import { crossfade, fade } from "svelte/transition";
 
-  import { auth } from "$lib/auth.svelte";
-  import ArticlePanel from "$lib/components/article-panel.svelte";
-  import HealthIndicator from "$lib/components/health-indicator.svelte";
-  import IngestionFlow from "$lib/components/ingestion-flow.svelte";
-  import PanelHost from "$lib/components/panel-host.svelte";
-  import VaultSwitcher from "$lib/components/vault-switcher.svelte";
-  import SearchBar from "$lib/components/search-bar.svelte";
-  import SessionThread from "$lib/components/session-thread.svelte";
-  import SessionExport from "$lib/components/session-export.svelte";
-  import ShareDialog from "$lib/components/share-dialog.svelte";
-  import { Button } from "$lib/components/ui/button";
-  import { useActiveJob } from "$lib/hooks/use-active-job.svelte";
-  import { unsponsoredNotice, useMe } from "$lib/hooks/use-me.svelte";
-  import { useHealthReport } from "$lib/hooks/use-health-report.svelte";
-  import { usePanelCard } from "$lib/hooks/use-panel-card.svelte";
-  import { usePanelContent } from "$lib/hooks/use-panel-content.svelte";
-  import { useSessions } from "$lib/hooks/use-sessions.svelte";
+  import { auth } from "#lib/auth.svelte.ts";
+  import ArticlePanel from "#lib/components/article-panel.svelte";
+  import HealthIndicator from "#lib/components/health-indicator.svelte";
+  import IngestionFlow from "#lib/components/ingestion-flow.svelte";
+  import PanelHost from "#lib/components/panel-host.svelte";
+  import VaultSwitcher from "#lib/components/vault-switcher.svelte";
+  import SearchBar from "#lib/components/search-bar.svelte";
+  import SessionThread from "#lib/components/session-thread.svelte";
+  import SessionExport from "#lib/components/session-export.svelte";
+  import ShareDialog from "#lib/components/share-dialog.svelte";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { useActiveJob } from "#lib/hooks/use-active-job.svelte.ts";
+  import { unsponsoredNotice, useMe } from "#lib/hooks/use-me.svelte.ts";
+  import { useHealthReport } from "#lib/hooks/use-health-report.svelte.ts";
+  import { usePanelCard } from "#lib/hooks/use-panel-card.svelte.ts";
+  import { usePanelContent } from "#lib/hooks/use-panel-content.svelte.ts";
+  import { useSessions } from "#lib/hooks/use-sessions.svelte.ts";
   import {
     activeVault,
     useVaultDetail,
     useVaults,
-  } from "$lib/hooks/use-vault.svelte";
-  import { useSessionExport } from "$lib/hooks/use-session-export.svelte";
-  import { Session } from "$lib/session.svelte";
+  } from "#lib/hooks/use-vault.svelte.ts";
+  import { useSessionExport } from "#lib/hooks/use-session-export.svelte.ts";
+  import { Session } from "#lib/session.svelte.ts";
 
   let {
     saved,
@@ -89,7 +89,7 @@
   const panelQuery = usePanelContent(() => card.selectedCard);
 
   function handleSessionCreated(id: SessionId) {
-    replaceState(`/sessions/${id}`, {});
+    goto(`/sessions/${id}`, { shallow: true, replace: true });
     void sessions.refetch();
   }
 

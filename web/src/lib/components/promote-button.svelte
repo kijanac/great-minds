@@ -2,8 +2,8 @@
   import type { SessionId, Uuid } from "@great-minds/domain";
   import BookmarkPlus from "@lucide/svelte/icons/bookmark-plus";
 
-  import { Button } from "$lib/components/ui/button";
-  import { useExchangePromotion } from "$lib/hooks/use-sessions.svelte";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { useExchangePromotion } from "#lib/hooks/use-sessions.svelte.ts";
 
   let {
     sessionId,

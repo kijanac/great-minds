@@ -10,7 +10,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import type { Snippet } from "svelte";
 
-  import { fetchWikiArticles } from "$lib/api/wiki";
+  import { fetchWikiArticles } from "#lib/api/wiki.ts";
 
   let {
     outcome,

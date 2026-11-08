@@ -6,9 +6,12 @@
   import X from "@lucide/svelte/icons/x";
   import { Schema } from "effect";
 
-  import { Button } from "$lib/components/ui/button";
-  import * as Select from "$lib/components/ui/select";
-  import { SELECT_CONTENT_CLASS, SELECT_ITEM_CLASS } from "$lib/control-styles";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import * as Select from "#lib/components/ui/select/index.ts";
+  import {
+    SELECT_CONTENT_CLASS,
+    SELECT_ITEM_CLASS,
+  } from "#lib/control-styles.ts";
 
   let {
     member,

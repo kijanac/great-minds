@@ -1,6 +1,6 @@
 <script lang="ts" module>
-  import { cn } from "$lib/utils.js";
-  import type { WithElementRef } from "$lib/components/ui/types.js";
+  import { cn } from "#lib/utils.js";
+  import type { WithElementRef } from "#lib/components/ui/types.js";
   import type {
     HTMLAnchorAttributes,
     HTMLButtonAttributes,

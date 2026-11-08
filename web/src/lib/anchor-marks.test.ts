@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { render } from "svelte/server";
 
-import { uniqueQuoteSpan } from "$lib/anchor";
-import { wrapAnchors } from "$lib/anchor-marks";
-import SessionPassage from "$lib/components/session-passage.svelte";
-import { parseMarkdown } from "$lib/markdown";
-import type { HastNode } from "$lib/markdown-plugins";
+import { uniqueQuoteSpan } from "#lib/anchor.ts";
+import { wrapAnchors } from "#lib/anchor-marks.ts";
+import SessionPassage from "#lib/components/session-passage.svelte";
+import { parseMarkdown } from "#lib/markdown.ts";
+import type { HastNode } from "#lib/markdown-plugins.ts";
 
 describe("saved passage anchors", () => {
   it("preserves a paragraph association without highlighting either repeated phrase", () => {
@@ -13,7 +13,12 @@ describe("saved passage anchors", () => {
       { threadId: "recovered", blockOffset: 0, quote: "The claim" },
     ]);
     expect(result.misses).toEqual([
-      { threadId: "recovered", blockOffset: 0, quote: "The claim", reason: "quote-unresolved" },
+      {
+        threadId: "recovered",
+        blockOffset: 0,
+        quote: "The claim",
+        reason: "quote-unresolved",
+      },
     ]);
     expect(JSON.stringify(result.tree)).not.toContain('"tagName":"mark"');
   });
@@ -29,12 +34,23 @@ describe("saved passage anchors", () => {
 
   it("does not treat overlapping occurrences as a unique selection", () => {
     expect(uniqueQuoteSpan("banana", "ana")).toBeNull();
-    expect(uniqueQuoteSpan("A clear claim.", "clear claim")).toEqual({ start: 2, end: 13 });
+    expect(uniqueQuoteSpan("A clear claim.", "clear claim")).toEqual({
+      start: 2,
+      end: 13,
+    });
   });
 
   it.each([
-    { name: "unique quote", quote: "clear claim", context: "A clear claim needs evidence." },
-    { name: "list selection", quote: "First item\nSecond item", context: "First itemSecond item" },
+    {
+      name: "unique quote",
+      quote: "clear claim",
+      context: "A clear claim needs evidence.",
+    },
+    {
+      name: "list selection",
+      quote: "First item\nSecond item",
+      context: "First itemSecond item",
+    },
     {
       name: "repeated quote",
       quote: "The claim",
@@ -42,7 +58,9 @@ describe("saved passage anchors", () => {
     },
     { name: "quote without context", quote: "clear claim", context: null },
   ])("shows the saved selection with optional surrounding context: $name", ({ quote, context }) => {
-    const { body } = render(SessionPassage, { props: { quote, context, href: null } });
+    const { body } = render(SessionPassage, {
+      props: { quote, context, href: null },
+    });
     expect(body.match(/<mark\b[^>]*>([\s\S]*?)<\/mark>/)?.[1]).toBe(quote);
     expect(body.split(quote)).toHaveLength(2);
     if (context) {
@@ -66,7 +84,10 @@ describe("saved passage anchors", () => {
     visit(tree);
     const triggers = nodes.filter((node) => node.properties?.role === "button");
     expect(triggers).toHaveLength(1);
-    expect(triggers[0]?.properties).toMatchObject({ tabIndex: 0, ariaLabel: `BTW: ${quote}` });
+    expect(triggers[0]?.properties).toMatchObject({
+      tabIndex: 0,
+      ariaLabel: `BTW: ${quote}`,
+    });
     const link = nodes.find((node) => node.tagName === "a");
     expect(link?.properties?.href).toBe("wiki/evidence.md");
     expect(JSON.stringify(link)).not.toContain('"role":"button"');

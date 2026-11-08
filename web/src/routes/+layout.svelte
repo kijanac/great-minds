@@ -1,17 +1,17 @@
 <script lang="ts">
-  import { dev } from "$app/environment";
+  import { dev } from "$app/env";
   import { page } from "$app/state";
   import { QueryClientProvider } from "@tanstack/svelte-query";
   import { SvelteQueryDevtools } from "@tanstack/svelte-query-devtools";
   import { onMount } from "svelte";
 
   import "../index.css";
-  import { auth } from "$lib/auth.svelte";
-  import AppShell from "$lib/components/app-shell.svelte";
-  import CornerMenu from "$lib/components/corner-menu.svelte";
-  import { activeVault } from "$lib/hooks/use-vault.svelte";
-  import { queryClient } from "$lib/query-client";
-  import { theme } from "$lib/theme.svelte";
+  import { auth } from "#lib/auth.svelte.ts";
+  import AppShell from "#lib/components/app-shell.svelte";
+  import CornerMenu from "#lib/components/corner-menu.svelte";
+  import { activeVault } from "#lib/hooks/use-vault.svelte.ts";
+  import { queryClient } from "#lib/query-client.ts";
+  import { theme } from "#lib/theme.svelte.ts";
 
   let { children } = $props();
 

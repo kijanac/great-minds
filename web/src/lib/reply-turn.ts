@@ -1,5 +1,5 @@
 import { isReplyPending, type ReplySnapshot, type SessionActivity } from "@great-minds/domain";
-import type { Exchange } from "$lib/types";
+import type { Exchange } from "#lib/types.ts";
 
 export const applyReplySnapshot = (
   exchange: Exchange,

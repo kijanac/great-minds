@@ -3,7 +3,7 @@ import { expect, it, vi } from "vitest";
 
 import { citationsOf } from "@great-minds/domain";
 
-import type { Citation } from "$lib/citations";
+import type { Citation } from "#lib/citations.ts";
 import AnswerBlock from "./answer-block.svelte";
 
 it("on a phone, a citation number opens a source card and each answer lists its sources", () => {

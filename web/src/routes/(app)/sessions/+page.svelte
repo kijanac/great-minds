@@ -2,14 +2,14 @@
   import { goto } from "$app/navigation";
   import Search from "@lucide/svelte/icons/search";
 
-  import PageHeader from "$lib/components/page-header.svelte";
-  import SessionRow from "$lib/components/session-row.svelte";
-  import { Button } from "$lib/components/ui/button";
-  import { ErrorState } from "$lib/components/ui/feedback";
-  import { Input } from "$lib/components/ui/input";
-  import { Separator } from "$lib/components/ui/separator";
-  import { Skeleton } from "$lib/components/ui/skeleton";
-  import { useInfiniteSessions } from "$lib/hooks/use-sessions.svelte";
+  import PageHeader from "#lib/components/page-header.svelte";
+  import SessionRow from "#lib/components/session-row.svelte";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { ErrorState } from "#lib/components/ui/feedback/index.ts";
+  import { Input } from "#lib/components/ui/input/index.ts";
+  import { Separator } from "#lib/components/ui/separator/index.ts";
+  import { Skeleton } from "#lib/components/ui/skeleton/index.ts";
+  import { useInfiniteSessions } from "#lib/hooks/use-sessions.svelte.ts";
 
   const query = useInfiniteSessions();
   let filter = $state("");

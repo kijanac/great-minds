@@ -2,7 +2,7 @@ import { SessionId, Uuid } from "@great-minds/domain";
 import { flushSync, mount, unmount } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { auth } from "$lib/auth.svelte";
+import { auth } from "#lib/auth.svelte.ts";
 import Fixture from "./publication-fixture.svelte";
 import { activeVault } from "./use-vault.svelte";
 
@@ -47,7 +47,10 @@ const click = (label: string) => {
   flushSync();
 };
 const start = (linkedVault: string | null = null) => {
-  const component = mount(Fixture, { target, props: { sessionId: root, linkedVault } });
+  const component = mount(Fixture, {
+    target,
+    props: { sessionId: root, linkedVault },
+  });
   dispose = () => unmount(component);
   flushSync();
   return component;
@@ -110,7 +113,9 @@ beforeEach(() => {
         : pdf();
     }
     if (url.pathname.endsWith("/markdown"))
-      return new Response(literal, { headers: { "content-type": "text/markdown" } });
+      return new Response(literal, {
+        headers: { "content-type": "text/markdown" },
+      });
     throw new Error(`Unexpected request: ${url.pathname}`);
   };
   vi.stubGlobal("fetch", fetchImpl);

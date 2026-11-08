@@ -2,27 +2,30 @@
   import type { Uuid } from "@great-minds/domain";
   import { tick, type Snippet } from "svelte";
 
-  import { findQuoteRange } from "$lib/anchor";
+  import { findQuoteRange } from "#lib/anchor.ts";
   import {
     wrapAnchors,
     type AnchorMark,
     type AnchorMiss,
-  } from "$lib/anchor-marks";
-  import { assignBlockRefIds, stripBlockRefMarkers } from "$lib/block-refs";
-  import AnswerCitations from "$lib/components/answer-citations.svelte";
-  import BtwThread from "$lib/components/btw-thread.svelte";
-  import { numberCitations, type Citation } from "$lib/citations";
+  } from "#lib/anchor-marks.ts";
+  import { assignBlockRefIds, stripBlockRefMarkers } from "#lib/block-refs.ts";
+  import AnswerCitations from "#lib/components/answer-citations.svelte";
+  import BtwThread from "#lib/components/btw-thread.svelte";
+  import { numberCitations, type Citation } from "#lib/citations.ts";
   import FootnoteNotes, {
     type MarginDot,
-  } from "$lib/components/footnote-notes.svelte";
-  import HastNodeView from "$lib/components/hast-node.svelte";
-  import { clearAnchorHighlights, setAnchorHighlights } from "$lib/highlight";
-  import { parseMarkdown } from "$lib/markdown";
-  import type { HastNode } from "$lib/markdown-plugins";
-  import { passageMark } from "$lib/passage-navigation";
-  import { selectionPassage } from "$lib/selection-passage";
-  import { splitStreamingMarkdown } from "$lib/streaming-markdown";
-  import type { SelectionInfo, ThreadLike } from "$lib/types";
+  } from "#lib/components/footnote-notes.svelte";
+  import HastNodeView from "#lib/components/hast-node.svelte";
+  import {
+    clearAnchorHighlights,
+    setAnchorHighlights,
+  } from "#lib/highlight.ts";
+  import { parseMarkdown } from "#lib/markdown.ts";
+  import type { HastNode } from "#lib/markdown-plugins.ts";
+  import { passageMark } from "#lib/passage-navigation.ts";
+  import { selectionPassage } from "#lib/selection-passage.ts";
+  import { splitStreamingMarkdown } from "#lib/streaming-markdown.ts";
+  import type { SelectionInfo, ThreadLike } from "#lib/types.ts";
 
   let {
     text,

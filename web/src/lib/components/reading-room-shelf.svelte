@@ -1,9 +1,9 @@
 <script lang="ts">
-  import OpenReferenceForm from "$lib/components/open-reference-form.svelte";
-  import SourceRow from "$lib/components/source-row.svelte";
-  import { Button } from "$lib/components/ui/button";
-  import { Skeleton } from "$lib/components/ui/skeleton";
-  import type { ReferenceOverview } from "$lib/api/references";
+  import OpenReferenceForm from "#lib/components/open-reference-form.svelte";
+  import SourceRow from "#lib/components/source-row.svelte";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { Skeleton } from "#lib/components/ui/skeleton/index.ts";
+  import type { ReferenceOverview } from "#lib/api/references.ts";
 
   let {
     items,

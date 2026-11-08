@@ -1,5 +1,5 @@
 import GithubSlugger from "github-slugger";
-import type { HastNode } from "$lib/markdown-plugins";
+import type { HastNode } from "#lib/markdown-plugins.ts";
 
 const HEADINGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
 const ANCHORED_TAGS = new Set([...HEADINGS, "p", "ul", "ol", "blockquote"]);
@@ -28,7 +28,10 @@ export function assignBlockRefIds(root: HastNode, originalSource: string): void 
   const headings = new GithubSlugger();
   const walk = (node: HastNode): void => {
     if (node.type === "element" && node.tagName && HEADINGS.has(node.tagName)) {
-      node.properties = { ...node.properties, id: headings.slug(textContent(node)) };
+      node.properties = {
+        ...node.properties,
+        id: headings.slug(textContent(node)),
+      };
     }
     if (node.type === "element" && node.tagName && ANCHORED_TAGS.has(node.tagName)) {
       const start = node.position?.start?.offset;
@@ -45,7 +48,12 @@ export function assignBlockRefIds(root: HastNode, originalSource: string): void 
           const id = `^p${marker.chunk}`;
           if (node.properties?.id) {
             node.children = [
-              { type: "element", tagName: "span", properties: { id }, children: [] },
+              {
+                type: "element",
+                tagName: "span",
+                properties: { id },
+                children: [],
+              },
               ...(node.children ?? []),
             ];
           } else {

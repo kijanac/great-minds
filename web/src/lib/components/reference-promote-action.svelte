@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { Button } from "$lib/components/ui/button";
-  import { useMe } from "$lib/hooks/use-me.svelte";
-  import type { ReferencePromotionAction } from "$lib/types";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { useMe } from "#lib/hooks/use-me.svelte.ts";
+  import type { ReferencePromotionAction } from "#lib/types.ts";
 
   let { action }: { action: ReferencePromotionAction } = $props();
 

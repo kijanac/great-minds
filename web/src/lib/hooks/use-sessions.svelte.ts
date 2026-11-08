@@ -8,9 +8,9 @@ import {
 
 import { nextPageOffset } from "@great-minds/client";
 import { errorMessage } from "@great-minds/client";
-import { listSessions, promoteExchange } from "$lib/api/sessions";
-import { invalidateSourceLists } from "$lib/hooks/use-library.svelte";
-import { activeVault } from "$lib/hooks/use-vault.svelte";
+import { listSessions, promoteExchange } from "#lib/api/sessions.ts";
+import { invalidateSourceLists } from "#lib/hooks/use-library.svelte.ts";
+import { activeVault } from "#lib/hooks/use-vault.svelte.ts";
 
 export function useSessions() {
   return createQuery(() => ({
@@ -27,7 +27,10 @@ export function useExchangePromotion() {
       promoteExchange(sessionId, exchangeId),
     onSuccess: async (result) => {
       if (result.mode === "ingested") await invalidateSourceLists(queryClient, activeVault.id);
-      else await queryClient.invalidateQueries({ queryKey: ["proposals", activeVault.id] });
+      else
+        await queryClient.invalidateQueries({
+          queryKey: ["proposals", activeVault.id],
+        });
     },
   }));
 

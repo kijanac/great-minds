@@ -11,12 +11,12 @@
     createFileIngestBatch,
     hashFile,
     type HashedFile,
-  } from "$lib/api/ingest";
-  import { run } from "$lib/api/app";
-  import { Button } from "$lib/components/ui/button";
-  import { Input } from "$lib/components/ui/input";
+  } from "#lib/api/ingest.ts";
+  import { run } from "#lib/api/app.ts";
+  import { Button } from "#lib/components/ui/button/index.ts";
+  import { Input } from "#lib/components/ui/input/index.ts";
   import { newUuid } from "@great-minds/client";
-  import type { DroppedFile } from "$lib/types";
+  import type { DroppedFile } from "#lib/types.ts";
 
   const HASH_CONCURRENCY = 4;
 
@@ -25,7 +25,6 @@
     file: File;
     path: string;
   }
-
   interface CheckingFile extends FileBase {
     status: "checking";
     selected: true;
@@ -41,7 +40,6 @@
     status: "unsupported";
     selected: false;
   }
-
   interface FailedFile extends FileBase {
     status: "error";
     selected: false;
@@ -89,7 +87,9 @@
   let componentActive = true;
   let navigationEpoch = 0;
 
-  beforeNavigate(() => {
+  beforeNavigate(({ shallow, type }) => {
+    if (shallow && type === "goto") return;
+
     navigationEpoch += 1;
   });
 
