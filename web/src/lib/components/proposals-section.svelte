@@ -2,11 +2,7 @@
   import type { MemberRole, ProposalOverview, Uuid } from "@great-minds/domain";
   import Check from "@lucide/svelte/icons/check";
   import X from "@lucide/svelte/icons/x";
-  import {
-    createInfiniteQuery,
-    createMutation,
-    useQueryClient,
-  } from "@tanstack/svelte-query";
+  import { createInfiniteQuery, createMutation, useQueryClient } from "@tanstack/svelte-query";
 
   import { errorMessage } from "@great-minds/client";
   import {
@@ -95,9 +91,7 @@
     },
   }));
 
-  const items = $derived(
-    proposals.data?.pages.flatMap((page) => page.items) ?? [],
-  );
+  const items = $derived(proposals.data?.pages.flatMap((page) => page.items) ?? []);
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -121,9 +115,7 @@
 
   function proposalState(proposal: ProposalOverview): string {
     if (proposal.status === "pending") {
-      return proposal.source_deleted
-        ? "pending · source deleted, can only be rejected"
-        : "pending";
+      return proposal.source_deleted ? "pending · source deleted, can only be rejected" : "pending";
     }
     if (proposal.status === "rejected") return "rejected";
     switch (proposal.application) {
@@ -146,30 +138,18 @@
     proposals
   </h2>
 
-  <ToggleGroup.Root
-    type="single"
-    bind:value={status}
-    variant="outline"
-    size="sm"
-    class="mb-4"
-  >
+  <ToggleGroup.Root type="single" bind:value={status} variant="outline" size="sm" class="mb-4">
     {#each ["pending", "approved", "rejected", "all"] as value (value)}
-      <ToggleGroup.Item {value} class={FILTER_CHIP_CLASS}
-        >{value}</ToggleGroup.Item
-      >
+      <ToggleGroup.Item {value} class={FILTER_CHIP_CLASS}>{value}</ToggleGroup.Item>
     {/each}
   </ToggleGroup.Root>
 
   {#if proposals.isLoading && items.length === 0}
-    <p
-      class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-    >
+    <p class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
       loading…
     </p>
   {:else if items.length === 0}
-    <p
-      class="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-    >
+    <p class="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
       no proposals
     </p>
   {:else}
@@ -187,15 +167,11 @@
             <span
               class="w-full truncate text-left font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost"
             >
-              {proposalTypeLabel(proposal.content_type)} · {proposalState(
-                proposal,
-              )}
+              {proposalTypeLabel(proposal.content_type)} · {proposalState(proposal)}
             </span>
           </div>
           <div class="ml-4 flex shrink-0 items-center gap-3">
-            <span
-              class="font-mono text-[length:var(--text-chrome)] text-warm-ghost"
-            >
+            <span class="font-mono text-[length:var(--text-chrome)] text-warm-ghost">
               {formatShortDate(proposal.created_at)}
             </span>
             {#if canReview && proposal.status === "pending"}
@@ -274,11 +250,7 @@
           disabled={create.isPending}
           class="h-8 flex-1 rounded-sm border-ink-border bg-transparent px-3 font-mono text-[length:var(--text-small)] text-warm caret-gold placeholder:text-warm-ghost focus-visible:border-gold-dim focus-visible:ring-0 dark:bg-transparent"
         />
-        <Select.Root
-          type="single"
-          bind:value={contentType}
-          disabled={create.isPending}
-        >
+        <Select.Root type="single" bind:value={contentType} disabled={create.isPending}>
           <Select.Trigger size="sm" class={`h-8 ${SELECT_TRIGGER_CLASS}`}>
             {contentType}
           </Select.Trigger>

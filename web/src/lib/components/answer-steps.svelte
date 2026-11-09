@@ -18,16 +18,13 @@
   let open = $state(false);
   const steps = $derived(blocks.flatMap((block) => block.sources));
   const reads = (type: SourceRef["type"]) =>
-    new Set(
-      steps.filter((step) => step.type === type).map((step) => step.label),
-    ).size;
+    new Set(steps.filter((step) => step.type === type).map((step) => step.label)).size;
   const articles = $derived(reads("article"));
   const sources = $derived(reads("raw"));
   const current = $derived(steps.at(-1));
   const readSoFar = $derived(articles + sources);
 
-  const filterLabel = (label: string) =>
-    /^contains: (.*?)(, sort:.*)?$/.exec(label)?.[1] ?? label;
+  const filterLabel = (label: string) => /^contains: (.*?)(, sort:.*)?$/.exec(label)?.[1] ?? label;
 
   const verb = (step: SourceRef) =>
     step.type === "search"
@@ -92,9 +89,7 @@
     {/if}
   </div>
 {:else if steps.length > 0}
-  <div
-    class="mb-7 font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost"
-  >
+  <div class="mb-7 font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost">
     <button
       type="button"
       onclick={() => (open = !open)}

@@ -5,11 +5,7 @@
   import AnswerBlock from "#lib/components/answer-block.svelte";
   import DocHeader from "#lib/components/doc-header.svelte";
   import { Button } from "#lib/components/ui/button/index.ts";
-  import type {
-    ReferencePromotionAction,
-    SelectionInfo,
-    ThreadLike,
-  } from "#lib/types.ts";
+  import type { ReferencePromotionAction, SelectionInfo, ThreadLike } from "#lib/types.ts";
 
   let {
     document,

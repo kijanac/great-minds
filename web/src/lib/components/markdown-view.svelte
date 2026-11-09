@@ -22,9 +22,7 @@
     panelDocked?: boolean;
   } = $props();
 
-  const displaySource = $derived(
-    stripBlockRefs ? stripBlockRefMarkers(source) : source,
-  );
+  const displaySource = $derived(stripBlockRefs ? stripBlockRefMarkers(source) : source);
   const tree = $derived.by(() => {
     const rendered = parseMarkdown(displaySource);
     if (stripBlockRefs && resolveBlockRefs) {

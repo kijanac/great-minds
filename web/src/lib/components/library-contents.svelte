@@ -39,10 +39,8 @@
 
   const me = useMe();
 
-  const jump = (id: string) =>
-    document.getElementById(id)?.scrollIntoView({ block: "start" });
-  const sortKey = (title: string) =>
-    title.replace(/^(the|a|an)\s+/i, "").toLocaleLowerCase();
+  const jump = (id: string) => document.getElementById(id)?.scrollIntoView({ block: "start" });
+  const sortKey = (title: string) => title.replace(/^(the|a|an)\s+/i, "").toLocaleLowerCase();
   const letterOf = (title: string) => {
     const first = sortKey(title).charAt(0).toLocaleUpperCase();
     return /\p{L}/u.test(first) ? first : "#";
@@ -71,9 +69,7 @@
   {/if}
 
   <div class="mb-2 flex items-center justify-between gap-4">
-    <h1 class="font-serif text-[length:var(--text-title)] text-warm">
-      Contents
-    </h1>
+    <h1 class="font-serif text-[length:var(--text-title)] text-warm">Contents</h1>
     {#if canUpdate}
       <Button
         variant="outline"
@@ -91,9 +87,7 @@
       {updateError}
     </p>
   {/if}
-  <p
-    class="mb-9 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-  >
+  <p class="mb-9 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
     {#if lastUpdated}Last updated {formatShortDate(lastUpdated)} ·
     {/if}<button
       type="button"
@@ -126,12 +120,8 @@
   </p>
 {:else if articles.length === 0}
   <div class="pt-6 text-center">
-    <p class="mb-2 font-serif text-[length:var(--text-body)] text-warm-dim">
-      No articles yet
-    </p>
-    <p
-      class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-    >
+    <p class="mb-2 font-serif text-[length:var(--text-body)] text-warm-dim">No articles yet</p>
+    <p class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
       add sources from home, then update to write the library
     </p>
   </div>

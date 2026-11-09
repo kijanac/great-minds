@@ -6,12 +6,7 @@
   import { cubicOut } from "svelte/easing";
   import { fade, slide } from "svelte/transition";
 
-  import {
-    checkDupes,
-    createFileIngestBatch,
-    hashFile,
-    type HashedFile,
-  } from "#lib/api/ingest.ts";
+  import { checkDupes, createFileIngestBatch, hashFile, type HashedFile } from "#lib/api/ingest.ts";
   import { run } from "#lib/api/app.ts";
   import { Button } from "#lib/components/ui/button/index.ts";
   import { Input } from "#lib/components/ui/input/index.ts";
@@ -46,8 +41,7 @@
     error: string;
   }
 
-  type IngestableFile =
-    CheckingFile | HashedIngestableFile | UnsupportedFile | FailedFile;
+  type IngestableFile = CheckingFile | HashedIngestableFile | UnsupportedFile | FailedFile;
 
   function isHashedFile(file: IngestableFile): file is HashedIngestableFile {
     return (
@@ -67,9 +61,7 @@
     locked?: boolean;
   } = $props();
 
-  function isSelectableFile(
-    file: IngestableFile,
-  ): file is HashedIngestableFile {
+  function isSelectableFile(file: IngestableFile): file is HashedIngestableFile {
     return file.status === "unique";
   }
 
@@ -100,32 +92,21 @@
 
   const hasFiles = $derived(files.length > 0);
   const selectedFiles = $derived(
-    files.filter(
-      (file): file is HashedIngestableFile =>
-        isSelectableFile(file) && file.selected,
-    ),
+    files.filter((file): file is HashedIngestableFile => isSelectableFile(file) && file.selected),
   );
   const selectedCount = $derived(selectedFiles.length);
-  const checkingCount = $derived(
-    files.filter((file) => file.status === "checking").length,
-  );
+  const checkingCount = $derived(files.filter((file) => file.status === "checking").length);
   const dupBatchCount = $derived(
     files.filter((file) => file.status === "duplicate-in-batch").length,
   );
   const dupVaultCount = $derived(
     files.filter((file) => file.status === "duplicate-in-vault").length,
   );
-  const unsupportedCount = $derived(
-    files.filter((file) => file.status === "unsupported").length,
-  );
-  const selectedSize = $derived(
-    selectedFiles.reduce((total, file) => total + file.file.size, 0),
-  );
+  const unsupportedCount = $derived(files.filter((file) => file.status === "unsupported").length);
+  const selectedSize = $derived(selectedFiles.reduce((total, file) => total + file.file.size, 0));
   const sharedFolder = $derived(commonFolder(files.map((file) => file.path)));
   const shownFiles = $derived(
-    showInVault
-      ? files
-      : files.filter((file) => file.status !== "duplicate-in-vault"),
+    showInVault ? files : files.filter((file) => file.status !== "duplicate-in-vault"),
   );
 
   function commonFolder(paths: readonly string[]): string {
@@ -133,10 +114,7 @@
     const [first, ...rest] = folders;
     if (first === undefined) return "";
     let depth = 0;
-    while (
-      depth < first.length &&
-      rest.every((folder) => folder[depth] === first[depth])
-    )
+    while (depth < first.length && rest.every((folder) => folder[depth] === first[depth]))
       depth += 1;
     return depth === 0 ? "" : `${first.slice(0, depth).join("/")}/`;
   }
@@ -151,9 +129,7 @@
     return uploadKind(file.name, file.type) !== null;
   }
 
-  async function filesFromDrop(
-    dataTransfer: DataTransfer,
-  ): Promise<DroppedFile[]> {
+  async function filesFromDrop(dataTransfer: DataTransfer): Promise<DroppedFile[]> {
     const entries = Array.from(dataTransfer.items)
       .map((item) => item.webkitGetAsEntry?.())
       .filter((entry): entry is FileSystemEntry => entry != null);
@@ -165,20 +141,12 @@
     }));
   }
 
-  function readFailure(
-    kind: "file" | "folder",
-    path: string,
-    cause: unknown,
-  ): Error {
-    const reason =
-      cause instanceof Error ? cause.message || cause.name : String(cause);
+  function readFailure(kind: "file" | "folder", path: string, cause: unknown): Error {
+    const reason = cause instanceof Error ? cause.message || cause.name : String(cause);
     return new Error(`Unable to read ${kind} ${path}: ${reason}`);
   }
 
-  function readFileEntry(
-    entry: FileSystemFileEntry,
-    path: string,
-  ): Promise<File> {
+  function readFileEntry(entry: FileSystemFileEntry, path: string): Promise<File> {
     return new Promise((resolve, reject) =>
       entry.file(resolve, (cause) => reject(readFailure("file", path, cause))),
     );
@@ -189,16 +157,11 @@
     path: string,
   ): Promise<FileSystemEntry[]> {
     return new Promise((resolve, reject) =>
-      reader.readEntries(resolve, (cause) =>
-        reject(readFailure("folder", path, cause)),
-      ),
+      reader.readEntries(resolve, (cause) => reject(readFailure("folder", path, cause))),
     );
   }
 
-  async function collectAll(
-    entries: FileSystemEntry[],
-    prefix: string,
-  ): Promise<DroppedFile[]> {
+  async function collectAll(entries: FileSystemEntry[], prefix: string): Promise<DroppedFile[]> {
     const results: DroppedFile[] = [];
     for (const entry of entries) {
       const path = prefix ? `${prefix}/${entry.name}` : entry.name;
@@ -323,8 +286,7 @@
                       ...file,
                       status: "error",
                       selected: false,
-                      error:
-                        error instanceof Error ? error.message : "hash failed",
+                      error: error instanceof Error ? error.message : "hash failed",
                     }
                   : file,
               );
@@ -367,8 +329,7 @@
     try {
       startWithFiles(await filesFromDrop(event.dataTransfer!));
     } catch (error) {
-      importError =
-        error instanceof Error ? error.message : "Unable to read dropped items";
+      importError = error instanceof Error ? error.message : "Unable to read dropped items";
     }
   }
 
@@ -387,9 +348,7 @@
       startWithFiles(
         picked.map((file) => ({
           file,
-          path:
-            (file as File & { webkitRelativePath?: string })
-              .webkitRelativePath || file.name,
+          path: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
         })),
       );
     };
@@ -404,9 +363,7 @@
 
   function toggleSelected(id: Uuid) {
     files = files.map((file) =>
-      file.id === id && isSelectableFile(file)
-        ? { ...file, selected: !file.selected }
-        : file,
+      file.id === id && isSelectableFile(file) ? { ...file, selected: !file.selected } : file,
     );
   }
 
@@ -429,8 +386,7 @@
       });
     } catch (error) {
       if (!ownsNavigation()) return;
-      importError =
-        error instanceof Error ? error.message : "Unable to start file upload";
+      importError = error instanceof Error ? error.message : "Unable to start file upload";
     } finally {
       if (componentActive) creatingBatch = false;
     }
@@ -495,11 +451,7 @@
         : "add sources"}
     onclick={expanded || locked ? undefined : handleCircleClick}
     onkeydown={(event) => {
-      if (
-        !expanded &&
-        !locked &&
-        (event.key === "Enter" || event.key === " ")
-      ) {
+      if (!expanded && !locked && (event.key === "Enter" || event.key === " ")) {
         event.preventDefault();
         handleCircleClick();
       }
@@ -513,9 +465,7 @@
     <!-- dashed ring crossfades instead of border-style flipping (not animatable) -->
     <div
       class={`pointer-events-none absolute inset-0 rounded-[inherit] border border-dashed border-ink-border transition-opacity ease-[cubic-bezier(0.22,1,0.36,1)] ${
-        expanded
-          ? "opacity-0 duration-[120ms]"
-          : "opacity-100 duration-[280ms] delay-[80ms]"
+        expanded ? "opacity-0 duration-[120ms]" : "opacity-100 duration-[280ms] delay-[80ms]"
       }`}
     ></div>
     {#if !expanded}
@@ -573,9 +523,7 @@
               ↵
             </span>
           {/if}
-          <div
-            class="flex h-full shrink-0 items-center border-l border-ink-subtle"
-          >
+          <div class="flex h-full shrink-0 items-center border-l border-ink-subtle">
             <Button
               variant="ghost"
               size="xs"
@@ -665,10 +613,7 @@
         <div class="flex flex-wrap items-center justify-center gap-4">
           <Button
             onclick={() => void confirm()}
-            disabled={selectedCount === 0 ||
-              checkingCount > 0 ||
-              checkingVault ||
-              creatingBatch}
+            disabled={selectedCount === 0 || checkingCount > 0 || checkingVault || creatingBatch}
             class="h-auto rounded-sm bg-gold px-4 py-2 font-mono text-[length:var(--text-chrome)] font-medium tracking-[0.1em] text-primary-foreground hover:bg-gold-hover disabled:bg-interactive-ghost disabled:text-muted-foreground disabled:opacity-100"
           >
             {creatingBatch

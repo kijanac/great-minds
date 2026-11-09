@@ -7,9 +7,7 @@
 
   const decodeSessionId = Schema.decodeOption(SessionId);
   const sessionId = $derived(
-    page.params.id === undefined
-      ? null
-      : Option.getOrNull(decodeSessionId(page.params.id)),
+    page.params.id === undefined ? null : Option.getOrNull(decodeSessionId(page.params.id)),
   );
 </script>
 

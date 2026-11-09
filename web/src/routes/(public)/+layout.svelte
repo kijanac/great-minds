@@ -7,9 +7,7 @@
 
   let { children } = $props();
 
-  const isShareRoute = $derived(
-    page.route.id?.startsWith("/(public)/s/") ?? false,
-  );
+  const isShareRoute = $derived(page.route.id?.startsWith("/(public)/s/") ?? false);
 
   $effect(() => {
     if (browser && auth.ready && auth.isAuthenticated && !isShareRoute) {

@@ -2,10 +2,7 @@
   import { page } from "$app/state";
 
   import ArticleReader from "#lib/components/article-reader.svelte";
-  import {
-    ErrorState,
-    LoadingState,
-  } from "#lib/components/ui/feedback/index.ts";
+  import { ErrorState, LoadingState } from "#lib/components/ui/feedback/index.ts";
   import { useLinkedVault } from "#lib/hooks/use-linked-vault.svelte.ts";
 
   const path = $derived(page.params.path);

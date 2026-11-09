@@ -30,9 +30,7 @@
   const LIMIT = 5;
   let expanded = $state<Record<string, boolean>>({});
 
-  const firstBuild = $derived(
-    stopped === null && outcome !== null && isFirstBuild(outcome),
-  );
+  const firstBuild = $derived(stopped === null && outcome !== null && isFirstBuild(outcome));
   const nothing = $derived(outcome !== null && changedNothing(outcome));
   const startHere = createQuery(() => ({
     queryKey: ["run-outcome-start-here"],
@@ -47,11 +45,7 @@
   });
 </script>
 
-{#snippet group(
-  key: string,
-  label: string,
-  articles: readonly RemovedArticle[],
-)}
+{#snippet group(key: string, label: string, articles: readonly RemovedArticle[])}
   {#if articles.length > 0}
     {@const shown = expanded[key] ? articles : articles.slice(0, LIMIT)}
     <section class="mb-6">
@@ -103,16 +97,12 @@
   {/if}
 {/snippet}
 
-<h1
-  class="mt-1 mb-6 font-serif text-[length:var(--text-title)] leading-[1.25] text-warm"
->
+<h1 class="mt-1 mb-6 font-serif text-[length:var(--text-title)] leading-[1.25] text-warm">
   {title}
 </h1>
 {@render actions?.()}
 {#if !stopped && outcome && !firstBuild && !nothing && outcome.sources > 0}
-  <p
-    class="-mt-4 mb-7 font-serif text-[length:var(--text-body)] leading-[1.7] text-warm-faint"
-  >
+  <p class="-mt-4 mb-7 font-serif text-[length:var(--text-body)] leading-[1.7] text-warm-faint">
     From {plural(outcome.sources, "new or edited source")}.
   </p>
 {/if}

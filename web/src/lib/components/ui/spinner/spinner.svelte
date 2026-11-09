@@ -4,8 +4,7 @@
 
   import { cn } from "#lib/utils.ts";
 
-  let { class: className, ...restProps }: ComponentProps<typeof Loader2Icon> =
-    $props();
+  let { class: className, ...restProps }: ComponentProps<typeof Loader2Icon> = $props();
 </script>
 
 <Loader2Icon

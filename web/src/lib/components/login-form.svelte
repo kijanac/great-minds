@@ -10,11 +10,7 @@
   import { onMount } from "svelte";
 
   import { api, run } from "#lib/api/app.ts";
-  import {
-    loginWithCode,
-    loginWithTokenPair,
-    requestCode,
-  } from "#lib/api/auth.ts";
+  import { loginWithCode, loginWithTokenPair, requestCode } from "#lib/api/auth.ts";
   import { domainErrorDetail } from "@great-minds/client";
   import { Alert, AlertDescription } from "#lib/components/ui/alert/index.ts";
   import { Label } from "#lib/components/ui/label/index.ts";
@@ -53,9 +49,7 @@
   // Aborted conditional requests wedge Safari's WebAuthn state until reload.
   const isSafari = (() => {
     const agent = navigator.userAgent;
-    return (
-      agent.includes("Safari/") && !/Chrome\/|CriOS\/|Edg\/|Android/.test(agent)
-    );
+    return agent.includes("Safari/") && !/Chrome\/|CriOS\/|Edg\/|Android/.test(agent);
   })();
 
   onMount(() => {
@@ -70,11 +64,9 @@
       void browserSupportsWebAuthnAutofill()
         .then((supported) => {
           if (!supported || !active) return;
-          void authenticateWithPasskey(true, () => active).catch(
-            (reason: unknown) => {
-              console.warn("Conditional passkey sign-in ended", reason);
-            },
-          );
+          void authenticateWithPasskey(true, () => active).catch((reason: unknown) => {
+            console.warn("Conditional passkey sign-in ended", reason);
+          });
         })
         .catch((reason: unknown) => {
           console.warn("Conditional passkey sign-in ended", reason);
@@ -98,9 +90,7 @@
       await requestCode(email);
       step = "code";
     } catch (reason) {
-      error =
-        domainErrorDetail(reason) ??
-        "Failed to send code. Check your email and try again.";
+      error = domainErrorDetail(reason) ?? "Failed to send code. Check your email and try again.";
     } finally {
       loading = false;
     }
@@ -127,9 +117,7 @@
       await requestCode(email);
       code = "";
     } catch (reason) {
-      error =
-        domainErrorDetail(reason) ??
-        "Failed to send code. Check your email and try again.";
+      error = domainErrorDetail(reason) ?? "Failed to send code. Check your email and try again.";
     } finally {
       loading = false;
     }
@@ -168,10 +156,7 @@
     </div>
 
     {#if error}
-      <Alert
-        variant="destructive"
-        class="rounded-sm border-red-400/25 bg-red-400/5"
-      >
+      <Alert variant="destructive" class="rounded-sm border-red-400/25 bg-red-400/5">
         <AlertDescription class="text-center text-small text-red-400/90">
           {error}
         </AlertDescription>

@@ -25,21 +25,13 @@
   <title>New vault | Great Minds</title>
 </svelte:head>
 
-<div
-  class="flex min-h-dvh items-start justify-center px-4 pt-16 pb-20 md:px-10"
->
+<div class="flex min-h-dvh items-start justify-center px-4 pt-16 pb-20 md:px-10">
   <div class="w-full max-w-[640px]">
-    <h1
-      class="mb-2 font-serif text-[length:var(--text-title)] leading-[1.15] text-foreground"
-    >
+    <h1 class="mb-2 font-serif text-[length:var(--text-title)] leading-[1.15] text-foreground">
       {isFirstRun ? "Name your first vault" : "New vault"}
     </h1>
-    <p
-      class="mb-10 font-mono text-[length:var(--text-caption)] tracking-[0.1em] text-warm-ghost"
-    >
-      {isFirstRun
-        ? "a library of sources you can ask across"
-        : "set up a new library of sources"}
+    <p class="mb-10 font-mono text-[length:var(--text-caption)] tracking-[0.1em] text-warm-ghost">
+      {isFirstRun ? "a library of sources you can ask across" : "set up a new library of sources"}
     </p>
 
     <VaultConfigForm

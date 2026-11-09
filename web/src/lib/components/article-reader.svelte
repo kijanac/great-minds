@@ -5,10 +5,7 @@
   import { onDestroy, tick, untrack } from "svelte";
 
   import type { DocumentScope } from "#lib/api/doc.ts";
-  import {
-    postUserSuggestion,
-    type UserSuggestionResult,
-  } from "#lib/api/ingest.ts";
+  import { postUserSuggestion, type UserSuggestionResult } from "#lib/api/ingest.ts";
   import { auth } from "#lib/auth.svelte.ts";
   import { DocThreads } from "#lib/doc-threads.svelte.ts";
   import ArticleChrome from "#lib/components/article-chrome.svelte";
@@ -20,16 +17,10 @@
   } from "#lib/components/onboarding-hint.svelte";
   import PanelHost from "#lib/components/panel-host.svelte";
   import SelectionPopover from "#lib/components/selection-popover.svelte";
-  import SuggestionForm, {
-    type SuggestionPayload,
-  } from "#lib/components/suggestion-form.svelte";
+  import SuggestionForm, { type SuggestionPayload } from "#lib/components/suggestion-form.svelte";
   import { Skeleton } from "#lib/components/ui/skeleton/index.ts";
   import { useReferencePromotion } from "#lib/hooks/use-reference-promotion.svelte.ts";
-  import {
-    activeVault,
-    useVaultDetail,
-    useVaults,
-  } from "#lib/hooks/use-vault.svelte.ts";
+  import { activeVault, useVaultDetail, useVaults } from "#lib/hooks/use-vault.svelte.ts";
   import {
     useArticleLinks,
     useDocument,
@@ -61,11 +52,7 @@
   let docThreads = $state<DocThreads | null>(
     initialPath === null
       ? null
-      : new DocThreads(
-          initialPath,
-          readerScope,
-          (id) => void goto(`/sessions/${id}`),
-        ),
+      : new DocThreads(initialPath, readerScope, (id) => void goto(`/sessions/${id}`)),
   );
   const documentQuery =
     initialSourceId !== null
@@ -80,9 +67,7 @@
   const resolvedPath = $derived(document?.file_path ?? path ?? "");
   const label = $derived(displayTitle(resolvedPath, document?.title));
   const wikiSlug = $derived(
-    readerScope === "vault" &&
-      resolvedPath.startsWith("wiki/") &&
-      resolvedPath.endsWith(".md")
+    readerScope === "vault" && resolvedPath.startsWith("wiki/") && resolvedPath.endsWith(".md")
       ? resolvedPath.slice("wiki/".length, -".md".length)
       : null,
   );
@@ -98,14 +83,10 @@
         : null,
   );
   const articleLinks = useArticleLinks(() =>
-    readerScope === "vault" && resolvedPath.startsWith("wiki/")
-      ? resolvedPath
-      : null,
+    readerScope === "vault" && resolvedPath.startsWith("wiki/") ? resolvedPath : null,
   );
   const showHint = $derived(!onboardingHintSeen() && body !== null);
-  const selectedVault = $derived(
-    vaults.data?.find((vault) => vault.id === activeVault.id) ?? null,
-  );
+  const selectedVault = $derived(vaults.data?.find((vault) => vault.id === activeVault.id) ?? null);
   const promotionAction = $derived(
     readerScope === "personal" && selectedVault?.owner_id === auth.userId
       ? {
@@ -123,17 +104,8 @@
   $effect(() => {
     const target = page.url.searchParams.get("thread");
     const threads = docThreads;
-    if (
-      !target ||
-      body === null ||
-      !threads ||
-      threads.loading ||
-      focusedThread === target
-    )
-      return;
-    const thread = threads.threads.find(
-      (item) => item.conversation?.id === target,
-    );
+    if (!target || body === null || !threads || threads.loading || focusedThread === target) return;
+    const thread = threads.threads.find((item) => item.conversation?.id === target);
     if (!thread) return;
     focusedThread = target;
     void tick().then(() => threads.jumpTo(thread.id));
@@ -156,11 +128,7 @@
     if (currentPath === "" || currentPath === btwPath) return;
     docThreads?.destroy();
     btwPath = currentPath;
-    docThreads = new DocThreads(
-      currentPath,
-      readerScope,
-      (id) => void goto(`/sessions/${id}`),
-    );
+    docThreads = new DocThreads(currentPath, readerScope, (id) => void goto(`/sessions/${id}`));
     popover = null;
     suggestionTarget = null;
   });
@@ -187,9 +155,7 @@
     const target = suggestionTarget;
     const anchor = wikiSlug;
     if (!target || !anchor) {
-      throw new Error(
-        "This suggestion is no longer attached to an article passage.",
-      );
+      throw new Error("This suggestion is no longer attached to an article passage.");
     }
     const result = await postUserSuggestion({
       ...payload,
@@ -216,9 +182,7 @@
     if (!hash || renderedBody === null || !currentPath) return;
 
     void tick().then(() => {
-      const target = window.document.getElementById(
-        decodeURIComponent(hash.slice(1)),
-      );
+      const target = window.document.getElementById(decodeURIComponent(hash.slice(1)));
       target?.scrollIntoView({ block: "start" });
     });
   });
@@ -244,9 +208,7 @@
     {label}
     onHome={() => void goto("/")}
     onQuery={(question) =>
-      void goto(
-        `/?q=${encodeURIComponent(question)}&origin=${encodeURIComponent(resolvedPath)}`,
-      )}
+      void goto(`/?q=${encodeURIComponent(question)}&origin=${encodeURIComponent(resolvedPath)}`)}
   >
     {#snippet footer()}
       {#if suggestionTarget && suggestionMode}
@@ -300,9 +262,7 @@
       />
     {:else}
       <div class="mx-auto max-w-[740px] px-4 pt-6 md:px-10 md:pt-10">
-        <p class="text-[length:var(--text-body)] text-warm-faint">
-          Document not found.
-        </p>
+        <p class="text-[length:var(--text-body)] text-warm-faint">Document not found.</p>
       </div>
     {/if}
 

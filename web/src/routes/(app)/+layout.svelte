@@ -14,12 +14,9 @@
   $effect(() => {
     if (browser && auth.ready && !auth.isAuthenticated) {
       const next = `${page.url.pathname}${page.url.search}`;
-      void goto(
-        next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`,
-        {
-          replace: true,
-        },
-      );
+      void goto(next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`, {
+        replace: true,
+      });
     }
   });
 

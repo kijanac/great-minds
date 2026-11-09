@@ -28,9 +28,7 @@
   class="shrink-0 animate-[slide-up_0.28s_ease] border-t border-ink-subtle pt-3 pr-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pl-[var(--shell-utility-inset)] md:pr-10"
 >
   <div class="mx-auto flex max-w-[740px] items-center justify-between gap-2">
-    <p
-      class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint"
-    >
+    <p class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint">
       <Badge
         variant="outline"
         class="mr-2 border-gold-dim font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold-muted"

@@ -48,14 +48,9 @@
             <Skeleton class="h-10 w-full bg-ink-raised" />
           </div>
         {:else if vaults.isError}
-          <ErrorState
-            message="Couldn't load your vaults."
-            onRetry={() => void vaults.refetch()}
-          />
+          <ErrorState message="Couldn't load your vaults." onRetry={() => void vaults.refetch()} />
         {:else if list.length === 0}
-          <p
-            class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-          >
+          <p class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
             no vaults yet
           </p>
         {:else}
@@ -67,9 +62,7 @@
                 class="group h-auto w-full justify-between gap-4 rounded-sm px-3 py-2 hover:bg-ink-raised"
               >
                 <span class="flex min-w-0 items-baseline gap-3">
-                  <span
-                    class="truncate font-serif text-[length:var(--text-body)] text-warm"
-                  >
+                  <span class="truncate font-serif text-[length:var(--text-body)] text-warm">
                     {vault.name}
                   </span>
                   {#if vault.id === activeVault.id}

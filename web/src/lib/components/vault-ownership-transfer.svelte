@@ -23,12 +23,8 @@
   let selectedId = $state("");
   let transferring = $state(false);
   let error = $state<string | null>(null);
-  const candidates = $derived(
-    members.filter((member) => member.role !== "owner"),
-  );
-  const selected = $derived(
-    candidates.find((member) => member.user_id === selectedId),
-  );
+  const candidates = $derived(members.filter((member) => member.role !== "owner"));
+  const selected = $derived(candidates.find((member) => member.user_id === selectedId));
 
   async function transfer(event: MouseEvent) {
     event.preventDefault();
@@ -69,16 +65,14 @@
   </AlertDialog.Trigger>
   <AlertDialog.Content class={POPOVER_SURFACE_CLASS}>
     <AlertDialog.Header>
-      <AlertDialog.Title
-        class="font-serif text-[length:var(--text-body)] text-warm"
+      <AlertDialog.Title class="font-serif text-[length:var(--text-body)] text-warm"
         >Transfer ownership?</AlertDialog.Title
       >
       <AlertDialog.Description
         class="font-mono text-[length:var(--text-chrome)] leading-relaxed text-warm-ghost"
       >
-        Choose a member to become the owner of this vault. You will become an
-        editor and lose owner privileges. Only the new owner can transfer it
-        back.
+        Choose a member to become the owner of this vault. You will become an editor and lose owner
+        privileges. Only the new owner can transfer it back.
       </AlertDialog.Description>
     </AlertDialog.Header>
     <Select.Root type="single" bind:value={selectedId} disabled={transferring}>
@@ -90,19 +84,14 @@
       </Select.Trigger>
       <Select.Content class={SELECT_CONTENT_CLASS}>
         {#each candidates as member (member.user_id)}
-          <Select.Item
-            value={member.user_id}
-            label={member.email}
-            class={SELECT_ITEM_CLASS}>{member.email}</Select.Item
+          <Select.Item value={member.user_id} label={member.email} class={SELECT_ITEM_CLASS}
+            >{member.email}</Select.Item
           >
         {/each}
       </Select.Content>
     </Select.Root>
     {#if error}
-      <p
-        role="alert"
-        class="font-mono text-[length:var(--text-chrome)] text-destructive"
-      >
+      <p role="alert" class="font-mono text-[length:var(--text-chrome)] text-destructive">
         {error}
       </p>
     {/if}

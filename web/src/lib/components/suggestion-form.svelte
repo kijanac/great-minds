@@ -62,13 +62,8 @@
         aria-live="polite"
       >
         <div class="min-w-0">
-          <h2
-            id="suggestion-heading"
-            class="font-serif text-[length:var(--text-body)] text-warm"
-          >
-            {submittedMode === "ingested"
-              ? "Suggestion added"
-              : "Suggestion sent for review"}
+          <h2 id="suggestion-heading" class="font-serif text-[length:var(--text-body)] text-warm">
+            {submittedMode === "ingested" ? "Suggestion added" : "Suggestion sent for review"}
           </h2>
           <p
             class="mt-1 text-pretty font-mono text-[length:var(--text-chrome)] leading-relaxed text-warm-ghost"
@@ -114,9 +109,7 @@
 
       <form class="space-y-5" onsubmit={(event) => void submit(event)}>
         <div class="space-y-2">
-          <p
-            class="font-mono text-[length:var(--text-chrome)] text-warm-ghost uppercase"
-          >
+          <p class="font-mono text-[length:var(--text-chrome)] text-warm-ghost uppercase">
             selected passage
           </p>
           <blockquote

@@ -14,9 +14,7 @@
   const query = useInfiniteSessions();
   let filter = $state("");
 
-  const sessions = $derived(
-    query.data?.pages.flatMap((page) => page.items) ?? [],
-  );
+  const sessions = $derived(query.data?.pages.flatMap((page) => page.items) ?? []);
   const filtered = $derived.by(() => {
     const term = filter.trim().toLowerCase();
     return term
@@ -40,19 +38,12 @@
       />
     </div>
   {/snippet}
-  <PageHeader
-    title="sessions"
-    trailing={filterInput}
-    onHome={() => void goto("/")}
-  />
+  <PageHeader title="sessions" trailing={filterInput} onHome={() => void goto("/")} />
 
   <div class="min-h-0 flex-1 overflow-y-auto">
     <main class="mx-auto max-w-[740px] px-4 pt-8 pb-20 md:px-10">
       {#if query.error}
-        <ErrorState
-          message="Couldn't load your sessions."
-          onRetry={() => void query.refetch()}
-        />
+        <ErrorState message="Couldn't load your sessions." onRetry={() => void query.refetch()} />
       {:else if query.isLoading}
         <div class="space-y-4">
           {#each [0, 1, 2, 3] as row (row)}
@@ -63,14 +54,10 @@
           {/each}
         </div>
       {:else if filtered.length === 0 && filter}
-        <p class="text-[length:var(--text-body)] text-warm-faint">
-          No sessions match your filter.
-        </p>
+        <p class="text-[length:var(--text-body)] text-warm-faint">No sessions match your filter.</p>
       {:else if filtered.length === 0}
         <div class="pt-8 text-center">
-          <p
-            class="mb-2 font-serif text-[length:var(--text-body)] text-warm-dim"
-          >
+          <p class="mb-2 font-serif text-[length:var(--text-body)] text-warm-dim">
             No sessions yet
           </p>
           <p

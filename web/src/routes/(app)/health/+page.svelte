@@ -21,8 +21,7 @@
 
 <svelte:head>
   <title
-    >{health.currentVault ? `${health.currentVault.name} — Health` : "Health"} | Great
-    Minds</title
+    >{health.currentVault ? `${health.currentVault.name} — Health` : "Health"} | Great Minds</title
   >
 </svelte:head>
 

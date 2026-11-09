@@ -18,11 +18,7 @@
     updateMemberRole,
     updateVaultConfig,
   } from "#lib/api/vaults.ts";
-  import {
-    switchVault,
-    useRenameVault,
-    useVaultDetail,
-  } from "#lib/hooks/use-vault.svelte.ts";
+  import { switchVault, useRenameVault, useVaultDetail } from "#lib/hooks/use-vault.svelte.ts";
   import VaultTitle from "#lib/components/vault-title.svelte";
   import VaultOwnershipTransfer from "#lib/components/vault-ownership-transfer.svelte";
   import MemberRow from "#lib/components/member-row.svelte";
@@ -46,9 +42,7 @@
 
   const decodeVaultId = Schema.decodeOption(Uuid);
   const vaultId = $derived(
-    page.params.id === undefined
-      ? null
-      : Option.getOrNull(decodeVaultId(page.params.id)),
+    page.params.id === undefined ? null : Option.getOrNull(decodeVaultId(page.params.id)),
   );
   const queryClient = useQueryClient();
 
@@ -75,9 +69,7 @@
     queryFn: () => getVaultConfig(vaultId!),
     enabled: !!vaultId,
   }));
-  const loading = $derived(
-    vault.isLoading || members.isLoading || config.isLoading,
-  );
+  const loading = $derived(vault.isLoading || members.isLoading || config.isLoading);
 
   async function refreshMembers() {
     await queryClient.invalidateQueries({
@@ -196,14 +188,10 @@
             onRename={(name) => rename.mutateAsync({ vaultId: vaultId!, name })}
           />
         {/key}
-        <div
-          class="mb-8 flex flex-wrap items-center justify-between gap-x-4 gap-y-2"
-        >
-          <p
-            class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-          >
-            {vault.data.article_count} articles · {vault.data.member_count} member{vault
-              .data.member_count !== 1
+        <div class="mb-8 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <p class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
+            {vault.data.article_count} articles · {vault.data.member_count} member{vault.data
+              .member_count !== 1
               ? "s"
               : ""} · {vault.data.role}
           </p>
@@ -226,10 +214,7 @@
             >
               members
             </h2>
-            <VaultOwnershipTransfer
-              members={members.data ?? []}
-              onTransfer={transfer}
-            />
+            <VaultOwnershipTransfer members={members.data ?? []} onTransfer={transfer} />
           </div>
 
           <div class="mb-6 space-y-1">
@@ -265,19 +250,13 @@
               </Select.Trigger>
               <Select.Content class={SELECT_CONTENT_CLASS}>
                 {#each assignableRoles as role (role)}
-                  <Select.Item
-                    value={role}
-                    label={role}
-                    class={SELECT_ITEM_CLASS}
-                  >
+                  <Select.Item value={role} label={role} class={SELECT_ITEM_CLASS}>
                     {role}
                   </Select.Item>
                 {/each}
               </Select.Content>
             </Select.Root>
-            <span
-              class="shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost"
-            >
+            <span class="shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost">
               ↵
             </span>
           </form>
@@ -341,11 +320,9 @@
             >
               danger zone
             </h2>
-            <p
-              class="mb-4 text-[length:var(--text-small)] leading-relaxed text-warm-ghost"
-            >
-              Permanently delete this vault and all its documents, articles, and
-              conversations for everyone in the vault. This cannot be undone.
+            <p class="mb-4 text-[length:var(--text-small)] leading-relaxed text-warm-ghost">
+              Permanently delete this vault and all its documents, articles, and conversations for
+              everyone in the vault. This cannot be undone.
             </p>
 
             <AlertDialog.Root bind:open={deleteOpen}>
@@ -362,17 +339,14 @@
               </AlertDialog.Trigger>
               <AlertDialog.Content class={POPOVER_SURFACE_CLASS}>
                 <AlertDialog.Header>
-                  <AlertDialog.Title
-                    class="font-serif text-[length:var(--text-body)] text-warm"
-                  >
+                  <AlertDialog.Title class="font-serif text-[length:var(--text-body)] text-warm">
                     Delete this vault?
                   </AlertDialog.Title>
                   <AlertDialog.Description
                     class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost"
                   >
-                    This permanently deletes all documents, articles, and
-                    conversations for everyone in the vault. This cannot be
-                    undone. Type
+                    This permanently deletes all documents, articles, and conversations for everyone
+                    in the vault. This cannot be undone. Type
                     <span class="text-destructive">delete</span> to confirm.
                   </AlertDialog.Description>
                 </AlertDialog.Header>
@@ -382,11 +356,7 @@
                     autofocus
                     disabled={deleting}
                     onkeydown={(event) => {
-                      if (
-                        event.key === "Enter" &&
-                        confirmation === "delete" &&
-                        !deleting
-                      ) {
+                      if (event.key === "Enter" && confirmation === "delete" && !deleting) {
                         event.preventDefault();
                         void confirmDelete();
                       }

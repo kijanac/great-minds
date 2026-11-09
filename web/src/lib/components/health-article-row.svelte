@@ -22,9 +22,7 @@
   >
     {article.title}
   </span>
-  <span
-    class="ml-4 shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost"
-  >
+  <span class="ml-4 shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost">
     {formatShortDate(article.updated_at)}
   </span>
 </Button>

@@ -8,9 +8,7 @@
 
   let { source }: { source: SourceRef } = $props();
   const web = $derived(source.scope === "web");
-  const documentTitle = $derived(
-    source.path ? displayTitle(source.path, source.title) : null,
-  );
+  const documentTitle = $derived(source.path ? displayTitle(source.path, source.title) : null);
 </script>
 
 <Badge

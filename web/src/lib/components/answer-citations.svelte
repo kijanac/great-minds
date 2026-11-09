@@ -47,18 +47,11 @@
         const next: Record<number, number> = {};
         let cursor = 0;
         for (const citation of list) {
-          const ref = current.querySelector<HTMLElement>(
-            `[data-citation-ref="${citation.n}"]`,
-          );
+          const ref = current.querySelector<HTMLElement>(`[data-citation-ref="${citation.n}"]`);
           const block = ref?.closest<HTMLElement>("[data-block-offset]") ?? ref;
-          const note = current.querySelector<HTMLElement>(
-            `[data-citation-note="${citation.n}"]`,
-          );
+          const note = current.querySelector<HTMLElement>(`[data-citation-note="${citation.n}"]`);
           if (!block || !note) continue;
-          const top = Math.max(
-            block.getBoundingClientRect().top - rootTop,
-            cursor,
-          );
+          const top = Math.max(block.getBoundingClientRect().top - rootTop, cursor);
           next[citation.n] = top;
           cursor = top + note.getBoundingClientRect().height + 10;
         }
@@ -149,9 +142,7 @@
             onclick={() => onOpen(citation)}
             class="grid w-full grid-cols-[18px_1fr] gap-x-1.5 text-left font-serif text-[length:var(--text-caption)] leading-[1.55] text-warm-faint hover:text-warm-dim"
           >
-            <span class="pt-0.5 font-mono text-[10px] text-gold"
-              >{citation.n}</span
-            >
+            <span class="pt-0.5 font-mono text-[10px] text-gold">{citation.n}</span>
             <span class="[overflow-wrap:anywhere]">{citation.label}</span>
           </button>
         </li>
@@ -167,11 +158,8 @@
     aria-label={`source ${selected.n}`}
     class="fixed inset-x-3 bottom-[calc(6.5rem+env(safe-area-inset-bottom))] z-[150] rounded-md border border-ink-border bg-ink-raised px-4 pt-3.5 pb-3 shadow-[0_10px_30px_rgba(40,30,10,0.18)] md:inset-x-auto md:left-1/2 md:w-[420px] md:-translate-x-1/2"
   >
-    <div
-      class="font-serif text-[length:var(--text-small)] leading-[1.5] text-warm"
-    >
-      <span class="mr-1.5 font-mono text-[10px] text-gold">{selected.n}</span
-      >{selected.label}
+    <div class="font-serif text-[length:var(--text-small)] leading-[1.5] text-warm">
+      <span class="mr-1.5 font-mono text-[10px] text-gold">{selected.n}</span>{selected.label}
     </div>
     <div class="mt-2.5 flex items-center justify-between">
       {@render kind(selected)}

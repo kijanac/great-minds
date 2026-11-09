@@ -22,9 +22,7 @@
       {article.title}
     </span>
     {#if article.precis}
-      <span
-        class="mt-1 line-clamp-2 font-serif text-[length:var(--text-small)] text-warm-ghost"
-      >
+      <span class="mt-1 line-clamp-2 font-serif text-[length:var(--text-small)] text-warm-ghost">
         {article.precis}
       </span>
     {/if}

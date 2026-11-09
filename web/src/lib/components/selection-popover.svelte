@@ -20,9 +20,7 @@
   let width = $state(0);
   let height = $state(0);
   const top = $derived(
-    info.rect.top - height - 12 >= 8
-      ? info.rect.top - height - 12
-      : info.rect.bottom + 12,
+    info.rect.top - height - 12 >= 8 ? info.rect.top - height - 12 : info.rect.bottom + 12,
   );
   let returnFocus: HTMLElement | null = null;
   let entered = false;
@@ -30,8 +28,7 @@
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === "Escape") {
       event.preventDefault();
-      if (root?.contains(document.activeElement))
-        returnFocus?.focus({ preventScroll: true });
+      if (root?.contains(document.activeElement)) returnFocus?.focus({ preventScroll: true });
       onDismiss();
     } else if (
       event.key === "Tab" &&
@@ -41,10 +38,7 @@
     ) {
       event.preventDefault();
       entered = true;
-      returnFocus =
-        document.activeElement instanceof HTMLElement
-          ? document.activeElement
-          : null;
+      returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       root?.querySelector("button")?.focus({ preventScroll: true });
     }
   }

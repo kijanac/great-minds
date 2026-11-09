@@ -30,11 +30,7 @@
   } = $props();
 </script>
 
-<OpenReferenceForm
-  pending={creating}
-  error={createError}
-  onOpen={onOpenExternal}
-/>
+<OpenReferenceForm pending={creating} error={createError} onOpen={onOpenExternal} />
 
 {#if loading && items.length === 0}
   <div class="space-y-3">
@@ -49,9 +45,7 @@
     {/each}
   </div>
 {:else if error}
-  <p
-    class="pt-6 text-center font-serif text-[length:var(--text-body)] text-destructive"
-  >
+  <p class="pt-6 text-center font-serif text-[length:var(--text-body)] text-destructive">
     {error}
   </p>
 {:else if items.length === 0}
@@ -59,9 +53,7 @@
     <p class="mb-2 font-serif text-[length:var(--text-body)] text-warm-dim">
       Your reading room is empty
     </p>
-    <p
-      class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-    >
+    <p class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
       open an external article to keep it here
     </p>
   </div>

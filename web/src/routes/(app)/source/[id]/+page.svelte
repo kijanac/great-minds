@@ -7,9 +7,7 @@
 
   const decodeSourceId = Schema.decodeOption(Uuid);
   const sourceId = $derived(
-    page.params.id === undefined
-      ? null
-      : Option.getOrNull(decodeSourceId(page.params.id)),
+    page.params.id === undefined ? null : Option.getOrNull(decodeSourceId(page.params.id)),
   );
 </script>
 

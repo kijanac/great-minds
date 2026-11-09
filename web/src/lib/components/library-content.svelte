@@ -13,10 +13,7 @@
     type LibraryView,
   } from "#lib/hooks/use-library.svelte.ts";
   import type { ReadingRoomView } from "#lib/hooks/use-references.svelte.ts";
-  import type {
-    SourceDocumentSummary,
-    WikiArticleOverview,
-  } from "#lib/types.ts";
+  import type { SourceDocumentSummary, WikiArticleOverview } from "#lib/types.ts";
 
   type LibraryActions = {
     chooseType: (value: string) => void;

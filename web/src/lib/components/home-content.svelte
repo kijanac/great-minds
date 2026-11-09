@@ -25,11 +25,7 @@
   import { usePanelCard } from "#lib/hooks/use-panel-card.svelte.ts";
   import { usePanelContent } from "#lib/hooks/use-panel-content.svelte.ts";
   import { useSessions } from "#lib/hooks/use-sessions.svelte.ts";
-  import {
-    activeVault,
-    useVaultDetail,
-    useVaults,
-  } from "#lib/hooks/use-vault.svelte.ts";
+  import { activeVault, useVaultDetail, useVaults } from "#lib/hooks/use-vault.svelte.ts";
   import { useSessionExport } from "#lib/hooks/use-session-export.svelte.ts";
   import { Session } from "#lib/session.svelte.ts";
 
@@ -77,9 +73,7 @@
     duration: 280,
     easing: cubicOut,
   });
-  const currentVault = $derived(
-    vaults.data?.find((vault) => vault.id === activeVault.id) ?? null,
-  );
+  const currentVault = $derived(vaults.data?.find((vault) => vault.id === activeVault.id) ?? null);
 
   const isActive = $derived(session.phase !== "idle");
   const vaultDetail = useVaultDetail(
@@ -135,9 +129,7 @@
           <span
             class="ml-1 min-w-0 flex-1 truncate font-mono text-[length:var(--text-chrome)] tracking-[0.12em] text-warm-ghost uppercase"
           >
-            {currentVault
-              ? `${currentVault.name} · conversation`
-              : "conversation"}
+            {currentVault ? `${currentVault.name} · conversation` : "conversation"}
           </span>
           {#if session.sessionId}
             <ShareDialog subjectKind="session" subjectId={session.sessionId}>
@@ -158,9 +150,7 @@
           <Button
             variant="ghost"
             size="icon-sm"
-            disabled={session.sessionId === null ||
-              exportBusy ||
-              publication.pending}
+            disabled={session.sessionId === null || exportBusy || publication.pending}
             title={exportBusy
               ? "Export is available when the conversation finishes saving"
               : "Export"}
@@ -196,9 +186,7 @@
               class="absolute inset-0 flex flex-col items-center justify-center px-4 pb-12 md:px-10"
               out:fade={{ duration: 150 }}
             >
-              <div
-                class="mb-6 flex w-full max-w-[640px] items-center justify-center gap-1.5"
-              >
+              <div class="mb-6 flex w-full max-w-[640px] items-center justify-center gap-1.5">
                 {#if currentVault}
                   <Button
                     variant="outline"
@@ -206,9 +194,7 @@
                     aria-label={`${currentVault.name} library`}
                     class="h-auto min-w-0 shrink rounded-sm border-ink-border px-4 py-1.5 text-left font-mono text-[length:var(--text-chrome)] tracking-[0.14em] whitespace-normal text-warm-faint hover:border-gold-dim hover:text-warm"
                   >
-                    <span class="min-w-0 [overflow-wrap:anywhere]"
-                      >{currentVault.name}</span
-                    >
+                    <span class="min-w-0 [overflow-wrap:anywhere]">{currentVault.name}</span>
                   </Button>
                   <HealthIndicator
                     status={health.status}
@@ -259,10 +245,7 @@
               {/if}
             </div>
           {:else}
-            <div
-              class="flex h-full min-h-0 flex-col"
-              in:fade={{ duration: 200, delay: 100 }}
-            >
+            <div class="flex h-full min-h-0 flex-col" in:fade={{ duration: 200, delay: 100 }}>
               <SessionThread
                 {session}
                 activeCard={card.selectedCard?.label ?? null}

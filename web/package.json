@@ -42,8 +42,6 @@
     "@tanstack/svelte-query-devtools": "6.1.36",
     "@types/node": "26.4.0",
     "esbuild": "0.28.1",
-    "prettier": "3.9.5",
-    "prettier-plugin-svelte": "4.1.1",
     "shadcn-svelte": "1.4.2",
     "svelte": "5.57.3",
     "svelte-check": "4.7.8",

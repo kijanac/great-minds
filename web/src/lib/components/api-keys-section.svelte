@@ -5,21 +5,14 @@
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import Copy from "@lucide/svelte/icons/copy";
   import X from "@lucide/svelte/icons/x";
-  import {
-    createMutation,
-    createQuery,
-    useQueryClient,
-  } from "@tanstack/svelte-query";
+  import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
 
   import { api, run } from "#lib/api/app.ts";
   import { Button } from "#lib/components/ui/button/index.ts";
   import * as Collapsible from "#lib/components/ui/collapsible/index.ts";
   import { Input } from "#lib/components/ui/input/index.ts";
   import * as Select from "#lib/components/ui/select/index.ts";
-  import {
-    SELECT_CONTENT_CLASS,
-    SELECT_ITEM_CLASS,
-  } from "#lib/control-styles.ts";
+  import { SELECT_CONTENT_CLASS, SELECT_ITEM_CLASS } from "#lib/control-styles.ts";
   import { useVaults } from "#lib/hooks/use-vault.svelte.ts";
   import { formatShortDate } from "#lib/utils.ts";
 
@@ -38,8 +31,7 @@
   }));
   const create = createMutation(() => ({
     mutationFn: () => {
-      const days =
-        EXPIRY.find((option) => option.value === expiry)?.days ?? null;
+      const days = EXPIRY.find((option) => option.value === expiry)?.days ?? null;
       return run(
         api.auth.createApiKey({
           payload: {
@@ -47,8 +39,7 @@
             vault_ids: allVaults ? null : [...chosen],
             can_ask: canAsk,
             can_change: canChange,
-            expires_at:
-              days === null ? null : new Date(Date.now() + days * 86_400_000),
+            expires_at: days === null ? null : new Date(Date.now() + days * 86_400_000),
           },
         }),
       );
@@ -59,8 +50,7 @@
     },
   }));
   const revoke = createMutation(() => ({
-    mutationFn: (keyId: Uuid) =>
-      run(api.auth.deleteApiKey({ params: { key_id: keyId } })),
+    mutationFn: (keyId: Uuid) => run(api.auth.deleteApiKey({ params: { key_id: keyId } })),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["api-keys"] });
     },
@@ -79,12 +69,8 @@
   const keys = $derived(keysQuery.data ?? []);
   const active = $derived(keys.filter((key) => !key.revoked));
   const revoked = $derived(keys.filter((key) => key.revoked));
-  const vaultName = $derived(
-    new Map((vaults.data ?? []).map((vault) => [vault.id, vault.name])),
-  );
-  const canCreate = $derived(
-    label.trim().length > 0 && (allVaults || chosen.length > 0),
-  );
+  const vaultName = $derived(new Map((vaults.data ?? []).map((vault) => [vault.id, vault.name])));
+  const canCreate = $derived(label.trim().length > 0 && (allVaults || chosen.length > 0));
 
   function startCreating() {
     label = "";
@@ -99,9 +85,7 @@
 
   function toggleVault(id: Uuid) {
     allVaults = false;
-    chosen = chosen.includes(id)
-      ? chosen.filter((existing) => existing !== id)
-      : [...chosen, id];
+    chosen = chosen.includes(id) ? chosen.filter((existing) => existing !== id) : [...chosen, id];
   }
 
   function scopeText(key: ApiKey): string {
@@ -109,11 +93,7 @@
       key.vault_ids === null
         ? "all vaults"
         : key.vault_ids.map((id) => vaultName.get(id) ?? "a vault").join(", ");
-    const can = key.can_change
-      ? "adds documents"
-      : key.can_ask
-        ? "reads and asks"
-        : "read-only";
+    const can = key.can_change ? "adds documents" : key.can_ask ? "reads and asks" : "read-only";
     return `${reach} · ${can}`;
   }
 
@@ -127,9 +107,7 @@
           : `expires ${formatShortDate(key.expires_at)}`,
     );
     parts.push(
-      key.last_used_at === null
-        ? "never used"
-        : `used ${formatShortDate(key.last_used_at)}`,
+      key.last_used_at === null ? "never used" : `used ${formatShortDate(key.last_used_at)}`,
     );
     return parts.join(" · ");
   }
@@ -143,8 +121,7 @@
   const optionClass =
     "flex cursor-pointer items-start gap-2.5 py-1 text-[length:var(--text-small)] text-warm-dim";
   const boxClass = "mt-0.5 h-4 w-4 shrink-0 accent-gold disabled:opacity-70";
-  const hintClass =
-    "block font-mono text-[length:var(--text-chrome)] text-warm-ghost";
+  const hintClass = "block font-mono text-[length:var(--text-chrome)] text-warm-ghost";
   const fieldLabelClass =
     "mt-4 mb-1.5 block font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost";
 </script>
@@ -170,9 +147,7 @@
   {#if create.data}
     <div class="mb-6 rounded-sm border border-gold-dim bg-gold/10 p-4">
       <div class="mb-3 flex items-start justify-between gap-3">
-        <div
-          class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-gold"
-        >
+        <div class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-gold">
           Copy it now. It won't be shown again.
         </div>
         <Button
@@ -214,9 +189,7 @@
         if (canCreate && !create.isPending) create.mutate();
       }}
     >
-      <label for="key-name" class={fieldLabelClass} style="margin-top:0"
-        >Name</label
-      >
+      <label for="key-name" class={fieldLabelClass} style="margin-top:0">Name</label>
       <Input
         id="key-name"
         bind:value={label}
@@ -260,16 +233,12 @@
       </label>
       <label class={optionClass}>
         <input type="checkbox" class={boxClass} bind:checked={canAsk} />
-        <span
-          >Ask questions<span class={hintClass}>Answers call paid models.</span
-          ></span
-        >
+        <span>Ask questions<span class={hintClass}>Answers call paid models.</span></span>
       </label>
       <label class={optionClass}>
         <input type="checkbox" class={boxClass} bind:checked={canChange} />
         <span
-          >Add documents and start Updates<span class={hintClass}
-            >Updates call paid models.</span
+          >Add documents and start Updates<span class={hintClass}>Updates call paid models.</span
           ></span
         >
       </label>
@@ -285,10 +254,8 @@
         </Select.Trigger>
         <Select.Content class={SELECT_CONTENT_CLASS}>
           {#each EXPIRY as option (option.value)}
-            <Select.Item
-              value={option.value}
-              label={option.label}
-              class={SELECT_ITEM_CLASS}>{option.label}</Select.Item
+            <Select.Item value={option.value} label={option.label} class={SELECT_ITEM_CLASS}
+              >{option.label}</Select.Item
             >
           {/each}
         </Select.Content>
@@ -315,15 +282,11 @@
   {/if}
 
   {#if keysQuery.isLoading && keys.length === 0}
-    <p
-      class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-    >
+    <p class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
       loading…
     </p>
   {:else if keys.length === 0}
-    <p
-      class="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-    >
+    <p class="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
       no api keys yet
     </p>
   {:else}
@@ -336,9 +299,7 @@
             <div class="truncate text-[length:var(--text-small)] text-warm-dim">
               {key.label}
             </div>
-            <div
-              class="truncate font-mono text-[length:var(--text-chrome)] text-warm-ghost"
-            >
+            <div class="truncate font-mono text-[length:var(--text-chrome)] text-warm-ghost">
               {scopeText(key)} · {useText(key)}
             </div>
           </div>
@@ -370,17 +331,13 @@
           <Collapsible.Content>
             <div class="mt-1 space-y-1">
               {#each revoked as key (key.id)}
-                <div
-                  class="flex items-center justify-between rounded-sm px-3 py-2 opacity-60"
-                >
+                <div class="flex items-center justify-between rounded-sm px-3 py-2 opacity-60">
                   <span
                     class="truncate text-[length:var(--text-small)] text-warm-ghost line-through"
                   >
                     {key.label}
                   </span>
-                  <span
-                    class="shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost"
-                  >
+                  <span class="shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost">
                     {key.last_used_at === null
                       ? "never used"
                       : `last used ${formatShortDate(key.last_used_at)}`}

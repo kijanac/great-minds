@@ -79,9 +79,7 @@
     </AlertDialog.Trigger>
     <AlertDialog.Content class={POPOVER_SURFACE_CLASS}>
       <AlertDialog.Header>
-        <AlertDialog.Title
-          class="font-serif text-[length:var(--text-body)] text-warm"
-        >
+        <AlertDialog.Title class="font-serif text-[length:var(--text-body)] text-warm">
           {action.title}
         </AlertDialog.Title>
         <AlertDialog.Description
