@@ -24,9 +24,7 @@
 
   const author = $derived("author" in source ? source.author : null);
   const actionable = $derived(
-    "source_type" in source &&
-      onDeleteSource !== undefined &&
-      onRequestDeletion !== undefined,
+    "source_type" in source && onDeleteSource !== undefined && onRequestDeletion !== undefined,
   );
 </script>
 
@@ -52,19 +50,11 @@
         </span>
       {/if}
     </span>
-    <span
-      class="shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost"
-    >
+    <span class="shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost">
       {formatShortDate(source.updated_at)}
     </span>
   </button>
   {#if actionable && "source_type" in source && onDeleteSource && onRequestDeletion}
-    <SourceActionButton
-      item={source}
-      {role}
-      {busy}
-      {onDeleteSource}
-      {onRequestDeletion}
-    />
+    <SourceActionButton item={source} {role} {busy} {onDeleteSource} {onRequestDeletion} />
   {/if}
 </div>

@@ -106,9 +106,7 @@
   </form>
 {:else}
   <div class="mb-1 flex items-start gap-2">
-    <h1
-      class="min-w-0 font-serif text-[length:var(--text-heading)] break-words text-warm"
-    >
+    <h1 class="min-w-0 font-serif text-[length:var(--text-heading)] break-words text-warm">
       {name}
     </h1>
     {#if editable}

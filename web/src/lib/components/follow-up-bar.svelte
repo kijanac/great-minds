@@ -67,9 +67,7 @@
             variant="outline"
             class="flex h-auto max-w-[280px] items-center gap-[7px] rounded-sm border-gold-dim bg-interactive-dim py-1 pr-[9px] pl-[11px] text-[length:var(--text-caption)] text-warm-ghost italic"
           >
-            <span
-              class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
-            >
+            <span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
               “{chip.length > 42 ? `${chip.slice(0, 42)}...` : chip}”
             </span>
             <Button
@@ -126,10 +124,7 @@
       <ReplySubmissionError onRetry={onSubmit} />
     {/if}
     {#if stopFailed}
-      <p
-        role="alert"
-        class="font-mono text-[length:var(--text-chrome)] text-destructive"
-      >
+      <p role="alert" class="font-mono text-[length:var(--text-chrome)] text-destructive">
         Couldn’t stop the response. Try again.
       </p>
     {/if}

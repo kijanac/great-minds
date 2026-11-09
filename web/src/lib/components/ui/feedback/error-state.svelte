@@ -11,13 +11,8 @@
   } = $props();
 </script>
 
-<div
-  class="flex h-full w-full flex-col items-center justify-center gap-3 py-10 px-4"
->
-  <Alert
-    variant="destructive"
-    class="max-w-sm rounded-sm border-red-400/25 bg-red-400/5"
-  >
+<div class="flex h-full w-full flex-col items-center justify-center gap-3 py-10 px-4">
+  <Alert variant="destructive" class="max-w-sm rounded-sm border-red-400/25 bg-red-400/5">
     <AlertDescription
       class="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-red-400/90 text-center"
     >

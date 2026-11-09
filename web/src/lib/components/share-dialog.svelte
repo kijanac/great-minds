@@ -3,12 +3,7 @@
   import Copy from "@lucide/svelte/icons/copy";
   import type { Snippet } from "svelte";
 
-  import {
-    isUuid,
-    type SessionId,
-    type ShareOverview,
-    type Uuid,
-  } from "@great-minds/domain";
+  import { isUuid, type SessionId, type ShareOverview, type Uuid } from "@great-minds/domain";
 
   import { api, run } from "#lib/api/app.ts";
   import { errorMessage } from "@great-minds/client";
@@ -55,9 +50,7 @@
       share =
         shares.find(
           (s) =>
-            s.subject_kind === subjectKind &&
-            s.subject_id === subjectId &&
-            s.revoked_at === null,
+            s.subject_kind === subjectKind && s.subject_id === subjectId && s.revoked_at === null,
         ) ?? null;
     } catch (cause) {
       error = errorMessage(cause, "Failed to load share status");
@@ -159,9 +152,7 @@
   </AlertDialog.Trigger>
   <AlertDialog.Content class={POPOVER_SURFACE_CLASS}>
     <AlertDialog.Header>
-      <AlertDialog.Title
-        class="font-serif text-[length:var(--text-body)] text-warm"
-      >
+      <AlertDialog.Title class="font-serif text-[length:var(--text-body)] text-warm">
         {subjectKind === "reference" ? "Share reference" : "Share session"}
       </AlertDialog.Title>
       <AlertDialog.Description
@@ -172,15 +163,11 @@
     </AlertDialog.Header>
 
     {#if loading}
-      <p
-        class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-dim"
-      >
+      <p class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-dim">
         loading…
       </p>
     {:else if share && link}
-      <div
-        class="flex items-center gap-1 rounded-sm bg-ink-raised py-1 pr-1 pl-3"
-      >
+      <div class="flex items-center gap-1 rounded-sm bg-ink-raised py-1 pr-1 pl-3">
         <code
           class="min-w-0 flex-1 overflow-hidden font-mono text-[length:var(--text-small)] whitespace-nowrap text-warm"
           title={link}
@@ -202,16 +189,12 @@
         </Button>
       </div>
       {#if subjectKind === "reference"}
-        <p
-          class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost"
-        >
+        <p class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost">
           {share.include_annotations ? "includes your notes" : "article only"}
         </p>
       {/if}
       {#if copied}
-        <p
-          class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-dim"
-        >
+        <p class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-dim">
           copied
         </p>
       {/if}
@@ -232,16 +215,12 @@
     {/if}
 
     {#if created}
-      <p
-        class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-dim"
-      >
+      <p class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-dim">
         link created
       </p>
     {/if}
     {#if error}
-      <p
-        class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-destructive"
-      >
+      <p class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-destructive">
         {error}
       </p>
     {/if}

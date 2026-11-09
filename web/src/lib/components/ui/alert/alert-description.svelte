@@ -3,11 +3,7 @@
 
   import { cn } from "#lib/utils.ts";
 
-  let {
-    class: className,
-    children,
-    ...restProps
-  }: HTMLAttributes<HTMLDivElement> = $props();
+  let { class: className, children, ...restProps }: HTMLAttributes<HTMLDivElement> = $props();
 </script>
 
 <div

@@ -27,10 +27,10 @@
     aria-label="Original passage"
     class="mb-2 whitespace-pre-wrap font-serif text-[length:var(--text-small)] leading-[1.85] text-warm-dim [overflow-wrap:anywhere]"
   >
-    {#if span}{passage.slice(0, span.start)}{:else}<span class="mb-2 block"
-        >{passage}</span
-      >{/if}<mark class="bg-btw/22 text-inherit">{quote}</mark
-    >{#if span}{passage.slice(span.end)}{/if}
+    {#if span}{passage.slice(0, span.start)}{:else}<span class="mb-2 block">{passage}</span
+      >{/if}<mark class="bg-btw/22 text-inherit">{quote}</mark>{#if span}{passage.slice(
+        span.end,
+      )}{/if}
   </blockquote>
   <div class="flex flex-wrap items-baseline gap-x-5 gap-y-1">
     {#if context && context !== quote}

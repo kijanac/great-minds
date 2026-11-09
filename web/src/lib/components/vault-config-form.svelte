@@ -43,9 +43,7 @@
   let draftError = $state<string | null>(null);
 
   const isCreate = $derived(mode === "create");
-  const canSubmit = $derived(
-    !submitting && (!isCreate || name.trim().length > 0),
-  );
+  const canSubmit = $derived(!submitting && (!isCreate || name.trim().length > 0));
 
   async function draft() {
     const trimmed = description.trim();
@@ -113,13 +111,8 @@
         {drafting ? "drafting…" : "draft focus from description"}
       </Button>
       {#if draftError}
-        <Alert
-          variant="destructive"
-          class="rounded-sm border-red-400/25 bg-red-400/5 py-1.5"
-        >
-          <AlertDescription
-            class="font-mono text-[length:var(--text-chrome)] text-red-400/90"
-          >
+        <Alert variant="destructive" class="rounded-sm border-red-400/25 bg-red-400/5 py-1.5">
+          <AlertDescription class="font-mono text-[length:var(--text-chrome)] text-red-400/90">
             {draftError}
           </AlertDescription>
         </Alert>
@@ -150,9 +143,7 @@
       disabled={!canSubmit}
       class="rounded-sm border border-gold-dim bg-gold/15 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold hover:bg-gold/25"
     >
-      {submitting
-        ? "saving…"
-        : (submitLabel ?? (isCreate ? "create vault" : "save changes"))}
+      {submitting ? "saving…" : (submitLabel ?? (isCreate ? "create vault" : "save changes"))}
     </Button>
     {#if onCancel}
       <Button

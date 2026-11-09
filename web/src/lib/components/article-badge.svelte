@@ -40,7 +40,5 @@
   {#if source.type === "links"}
     <Waypoints size={9} class="mr-1.5 shrink-0 opacity-60" />
   {/if}
-  <span class="min-w-0 truncate"
-    >{displayTitle(source.label, source.title)}</span
-  >
+  <span class="min-w-0 truncate">{displayTitle(source.label, source.title)}</span>
 </Badge>

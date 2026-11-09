@@ -43,9 +43,7 @@
     </Button>
   </div>
   {#if error}
-    <p
-      class="mt-2 font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-destructive"
-    >
+    <p class="mt-2 font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-destructive">
       {error}
     </p>
   {/if}

@@ -59,12 +59,7 @@
     return exchange.thinking
       .flatMap((block) => block.sources)
       .filter((source) => {
-        if (
-          source.type !== "article" ||
-          source.pending ||
-          seen.has(source.label)
-        )
-          return false;
+        if (source.type !== "article" || source.pending || seen.has(source.label)) return false;
         seen.add(source.label);
         return true;
       })
@@ -96,9 +91,7 @@
     const section = document.getElementById(id);
     return heading < 0
       ? section
-      : section?.querySelectorAll<HTMLElement>(
-          "[data-answer] h2, [data-answer] h3",
-        )[heading];
+      : section?.querySelectorAll<HTMLElement>("[data-answer] h2, [data-answer] h3")[heading];
   };
 
   function jump(id: string, heading: number) {
@@ -114,8 +107,7 @@
   function updateActiveOutline() {
     if (!viewport) return;
     const view = viewport.getBoundingClientRect();
-    const atBottom =
-      viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 2;
+    const atBottom = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 2;
     const line = atBottom ? view.bottom : view.top + 96;
     let active = -1;
     outline.forEach((entry, index) => {
@@ -191,13 +183,9 @@
       following = false;
     });
   });
-  const originDocPath = $derived(
-    origin?.kind === "document" ? origin.doc_path : null,
-  );
+  const originDocPath = $derived(origin?.kind === "document" ? origin.doc_path : null);
   const originHref = $derived(
-    origin && session.sessionId
-      ? sessionOriginHref(origin, session.sessionId)
-      : null,
+    origin && session.sessionId ? sessionOriginHref(origin, session.sessionId) : null,
   );
 
   let focusedThread: string | null = null;
@@ -221,8 +209,7 @@
       session.phase === "done" &&
       session.submission.status !== "failed" &&
       session.thread.length === 1 &&
-      (session.thread[0]?.error === null ||
-        session.thread[0]?.error === undefined),
+      (session.thread[0]?.error === null || session.thread[0]?.error === undefined),
   );
 
   function handleSelectionChange() {
@@ -244,10 +231,7 @@
   onclick={onLinkClick}
   role={onLinkClick ? "presentation" : undefined}
 >
-  <div
-    bind:this={content}
-    class="relative mx-auto max-w-[740px] px-4 pt-9 pb-8 md:px-10"
-  >
+  <div bind:this={content} class="relative mx-auto max-w-[740px] px-4 pt-9 pb-8 md:px-10">
     {#if outline.length >= 3 && !origin?.anchor && !panelDocked}
       <aside
         class="absolute top-0 right-[calc(100%+1rem)] hidden h-full w-[190px] min-[1200px]:block"
@@ -256,9 +240,7 @@
           aria-label="in this conversation"
           class="sticky top-9 font-mono text-[length:var(--text-chrome)] leading-[1.5]"
         >
-          <div class="mb-2.5 tracking-[0.14em] text-gold-muted uppercase">
-            In this conversation
-          </div>
+          <div class="mb-2.5 tracking-[0.14em] text-gold-muted uppercase">In this conversation</div>
           {#each outline as entry, index (`${entry.id}:${entry.heading}:${index}`)}
             <button
               type="button"
@@ -296,8 +278,7 @@
 
     {#snippet conversation()}
       {#each session.thread as exchange, index (exchange.id)}
-        {@const streaming =
-          exchange.status === "running" && session.phase !== "finalizing"}
+        {@const streaming = exchange.status === "running" && session.phase !== "finalizing"}
         <section id={`exchange-${exchange.id}`} class="scroll-mt-6">
           {#if index === 0}
             {#if receive}
@@ -331,11 +312,7 @@
             />
           {/if}
 
-          <AnswerSteps
-            blocks={exchange.thinking}
-            {streaming}
-            onOpen={onCardClick}
-          />
+          <AnswerSteps blocks={exchange.thinking} {streaming} onOpen={onCardClick} />
 
           {#if exchange.answer}
             <div data-answer>
@@ -351,8 +328,7 @@
                 onBtwRetry={session.retryBtw}
                 onBtwDismiss={session.dismissBtw}
                 onBtwOpenSession={session.openBtwSession}
-                onCitation={(citation) =>
-                  openCitation(citation.href, citation.path)}
+                onCitation={(citation) => openCitation(citation.href, citation.path)}
               />
             </div>
           {/if}
@@ -377,16 +353,13 @@
           {#if exchange.answer && !streaming && (exchange.status === "completed" || exchange.status === "stopped")}
             {@const more = readMore(exchange)}
             {@const canPromote =
-              !!session.sessionId &&
-              (vaultRole === "owner" || vaultRole === "editor")}
+              !!session.sessionId && (vaultRole === "owner" || vaultRole === "editor")}
             {#if more.length > 0 || canPromote}
               <div
                 class="mt-5 flex flex-wrap items-baseline justify-between gap-x-5 gap-y-2 border-t border-dashed border-ink-subtle pt-3"
               >
                 {#if more.length > 0}
-                  <div
-                    class="font-serif text-[length:var(--text-small)] leading-[1.7]"
-                  >
+                  <div class="font-serif text-[length:var(--text-small)] leading-[1.7]">
                     <span
                       class="mr-2 font-mono text-[10px] tracking-[0.14em] text-gold-muted uppercase"
                       >Read more</span
@@ -419,8 +392,8 @@
 
 {#if showHint}
   <OnboardingHint>
-    highlight text to <span class="text-warm-dim">add to reply</span> or ask
-    with <span class="text-btw">btw</span>
+    highlight text to <span class="text-warm-dim">add to reply</span> or ask with
+    <span class="text-btw">btw</span>
   </OnboardingHint>
 {/if}
 

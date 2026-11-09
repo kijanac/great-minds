@@ -3,23 +3,14 @@
   import { tick, type Snippet } from "svelte";
 
   import { findQuoteRange } from "#lib/anchor.ts";
-  import {
-    wrapAnchors,
-    type AnchorMark,
-    type AnchorMiss,
-  } from "#lib/anchor-marks.ts";
+  import { wrapAnchors, type AnchorMark, type AnchorMiss } from "#lib/anchor-marks.ts";
   import { assignBlockRefIds, stripBlockRefMarkers } from "#lib/block-refs.ts";
   import AnswerCitations from "#lib/components/answer-citations.svelte";
   import BtwThread from "#lib/components/btw-thread.svelte";
   import { numberCitations, type Citation } from "#lib/citations.ts";
-  import FootnoteNotes, {
-    type MarginDot,
-  } from "#lib/components/footnote-notes.svelte";
+  import FootnoteNotes, { type MarginDot } from "#lib/components/footnote-notes.svelte";
   import HastNodeView from "#lib/components/hast-node.svelte";
-  import {
-    clearAnchorHighlights,
-    setAnchorHighlights,
-  } from "#lib/highlight.ts";
+  import { clearAnchorHighlights, setAnchorHighlights } from "#lib/highlight.ts";
   import { parseMarkdown } from "#lib/markdown.ts";
   import type { HastNode } from "#lib/markdown-plugins.ts";
   import { passageMark } from "#lib/passage-navigation.ts";
@@ -79,12 +70,8 @@
 
   let root: HTMLDivElement | null = $state(null);
   let localExpanded = $state<Record<string, boolean>>({});
-  const displayText = $derived(
-    stripBlockRefs ? stripBlockRefMarkers(text) : text,
-  );
-  const split = $derived(
-    streaming ? splitStreamingMarkdown(displayText) : null,
-  );
+  const displayText = $derived(stripBlockRefs ? stripBlockRefMarkers(text) : text);
+  const split = $derived(streaming ? splitStreamingMarkdown(displayText) : null);
   const stableSource = $derived(split?.stable ?? "");
   const tailSource = $derived(split?.tail ?? "");
 
@@ -103,9 +90,7 @@
   // streaming Svelte does not invalidate it until a complete block lands.
   // Settled trees carry marks; the streaming tail tree is never marked.
   const stableParsed = $derived.by(() =>
-    stableSource
-      ? parseSettled(stableSource)
-      : { tree: emptyRoot(), misses: [] },
+    stableSource ? parseSettled(stableSource) : { tree: emptyRoot(), misses: [] },
   );
   const stableTree = $derived(stableParsed.tree);
   const tailTree = $derived.by(() =>
@@ -120,13 +105,10 @@
     return (
       !!documentTitle &&
       first?.tagName === "h1" &&
-      nodeText(first).replace(/\s+/g, " ").trim() ===
-        documentTitle.replace(/\s+/g, " ").trim()
+      nodeText(first).replace(/\s+/g, " ").trim() === documentTitle.replace(/\s+/g, " ").trim()
     );
   });
-  const anchorMisses = $derived(
-    streaming ? stableParsed.misses : fullParsed.misses,
-  );
+  const anchorMisses = $derived(streaming ? stableParsed.misses : fullParsed.misses);
   // Offsets of top-level blocks currently rendered in the body (streaming
   // uses the stable/tail trees, otherwise the full tree). Threads whose
   // anchor offset is not among these are unresolvable: they render nowhere
@@ -143,9 +125,7 @@
   });
   // Only anchored threads (quote present) render in the body; doc-initiated
   // conversations surface through the doc-header chip instead.
-  const bodyThreads = $derived(
-    btws.filter((btw) => btw.anchor.quote.length > 0),
-  );
+  const bodyThreads = $derived(btws.filter((btw) => btw.anchor.quote.length > 0));
   // Gutter dots render only for threads whose block resolves in the body but
   // whose quote cannot be located in it — pure indicators, no interaction.
   // Threads with marks get no dot; threads with no block stay header-panel-only.
@@ -158,8 +138,7 @@
     const seen = new Set<number>();
     const dots: MarginDot[] = [];
     for (const btw of bodyThreads) {
-      if (btw.anchor.blockOffset < 0 || seen.has(btw.anchor.blockOffset))
-        continue;
+      if (btw.anchor.blockOffset < 0 || seen.has(btw.anchor.blockOffset)) continue;
       if (!renderedOffsets.has(btw.anchor.blockOffset)) continue;
       if (!missedBlocks.has(btw.anchor.blockOffset)) continue;
       seen.add(btw.anchor.blockOffset);
@@ -171,14 +150,10 @@
     }
     return dots;
   });
-  const footnoteRoots = $derived(
-    streaming ? [stableTree, tailTree] : [fullTree],
-  );
+  const footnoteRoots = $derived(streaming ? [stableTree, tailTree] : [fullTree]);
 
   const isOpen = (btwId: string): boolean =>
-    expandedThreads
-      ? expandedThreads.has(btwId)
-      : (localExpanded[btwId] ?? false);
+    expandedThreads ? expandedThreads.has(btwId) : (localExpanded[btwId] ?? false);
 
   const toggleThread = (btwId: string, keyboard = false): void => {
     const closing = isOpen(btwId);
@@ -195,9 +170,7 @@
         const trigger = root && passageMark(btwId, root);
         trigger?.focus({ preventScroll: true });
       } else if (keyboard) {
-        const thread = root?.querySelector<HTMLElement>(
-          `[data-btw-id="${CSS.escape(btwId)}"]`,
-        );
+        const thread = root?.querySelector<HTMLElement>(`[data-btw-id="${CSS.escape(btwId)}"]`);
         const control =
           thread?.querySelector<HTMLElement>("textarea:not(:disabled)") ??
           thread?.querySelector<HTMLElement>("a, button");
@@ -300,10 +273,7 @@
   function handleBodyKeydown(event: KeyboardEvent): void {
     if (event.key !== "Enter" && event.key !== " ") return;
     const target = event.target;
-    if (
-      !(target instanceof HTMLElement) ||
-      !target.matches('mark[data-thread-id][role="button"]')
-    )
+    if (!(target instanceof HTMLElement) || !target.matches('mark[data-thread-id][role="button"]'))
       return;
     const threadId = target.getAttribute("data-thread-id");
     if (!threadId) return;
@@ -316,9 +286,7 @@
   // tint the segment under the cursor.
   function setThreadHot(threadId: string, hot: boolean): void {
     if (!root) return;
-    for (const segment of root.querySelectorAll(
-      `mark[data-thread-id="${CSS.escape(threadId)}"]`,
-    )) {
+    for (const segment of root.querySelectorAll(`mark[data-thread-id="${CSS.escape(threadId)}"]`)) {
       segment.classList.toggle("btw-anchor-hot", hot);
     }
   }
@@ -329,10 +297,7 @@
     const mark = target.closest("mark[data-thread-id]");
     if (!mark) return;
     const related = event.relatedTarget;
-    if (
-      related instanceof Element &&
-      related.closest("mark[data-thread-id]") === mark
-    ) {
+    if (related instanceof Element && related.closest("mark[data-thread-id]") === mark) {
       return;
     }
     const threadId = mark.getAttribute("data-thread-id");
@@ -357,9 +322,7 @@
   });
 
   function nodeText(node: HastNode): string {
-    return node.type === "text"
-      ? (node.value ?? "")
-      : (node.children ?? []).map(nodeText).join("");
+    return node.type === "text" ? (node.value ?? "") : (node.children ?? []).map(nodeText).join("");
   }
 
   function emptyRoot(): HastNode {
@@ -386,15 +349,9 @@
   }
 
   function handleKeyboardSelection(event: KeyboardEvent): void {
-    if (
-      event.key !== "Shift" &&
-      !(event.shiftKey && /^(Arrow|Home|End)/.test(event.key))
-    )
-      return;
+    if (event.key !== "Shift" && !(event.shiftKey && /^(Arrow|Home|End)/.test(event.key))) return;
     const selection = window.getSelection();
-    const node = selection?.rangeCount
-      ? selection.getRangeAt(0).commonAncestorContainer
-      : null;
+    const node = selection?.rangeCount ? selection.getRangeAt(0).commonAncestorContainer : null;
     const element = node instanceof Element ? node : node?.parentElement;
     const block = element?.closest<HTMLElement>("[data-block-offset]");
     if (!block || !root?.contains(block)) return;
@@ -404,8 +361,7 @@
   function showSelection(element: HTMLElement, offset: number): void {
     if (streaming || !onSelection) return;
     const selection = window.getSelection();
-    if (!selection || selection.isCollapsed || selection.rangeCount === 0)
-      return;
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
     const quote = selection.toString().trim();
     if (!quote) return;
     const range = selection.getRangeAt(0);

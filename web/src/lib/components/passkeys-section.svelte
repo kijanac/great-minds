@@ -1,15 +1,8 @@
 <script lang="ts">
   import { type Passkey, type Uuid } from "@great-minds/domain";
   import X from "@lucide/svelte/icons/x";
-  import {
-    startRegistration,
-    WebAuthnAbortService,
-  } from "@simplewebauthn/browser";
-  import {
-    createMutation,
-    createQuery,
-    useQueryClient,
-  } from "@tanstack/svelte-query";
+  import { startRegistration, WebAuthnAbortService } from "@simplewebauthn/browser";
+  import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
 
   import { api, run } from "#lib/api/app.ts";
   import { errorMessage } from "@great-minds/client";
@@ -86,10 +79,7 @@
       naming = false;
     } catch (error) {
       if (!cancelled) {
-        addError = errorMessage(
-          error,
-          "We couldn't add this passkey. Please try again.",
-        );
+        addError = errorMessage(error, "We couldn't add this passkey. Please try again.");
       }
     } finally {
       adding = false;
@@ -169,10 +159,7 @@
   {/if}
 
   {#if addError}
-    <Alert
-      variant="destructive"
-      class="mb-4 rounded-sm border-red-400/25 bg-red-400/5"
-    >
+    <Alert variant="destructive" class="mb-4 rounded-sm border-red-400/25 bg-red-400/5">
       <AlertDescription
         class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-red-400/90"
       >
@@ -182,17 +169,12 @@
   {/if}
 
   {#if passkeysQuery.isLoading}
-    <p
-      class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-    >
+    <p class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
       loading…
     </p>
   {:else if (passkeysQuery.data ?? []).length === 0}
-    <p
-      class="max-w-[58ch] text-[length:var(--text-small)] leading-relaxed text-warm-ghost"
-    >
-      No passkeys yet. Add one to sign in with your device, security key, or
-      password manager.
+    <p class="max-w-[58ch] text-[length:var(--text-small)] leading-relaxed text-warm-ghost">
+      No passkeys yet. Add one to sign in with your device, security key, or password manager.
     </p>
   {:else}
     <div class="space-y-1">
@@ -201,14 +183,10 @@
           class="group flex min-h-12 items-center justify-between gap-4 rounded-sm px-3 py-2 hover:bg-ink-raised"
         >
           <div class="min-w-0">
-            <div
-              class="truncate font-mono text-[length:var(--text-small)] text-warm-dim"
-            >
+            <div class="truncate font-mono text-[length:var(--text-small)] text-warm-dim">
               {passkey.name}
             </div>
-            <div
-              class="mt-0.5 font-mono text-[length:var(--text-chrome)] text-warm-ghost"
-            >
+            <div class="mt-0.5 font-mono text-[length:var(--text-chrome)] text-warm-ghost">
               added {formatShortDate(passkey.created_at)} · {passkey.last_used_at
                 ? `last used ${formatShortDate(passkey.last_used_at)}`
                 : "never used"}
@@ -232,16 +210,14 @@
 <AlertDialog.Root bind:open={deleteOpen}>
   <AlertDialog.Content class={POPOVER_SURFACE_CLASS}>
     <AlertDialog.Header>
-      <AlertDialog.Title
-        class="font-serif text-[length:var(--text-body)] text-warm"
-      >
+      <AlertDialog.Title class="font-serif text-[length:var(--text-body)] text-warm">
         Delete this passkey?
       </AlertDialog.Title>
       <AlertDialog.Description
         class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-warm-ghost"
       >
-        {selected?.name ?? "This passkey"} will no longer work for signing in. Other
-        passkeys and email sign-in will still be available.
+        {selected?.name ?? "This passkey"} will no longer work for signing in. Other passkeys and email
+        sign-in will still be available.
       </AlertDialog.Description>
     </AlertDialog.Header>
     <AlertDialog.Footer>

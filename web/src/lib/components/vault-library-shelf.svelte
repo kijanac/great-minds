@@ -10,10 +10,7 @@
     LIBRARY_ARTICLES,
     type LibraryView,
   } from "#lib/hooks/use-library.svelte.ts";
-  import type {
-    SourceDocumentSummary,
-    WikiArticleOverview,
-  } from "#lib/types.ts";
+  import type { SourceDocumentSummary, WikiArticleOverview } from "#lib/types.ts";
 
   let {
     library,
@@ -35,9 +32,7 @@
   const pin = $derived(library.pinArticle);
   const articleItems = $derived(
     pin
-      ? library.articleItems.filter(
-          (article) => article.file_path !== pin.file_path,
-        )
+      ? library.articleItems.filter((article) => article.file_path !== pin.file_path)
       : library.articleItems,
   );
 </script>
@@ -63,9 +58,7 @@
 {/if}
 
 {#if library.actionNotice}
-  <p
-    class="mb-3 px-3 font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-gold-muted"
-  >
+  <p class="mb-3 px-3 font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-gold-muted">
     {library.actionNotice}
   </p>
 {/if}
@@ -99,9 +92,7 @@
           : "No library items yet"}
     </p>
     {#if !library.search && !library.activeTag}
-      <p
-        class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-      >
+      <p class="font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
         add sources from home to build your library
       </p>
     {/if}
@@ -127,9 +118,7 @@
             disabled={library.articles.isFetchingNextPage}
             class="h-auto px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-muted hover:bg-transparent hover:text-gold"
           >
-            {library.articles.isFetchingNextPage
-              ? "loading…"
-              : "load more articles"}
+            {library.articles.isFetchingNextPage ? "loading…" : "load more articles"}
           </Button>
         </div>
       {/if}

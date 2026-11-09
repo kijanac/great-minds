@@ -19,13 +19,7 @@
     type HashedFile,
     type UploadFailure,
   } from "#lib/api/ingest.ts";
-  import {
-    cancelJob,
-    listJobs,
-    requestCompile,
-    retryUrlJob,
-    startUrlJob,
-  } from "#lib/api/jobs.ts";
+  import { cancelJob, listJobs, requestCompile, retryUrlJob, startUrlJob } from "#lib/api/jobs.ts";
   import { auth } from "#lib/auth.svelte.ts";
   import RunOutcome from "#lib/components/run-outcome.svelte";
   import RunProgress from "#lib/components/run-progress.svelte";
@@ -71,34 +65,24 @@
   const jobId = $derived(routeJobId ?? resolvedJobId);
   const urlParam = $derived(page.url.searchParams.get("url"));
   const fileUpload = $derived(page.state as FileUploadState);
-  const currentVault = $derived(
-    vaults.data?.find((vault) => vault.id === activeVault.id) ?? null,
-  );
+  const currentVault = $derived(vaults.data?.find((vault) => vault.id === activeVault.id) ?? null);
   const jobVaultId = $derived(
-    routeJobId && !routeContextResolved
-      ? null
-      : (fileBatch?.vault_id ?? activeVault.id ?? null),
+    routeJobId && !routeContextResolved ? null : (fileBatch?.vault_id ?? activeVault.id ?? null),
   );
 
   const canManage = $derived(
-    fileBatch
-      ? fileBatch.created_by === auth.userId
-      : currentVault?.owner_id === auth.userId,
+    fileBatch ? fileBatch.created_by === auth.userId : currentVault?.owner_id === auth.userId,
   );
 
   const progress = useJobSSE(
     () => jobId,
     () => jobVaultId,
   );
-  const firstErrored = $derived(
-    progress.track.find((stage) => stage.status === "failed"),
-  );
+  const firstErrored = $derived(progress.track.find((stage) => stage.status === "failed"));
   const receivedFileCount = $derived(
     fileBatch?.files.filter((file) => file.status !== "pending").length ?? 0,
   );
-  const uploadInProgress = $derived(
-    fileBatch !== null && uploadingBatchIds.has(fileBatch.id),
-  );
+  const uploadInProgress = $derived(fileBatch !== null && uploadingBatchIds.has(fileBatch.id));
   const awaitingFiles = $derived(
     fileBatch?.status === "uploading" &&
       !uploadInProgress &&
@@ -106,10 +90,7 @@
       !progress.overallError,
   );
   const isRunning = $derived(
-    !noJobFound &&
-      !progress.overallDone &&
-      !progress.overallError &&
-      !progress.overallCancelled,
+    !noJobFound && !progress.overallDone && !progress.overallError && !progress.overallCancelled,
   );
 
   function captureRouteOwnership(predicate: () => boolean): () => boolean {
@@ -173,10 +154,7 @@
     resolverStarted = true;
     uploadFailures = [];
     const ownsResolver = captureRouteOwnership(
-      () =>
-        routeJobId === null &&
-        page.url.pathname === "/pipeline" &&
-        urlParam === currentUrl,
+      () => routeJobId === null && page.url.pathname === "/pipeline" && urlParam === currentUrl,
     );
 
     if (currentUrl && !canManage) {
@@ -215,16 +193,9 @@
     })();
   });
 
-  async function runBatchUpload(
-    batch: FileIngestBatch,
-    files: readonly HashedFile[],
-  ) {
+  async function runBatchUpload(batch: FileIngestBatch, files: readonly HashedFile[]) {
     const ownsRoute = captureRouteOwnership(() => routeJobId === batch.id);
-    if (
-      !ownsRoute() ||
-      uploadingBatchIds.has(batch.id) ||
-      batch.status !== "uploading"
-    ) {
+    if (!ownsRoute() || uploadingBatchIds.has(batch.id) || batch.status !== "uploading") {
       return;
     }
     uploadingBatchIds.add(batch.id);
@@ -364,10 +335,7 @@
   <div class="min-h-0 flex-1 overflow-y-auto">
     <main class="mx-auto max-w-[640px] px-4 pt-10 pb-20 md:px-10">
       {#if actionError}
-        <Alert
-          variant="destructive"
-          class="mb-8 rounded-sm border-red-400/25 bg-red-400/5"
-        >
+        <Alert variant="destructive" class="mb-8 rounded-sm border-red-400/25 bg-red-400/5">
           <AlertDescription
             class="font-mono text-[length:var(--text-chrome)] tracking-[0.04em] text-red-400/90"
           >
@@ -378,11 +346,7 @@
 
       {#if noJobFound && !resolveError}
         <div class="pt-8 text-center">
-          <p
-            class="mb-2 font-serif text-[length:var(--text-body)] text-warm-dim"
-          >
-            No active job
-          </p>
+          <p class="mb-2 font-serif text-[length:var(--text-body)] text-warm-dim">No active job</p>
           <p
             class="mb-5 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
           >
@@ -401,16 +365,12 @@
 
       {#if awaitingFiles && !resolveError}
         <div class="mb-8 rounded-sm border border-gold-dim bg-ink-raised p-5">
-          <p
-            class="mb-2 font-serif text-[length:var(--text-body)] text-warm-dim"
-          >
-            Upload paused
-          </p>
+          <p class="mb-2 font-serif text-[length:var(--text-body)] text-warm-dim">Upload paused</p>
           <p
             class="mb-4 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
           >
-            {receivedFileCount} of {fileBatch?.files.length ?? 0} files received ·
-            reselect the missing files to continue
+            {receivedFileCount} of {fileBatch?.files.length ?? 0} files received · reselect the missing
+            files to continue
           </p>
           {#if canManage}
             <Button
@@ -463,8 +423,7 @@
                   variant="outline"
                   size="xs"
                   onclick={() => {
-                    if (fileBatch)
-                      void runBatchUpload(fileBatch, availableFiles);
+                    if (fileBatch) void runBatchUpload(fileBatch, availableFiles);
                   }}
                   class="h-auto rounded-sm border-gold-dim px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold uppercase hover:bg-gold/10"
                 >
@@ -487,8 +446,7 @@
                 disabled={!me.canUseModels}
                 class="h-auto rounded-sm border-gold-dim px-3 py-1.5 disabled:opacity-45 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold uppercase hover:bg-gold/10"
               >
-                {progress.trigger === "url" &&
-                progress.backendPhase === "source_ingest"
+                {progress.trigger === "url" && progress.backendPhase === "source_ingest"
                   ? "Retry URL"
                   : firstErrored?.key === "upload"
                     ? "Compile saved files"
@@ -515,9 +473,7 @@
             />
           {/if}
           {#if uploadFailures.length > 0}
-            <ul
-              class="mb-6 space-y-1 font-mono text-[length:var(--text-chrome)] text-warm-faint"
-            >
+            <ul class="mb-6 space-y-1 font-mono text-[length:var(--text-chrome)] text-warm-faint">
               {#each uploadFailures as failure}
                 <li class="[overflow-wrap:anywhere]">
                   <span class="text-warm-dim">{failure.name}</span>: {failure.error}

@@ -7,15 +7,8 @@
 
   import { Button } from "#lib/components/ui/button/index.ts";
   import * as Popover from "#lib/components/ui/popover/index.ts";
-  import {
-    MENU_ITEM_CLASS,
-    POPOVER_SURFACE_CLASS,
-  } from "#lib/control-styles.ts";
-  import {
-    activeVault,
-    switchVault,
-    useVaults,
-  } from "#lib/hooks/use-vault.svelte.ts";
+  import { MENU_ITEM_CLASS, POPOVER_SURFACE_CLASS } from "#lib/control-styles.ts";
+  import { activeVault, switchVault, useVaults } from "#lib/hooks/use-vault.svelte.ts";
 
   const vaults = useVaults();
   let open = $state(false);

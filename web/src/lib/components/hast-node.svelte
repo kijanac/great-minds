@@ -80,8 +80,7 @@
       ul: "mb-2 ml-2 list-inside list-disc text-[length:var(--text-body)] leading-[1.82] text-warm-dim",
       ol: "mb-2 ml-2 list-inside list-decimal text-[length:var(--text-body)] leading-[1.82] text-warm-dim",
       li: "mb-1",
-      blockquote:
-        "my-3 border-l-2 border-gold-dim pl-3.5 text-warm-faint italic",
+      blockquote: "my-3 border-l-2 border-gold-dim pl-3.5 text-warm-faint italic",
       em: "text-warm",
       strong: "font-bold text-foreground",
       code: "rounded-sm bg-code-bg px-1.5 py-0.5 font-mono text-[length:var(--text-small)] text-gold",
@@ -98,8 +97,7 @@
       ul: "mb-1 ml-2 list-inside list-disc",
       ol: "mb-1 ml-2 list-inside list-decimal",
       li: "mb-0.5",
-      blockquote:
-        "my-1.5 border-l-2 border-gold-dim pl-2.5 text-warm-faint italic",
+      blockquote: "my-1.5 border-l-2 border-gold-dim pl-2.5 text-warm-faint italic",
       em: "text-warm",
       strong: "font-bold text-foreground",
       code: "rounded-sm bg-code-bg px-1 py-0.5 font-mono text-[length:var(--text-chrome)] text-gold",
@@ -132,15 +130,9 @@
     return output;
   }
 
-  function propertyClass(
-    properties: Record<string, unknown> | undefined,
-  ): string {
+  function propertyClass(properties: Record<string, unknown> | undefined): string {
     const value = properties?.className;
-    return Array.isArray(value)
-      ? value.join(" ")
-      : typeof value === "string"
-        ? value
-        : "";
+    return Array.isArray(value) ? value.join(" ") : typeof value === "string" ? value : "";
   }
 
   const attrs = $derived(attributes(node.properties));
@@ -149,34 +141,20 @@
     return rest;
   });
   const tag = $derived(node.tagName ?? "span");
-  const className = $derived(
-    cn(CLASSES[variant][tag], propertyClass(node.properties)),
-  );
+  const className = $derived(cn(CLASSES[variant][tag], propertyClass(node.properties)));
   const footnoteId = $derived(
-    typeof node.properties?.dataMarginNoteId === "string"
-      ? node.properties.dataMarginNoteId
-      : null,
+    typeof node.properties?.dataMarginNoteId === "string" ? node.properties.dataMarginNoteId : null,
   );
   const href = $derived(
-    typeof node.properties?.href === "string"
-      ? node.properties.href
-      : undefined,
+    typeof node.properties?.href === "string" ? node.properties.href : undefined,
   );
   const citation = $derived(
-    typeof node.properties?.dataCitation === "string"
-      ? node.properties.dataCitation
-      : null,
+    typeof node.properties?.dataCitation === "string" ? node.properties.dataCitation : null,
   );
-  const elementId = $derived(
-    typeof node.properties?.id === "string" ? node.properties.id : null,
-  );
+  const elementId = $derived(typeof node.properties?.id === "string" ? node.properties.id : null);
   const external = $derived(href?.startsWith("http") ?? false);
-  const footnoteContent = $derived(
-    footnoteId ? (footnoteDefinitions?.[footnoteId] ?? null) : null,
-  );
-  const pinnedFootnote = $derived(
-    footnoteId ? pinnedFootnotes.includes(footnoteId) : false,
-  );
+  const footnoteContent = $derived(footnoteId ? (footnoteDefinitions?.[footnoteId] ?? null) : null);
+  const pinnedFootnote = $derived(footnoteId ? pinnedFootnotes.includes(footnoteId) : false);
 </script>
 
 {#snippet childNodes()}
@@ -202,8 +180,8 @@
   {node.value ?? ""}
 {:else if node.type === "element" && tag === "a"}
   {#if footnoteContent && footnoteMode === "popover"}
-    {#if elementId}<span id={elementId} class="sr-only" aria-hidden="true"
-      ></span>{/if}<Popover.Root>
+    {#if elementId}<span id={elementId} class="sr-only" aria-hidden="true"></span>{/if}<Popover.Root
+    >
       <Popover.Trigger>
         {#snippet child({ props })}
           <a
@@ -212,9 +190,7 @@
             {href}
             onclick={(event) => {
               event.preventDefault();
-              (props.onclick as ((event: MouseEvent) => void) | undefined)?.(
-                event,
-              );
+              (props.onclick as ((event: MouseEvent) => void) | undefined)?.(event);
             }}
             class={cn(
               "text-gold underline decoration-gold/30 underline-offset-2 transition-colors hover:decoration-gold/60",

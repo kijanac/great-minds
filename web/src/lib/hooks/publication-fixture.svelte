@@ -33,9 +33,7 @@
   }
 </script>
 
-<output data-vault={linked.id} data-pending={linked.pending}
-  >{linked.error ?? "Ready"}</output
->
+<output data-vault={linked.id} data-pending={linked.pending}>{linked.error ?? "Ready"}</output>
 <button onclick={publication.prepare}>Export</button>
 {#if publication.open}
   <SessionExport

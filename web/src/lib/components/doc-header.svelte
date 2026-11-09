@@ -5,11 +5,7 @@
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import Pencil from "@lucide/svelte/icons/pencil";
 
-  import {
-    articleMeta,
-    type Article,
-    type DocumentScope,
-  } from "#lib/api/doc.ts";
+  import { articleMeta, type Article, type DocumentScope } from "#lib/api/doc.ts";
   import { errorMessage } from "@great-minds/client";
   import ReferencePromoteAction from "#lib/components/reference-promote-action.svelte";
   import ShareDialog from "#lib/components/share-dialog.svelte";
@@ -57,9 +53,7 @@
   let titleInput = $state<HTMLInputElement | null>(null);
   let renameError = $state<string | null>(null);
   const rename = useReferenceRename();
-  const notes = $derived(
-    threads.filter((thread) => thread.conversation?.kind === "btw"),
-  );
+  const notes = $derived(threads.filter((thread) => thread.conversation?.kind === "btw"));
   const conversations = $derived(
     threads.flatMap((thread) =>
       thread.conversation?.kind === "session"
@@ -74,8 +68,7 @@
     ),
   );
   const showThreadsChip = $derived(notes.length + conversations.length > 0);
-  const shortQuote = (quote: string) =>
-    quote.length > 44 ? `${quote.slice(0, 44)}...` : quote;
+  const shortQuote = (quote: string) => (quote.length > 44 ? `${quote.slice(0, 44)}...` : quote);
   const metadata = $derived(articleMeta(document));
   const metaParts = $derived(
     [metadata.author, metadata.published_date, metadata.genre].filter(
@@ -83,9 +76,7 @@
     ),
   );
   const extraEntries = $derived(
-    Object.entries(metadata.derived_extras ?? {}).filter(
-      ([key]) => key !== "topic_id",
-    ),
+    Object.entries(metadata.derived_extras ?? {}).filter(([key]) => key !== "topic_id"),
   );
 
   function formatValue(value: unknown): string {
@@ -196,17 +187,13 @@
         aria-label="reference title"
       />
       {#if renameError}
-        <p
-          class="mt-1 font-mono text-[length:var(--text-chrome)] text-destructive"
-        >
+        <p class="mt-1 font-mono text-[length:var(--text-chrome)] text-destructive">
           {renameError}
         </p>
       {/if}
     </div>
   {:else if showTitle}
-    <h1
-      class="group mb-3 min-w-0 text-[length:var(--text-title)] font-bold text-foreground"
-    >
+    <h1 class="group mb-3 min-w-0 text-[length:var(--text-title)] font-bold text-foreground">
       {document.title}{#if scope === "personal" && document.kind === "reference"}<button
           type="button"
           onclick={() => void startRename()}
@@ -219,17 +206,13 @@
   {/if}
 
   {#if metadata.precis}
-    <p
-      class="mb-4 font-serif text-[length:var(--text-body)] leading-[1.6] text-warm-dim italic"
-    >
+    <p class="mb-4 font-serif text-[length:var(--text-body)] leading-[1.6] text-warm-dim italic">
       {metadata.precis}
     </p>
   {/if}
 
   {#if metaParts.length > 0}
-    <p
-      class="mb-3 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint"
-    >
+    <p class="mb-3 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint">
       {metaParts.join(" · ")}
     </p>
   {/if}
@@ -237,10 +220,7 @@
   {#if metadata.tags.length > 0}
     <div class="mb-3 flex flex-wrap gap-2">
       {#each metadata.tags as tag (tag)}
-        <a
-          href={`/library?tag=${encodeURIComponent(tag)}`}
-          class={cn(CHIP_BASE, CHIP_INACTIVE)}
-        >
+        <a href={`/library?tag=${encodeURIComponent(tag)}`} class={cn(CHIP_BASE, CHIP_INACTIVE)}>
           {tag}
         </a>
       {/each}
@@ -248,9 +228,7 @@
   {/if}
 
   {#if metadata.url || metadata.origin}
-    <p
-      class="mb-3 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
-    >
+    <p class="mb-3 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
       {#if metadata.url}
         <a
           href={metadata.url}
@@ -268,13 +246,8 @@
   {/if}
 
   {#if document.kind === "reference" && (document.author || document.published)}
-    <p
-      class="mb-3 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint"
-    >
-      {[
-        document.author !== null ? `by ${document.author}` : null,
-        document.published,
-      ]
+    <p class="mb-3 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-faint">
+      {[document.author !== null ? `by ${document.author}` : null, document.published]
         .filter((part): part is string => part !== null)
         .join(" · ")}
     </p>
@@ -305,15 +278,13 @@
               BTWs
             </p>
             {#each notes as note (note.id)}
-              {@const jumpable =
-                jumpableThreads === null || jumpableThreads.has(note.id)}
+              {@const jumpable = jumpableThreads === null || jumpableThreads.has(note.id)}
               <button
                 type="button"
                 onclick={jumpable ? () => onThreadJump?.(note.id) : undefined}
                 class="group flex w-full items-baseline gap-2 text-left"
               >
-                <span class="shrink-0 text-[10px] leading-none text-btw">●</span
-                >
+                <span class="shrink-0 text-[10px] leading-none text-btw">●</span>
                 <span
                   class="min-w-0 flex-1 truncate font-serif text-[length:var(--text-small)] text-warm-dim italic transition-colors group-hover:text-warm"
                 >
@@ -322,9 +293,7 @@
                 <span
                   class="shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost lowercase"
                 >
-                  {note.exchanges.length} turn{note.exchanges.length === 1
-                    ? ""
-                    : "s"} ·
+                  {note.exchanges.length} turn{note.exchanges.length === 1 ? "" : "s"} ·
                   {formatShortDate(note.createdAt)}
                 </span>
                 {#if jumpable}
@@ -349,10 +318,7 @@
                 onclick={() => onThreadOpen?.(conversation.id)}
                 class="group flex w-full items-baseline gap-2 text-left"
               >
-                <CornerUpRight
-                  size={11}
-                  class="shrink-0 translate-y-px text-gold-muted"
-                />
+                <CornerUpRight size={11} class="shrink-0 translate-y-px text-gold-muted" />
                 <span
                   class="min-w-0 flex-1 truncate font-serif text-[length:var(--text-small)] text-warm-dim italic transition-colors group-hover:text-warm"
                 >

@@ -34,10 +34,9 @@ format-packages:
 test-lint-plugin:
     node --experimental-strip-types --test lint/boundary-plugin.test.ts
 
-# Check frontend formatting (read-only): oxfmt for .ts, prettier for .svelte
+# Check frontend formatting (read-only)
 format-web:
     pnpm --prefix web exec oxfmt --check src
-    pnpm --prefix web exec prettier --check "src/**/*.svelte" --log-level warn
 
 # Type-check frontend with svelte-check (after svelte-kit sync)
 types-web:
@@ -86,7 +85,6 @@ review: ci-full
 # Auto-format frontend
 format-web-fix:
     pnpm --prefix web exec oxfmt --write src
-    pnpm --prefix web exec prettier --write "src/**/*.svelte" --log-level warn
 
 # Auto-format TypeScript packages
 format-packages-fix:

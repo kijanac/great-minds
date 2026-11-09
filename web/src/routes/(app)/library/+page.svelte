@@ -8,10 +8,7 @@
   import PanelHost from "#lib/components/panel-host.svelte";
   import { Input } from "#lib/components/ui/input/index.ts";
   import type { ReferenceOverview } from "#lib/api/references.ts";
-  import {
-    LIBRARY_READING_ROOM,
-    useLibrary,
-  } from "#lib/hooks/use-library.svelte.ts";
+  import { LIBRARY_READING_ROOM, useLibrary } from "#lib/hooks/use-library.svelte.ts";
   import { usePanelCard } from "#lib/hooks/use-panel-card.svelte.ts";
   import { useReferences } from "#lib/hooks/use-references.svelte.ts";
   import { activeVault } from "#lib/hooks/use-vault.svelte.ts";
@@ -97,11 +94,7 @@
         </div>
       {/if}
     {/snippet}
-    <PageHeader
-      title="library"
-      trailing={search}
-      onHome={() => void goto("/")}
-    />
+    <PageHeader title="library" trailing={search} onHome={() => void goto("/")} />
 
     <div class="min-h-0 flex-1 overflow-y-auto">
       <LibraryContent {library} {readingRoom} {actions} {updatedSinceVisit} />

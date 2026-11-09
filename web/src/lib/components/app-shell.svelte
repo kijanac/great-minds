@@ -10,10 +10,7 @@
   } = $props();
 </script>
 
-<div
-  class="relative h-dvh"
-  style:--shell-utility-inset={utility ? "3.5rem" : "2.5rem"}
->
+<div class="relative h-dvh" style:--shell-utility-inset={utility ? "3.5rem" : "2.5rem"}>
   {@render children()}
   {#if utility}
     <div

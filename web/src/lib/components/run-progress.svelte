@@ -31,13 +31,10 @@
     return pending === -1 ? track.length - 1 : pending;
   });
   const current = $derived(track[currentIndex]);
-  const shown = $derived(
-    track.find((stage) => stage.key === opened) ?? current,
-  );
+  const shown = $derived(track.find((stage) => stage.key === opened) ?? current);
   const counted = $derived(
     current?.steps.find(
-      (step) =>
-        step.status === "running" && step.total != null && step.total > 0,
+      (step) => step.status === "running" && step.total != null && step.total > 0,
     ),
   );
   const leftOut = $derived(track.flatMap((stage) => stage.warnings));
@@ -50,11 +47,7 @@
     if (minutes < 1) return "less than a minute";
     const hours = Math.floor(minutes / 60);
     const rest = minutes % 60;
-    return hours === 0
-      ? `${rest} min`
-      : rest === 0
-        ? `${hours} h`
-        : `${hours} h ${rest} min`;
+    return hours === 0 ? `${rest} min` : rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
   };
 </script>
 
@@ -62,14 +55,11 @@
   <div
     class="mb-3.5 flex items-center gap-2 font-mono text-[length:var(--text-chrome)] font-medium tracking-[0.16em] text-gold-muted uppercase"
   >
-    <span
-      class="size-[7px] animate-[pulse-fade_1.6s_ease-in-out_infinite] rounded-full bg-gold"
+    <span class="size-[7px] animate-[pulse-fade_1.6s_ease-in-out_infinite] rounded-full bg-gold"
     ></span>
     Updating your library
   </div>
-  <h1
-    class="mb-6 font-serif text-[length:var(--text-title)] leading-[1.25] text-warm"
-  >
+  <h1 class="mb-6 font-serif text-[length:var(--text-title)] leading-[1.25] text-warm">
     {current.title}
   </h1>
   <div
@@ -89,19 +79,13 @@
   <div
     class="mb-8 flex justify-between font-mono text-[length:var(--text-caption)] text-warm-ghost"
   >
-    <span
-      >{counted?.total != null
-        ? `${fmt(counted.done ?? 0)} of ${fmt(counted.total)}`
-        : ""}</span
+    <span>{counted?.total != null ? `${fmt(counted.done ?? 0)} of ${fmt(counted.total)}` : ""}</span
     >
     <span>step {currentIndex + 1} of {track.length}</span>
   </div>
 {/if}
 
-<ol
-  class="grid gap-1.5"
-  style:grid-template-columns={`repeat(${track.length}, minmax(0, 1fr))`}
->
+<ol class="grid gap-1.5" style:grid-template-columns={`repeat(${track.length}, minmax(0, 1fr))`}>
   {#each track as stage (stage.key)}
     <li>
       <button

@@ -7,9 +7,7 @@
 
   const decodeJobId = Schema.decodeOption(Uuid);
   const routeJobId = $derived(
-    page.params.jobId === undefined
-      ? null
-      : Option.getOrNull(decodeJobId(page.params.jobId)),
+    page.params.jobId === undefined ? null : Option.getOrNull(decodeJobId(page.params.jobId)),
   );
 </script>
 

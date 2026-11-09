@@ -19,9 +19,7 @@
     {action.pending ? "adding…" : `add to ${action.vaultName}`}
   </Button>
   {#if action.error}
-    <p
-      class="max-w-56 text-right font-mono text-[length:var(--text-chrome)] text-destructive"
-    >
+    <p class="max-w-56 text-right font-mono text-[length:var(--text-chrome)] text-destructive">
       {action.error}
     </p>
   {/if}

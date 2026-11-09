@@ -4,10 +4,7 @@
   import { tick } from "svelte";
 
   import HastNodeView from "#lib/components/hast-node.svelte";
-  import {
-    buildFootnotePresentation,
-    type FootnoteDefinitions,
-  } from "#lib/footnote-notes.ts";
+  import { buildFootnotePresentation, type FootnoteDefinitions } from "#lib/footnote-notes.ts";
   import type { HastNode } from "#lib/markdown-plugins.ts";
   import { cn } from "#lib/utils.ts";
 
@@ -60,13 +57,10 @@
   const presentation = $derived(buildFootnotePresentation(roots, idPrefix));
   const visibleNotes = $derived(
     presentation.notes.filter(
-      (note) =>
-        note.id === hoveredFootnote || pinnedFootnotes.includes(note.id),
+      (note) => note.id === hoveredFootnote || pinnedFootnotes.includes(note.id),
     ),
   );
-  const marginEnabled = $derived(
-    marginFootnotes && viewportWide && !coarsePointer && !panelDocked,
-  );
+  const marginEnabled = $derived(marginFootnotes && viewportWide && !coarsePointer && !panelDocked);
 
   $effect(() => {
     if (!browser || !marginFootnotes) return;
@@ -92,9 +86,7 @@
     let frame = 0;
     const measure = async () => {
       await tick();
-      frame = requestAnimationFrame(() =>
-        place(currentRoot.getBoundingClientRect()),
-      );
+      frame = requestAnimationFrame(() => place(currentRoot.getBoundingClientRect()));
     };
 
     void measure();
@@ -150,8 +142,7 @@
         const reference = currentRoot.querySelector<HTMLElement>(
           `[data-margin-note-id="${CSS.escape(note.id)}"]`,
         );
-        const block =
-          reference?.closest<HTMLElement>("[data-footnote-block]") ?? reference;
+        const block = reference?.closest<HTMLElement>("[data-footnote-block]") ?? reference;
         const noteElement = currentRoot.querySelector<HTMLElement>(
           `[data-margin-note="${CSS.escape(note.id)}"]`,
         );
@@ -204,10 +195,7 @@
   })}
 
   {#if marginEnabled}
-    <div
-      data-margin-notes
-      class="pointer-events-none absolute inset-0 print:hidden"
-    >
+    <div data-margin-notes class="pointer-events-none absolute inset-0 print:hidden">
       {#each visibleNotes as note (note.id)}
         <aside
           data-margin-note={note.id}
@@ -227,10 +215,7 @@
   {/if}
 
   {#if marginDots.length > 0}
-    <div
-      data-margin-dots
-      class="pointer-events-none absolute inset-0 print:hidden"
-    >
+    <div data-margin-dots class="pointer-events-none absolute inset-0 print:hidden">
       {#each marginDots as dot (dot.id)}
         {@const dotLabel = `annotation thread: "${dot.quote.slice(0, 40)}"`}
         <!-- Pure indicator for a thread whose quote could not be located in

@@ -16,9 +16,7 @@
   let { children } = $props();
 
   // Public share pages are chrome-less: no corner menu, even when signed in.
-  const isShareRoute = $derived(
-    page.route.id?.startsWith("/(public)/s/") ?? false,
-  );
+  const isShareRoute = $derived(page.route.id?.startsWith("/(public)/s/") ?? false);
 
   onMount(() => {
     const stopAuth = auth.initialize();

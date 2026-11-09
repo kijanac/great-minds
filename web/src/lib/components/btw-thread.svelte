@@ -137,9 +137,7 @@
 
         <Collapsible.Content>
           {#each btw.exchanges as exchange, index (exchange.id)}
-            {@const sources = exchange.thinking.flatMap(
-              (block) => block.sources,
-            )}
+            {@const sources = exchange.thinking.flatMap((block) => block.sources)}
             <div class="mt-4">
               <ThreadTurn query={exchange.query}>
                 {#if sources.length > 0}
@@ -148,10 +146,7 @@
                       {#if source.type === "search"}
                         <SearchBadge {source} />
                       {:else if source.type === "query"}
-                        <FilterBadge
-                          summary={source.label}
-                          pending={source.pending === true}
-                        />
+                        <FilterBadge summary={source.label} pending={source.pending === true} />
                       {:else}
                         <ArticleBadge {source} />
                       {/if}
@@ -171,9 +166,7 @@
                   </div>
                 {:else}
                   {#if exchange.answer}
-                    <div
-                      class="mb-3 text-[length:var(--text-small)] leading-[1.85] text-warm-dim"
-                    >
+                    <div class="mb-3 text-[length:var(--text-small)] leading-[1.85] text-warm-dim">
                       <MarkdownView source={exchange.answer} variant="btw" />
                       {#if exchange.status === "running" && !btw.finalizing}
                         <span
@@ -207,24 +200,17 @@
           {/each}
 
           {#if btw.unavailable}
-            <p
-              role="status"
-              class="mt-3 text-[length:var(--text-small)] text-warm-faint"
-            >
+            <p role="status" class="mt-3 text-[length:var(--text-small)] text-warm-faint">
               {btw.unavailable}
               {#if btw.conversation}
                 <a
                   class="text-gold underline underline-offset-4"
-                  href={`/sessions/${btw.conversation.id}`}
-                  >Try loading this note again</a
+                  href={`/sessions/${btw.conversation.id}`}>Try loading this note again</a
                 >
               {/if}
             </p>
           {:else if btw.connectionError}
-            <p
-              role="status"
-              class="mt-3 text-[length:var(--text-small)] text-warm-faint"
-            >
+            <p role="status" class="mt-3 text-[length:var(--text-small)] text-warm-faint">
               {btw.connectionError}
             </p>
             {@const pending = btw.exchanges.at(-1)}
@@ -264,34 +250,22 @@
                   bind:this={inputElement}
                   bind:value={input}
                   rows={2}
-                  aria-label={btw.exchanges.length === 0
-                    ? "Ask a BTW"
-                    : "Reply to BTW"}
+                  aria-label={btw.exchanges.length === 0 ? "Ask a BTW" : "Reply to BTW"}
                   disabled={btw.promoting || isStreaming}
                   class="max-h-52 min-h-12 w-full min-w-0 flex-1 resize-y border-0 border-b border-b-gold-dim bg-transparent py-1 font-serif text-[length:var(--text-small)] leading-[1.7] text-warm-dim italic caret-gold outline-none transition-colors placeholder:text-warm-faint focus:border-b-gold disabled:opacity-50"
-                  placeholder={btw.exchanges.length === 0
-                    ? "Ask about this passage…"
-                    : "Reply…"}
+                  placeholder={btw.exchanges.length === 0 ? "Ask about this passage…" : "Reply…"}
                   onblur={(event) => {
                     if (
                       event.relatedTarget instanceof Node &&
                       event.currentTarget.form?.contains(event.relatedTarget)
                     )
                       return;
-                    if (
-                      btw.exchanges.length === 0 &&
-                      !input.trim() &&
-                      onDismiss
-                    ) {
+                    if (btw.exchanges.length === 0 && !input.trim() && onDismiss) {
                       onDismiss(btw.id);
                     }
                   }}
                   onkeydown={(event) => {
-                    if (
-                      event.key === "Enter" &&
-                      !event.shiftKey &&
-                      !event.isComposing
-                    ) {
+                    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
                       event.preventDefault();
                       submit();
                     }

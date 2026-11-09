@@ -36,10 +36,7 @@
   const headingTitle = $derived(
     displayTitle(
       card.label,
-      card.title ??
-        (content?.mode === "chunks"
-          ? (content.chunks[0]?.heading ?? null)
-          : null),
+      card.title ?? (content?.mode === "chunks" ? (content.chunks[0]?.heading ?? null) : null),
     ),
   );
   const subtitle = $derived.by(() => {
@@ -47,13 +44,10 @@
     if (content?.mode === "chunks") {
       const ranges = (card.ranges ?? [])
         .map((range) =>
-          range.start === range.end
-            ? `¶${range.start}`
-            : `¶${range.start}–${range.end}`,
+          range.start === range.end ? `¶${range.start}` : `¶${range.start}–${range.end}`,
         )
         .join(", ");
-      const label =
-        context === "citation" ? "cited passage" : "what the agent read";
+      const label = context === "citation" ? "cited passage" : "what the agent read";
       return ranges ? `${ranges} · ${label}` : label;
     }
     const kind = card.label.startsWith("wiki/") ? "wiki article" : "raw source";
@@ -64,9 +58,7 @@
 <div class="flex h-full flex-col">
   <div class="shrink-0 border-b border-ink-subtle px-5 pt-5 pb-3.5">
     <div class="mb-[9px] flex items-start justify-between gap-2">
-      <span
-        class="min-w-0 break-words text-[length:var(--text-body)] font-bold text-foreground"
-      >
+      <span class="min-w-0 break-words text-[length:var(--text-body)] font-bold text-foreground">
         {headingTitle}
       </span>
       <div class="flex shrink-0 items-center gap-1">
@@ -109,34 +101,20 @@
           <Skeleton class="h-4 w-2/3 bg-ink-raised" />
         </div>
       {:else if content?.mode === "doc"}
-        <MarkdownView
-          source={content.body}
-          variant="panel"
-          stripBlockRefs
-          {onLinkClick}
-        />
+        <MarkdownView source={content.body} variant="panel" stripBlockRefs {onLinkClick} />
       {:else if content?.mode === "chunks"}
         <div class="space-y-5">
           {#if content.chunks.length === 0}
-            <p class="text-[length:var(--text-small)] text-warm-faint">
-              No passages found.
-            </p>
+            <p class="text-[length:var(--text-small)] text-warm-faint">No passages found.</p>
           {:else}
             {#each content.chunks as chunk (chunk.chunk_index)}
               <div>
                 <div
                   class="mb-1 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold-muted"
                 >
-                  ¶{chunk.chunk_index}{chunk.heading
-                    ? ` · ${chunk.heading}`
-                    : ""}
+                  ¶{chunk.chunk_index}{chunk.heading ? ` · ${chunk.heading}` : ""}
                 </div>
-                <MarkdownView
-                  source={chunk.body}
-                  variant="panel"
-                  stripBlockRefs
-                  {onLinkClick}
-                />
+                <MarkdownView source={chunk.body} variant="panel" stripBlockRefs {onLinkClick} />
               </div>
             {/each}
           {/if}
@@ -151,11 +129,7 @@
                 {group.label}
               </div>
               {#if group.items.length === 0}
-                <p
-                  class="text-[length:var(--text-small)] text-warm-ghost italic"
-                >
-                  none
-                </p>
+                <p class="text-[length:var(--text-small)] text-warm-ghost italic">none</p>
               {:else}
                 <ul class="space-y-1">
                   {#each group.items as item (item.file_path)}
@@ -175,9 +149,7 @@
           {/each}
         </div>
       {:else}
-        <p class="text-[length:var(--text-small)] text-warm-faint">
-          Not found.
-        </p>
+        <p class="text-[length:var(--text-small)] text-warm-faint">Not found.</p>
       {/if}
     </div>
   </div>

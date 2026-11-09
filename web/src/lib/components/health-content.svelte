@@ -5,10 +5,7 @@
   import { Button } from "#lib/components/ui/button/index.ts";
   import { useMe } from "#lib/hooks/use-me.svelte.ts";
   import { Skeleton } from "#lib/components/ui/skeleton/index.ts";
-  import type {
-    UnmentionedLink,
-    WikiArticleOverview,
-  } from "@great-minds/domain";
+  import type { UnmentionedLink, WikiArticleOverview } from "@great-minds/domain";
 
   type HealthView = {
     status: "loading" | "ready" | "unavailable";
@@ -50,9 +47,7 @@
       vault health
     </p>
     {#if health.vaultName}
-      <h1
-        class="font-serif text-[length:var(--text-heading)] text-warm [overflow-wrap:anywhere]"
-      >
+      <h1 class="font-serif text-[length:var(--text-heading)] text-warm [overflow-wrap:anywhere]">
         {health.vaultName}
       </h1>
     {/if}
@@ -71,13 +66,8 @@
       </div>
     </div>
   {:else if health.status === "unavailable"}
-    <Alert
-      variant="destructive"
-      class="rounded-sm border-red-400/25 bg-red-400/5 p-5"
-    >
-      <AlertTitle
-        class="mb-3 font-serif text-[length:var(--text-body)] text-warm-dim"
-      >
+    <Alert variant="destructive" class="rounded-sm border-red-400/25 bg-red-400/5 p-5">
+      <AlertTitle class="mb-3 font-serif text-[length:var(--text-body)] text-warm-dim">
         Health unavailable
       </AlertTitle>
       <Button
@@ -118,13 +108,11 @@
           {/if}
         </div>
         <p class="font-serif text-[length:var(--text-body)] text-warm-dim">
-          {health.dirtyCount} article{health.dirtyCount === 1 ? "" : "s"} drifted
-          from the current topic registry and will be refreshed on the next update.
+          {health.dirtyCount} article{health.dirtyCount === 1 ? "" : "s"} drifted from the current topic
+          registry and will be refreshed on the next update.
         </p>
         {#if health.compileError}
-          <p
-            class="mt-3 font-mono text-[length:var(--text-chrome)] text-destructive"
-          >
+          <p class="mt-3 font-mono text-[length:var(--text-chrome)] text-destructive">
             {health.compileError.message}
           </p>
         {/if}
@@ -167,11 +155,7 @@
           {#each health.missing as connection, index (`${connection.source_slug}-${connection.target_slug}-${index}`)}
             <button
               type="button"
-              onclick={() =>
-                onOpenSourceArticle(
-                  connection.source_slug,
-                  connection.source_title,
-                )}
+              onclick={() => onOpenSourceArticle(connection.source_slug, connection.source_title)}
               class="group w-full rounded-sm px-3 py-2.5 text-left hover:bg-ink-raised focus-visible:bg-ink-raised focus-visible:outline-none"
             >
               <div
@@ -179,9 +163,7 @@
               >
                 {connection.source_title}
               </div>
-              <div
-                class="mt-0.5 font-mono text-[length:var(--text-chrome)] text-warm-ghost"
-              >
+              <div class="mt-0.5 font-mono text-[length:var(--text-chrome)] text-warm-ghost">
                 → {connection.target_title}
               </div>
             </button>

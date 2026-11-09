@@ -37,10 +37,7 @@
     >
       <ArrowLeft size={14} /> Back to conversation
     </Button>
-    <fieldset
-      class="flex items-center gap-4 font-mono text-xs"
-      disabled={pending}
-    >
+    <fieldset class="flex items-center gap-4 font-mono text-xs" disabled={pending}>
       <legend class="sr-only">Paper size</legend>
       <label class="flex min-h-11 cursor-pointer items-center gap-2"
         ><input
@@ -63,13 +60,8 @@
     </fieldset>
     {#if prepared}
       <div class="flex flex-wrap items-center gap-3 sm:ml-auto">
-        <Button
-          variant="ghost"
-          onclick={onPrepare}
-          class="min-h-11 rounded-sm font-mono text-xs"
-          >{prepared.format === "pdf"
-            ? "Refresh copy"
-            : "Try PDF again"}</Button
+        <Button variant="ghost" onclick={onPrepare} class="min-h-11 rounded-sm font-mono text-xs"
+          >{prepared.format === "pdf" ? "Refresh copy" : "Try PDF again"}</Button
         >
         <Button
           variant="outline"
@@ -92,45 +84,30 @@
       <LoadingState label="Preparing your reading copy…" />
     </div>
   {:else if error}
-    <div
-      class="mx-auto flex w-full max-w-xl flex-1 flex-col justify-center gap-5 px-6"
-    >
-      <h2 class="text-[length:var(--text-heading)]">
-        Couldn’t prepare this copy
-      </h2>
+    <div class="mx-auto flex w-full max-w-xl flex-1 flex-col justify-center gap-5 px-6">
+      <h2 class="text-[length:var(--text-heading)]">Couldn’t prepare this copy</h2>
       <p class="text-warm-faint" role="alert">{error}</p>
       <div class="flex flex-wrap gap-3">
-        <Button
-          variant="outline"
-          onclick={onPrepare}
-          class="min-h-11 rounded-sm font-mono text-xs">Try PDF again</Button
+        <Button variant="outline" onclick={onPrepare} class="min-h-11 rounded-sm font-mono text-xs"
+          >Try PDF again</Button
         >
-        <Button
-          variant="ghost"
-          onclick={onMarkdown}
-          class="min-h-11 rounded-sm font-mono text-xs">Prepare Markdown</Button
+        <Button variant="ghost" onclick={onMarkdown} class="min-h-11 rounded-sm font-mono text-xs"
+          >Prepare Markdown</Button
         >
       </div>
       <p class="text-[length:var(--text-caption)] text-warm-faint">
-        Markdown doesn’t need PDF rendering. It reads a fresh copy of the saved
-        conversation and attached notes, without leaving anything out.
+        Markdown doesn’t need PDF rendering. It reads a fresh copy of the saved conversation and
+        attached notes, without leaving anything out.
       </p>
     </div>
   {:else if prepared?.format === "markdown"}
-    <div
-      class="mx-auto flex w-full max-w-xl flex-1 flex-col justify-center gap-5 px-6"
-    >
-      <h2 class="text-[length:var(--text-heading)]">
-        Your Markdown copy is ready
-      </h2>
-      <p class="text-warm-faint">
-        The saved conversation and attached notes, read afresh.
-      </p>
+    <div class="mx-auto flex w-full max-w-xl flex-1 flex-col justify-center gap-5 px-6">
+      <h2 class="text-[length:var(--text-heading)]">Your Markdown copy is ready</h2>
+      <p class="text-warm-faint">The saved conversation and attached notes, read afresh.</p>
       <Button
         href={prepared.markdownUrl}
         download={`${prepared.filename}.md`}
-        class="min-h-11 w-fit rounded-sm font-mono text-xs"
-        >Download Markdown</Button
+        class="min-h-11 w-fit rounded-sm font-mono text-xs">Download Markdown</Button
       >
     </div>
   {:else if prepared?.format === "pdf"}

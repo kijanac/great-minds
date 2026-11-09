@@ -33,9 +33,7 @@
   async function lookUp(userCode: string) {
     view = { kind: "loading" };
     try {
-      const request = await run(
-        api.auth.getCliLogin({ query: { user_code: userCode } }),
-      );
+      const request = await run(api.auth.getCliLogin({ query: { user_code: userCode } }));
       view = { kind: "confirm", request };
     } catch (reason) {
       view = { kind: "error", message: failure(reason) };
@@ -48,9 +46,7 @@
     const payload = { user_code: view.request.user_code };
     try {
       await run(
-        approve
-          ? api.auth.approveCliLogin({ payload })
-          : api.auth.denyCliLogin({ payload }),
+        approve ? api.auth.approveCliLogin({ payload }) : api.auth.denyCliLogin({ payload }),
       );
       view = { kind: approve ? "approved" : "cancelled" };
     } catch (reason) {
@@ -74,9 +70,7 @@
 
   function onInput() {
     if (!input) return;
-    const before = normalize(
-      input.value.slice(0, input.selectionStart ?? 0),
-    ).length;
+    const before = normalize(input.value.slice(0, input.selectionStart ?? 0)).length;
     code = normalize(input.value);
     input.value = code;
     select(Math.min(before, LENGTH));
@@ -91,11 +85,7 @@
     } else if (event.key === "ArrowRight") {
       event.preventDefault();
       select(at + 1);
-    } else if (
-      event.key === "Backspace" &&
-      input.selectionStart === input.selectionEnd &&
-      at > 0
-    ) {
+    } else if (event.key === "Backspace" && input.selectionStart === input.selectionEnd && at > 0) {
       event.preventDefault();
       code = code.slice(0, at - 1) + code.slice(at);
       input.value = code;
@@ -117,9 +107,7 @@
   <div class="w-full max-w-sm space-y-6 px-6">
     {#if view.kind === "enter"}
       <h1 class="font-serif text-title text-warm">Sign in</h1>
-      <p class="text-small text-warm-faint">
-        Enter the code shown in your terminal.
-      </p>
+      <p class="text-small text-warm-faint">Enter the code shown in your terminal.</p>
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions - the hidden input handles keys -->
       <div
         class="relative flex items-center justify-center gap-1.5"
@@ -210,9 +198,7 @@
       </div>
     {:else if view.kind === "approved"}
       <h1 class="font-serif text-title text-gold-muted">Signed in.</h1>
-      <p class="text-small text-warm-faint">
-        You can close this tab and return to your terminal.
-      </p>
+      <p class="text-small text-warm-faint">You can close this tab and return to your terminal.</p>
     {:else if view.kind === "cancelled"}
       <h1 class="font-serif text-title text-warm">Sign-in cancelled.</h1>
     {:else}
