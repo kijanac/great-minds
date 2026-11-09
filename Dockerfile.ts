@@ -2,7 +2,7 @@
 
 FROM ghcr.io/typst/typst:0.15.1@sha256:032e292249bcd378480cc7c142cfa324b63ef8aadeb88d7e7230320c4c9c422f AS typst
 
-FROM node:24-slim AS workspace
+FROM node:26-slim AS workspace
 
 ENV CI=true
 WORKDIR /workspace
@@ -33,7 +33,7 @@ RUN rm -rf packages/cli packages/client packages/server/test packages/server/scr
 RUN rm -rf packages/server/node_modules/@types
 RUN rm -f package.json pnpm-lock.yaml pnpm-workspace.yaml packages/*/tsconfig.json
 
-FROM node:24-slim AS runtime
+FROM node:26-slim AS runtime
 
 # The server runs with node alone; drop the package managers bundled in the base image so
 # their dependencies (and vulnerabilities) don't ship.
