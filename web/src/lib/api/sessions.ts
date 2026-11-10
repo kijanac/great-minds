@@ -2,8 +2,7 @@ import {
   type OriginScope,
   type OriginSessionDetail,
   type PromoteExchangeResponse,
-  type SessionExportRequest,
-  type SessionExportSelection,
+  type PublicationPaper,
   type SessionEvent,
   type SessionOrigin,
   type SessionOverview,
@@ -42,7 +41,11 @@ export function listSessionsByOrigin(
 }
 
 export function loadSession(sessionId: SessionId): Promise<SessionResponse> {
-  return run(readSession(selectedVault(), sessionId));
+  return run(
+    api.sessions.readSession({
+      params: { vault_id: selectedVault(), session_id: sessionId },
+    }),
+  );
 }
 
 export function continueAsSession(sessionId: SessionId): Promise<void> {
@@ -53,35 +56,18 @@ export function continueAsSession(sessionId: SessionId): Promise<void> {
   );
 }
 
-export function readSession(vaultId: Uuid, sessionId: SessionId) {
-  return withApiErrors(
-    api.sessions.readSession({ params: { vault_id: vaultId, session_id: sessionId } }),
-  );
-}
-
-export function prepareSessionExport(
-  vaultId: Uuid,
-  sessionId: SessionId,
-  payload: SessionExportRequest,
-) {
+export function prepareSessionExport(vaultId: Uuid, sessionId: SessionId, paper: PublicationPaper) {
   return withApiErrors(
     api.sessions.prepareSessionExport({
       params: { vault_id: vaultId, session_id: sessionId },
-      payload,
+      payload: { paper },
     }),
   );
 }
 
-export function readSessionMarkdown(
-  vaultId: Uuid,
-  sessionId: SessionId,
-  payload: SessionExportSelection,
-) {
+export function readSessionMarkdown(vaultId: Uuid, sessionId: SessionId) {
   return withApiErrors(
-    api.sessions.prepareSessionMarkdown({
-      params: { vault_id: vaultId, session_id: sessionId },
-      payload,
-    }),
+    api.sessions.readSessionMarkdown({ params: { vault_id: vaultId, session_id: sessionId } }),
   );
 }
 

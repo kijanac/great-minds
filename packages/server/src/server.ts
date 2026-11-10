@@ -720,11 +720,6 @@ const SessionsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "session
         exports.readMarkdown(userId, params.vault_id, params.session_id),
       ),
     )
-    .handle("prepareSessionMarkdown", ({ params, payload }) =>
-      asUser(SessionExportsService, (exports, userId) =>
-        exports.readMarkdown(userId, params.vault_id, params.session_id, payload),
-      ),
-    )
     .handle("prepareSessionExport", ({ params, payload }) =>
       asUser(SessionExportsService, (exports, userId) =>
         exports.prepare(userId, params.vault_id, params.session_id, payload),

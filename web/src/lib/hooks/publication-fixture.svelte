@@ -34,16 +34,10 @@
 </script>
 
 <output data-vault={linked.id} data-pending={linked.pending}>{linked.error ?? "Ready"}</output>
-<button onclick={publication.begin}>Export</button>
+<button onclick={publication.prepare}>Export</button>
 {#if publication.open}
   <SessionExport
     pending={publication.pending}
-    selecting={publication.selecting}
-    messages={publication.messages}
-    onSelect={publication.select}
-    onSelectAll={publication.selectAll}
-    onChooseMessages={publication.chooseMessages}
-    onReload={publication.begin}
     error={publication.error}
     prepared={publication.prepared}
     paper={publication.paper}

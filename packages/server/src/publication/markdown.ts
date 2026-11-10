@@ -1,9 +1,7 @@
 import {
   Conflict,
   ServiceUnavailable,
-  type SessionContent,
-  type SessionExportSelection,
-  type SessionId,
+  type SessionExchangeEvent,
   type SessionOrigin,
   type SessionResponse,
   type Uuid,
@@ -19,10 +17,7 @@ import { unified } from "unified";
 import { visit } from "unist-util-visit";
 
 export interface PublicationSection {
-  readonly exchanges: readonly {
-    readonly query: string | null;
-    readonly answer: string | null;
-  }[];
+  readonly exchanges: readonly SessionExchangeEvent[];
   readonly origin: SessionOrigin | null;
 }
 
@@ -79,7 +74,6 @@ export const compilePublication = (
   const title = sections[0]?.exchanges[0]?.query || "Conversation";
   let questionNumber = 0;
   let privateLinks = false;
-  let attachedNotes = false;
   const addHeading = (node: Heading) => {
     const id = slugger.slug(toString(node));
     node.data = { hProperties: { id } };
@@ -91,16 +85,11 @@ export const compilePublication = (
     tree.children.push(node);
   };
 
-  if (sections[0]?.exchanges[0]?.query == null) pushHeading(1, title);
-
   for (const [sectionIndex, section] of sections.entries()) {
-    if (sectionIndex > 0 && section.exchanges.length > 0 && !attachedNotes) {
-      pushHeading(2, "Attached notes");
-      attachedNotes = true;
-    }
+    if (sectionIndex === 1) pushHeading(2, "Attached notes");
     for (const [index, exchange] of section.exchanges.entries()) {
       const depth = sectionIndex > 0 ? 3 : index === 0 ? 1 : 2;
-      if (exchange.query !== null) pushHeading(depth, exchange.query);
+      pushHeading(depth, exchange.query);
       if (index === 0 && section.origin !== null) {
         const origin = section.origin;
         if (origin.paragraph !== null)
@@ -108,7 +97,6 @@ export const compilePublication = (
         if (origin.anchor !== null && origin.anchor !== origin.paragraph)
           tree.children.push(paragraph(`Selected passage: ${origin.anchor}`));
       }
-      if (exchange.answer === null) continue;
       const answer = markdown.parse(exchange.answer);
       const scope = `q${++questionNumber}`;
       const localSlugger = new GithubSlugger();
@@ -117,15 +105,13 @@ export const compilePublication = (
       visit(answer, "heading", (node) => {
         shallowest = Math.min(shallowest, node.depth);
       });
-      const answerDepth = exchange.query === null ? Math.max(1, depth - 1) : depth;
-      let precedingDepth = answerDepth;
+      let precedingDepth: number = depth;
       visit(answer, (node) => {
         delete node.position;
         if (node.type === "heading") {
           const localId = localSlugger.slug(toString(node));
           const levels: readonly Heading["depth"][] = [1, 2, 3, 4, 5, 6];
-          node.depth =
-            levels[Math.min(5, answerDepth + node.depth - shallowest, precedingDepth)] ?? 6;
+          node.depth = levels[Math.min(5, depth + node.depth - shallowest, precedingDepth)] ?? 6;
           precedingDepth = node.depth;
           headings.set(localId, addHeading(node));
         }
@@ -179,55 +165,40 @@ export const compilePublication = (
   return { title, tree, markdown: markdown.stringify(tree) };
 };
 
-export const prepareSessionPublication = (
-  session: SessionResponse,
-  links: PublicationLinks,
-  selection: SessionExportSelection = {},
-) =>
+export const prepareSessionPublication = (session: SessionResponse, links: PublicationLinks) =>
   Effect.gen(function* () {
-    const all = selection.messages === undefined;
-    const remaining = new Set(
-      selection.messages?.map((message) =>
-        JSON.stringify([message.session_id, message.exchange_id, message.role]),
-      ),
-    );
-    const section = (id: SessionId, content: SessionContent) =>
-      Effect.gen(function* () {
-        if (
-          content.activity !== null ||
-          content.events.some((event) => event.type === "exchange" && event.status === "running")
-        )
-          return yield* new Conflict({
-            detail:
-              "Wait for the conversation and attached notes to finish saving before exporting.",
-          });
-        return {
-          origin: all
-            ? (content.events.find((event) => event.type === "meta")?.origin ?? null)
-            : null,
-          exchanges: content.events.flatMap((event) => {
-            if (event.type !== "exchange") return [];
-            const include = (role: "user" | "assistant") =>
-              all || remaining.delete(JSON.stringify([id, event.exId, role]));
-            const query = include("user") ? event.query : null;
-            const answer = include("assistant") ? event.answer : null;
-            return query === null && answer === null ? [] : [{ query, answer }];
-          }),
-        };
+    const sections: PublicationSection[] = [];
+    const root = session.events.find((event) => event.type === "meta");
+    if (
+      session.activity !== null ||
+      session.events.some((event) => event.type === "exchange" && event.status === "running")
+    ) {
+      return yield* new Conflict({
+        detail: "Wait for the conversation to finish saving before exporting.",
       });
-    const sections = [yield* section(session.id, session)];
+    }
+    sections.push({
+      exchanges: session.events.filter((event) => event.type === "exchange"),
+      origin: root?.origin ?? null,
+    });
     for (const thread of session.threads) {
       if (thread.availability === "unavailable")
         return yield* new ServiceUnavailable({
           detail:
             "An attached note could not be loaded. Reload the conversation and try exporting again.",
         });
-      sections.push(yield* section(thread.session.id, thread));
-    }
-    if (remaining.size > 0)
-      return yield* new Conflict({
-        detail:
-          "Some selected messages are no longer available. Reopen export and select them again.",
+      if (
+        thread.activity !== null ||
+        thread.events.some((event) => event.type === "exchange" && event.status === "running")
+      ) {
+        return yield* new Conflict({
+          detail: "Wait for attached notes to finish saving before exporting.",
+        });
+      }
+      sections.push({
+        exchanges: thread.events.filter((event) => event.type === "exchange"),
+        origin: thread.events.find((event) => event.type === "meta")?.origin ?? null,
       });
+    }
     return compilePublication(sections, links);
   });

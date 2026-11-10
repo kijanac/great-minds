@@ -5,7 +5,6 @@ import type {
   ServiceUnavailable,
   SessionExport,
   SessionExportRequest,
-  SessionExportSelection,
   SessionId,
   Uuid,
 } from "@great-minds/domain";
@@ -23,7 +22,6 @@ export interface SessionExportsServiceShape {
     userId: Uuid,
     vaultId: Uuid,
     sessionId: SessionId,
-    selection?: SessionExportSelection,
   ) => Effect.Effect<string, ExportError>;
   readonly prepare: (
     userId: Uuid,
@@ -43,33 +41,17 @@ const makeSessionExports = Effect.gen(function* () {
   const config = yield* AppConfig;
   const clock = yield* ClockService;
   const renderer = yield* PdfRenderer;
-  const read = (
-    userId: Uuid,
-    vaultId: Uuid,
-    sessionId: SessionId,
-    selection: SessionExportSelection = {},
-  ) =>
+  const read = (userId: Uuid, vaultId: Uuid, sessionId: SessionId) =>
     Effect.gen(function* () {
       const session = yield* sessions.readSession(userId, vaultId, sessionId);
-      return yield* prepareSessionPublication(
-        session,
-        { webUrl: config.publicWebUrl, vaultId },
-        selection,
-      );
+      return yield* prepareSessionPublication(session, { webUrl: config.publicWebUrl, vaultId });
     });
   return {
-    readMarkdown: (
-      userId: Uuid,
-      vaultId: Uuid,
-      sessionId: SessionId,
-      selection?: SessionExportSelection,
-    ) =>
-      read(userId, vaultId, sessionId, selection).pipe(
-        Effect.map((publication) => publication.markdown),
-      ),
+    readMarkdown: (userId: Uuid, vaultId: Uuid, sessionId: SessionId) =>
+      read(userId, vaultId, sessionId).pipe(Effect.map((publication) => publication.markdown)),
     prepare: (userId: Uuid, vaultId: Uuid, sessionId: SessionId, request: SessionExportRequest) =>
       Effect.gen(function* () {
-        const publication = yield* read(userId, vaultId, sessionId, request);
+        const publication = yield* read(userId, vaultId, sessionId);
         const preparedAt = yield* clock.now;
         const pdf = yield* renderer.render(publication, request.paper, preparedAt);
         return {

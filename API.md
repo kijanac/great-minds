@@ -2167,12 +2167,6 @@ Response: `200` with content type `text/markdown` and the rendered conversation 
 
 Errors: `403 Forbidden`, `404 NotFound`, `409 Conflict` (included content still generating/saving), `503 ServiceUnavailable` (required history unavailable), `422 Validation`.
 
-#### POST /v1/vaults/:vault_id/sessions/:session_id/markdown
-
-Auth and response are the same as the GET endpoint above. Accepts a JSON body with optional `messages`, a nonempty array of `{ session_id, exchange_id, role }`, where `role` is `"user"` or `"assistant"`. Each entry selects one message from the root conversation or a directly attached note. Messages are rendered in saved conversation order, regardless of request order; duplicates do not duplicate output. Omit `messages` to export everything as with GET.
-
-Explicit selections contain only the selected message text and its citations, not attached-note origin passages. Unknown message identities return `409 Conflict`; an empty selection returns `422 Validation`. Existing readiness and unreadable-history checks still apply. Does not invoke the PDF renderer.
-
 #### POST /v1/vaults/:vault_id/sessions/:session_id/export
 
 Auth: required; caller must own the conversation and remain a vault member.
@@ -2186,13 +2180,12 @@ Request body (`SessionExportRequest`):
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `paper` | `"a4"` \| `"us-letter"` | yes | PDF paper size. |
-| `messages` | nonempty array of `{ session_id, exchange_id, role }` | no | Same independent message selection as POST Markdown above; omitted means everything. Applies identically to PDF and Markdown. |
 
 Response: `200` JSON (`SessionExport`):
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `title` | string | First included root question if the first included exchange contains it, otherwise `"Conversation"`. Excluded questions are never used as titles. |
+| `title` | string | First root question, or `"Conversation"`. |
 | `prepared_at` | ISO 8601 string | Preparation time, not source-version provenance. |
 | `paper` | `"a4"` \| `"us-letter"` | Requested paper size. |
 | `markdown` | string | Markdown of this prepared content. |
@@ -2803,7 +2796,6 @@ Every error body has the same shape:
 | GET | `/v1/vaults/:vault_id/sessions/:session_id` | required | sessions |
 | GET | `/v1/vaults/:vault_id/sessions/:session_id/markdown` | required | sessions |
 | POST | `/v1/vaults/:vault_id/sessions/:session_id/export` | required | sessions |
-| POST | `/v1/vaults/:vault_id/sessions/:session_id/markdown` | required | sessions |
 | POST | `/v1/vaults/:vault_id/sessions/:session_id/continue` | required | sessions |
 | POST | `/v1/vaults/:vault_id/replies` | required | replies |
 | POST | `/v1/vaults/:vault_id/replies/:reply_id/retry` | required | replies |
