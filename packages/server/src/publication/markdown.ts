@@ -2,6 +2,8 @@ import {
   Conflict,
   ServiceUnavailable,
   type SessionExchangeEvent,
+  type SessionExportSelection,
+  type SessionId,
   type SessionOrigin,
   type SessionResponse,
   type Uuid,
@@ -17,7 +19,10 @@ import { unified } from "unified";
 import { visit } from "unist-util-visit";
 
 export interface PublicationSection {
-  readonly exchanges: readonly SessionExchangeEvent[];
+  readonly exchanges: readonly {
+    readonly query: string | null;
+    readonly answer: string | null;
+  }[];
   readonly origin: SessionOrigin | null;
 }
 
@@ -74,6 +79,7 @@ export const compilePublication = (
   const title = sections[0]?.exchanges[0]?.query || "Conversation";
   let questionNumber = 0;
   let privateLinks = false;
+  let attachedNotes = false;
   const addHeading = (node: Heading) => {
     const id = slugger.slug(toString(node));
     node.data = { hProperties: { id } };
@@ -85,11 +91,16 @@ export const compilePublication = (
     tree.children.push(node);
   };
 
+  if (sections[0]?.exchanges[0]?.query == null) pushHeading(1, title);
+
   for (const [sectionIndex, section] of sections.entries()) {
-    if (sectionIndex === 1) pushHeading(2, "Attached notes");
+    if (sectionIndex > 0 && section.exchanges.length > 0 && !attachedNotes) {
+      pushHeading(2, "Attached notes");
+      attachedNotes = true;
+    }
     for (const [index, exchange] of section.exchanges.entries()) {
       const depth = sectionIndex > 0 ? 3 : index === 0 ? 1 : 2;
-      pushHeading(depth, exchange.query);
+      if (exchange.query !== null) pushHeading(depth, exchange.query);
       if (index === 0 && section.origin !== null) {
         const origin = section.origin;
         if (origin.paragraph !== null)
@@ -97,6 +108,7 @@ export const compilePublication = (
         if (origin.anchor !== null && origin.anchor !== origin.paragraph)
           tree.children.push(paragraph(`Selected passage: ${origin.anchor}`));
       }
+      if (exchange.answer === null) continue;
       const answer = markdown.parse(exchange.answer);
       const scope = `q${++questionNumber}`;
       const localSlugger = new GithubSlugger();
@@ -105,13 +117,15 @@ export const compilePublication = (
       visit(answer, "heading", (node) => {
         shallowest = Math.min(shallowest, node.depth);
       });
-      let precedingDepth: number = depth;
+      const answerDepth = exchange.query === null ? Math.max(1, depth - 1) : depth;
+      let precedingDepth = answerDepth;
       visit(answer, (node) => {
         delete node.position;
         if (node.type === "heading") {
           const localId = localSlugger.slug(toString(node));
           const levels: readonly Heading["depth"][] = [1, 2, 3, 4, 5, 6];
-          node.depth = levels[Math.min(5, depth + node.depth - shallowest, precedingDepth)] ?? 6;
+          node.depth =
+            levels[Math.min(5, answerDepth + node.depth - shallowest, precedingDepth)] ?? 6;
           precedingDepth = node.depth;
           headings.set(localId, addHeading(node));
         }
@@ -165,9 +179,17 @@ export const compilePublication = (
   return { title, tree, markdown: markdown.stringify(tree) };
 };
 
-export const prepareSessionPublication = (session: SessionResponse, links: PublicationLinks) =>
+export const prepareSessionPublication = (
+  session: SessionResponse,
+  links: PublicationLinks,
+  selection: SessionExportSelection = {},
+) =>
   Effect.gen(function* () {
-    const sections: PublicationSection[] = [];
+    const sections: {
+      id: SessionId;
+      exchanges: readonly SessionExchangeEvent[];
+      origin: SessionOrigin | null;
+    }[] = [];
     const root = session.events.find((event) => event.type === "meta");
     if (
       session.activity !== null ||
@@ -178,6 +200,7 @@ export const prepareSessionPublication = (session: SessionResponse, links: Publi
       });
     }
     sections.push({
+      id: session.id,
       exchanges: session.events.filter((event) => event.type === "exchange"),
       origin: root?.origin ?? null,
     });
@@ -196,9 +219,34 @@ export const prepareSessionPublication = (session: SessionResponse, links: Publi
         });
       }
       sections.push({
+        id: thread.session.id,
         exchanges: thread.events.filter((event) => event.type === "exchange"),
         origin: thread.events.find((event) => event.type === "meta")?.origin ?? null,
       });
     }
-    return compilePublication(sections, links);
+    if (selection.messages === undefined) return compilePublication(sections, links);
+    const remaining = new Set(
+      selection.messages.map((message) =>
+        JSON.stringify([message.session_id, message.exchange_id, message.role]),
+      ),
+    );
+    const selected: PublicationSection[] = [];
+    for (const section of sections) {
+      const exchanges = section.exchanges.flatMap((event) => {
+        const query = remaining.delete(JSON.stringify([section.id, event.exId, "user"]))
+          ? event.query
+          : null;
+        const answer = remaining.delete(JSON.stringify([section.id, event.exId, "assistant"]))
+          ? event.answer
+          : null;
+        return query === null && answer === null ? [] : [{ query, answer }];
+      });
+      selected.push({ exchanges, origin: null });
+    }
+    if (remaining.size > 0)
+      return yield* new Conflict({
+        detail:
+          "Some selected messages are no longer available. Reopen export and select them again.",
+      });
+    return compilePublication(selected, links);
   });

@@ -10,6 +10,24 @@ const uuid = (value: number) =>
   Uuid.make(`00000000-0000-4000-8000-${String(value).padStart(12, "0")}`);
 const root = SessionId.make("root");
 const literal = "# A complete conversation\n\n💡 धर्म\n\nAttached note";
+const savedSession = {
+  id: root,
+  kind: "session",
+  activity: null,
+  origin_title: null,
+  threads: [],
+  events: [1, 2, 3].map((index) => ({
+    type: "exchange",
+    exId: uuid(index),
+    reply_id: uuid(index + 10),
+    version: 1,
+    status: "completed",
+    error: null,
+    query: `Question ${index}`,
+    answer: `Answer ${index}`,
+    ts: "2026-01-01T00:00:00Z",
+  })),
+};
 const vaults = Array.from({ length: 51 }, (_, index) => ({
   id: uuid(index + 1),
   name: `Vault ${index + 1}`,
@@ -45,6 +63,10 @@ const click = (label: string) => {
   if (button === undefined) throw new Error(`Missing button: ${label}`);
   button.click();
   flushSync();
+};
+const openSelection = async () => {
+  click("Export");
+  await vi.waitFor(() => expect(target.querySelectorAll('input[type="checkbox"]')).toHaveLength(6));
 };
 const start = (linkedVault: string | null = null) => {
   const component = mount(Fixture, {
@@ -116,6 +138,7 @@ beforeEach(() => {
       return new Response(literal, {
         headers: { "content-type": "text/markdown" },
       });
+    if (/\/sessions\/[^/]+$/u.test(url.pathname)) return json(savedSession);
     throw new Error(`Unexpected request: ${url.pathname}`);
   };
   vi.stubGlobal("fetch", fetchImpl);
@@ -136,7 +159,8 @@ describe("mounted publication ownership", () => {
   it("releases old artifacts, offers fresh complete Markdown after PDF failure, and cancels navigation and teardown", async () => {
     const component = start();
     await vi.waitFor(() => expect(activeVault.id).toBe(uuid(1)));
-    click("Export");
+    await openSelection();
+    click("Prepare PDF");
     await vi.waitFor(() => expect(target.querySelector("iframe")).not.toBeNull());
     expect(blobs.size).toBe(2);
     expect(target.querySelector('a[download="research-notes.pdf"]')?.getAttribute("href")).toBe(
@@ -174,19 +198,75 @@ describe("mounted publication ownership", () => {
     expect(target.querySelector('[aria-label="Conversation export"]')).toBeNull();
 
     deferPdf = true;
-    click("Export");
+    await openSelection();
+    click("Prepare PDF");
     await vi.waitFor(() => expect(waiting).toHaveLength(1));
     component.navigate(SessionId.make("another"));
     flushSync();
     await vi.waitFor(() => expect(waiting[0]!.request.signal.aborted).toBe(true));
     waiting[0]!.resolve(pdf());
-    click("Export");
+    await openSelection();
+    click("Prepare PDF");
     await vi.waitFor(() => expect(waiting).toHaveLength(2));
     expect(blobs.size).toBe(3);
     await stop();
     await vi.waitFor(() => expect(waiting[1]!.request.signal.aborted).toBe(true));
     waiting[1]!.resolve(pdf());
     expect(blobs.size).toBe(3);
+  });
+
+  it("defaults to all messages, sends independent selections to both formats, and drops stale downloads", async () => {
+    start();
+    await vi.waitFor(() => expect(activeVault.id).toBe(uuid(1)));
+    await openSelection();
+    const checkboxes = () => [
+      ...target.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+    ];
+    expect(checkboxes().every((input) => input.checked)).toBe(true);
+    expect(requests.some((request) => request.url.endsWith("/export"))).toBe(false);
+    click("Clear all");
+    expect(checkboxes().every((input) => !input.checked)).toBe(true);
+    expect(
+      [...target.querySelectorAll("button")].find(
+        (button) => button.textContent?.trim() === "Prepare PDF",
+      )?.disabled,
+    ).toBe(true);
+    for (const index of [1, 2, 5]) checkboxes()[index]!.click();
+    flushSync();
+    click("Prepare PDF");
+    await vi.waitFor(() => expect(target.querySelector("iframe")).not.toBeNull());
+    const messages = [
+      { session_id: root, exchange_id: uuid(1), role: "assistant" },
+      { session_id: root, exchange_id: uuid(2), role: "user" },
+      { session_id: root, exchange_id: uuid(3), role: "assistant" },
+    ];
+    expect(await requests.find((request) => request.url.endsWith("/export"))!.json()).toEqual({
+      paper: "a4",
+      messages,
+    });
+    click("Choose messages");
+    expect(target.querySelector("iframe")).toBeNull();
+    expect(target.querySelector("a[download]")).toBeNull();
+    expect(checkboxes().map((input) => input.checked)).toEqual([
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+    ]);
+    await vi.waitFor(() => expect(revoked).toHaveBeenCalledTimes(2));
+    click("Prepare Markdown");
+    await vi.waitFor(() => expect(target.textContent).toContain("Your Markdown copy is ready"));
+    const request = requests.find((entry) => entry.url.endsWith("/markdown"))!;
+    expect(request.method).toBe("POST");
+    expect(await request.json()).toEqual({ messages });
+    click("Choose messages");
+    click("Select all");
+    expect(checkboxes().every((input) => input.checked)).toBe(true);
+    click("Back to conversation");
+    await openSelection();
+    expect(checkboxes().every((input) => input.checked)).toBe(true);
   });
 
   it("keeps an authorized linked vault beyond the first page selected and refuses an absent membership", async () => {

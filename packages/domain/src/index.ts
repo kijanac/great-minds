@@ -1091,7 +1091,22 @@ export type SessionMarkdown = typeof SessionMarkdown.Type;
 export const PublicationPaper = Schema.Literals(["a4", "us-letter"]);
 export type PublicationPaper = typeof PublicationPaper.Type;
 
-export const SessionExportRequest = Schema.Struct({ paper: PublicationPaper });
+export const SessionExportMessage = Schema.Struct({
+  session_id: SessionId,
+  exchange_id: Uuid,
+  role: Schema.Literals(["user", "assistant"]),
+});
+export type SessionExportMessage = typeof SessionExportMessage.Type;
+
+export const SessionExportSelection = Schema.Struct({
+  messages: Schema.optional(Schema.NonEmptyArray(SessionExportMessage)),
+});
+export type SessionExportSelection = typeof SessionExportSelection.Type;
+
+export const SessionExportRequest = Schema.Struct({
+  ...SessionExportSelection.fields,
+  paper: PublicationPaper,
+});
 export type SessionExportRequest = typeof SessionExportRequest.Type;
 
 export const SessionExport = Schema.Struct({
@@ -2181,6 +2196,16 @@ const SessionsApiGroup = HttpApiGroup.make("sessions").add(
     success: SessionMarkdown,
     error: [...ForbiddenNotFoundValidationErrors, ConflictResponse, ServiceUnavailableResponse],
   }).middleware(AuthMiddleware),
+  HttpApiEndpoint.post(
+    "prepareSessionMarkdown",
+    "/vaults/:vault_id/sessions/:session_id/markdown",
+    {
+      params: { vault_id: Uuid, session_id: SessionId },
+      payload: SessionExportSelection,
+      success: SessionMarkdown,
+      error: [...ForbiddenNotFoundValidationErrors, ConflictResponse, ServiceUnavailableResponse],
+    },
+  ).middleware(AuthMiddleware),
   HttpApiEndpoint.post("prepareSessionExport", "/vaults/:vault_id/sessions/:session_id/export", {
     params: { vault_id: Uuid, session_id: SessionId },
     payload: SessionExportRequest,
@@ -2386,6 +2411,7 @@ export const endpointPermissions: { readonly [Name in EndpointName]: Permission 
   readSession: "read",
   readSessionMarkdown: "read",
   prepareSessionExport: "read",
+  prepareSessionMarkdown: "read",
   continueAsSession: "ask",
   promoteSessionExchange: "change",
   createReply: "ask",
