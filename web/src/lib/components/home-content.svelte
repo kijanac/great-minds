@@ -26,7 +26,7 @@
   import { usePanelContent } from "#lib/hooks/use-panel-content.svelte.ts";
   import { useSessions } from "#lib/hooks/use-sessions.svelte.ts";
   import { activeVault, useVaultDetail, useVaults } from "#lib/hooks/use-vault.svelte.ts";
-  import { useSessionExport } from "#lib/hooks/use-session-export.svelte.ts";
+  import { SessionExport as ExportController } from "#lib/hooks/use-session-export.svelte.ts";
   import { Session } from "#lib/session.svelte.ts";
 
   let {
@@ -59,7 +59,7 @@
     onSessionCreated: handleSessionCreated,
   });
   onDestroy(session.destroy);
-  const publication = useSessionExport(() => session.sessionId);
+  const publication = new ExportController(() => session.sessionId);
   let exportButton = $state<HTMLButtonElement | HTMLAnchorElement | null>(null);
   async function closeExport() {
     publication.close();
@@ -169,23 +169,7 @@
 
       <main class="relative min-h-0 flex-1 overflow-hidden">
         {#if publication.open}
-          <SessionExport
-            pending={publication.pending}
-            previewing={publication.previewing}
-            messages={publication.messages}
-            onSelect={publication.select}
-            onSelectAll={publication.selectAll}
-            onChooseMessages={publication.chooseMessages}
-            onReload={publication.begin}
-            error={publication.error}
-            prepared={publication.prepared}
-            paper={publication.paper}
-            format={publication.format}
-            onPaperChange={publication.changePaper}
-            onFormatChange={publication.changeFormat}
-            onPrepare={publication.prepare}
-            onClose={() => void closeExport()}
-          />
+          <SessionExport {publication} onClose={() => void closeExport()} />
         {/if}
         <div class="h-full" hidden={publication.open}>
           {#if !isActive}

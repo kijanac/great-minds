@@ -28,8 +28,8 @@
 </script>
 
 <div
-  class="message grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-3 py-3"
-  class:excluded={!entry.selected}
+  class="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-3 py-3 motion-safe:transition-colors motion-safe:duration-150"
+  class:text-warm-faint={!entry.selected}
 >
   <div class="flex h-11 items-center">
     <input
@@ -75,30 +75,12 @@
 </div>
 
 <style>
-  .message {
-    transition: color 140ms ease-out;
-  }
-  .excluded {
-    color: var(--color-warm-faint);
-  }
   .collapsed {
     max-height: 3lh;
     overflow: hidden;
   }
-  .excerpt :global(p:first-child),
-  .excerpt :global(h1:first-child),
-  .excerpt :global(h2:first-child),
-  .excerpt :global(h3:first-child) {
-    margin-top: 0;
-  }
-  .excerpt :global(p:last-child),
   .excerpt :global(ul:last-child),
   .excerpt :global(ol:last-child) {
     margin-bottom: 0;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .message {
-      transition: none;
-    }
   }
 </style>

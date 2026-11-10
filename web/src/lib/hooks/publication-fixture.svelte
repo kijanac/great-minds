@@ -4,7 +4,7 @@
   import { onMount } from "svelte";
   import SessionExport from "#lib/components/session-export.svelte";
   import { useLinkedVault } from "./use-linked-vault.svelte";
-  import { useSessionExport } from "./use-session-export.svelte";
+  import { SessionExport as ExportController } from "./use-session-export.svelte";
   import { activeVault } from "./use-vault.svelte";
 
   let {
@@ -25,7 +25,7 @@
     };
   });
   const linked = useLinkedVault(() => linkedVault);
-  const publication = useSessionExport(() => sessionId);
+  const publication = new ExportController(() => sessionId);
 
   export function navigate(id: SessionId | null, vault: string | null = null) {
     sessionId = id;
@@ -36,21 +36,5 @@
 <output data-vault={linked.id} data-pending={linked.pending}>{linked.error ?? "Ready"}</output>
 <button onclick={publication.begin}>Export</button>
 {#if publication.open}
-  <SessionExport
-    pending={publication.pending}
-    previewing={publication.previewing}
-    messages={publication.messages}
-    onSelect={publication.select}
-    onSelectAll={publication.selectAll}
-    onChooseMessages={publication.chooseMessages}
-    onReload={publication.begin}
-    error={publication.error}
-    prepared={publication.prepared}
-    paper={publication.paper}
-    format={publication.format}
-    onPrepare={publication.prepare}
-    onFormatChange={publication.changeFormat}
-    onPaperChange={publication.changePaper}
-    onClose={publication.close}
-  />
+  <SessionExport {publication} onClose={publication.close} />
 {/if}
