@@ -42,11 +42,7 @@ export function listSessionsByOrigin(
 }
 
 export function loadSession(sessionId: SessionId): Promise<SessionResponse> {
-  return run(
-    api.sessions.readSession({
-      params: { vault_id: selectedVault(), session_id: sessionId },
-    }),
-  );
+  return run(readSession(selectedVault(), sessionId));
 }
 
 export function continueAsSession(sessionId: SessionId): Promise<void> {
@@ -57,7 +53,7 @@ export function continueAsSession(sessionId: SessionId): Promise<void> {
   );
 }
 
-export function readSessionForExport(vaultId: Uuid, sessionId: SessionId) {
+export function readSession(vaultId: Uuid, sessionId: SessionId) {
   return withApiErrors(
     api.sessions.readSession({ params: { vault_id: vaultId, session_id: sessionId } }),
   );

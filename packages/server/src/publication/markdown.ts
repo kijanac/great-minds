@@ -1,7 +1,7 @@
 import {
   Conflict,
   ServiceUnavailable,
-  type SessionExchangeEvent,
+  type SessionContent,
   type SessionExportSelection,
   type SessionId,
   type SessionOrigin,
@@ -185,68 +185,49 @@ export const prepareSessionPublication = (
   selection: SessionExportSelection = {},
 ) =>
   Effect.gen(function* () {
-    const sections: {
-      id: SessionId;
-      exchanges: readonly SessionExchangeEvent[];
-      origin: SessionOrigin | null;
-    }[] = [];
-    const root = session.events.find((event) => event.type === "meta");
-    if (
-      session.activity !== null ||
-      session.events.some((event) => event.type === "exchange" && event.status === "running")
-    ) {
-      return yield* new Conflict({
-        detail: "Wait for the conversation to finish saving before exporting.",
+    const all = selection.messages === undefined;
+    const remaining = new Set(
+      selection.messages?.map((message) =>
+        JSON.stringify([message.session_id, message.exchange_id, message.role]),
+      ),
+    );
+    const section = (id: SessionId, content: SessionContent) =>
+      Effect.gen(function* () {
+        if (
+          content.activity !== null ||
+          content.events.some((event) => event.type === "exchange" && event.status === "running")
+        )
+          return yield* new Conflict({
+            detail:
+              "Wait for the conversation and attached notes to finish saving before exporting.",
+          });
+        return {
+          origin: all
+            ? (content.events.find((event) => event.type === "meta")?.origin ?? null)
+            : null,
+          exchanges: content.events.flatMap((event) => {
+            if (event.type !== "exchange") return [];
+            const include = (role: "user" | "assistant") =>
+              all || remaining.delete(JSON.stringify([id, event.exId, role]));
+            const query = include("user") ? event.query : null;
+            const answer = include("assistant") ? event.answer : null;
+            return query === null && answer === null ? [] : [{ query, answer }];
+          }),
+        };
       });
-    }
-    sections.push({
-      id: session.id,
-      exchanges: session.events.filter((event) => event.type === "exchange"),
-      origin: root?.origin ?? null,
-    });
+    const sections = [yield* section(session.id, session)];
     for (const thread of session.threads) {
       if (thread.availability === "unavailable")
         return yield* new ServiceUnavailable({
           detail:
             "An attached note could not be loaded. Reload the conversation and try exporting again.",
         });
-      if (
-        thread.activity !== null ||
-        thread.events.some((event) => event.type === "exchange" && event.status === "running")
-      ) {
-        return yield* new Conflict({
-          detail: "Wait for attached notes to finish saving before exporting.",
-        });
-      }
-      sections.push({
-        id: thread.session.id,
-        exchanges: thread.events.filter((event) => event.type === "exchange"),
-        origin: thread.events.find((event) => event.type === "meta")?.origin ?? null,
-      });
-    }
-    if (selection.messages === undefined) return compilePublication(sections, links);
-    const remaining = new Set(
-      selection.messages.map((message) =>
-        JSON.stringify([message.session_id, message.exchange_id, message.role]),
-      ),
-    );
-    const selected: PublicationSection[] = [];
-    for (const section of sections) {
-      const exchanges = section.exchanges.flatMap((event) => {
-        const query = remaining.delete(JSON.stringify([section.id, event.exId, "user"]))
-          ? event.query
-          : null;
-        const answer = remaining.delete(JSON.stringify([section.id, event.exId, "assistant"]))
-          ? event.answer
-          : null;
-        return query === null && answer === null ? [] : [{ query, answer }];
-      });
-      selected.push({ exchanges, origin: null });
+      sections.push(yield* section(thread.session.id, thread));
     }
     if (remaining.size > 0)
       return yield* new Conflict({
         detail:
           "Some selected messages are no longer available. Reopen export and select them again.",
       });
-    return compilePublication(selected, links);
+    return compilePublication(sections, links);
   });

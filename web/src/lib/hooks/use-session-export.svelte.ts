@@ -8,11 +8,7 @@ import { Data, Effect, Fiber, type Scope } from "effect";
 
 import { fork } from "#lib/api/app.ts";
 import { errorMessage } from "@great-minds/client";
-import {
-  prepareSessionExport,
-  readSessionForExport,
-  readSessionMarkdown,
-} from "#lib/api/sessions.ts";
+import { prepareSessionExport, readSession, readSessionMarkdown } from "#lib/api/sessions.ts";
 import { auth } from "#lib/auth.svelte.ts";
 import { activeVault } from "#lib/hooks/use-vault.svelte.ts";
 
@@ -50,8 +46,7 @@ const objectUrl = (blob: Blob) =>
   );
 
 export function useSessionExport(sessionId: () => SessionId | null) {
-  let open = $state(false);
-  let selecting = $state(true);
+  let view = $state<"closed" | "selection" | "preview">("closed");
   let pending = $state(false);
   let error = $state<string | null>(null);
   let paper = $state<PublicationPaper>("a4");
@@ -72,7 +67,7 @@ export function useSessionExport(sessionId: () => SessionId | null) {
   function close() {
     invalidate();
     messages = [];
-    open = false;
+    view = "closed";
   }
 
   $effect(() => {
@@ -104,12 +99,11 @@ export function useSessionExport(sessionId: () => SessionId | null) {
     const id = sessionId();
     const vaultId = activeVault.id;
     if (id === null || vaultId === null) return;
-    open = true;
-    selecting = true;
+    view = "selection";
     messages = [];
     runTask(
       Effect.gen(function* () {
-        const session = yield* readSessionForExport(vaultId, id);
+        const session = yield* readSession(vaultId, id);
         const sections = [{ id: session.id, events: session.events, note: false }];
         for (const thread of session.threads) {
           if (thread.availability === "unavailable")
@@ -142,7 +136,7 @@ export function useSessionExport(sessionId: () => SessionId | null) {
     if (pending || id === null || vaultId === null || first === undefined) return;
     const selection = { messages: [first.message, ...rest.map((entry) => entry.message)] as const };
     const selectedPaper = paper;
-    selecting = false;
+    view = "preview";
     runTask(
       Effect.gen(function* () {
         const result =
@@ -185,15 +179,15 @@ export function useSessionExport(sessionId: () => SessionId | null) {
   function changePaper(value: PublicationPaper) {
     if (pending || value === paper) return;
     paper = value;
-    if (!selecting) prepare("pdf");
+    if (view === "preview") prepare("pdf");
   }
 
   return {
     get open() {
-      return open;
+      return view !== "closed";
     },
     get selecting() {
-      return selecting;
+      return view === "selection";
     },
     get pending() {
       return pending;
@@ -213,7 +207,7 @@ export function useSessionExport(sessionId: () => SessionId | null) {
     begin,
     chooseMessages() {
       invalidate();
-      selecting = true;
+      view = "selection";
     },
     select(index: number, selected: boolean) {
       messages = messages.map((entry, position) =>
