@@ -100,6 +100,46 @@ describe("conversation publication", () => {
     expect(shared).not.toMatch(/PRIVATE|ATTACHED|RECORDED|SELECTED/u);
   });
 
+  it("selects either side independently without leaking excluded questions or note context", async () => {
+    const root = session(
+      [
+        exchange(1, "FIRST_ANSWER[^1]\n\n[^1]: FIRST_CITATION"),
+        exchange(2, "EXCLUDED_ANSWER"),
+        exchange(4, "LAST_ANSWER"),
+      ],
+      [note()],
+    );
+    const publication = await Effect.runPromise(
+      prepareSessionPublication(root, links, {
+        messages: [
+          { session_id: sessionId, exchange_id: uuid(4), role: "assistant" },
+          { session_id: sessionId, exchange_id: uuid(1), role: "assistant" },
+          { session_id: sessionId, exchange_id: uuid(2), role: "user" },
+          { session_id: sessionId, exchange_id: uuid(3), role: "assistant" },
+          { session_id: sessionId, exchange_id: uuid(1), role: "assistant" },
+        ],
+      }),
+    );
+    expect(publication.title).toBe("Conversation");
+    expect(publication.markdown).not.toMatch(/Question [134]|EXCLUDED|RECORDED|SELECTED/u);
+    const positions = ["FIRST\\_ANSWER", "Question 2", "LAST\\_ANSWER", "ATTACHED\\_NOTE"].map(
+      (text) => publication.markdown.indexOf(text),
+    );
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    expect(publication.markdown.split("FIRST\\_ANSWER")).toHaveLength(2);
+    expect(publication.markdown).toContain("FIRST\\_CITATION");
+    expect(publication.markdown).toContain("NOTE\\_CITATION");
+    const unknown = await Effect.runPromise(
+      Effect.result(
+        prepareSessionPublication(root, links, {
+          messages: [{ session_id: sessionId, exchange_id: uuid(999), role: "user" }],
+        }),
+      ),
+    );
+    expect(unknown).toMatchObject({ _tag: "Failure", failure: { _tag: "Conflict" } });
+  });
+
   it("refuses active roots, saving children, and unreadable required notes", async () => {
     const child = note();
     const inputs = [
@@ -154,14 +194,18 @@ describe("conversation publication", () => {
     const renderer = await Effect.runPromise(makePdfRenderer(process.env.TYPST_BINARY ?? "typst"));
     const body =
       '## Evidence\n\nPROSEMARKER 💡\n\n**Strong**, *emphasis*, ~~deleted~~, `inline` and a citation.[^1]\n\n[^1]: FIRST_CITATION [source](https://example.org)\n\n> A quotation.\n\n- [x] LISTMARKER Done\n- [ ] Open\n\n1. First\n2. Second\n\n| Claim | Evidence |\n| --- | --- |\n| **TABLEMARKER Rich cell** | [source][ref] |\n\n[ref]: https://example.org/evidence\n\n![Image description](https://example.org/image.png)\n\n```js\nconst answer = 42;\n```\n\nLiteral #panic("injected") and <script>text</script>.\n\nÉléments Ελληνικά Русский 中文 العربية.\n\n---\n\nEnd.';
-    const publication = compilePublication(
-      [
+    const publication = await Effect.runPromise(
+      prepareSessionPublication(
+        session([exchange(1, body), exchange(2, "Second[^1]\n\n[^1]: SECOND_CITATION")]),
+        links,
         {
-          origin: null,
-          exchanges: [exchange(1, body), exchange(2, "Second[^1]\n\n[^1]: SECOND_CITATION")],
+          messages: [
+            { session_id: sessionId, exchange_id: uuid(1), role: "assistant" },
+            { session_id: sessionId, exchange_id: uuid(2), role: "user" },
+            { session_id: sessionId, exchange_id: uuid(2), role: "assistant" },
+          ],
         },
-      ],
-      links,
+      ),
     );
     const bytes = await Effect.runPromise(
       renderer.render(publication, "a4", new Date("2026-01-01")),
@@ -170,6 +214,8 @@ describe("conversation publication", () => {
     expect(new TextDecoder().decode(bytes.subarray(-20))).toContain("%%EOF");
     const parsed = await OfficeParser.parseOffice(Buffer.from(bytes), { allowRemoteAssets: false });
     const text = (await parsed.to("text")).value;
+    expect(text).not.toContain("Question 1");
+    expect(text).toContain("Question 2");
     for (const marker of [
       "PROSEMARKER",
       "LISTMARKER",
@@ -179,6 +225,20 @@ describe("conversation publication", () => {
       "💡",
     ])
       expect(text).toContain(marker);
+    const singleMessages = session(
+      [exchange(1, "## First answer\n\nFirst"), exchange(2, "## Later answer\n\nLater")],
+      [note()],
+    );
+    for (const index of [1, 2, 3]) {
+      for (const role of ["user", "assistant"] as const) {
+        const selected = await Effect.runPromise(
+          prepareSessionPublication(singleMessages, links, {
+            messages: [{ session_id: sessionId, exchange_id: uuid(index), role }],
+          }),
+        );
+        await Effect.runPromise(renderer.render(selected, "a4", new Date("2026-01-01")));
+      }
+    }
     const unsupported = compilePublication(
       [{ origin: null, exchanges: [exchange(1, "မြန်မာစာ")] }],
       links,

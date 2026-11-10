@@ -158,7 +158,7 @@
             bind:ref={exportButton}
             onclick={() => {
               card.close();
-              publication.prepare();
+              publication.begin();
             }}
             class="shrink-0 text-warm-ghost hover:bg-ink-raised hover:text-gold"
           >
@@ -171,6 +171,12 @@
         {#if publication.open}
           <SessionExport
             pending={publication.pending}
+            selecting={publication.selecting}
+            messages={publication.messages}
+            onSelect={publication.select}
+            onSelectAll={publication.selectAll}
+            onChooseMessages={publication.chooseMessages}
+            onReload={publication.begin}
             error={publication.error}
             prepared={publication.prepared}
             paper={publication.paper}

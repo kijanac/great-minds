@@ -2399,6 +2399,53 @@ describe("read-only HTTP integration", () => {
     expect(pdfRenders).toBe(2);
   });
 
+  it("exports independent messages identically in PDF and Markdown without widening access", async () => {
+    const { aliceToken, bobToken, malloryToken } = currentFixture();
+    const path = `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`;
+    const saved = await rawApi("GET", path, aliceToken);
+    const session = Schema.decodeUnknownSync(SessionResponse)(await saved.json());
+    const root = session.events.find((event) => event.type === "exchange")!;
+    const note = session.threads.find((thread) => thread.availability === "available")!;
+    if (note.availability !== "available") throw new Error("Expected an available note");
+    const reply = note.events.find((event) => event.type === "exchange")!;
+    const messages = [
+      { session_id: note.session.id, exchange_id: reply.exId, role: "assistant" },
+      { session_id: session.id, exchange_id: root.exId, role: "user" },
+    ];
+    const response = await rawApi("POST", `${path}/export`, aliceToken, { paper: "a4", messages });
+    expect(response.status).toBe(200);
+    const prepared = Schema.decodeUnknownSync(SessionExport)(await response.json());
+    expect(prepared.markdown).toContain(root.query);
+    expect(prepared.markdown).toContain(reply.answer);
+    expect(prepared.markdown).not.toContain(root.answer);
+    expect(prepared.markdown).not.toContain(reply.query);
+    const markdown = await rawApi("POST", `${path}/markdown`, aliceToken, { messages });
+    expect(markdown.status).toBe(200);
+    expect(markdown.headers.get("cache-control")).toBe("private, no-store");
+    expect(await markdown.text()).toBe(prepared.markdown);
+    for (const [token, status] of [
+      [undefined, 401],
+      [bobToken, 404],
+      [malloryToken, 403],
+    ] as const)
+      expect((await api("POST", `${path}/markdown`, token, { messages })).status).toBe(status);
+    for (const endpoint of ["export", "markdown"]) {
+      expect(
+        (await api("POST", `${path}/${endpoint}`, aliceToken, { paper: "a4", messages: [] }))
+          .status,
+      ).toBe(422);
+      expect(
+        (
+          await api("POST", `${path}/${endpoint}`, aliceToken, {
+            paper: "a4",
+            messages: [{ ...messages[0], exchange_id: id.vaultBeta }],
+          })
+        ).status,
+      ).toBe(409);
+    }
+    expect(pdfRenders).toBe(1);
+  });
+
   it("pages every source exactly once when a bulk import gives sources tied timestamps", async () => {
     const { aliceToken } = currentFixture();
     const sources = Array.from({ length: 137 }, (_, index) => ({
