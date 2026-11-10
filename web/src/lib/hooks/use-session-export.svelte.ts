@@ -12,28 +12,20 @@ import { prepareSessionExport, readSession, readSessionMarkdown } from "#lib/api
 import { auth } from "#lib/auth.svelte.ts";
 import { activeVault } from "#lib/hooks/use-vault.svelte.ts";
 
+export type ExportFormat = "pdf" | "markdown";
 export type ExportMessage = {
   readonly message: SessionExportMessage;
   readonly text: string;
   readonly note: boolean;
   readonly selected: boolean;
 };
-
 export type PreparedExport = {
   readonly filename: string;
-  readonly markdownUrl: string;
-} & (
-  | {
-      readonly format: "pdf";
-      readonly title: string;
-      readonly preparedAt: Date;
-      readonly pdfUrl: string;
-    }
-  | { readonly format: "markdown" }
-);
+  readonly url: string;
+};
 
 class DownloadUnavailable extends Data.TaggedError("DownloadUnavailable") {
-  readonly message = "Couldn’t create this download in your browser.";
+  readonly message = "Couldn’t start the download. Use the download button to try again.";
 }
 
 const objectUrl = (blob: Blob) =>
@@ -45,11 +37,28 @@ const objectUrl = (blob: Blob) =>
     (url) => Effect.sync(() => URL.revokeObjectURL(url)),
   );
 
+const download = (url: string, filename: string) =>
+  Effect.try({
+    try: () => {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.append(link);
+      try {
+        link.click();
+      } finally {
+        link.remove();
+      }
+    },
+    catch: () => new DownloadUnavailable(),
+  });
+
 export function useSessionExport(sessionId: () => SessionId | null) {
   let view = $state<"closed" | "selection" | "preview">("closed");
   let pending = $state(false);
   let error = $state<string | null>(null);
   let paper = $state<PublicationPaper>("a4");
+  let format = $state<ExportFormat>("pdf");
   let prepared = $state<PreparedExport | null>(null);
   let messages = $state<ExportMessage[]>([]);
   let owner: Fiber.Fiber<void> | null = null;
@@ -129,65 +138,61 @@ export function useSessionExport(sessionId: () => SessionId | null) {
     );
   }
 
-  function prepare(format: "pdf" | "markdown") {
+  function prepare(action: "download" | "preview") {
     const id = sessionId();
     const vaultId = activeVault.id;
     const [first, ...rest] = messages.filter((entry) => entry.selected);
     if (pending || id === null || vaultId === null || first === undefined) return;
+    if (action === "preview" && prepared) {
+      view = "preview";
+      return;
+    }
     const selection = { messages: [first.message, ...rest.map((entry) => entry.message)] as const };
     const selectedPaper = paper;
-    view = "preview";
+    const selectedFormat = format;
     runTask(
       Effect.gen(function* () {
         const result =
-          format === "pdf"
-            ? yield* prepareSessionExport(vaultId, id, { ...selection, paper: selectedPaper }).pipe(
-                Effect.map((value) => ({ ...value, format: "pdf" as const })),
-              )
+          selectedFormat === "pdf"
+            ? yield* prepareSessionExport(vaultId, id, { ...selection, paper: selectedPaper })
             : {
-                format: "markdown" as const,
+                title: "Conversation",
                 markdown: yield* readSessionMarkdown(vaultId, id, selection),
+                pdf: null,
               };
-        const markdownUrl = yield* objectUrl(
-          new Blob([result.markdown], { type: "text/markdown;charset=utf-8" }),
+        const filename =
+          result.title
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/gu, "-")
+            .replace(/^-+|-+$/gu, "")
+            .slice(0, 60) || "conversation";
+        const url = yield* objectUrl(
+          result.pdf === null
+            ? new Blob([result.markdown], { type: "text/markdown;charset=utf-8" })
+            : new Blob([new Uint8Array(result.pdf)], { type: "application/pdf" }),
         );
-        if (result.format === "pdf") {
-          const filename =
-            result.title
-              .toLowerCase()
-              .replace(/[^a-z0-9]+/gu, "-")
-              .replace(/^-+|-+$/gu, "")
-              .slice(0, 60) || "conversation";
-          const pdfUrl = yield* objectUrl(
-            new Blob([new Uint8Array(result.pdf)], { type: "application/pdf" }),
-          );
-          prepared = {
-            format: "pdf",
-            title: result.title,
-            preparedAt: result.prepared_at,
-            filename,
-            pdfUrl: `${pdfUrl}#view=FitH&navpanes=0`,
-            markdownUrl,
-          };
-        } else prepared = { format: "markdown", filename: "conversation", markdownUrl };
+        prepared = { filename, url };
         pending = false;
+        if (action === "preview") view = "preview";
+        else
+          yield* download(url, `${filename}.${selectedFormat === "pdf" ? "pdf" : "md"}`).pipe(
+            Effect.catch((cause) =>
+              Effect.sync(() => {
+                error = cause.message;
+              }),
+            ),
+          );
         yield* Effect.never;
       }),
     );
-  }
-
-  function changePaper(value: PublicationPaper) {
-    if (pending || value === paper) return;
-    paper = value;
-    if (view === "preview") prepare("pdf");
   }
 
   return {
     get open() {
       return view !== "closed";
     },
-    get selecting() {
-      return view === "selection";
+    get previewing() {
+      return view === "preview";
     },
     get pending() {
       return pending;
@@ -198,6 +203,9 @@ export function useSessionExport(sessionId: () => SessionId | null) {
     get paper() {
       return paper;
     },
+    get format() {
+      return format;
+    },
     get prepared() {
       return prepared;
     },
@@ -205,21 +213,32 @@ export function useSessionExport(sessionId: () => SessionId | null) {
       return messages;
     },
     begin,
+    prepare,
     chooseMessages() {
-      invalidate();
       view = "selection";
     },
     select(index: number, selected: boolean) {
+      if (pending) return;
+      invalidate();
       messages = messages.map((entry, position) =>
         position === index ? { ...entry, selected } : entry,
       );
     },
     selectAll(selected: boolean) {
+      if (pending) return;
+      invalidate();
       messages = messages.map((entry) => ({ ...entry, selected }));
     },
-    prepare: () => prepare("pdf"),
-    prepareMarkdown: () => prepare("markdown"),
+    changePaper(value: PublicationPaper) {
+      if (pending || value === paper) return;
+      invalidate();
+      paper = value;
+    },
+    changeFormat(value: ExportFormat) {
+      if (pending || value === format) return;
+      invalidate();
+      format = value;
+    },
     close,
-    changePaper,
   };
 }

@@ -171,7 +171,7 @@
         {#if publication.open}
           <SessionExport
             pending={publication.pending}
-            selecting={publication.selecting}
+            previewing={publication.previewing}
             messages={publication.messages}
             onSelect={publication.select}
             onSelectAll={publication.selectAll}
@@ -180,9 +180,10 @@
             error={publication.error}
             prepared={publication.prepared}
             paper={publication.paper}
+            format={publication.format}
             onPaperChange={publication.changePaper}
+            onFormatChange={publication.changeFormat}
             onPrepare={publication.prepare}
-            onMarkdown={publication.prepareMarkdown}
             onClose={() => void closeExport()}
           />
         {/if}
