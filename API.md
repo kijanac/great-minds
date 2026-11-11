@@ -1500,7 +1500,7 @@ Response: `201 Created` with a `FileIngestBatch`:
 | `status` | `"uploading"` \| `"processing"` \| `"completed"` \| `"failed"` \| `"cancelled"` | Batch lifecycle status. |
 | `error` | string or `null` | Error detail when failed. |
 | `expires_at` | ISO 8601 | Time after which an uncommitted batch expires. |
-| `files` | array | Per-file entries: `name`, `size`, `hash`, `mimetype`, `status` (`"pending"` \| `"uploaded"` \| `"processing"` \| `"completed"` \| `"failed"` \| `"cancelled"`), `error` (string or `null`). |
+| `files` | array | Per-file entries: `name`, `size`, `hash`, `mimetype`, `status` (`"pending"` \| `"uploaded"` \| `"processing"` \| `"completed"` \| `"failed"` \| `"cancelled"`), `error` (string or `null`), `source_id` (`Uuid` or `null`). `source_id` is the vault source the file becomes, assigned when the batch is created; uploading the same file to the vault again reports the same source. Read it with `GET /v1/vaults/:vault_id/raw/sources/:source_id` once the file is `"completed"`. It is `null` only for files recorded before source tracking. |
 | `targets` | array | Upload targets, one per file: either `{"hash": ..., "transport": "api"}` (upload through the raw API route) or `{"hash": ..., "transport": "presigned", "url": "..."}` (upload to the given URL directly). |
 
 Errors: `400 BadRequest`, `403 Forbidden`, `409 Conflict`, `422 Validation`.
@@ -1652,10 +1652,12 @@ Response: `201 Created` with a `JobResponse`:
 | `id` | `Uuid` | Job id. |
 | `vault_id` | `Uuid` | Vault id. |
 | `trigger` | `"staged_files"` \| `"url"` \| `"manual"` | How the job was started. |
+| `source_id` | `Uuid` or `null` | For `"url"` jobs, the vault source the URL becomes, assigned when the job is accepted; every import of the same canonical URL into the vault reports the same source. `null` for other jobs: a file ingest reports a `source_id` per file on its batch. |
 | `status` | `"pending"` \| `"running"` \| `"completed"` \| `"failed"` \| `"cancelled"` | Job lifecycle status. |
 | `current_phase` | string | Name of the current pipeline phase. |
 | `phase_status` | string | Status of the current phase. |
-| `progress_steps` | array | Per-step progress entries: `key`, `label`, `status` (`"pending"` \| `"running"` \| `"completed"` \| `"failed"`), `done` (number or `null`), `total` (number or `null`), `detail` (string). |
+| `stages` | array | Pipeline stages, each `phase` (string) and `steps`: per-step progress entries `key`, `label`, `status` (`"pending"` \| `"running"` \| `"completed"` \| `"failed"`), `done` (number or `null`), `total` (number or `null`), `detail` (string). |
+| `warnings` | array | Warnings, each `phase`, `message`, `count` (number) and `items` (array of strings). |
 | `error` | string or `null` | Error detail when failed. |
 | `created_at` | ISO 8601 | Creation time. |
 | `updated_at` | ISO 8601 | Last update time. |

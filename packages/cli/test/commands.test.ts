@@ -458,6 +458,7 @@ describe("gm update", () => {
       id: runId,
       vault_id: vaultId,
       trigger: "manual",
+      source_id: null,
       status: "pending",
       current_phase: "",
       phase_status: "",
@@ -566,6 +567,7 @@ describe("gm update", () => {
             mimetype: "",
             status: "pending",
             error: null,
+            source_id: null,
           })),
           targets: files.map((file: { readonly hash: string }) => ({
             hash: file.hash,

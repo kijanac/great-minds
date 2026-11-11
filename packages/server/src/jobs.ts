@@ -18,7 +18,7 @@ import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 import { cancelCompileWorkflow, linkRunToIntent, queueCompile } from "./compile-intents.ts";
 import { AppConfig, missingModelKey, notConfiguredDetail } from "./config.ts";
 import { FileIngestBatches } from "./file-ingest-batches.ts";
-import { jobResponse } from "./job-response.ts";
+import { jobResponse, selectJobs } from "./job-response.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { PipelineRunsService } from "./pipeline-runs.ts";
 import { pollingSse } from "./polling-sse.ts";
@@ -125,16 +125,14 @@ export const JobsServiceLive = Layer.effect(
           if (insertedRun && runId !== jobId) {
             yield* tx.delete(pipelineRuns).where(eq(pipelineRuns.id, jobId));
           }
-          const rows = yield* tx
-            .select()
-            .from(pipelineRuns)
+          const rows = yield* selectJobs(tx)
             .where(and(eq(pipelineRuns.id, runId), eq(pipelineRuns.vaultId, vaultId)))
             .limit(1);
-          const run = rows[0];
-          if (run === undefined) {
+          const job = rows[0];
+          if (job === undefined) {
             throw new Error(`compile pipeline run missing for vault ${vaultId}, job ${jobId}`);
           }
-          return jobResponse(run);
+          return jobResponse(job);
         }),
       );
 
@@ -221,9 +219,7 @@ export const JobsServiceLive = Layer.effect(
             d.select({ total: count() }).from(pipelineRuns).where(where),
           );
           const rows = yield* db.query((d) =>
-            d
-              .select()
-              .from(pipelineRuns)
+            selectJobs(d)
               .where(where)
               .orderBy(desc(pipelineRuns.createdAt))
               .limit(query.limit)
@@ -234,9 +230,14 @@ export const JobsServiceLive = Layer.effect(
       get: (userId, vaultId, jobId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
-          const run = yield* readRun(vaultId, jobId);
-          if (run === undefined) return yield* new NotFound({ detail: "Job not found" });
-          return jobResponse(run);
+          const rows = yield* db.query((d) =>
+            selectJobs(d)
+              .where(and(eq(pipelineRuns.id, jobId), eq(pipelineRuns.vaultId, vaultId)))
+              .limit(1),
+          );
+          const job = rows[0];
+          if (job === undefined) return yield* new NotFound({ detail: "Job not found" });
+          return jobResponse(job);
         }),
       stream: (userId, vaultId, jobId) =>
         Effect.gen(function* () {
