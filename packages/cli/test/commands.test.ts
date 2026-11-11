@@ -25,6 +25,11 @@ import {
   callApi,
   exportSession,
   listRuns,
+  listArticles,
+  listSessions,
+  readChunks,
+  readLinks,
+  search,
   login,
   logout,
   readDocument,
@@ -47,6 +52,7 @@ const now = "2026-11-06T00:00:00.000Z";
 type Recorded = {
   readonly method: string;
   readonly path: string;
+  readonly query: Record<string, string>;
   readonly auth: string | null;
   readonly body: string;
 };
@@ -92,6 +98,7 @@ const fakeFetch: typeof fetch = async (input, init) => {
   const recorded = {
     method: request.method,
     path: url.pathname,
+    query: Object.fromEntries(url.searchParams),
     auth: request.headers.get("authorization"),
     body: await request.text(),
   };
@@ -580,6 +587,102 @@ describe("gm update", () => {
 });
 
 describe("reading", () => {
+  it("passes reading filters and page positions through the typed client", async () => {
+    const article = {
+      file_path: "wiki/example.md",
+      title: "Example",
+      precis: "A summary",
+      updated_at: now,
+      slug: "example",
+    };
+    const page = { items: [article], pagination: { limit: 1, offset: 1, total: 3 } };
+    const chunk = {
+      path: article.file_path,
+      chunk_index: 2,
+      heading: "Heading",
+      body: "Text",
+      content_hash: "hash",
+    };
+    const hit = {
+      path: article.file_path,
+      chunk_index: 2,
+      heading: "Heading",
+      text: "Text",
+      score: 0.8,
+    };
+    const links = { outgoing: [article], incoming: [], related: [] };
+    route = (request) => {
+      if (request.path === `/v1/vaults/${vaultId}`) return vaultDetail();
+      if (request.path.endsWith("/wiki") || request.path.endsWith("/wiki/recent"))
+        return json(200, page);
+      if (request.path.endsWith("/search")) return json(200, [hit]);
+      if (request.path.endsWith("/chunks")) return json(200, [chunk]);
+      if (request.path.endsWith("/links")) return json(200, links);
+      if (request.path.endsWith("/sessions"))
+        return json(200, { items: [], pagination: page.pagination });
+      return json(404, {});
+    };
+    const env = { GM_API_KEY: "gm_reader", GM_VAULT: vaultId, GM_API_URL: apiUrl };
+    const options = { vault: Option.none(), json: true };
+    await run(
+      search({ ...options, query: "reading circles", path: Option.some(article.file_path) }),
+      env,
+    );
+    expect(requests.at(-1)).toMatchObject({
+      method: "GET",
+      auth: "Bearer gm_reader",
+      query: { q: "reading circles", path: article.file_path },
+    });
+    expect(JSON.parse(stdout.pop()!)).toEqual([hit]);
+    const articles = {
+      ...options,
+      limit: 1,
+      offset: 1,
+      sort: "linked" as const,
+      contains: Option.some("example"),
+      tag: Option.some("practice"),
+      run: Option.some(runId),
+    };
+    await run(listArticles(articles), env);
+    expect(requests.at(-1)!.query).toEqual({
+      limit: "1",
+      offset: "1",
+      sort: "linked",
+      contains: "example",
+      tag: "practice",
+      run: runId,
+    });
+    expect(JSON.parse(stdout.pop()!)).toEqual(page);
+    await run(
+      listArticles({
+        ...articles,
+        sort: "recent",
+        contains: Option.none(),
+        tag: Option.none(),
+        run: Option.none(),
+        json: false,
+      }),
+      env,
+    );
+    expect(requests.at(-1)).toMatchObject({
+      path: `/v1/vaults/${vaultId}/wiki/recent`,
+      query: { limit: "1", offset: "1" },
+    });
+    expect(stdout.pop()).toBe("wiki/example.md  Example");
+    expect(stderr.pop()).toBe("(2-2 of 3; --offset 2 shows more)");
+    const count = requests.length;
+    expect(await failureTag(listArticles({ ...articles, sort: "recent" }), env)).toBe("Validation");
+    expect(requests).toHaveLength(count);
+    await run(listSessions({ ...options, limit: 1, offset: 1 }), env);
+    expect(requests.at(-1)!.query).toEqual({ limit: "1", offset: "1" });
+    await run(readChunks({ ...options, path: article.file_path, start: 2, end: 4 }), env);
+    expect(requests.at(-1)!.query).toEqual({ path: article.file_path, start: "2", end: "4" });
+    expect(JSON.parse(stdout.pop()!)).toEqual([chunk]);
+    await run(readLinks({ ...options, path: article.file_path }), env);
+    expect(requests.at(-1)!.query).toEqual({ path: article.file_path });
+    expect(JSON.parse(stdout.pop()!)).toEqual(links);
+  });
+
   it.each(["pdf", "markdown"] as const)(
     "exports %s through the shared API without overwriting private files",
     async (format) => {

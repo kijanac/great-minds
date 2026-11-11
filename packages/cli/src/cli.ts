@@ -1,4 +1,10 @@
-import { PublicationPaper, SessionExportSelection, SessionId, Uuid } from "@great-minds/domain";
+import {
+  PublicationPaper,
+  SearchQuery,
+  SessionExportSelection,
+  SessionId,
+  Uuid,
+} from "@great-minds/domain";
 import { Schema } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 
@@ -8,6 +14,10 @@ import {
   exportSession,
   listSessions,
   listSources,
+  listArticles,
+  search,
+  readChunks,
+  readLinks,
   readDocument,
   readSession,
   ask,
@@ -135,6 +145,15 @@ const limitFlag = Flag.Int("limit").pipe(
   Flag.withDefault(20),
 );
 
+const offsetFlag = Flag.Int("offset").pipe(
+  Flag.filter(
+    (offset) => offset >= 0,
+    (offset) => `--offset can't be negative (got ${offset})`,
+  ),
+  Flag.withDescription("Skip this many results"),
+  Flag.withDefault(0),
+);
+
 const sourcesCommand = Command.make(
   "sources",
   {
@@ -165,14 +184,7 @@ const sourcesCommand = Command.make(
       Flag.withDefault("date" as const),
     ),
     limit: limitFlag,
-    offset: Flag.Int("offset").pipe(
-      Flag.filter(
-        (offset) => offset >= 0,
-        (offset) => `--offset can't be negative (got ${offset})`,
-      ),
-      Flag.withDescription("Skip this many, to page through a total"),
-      Flag.withDefault(0),
-    ),
+    offset: offsetFlag,
     json: jsonFlag,
   },
   listSources,
@@ -180,7 +192,7 @@ const sourcesCommand = Command.make(
 
 const sessionsCommand = Command.make(
   "sessions",
-  { vault: vaultFlag, limit: limitFlag, json: jsonFlag },
+  { vault: vaultFlag, limit: limitFlag, offset: offsetFlag, json: jsonFlag },
   listSessions,
 ).pipe(Command.withDescription("List recent sessions, newest first"));
 
@@ -228,6 +240,63 @@ const exportCommand = Command.make(
   ),
 );
 
+const searchCommand = Command.make(
+  "search",
+  {
+    query: Argument.String("query").pipe(Argument.withSchema(SearchQuery.fields.q)),
+    path: Flag.String("path").pipe(
+      Flag.withDescription("Search only this document"),
+      Flag.optional,
+    ),
+    vault: vaultFlag,
+    json: jsonFlag,
+  },
+  search,
+).pipe(Command.withDescription("Search sources and wiki articles for relevant passages"));
+
+const articlesCommand = Command.make(
+  "articles",
+  {
+    vault: vaultFlag,
+    contains: Flag.String("contains").pipe(
+      Flag.withDescription("Text in the title or summary"),
+      Flag.optional,
+    ),
+    tag: Flag.String("tag").pipe(Flag.withDescription("Article tag"), Flag.optional),
+    run: Flag.String("run").pipe(
+      Flag.withSchema(Uuid),
+      Flag.withDescription("Articles written by this Update id"),
+      Flag.optional,
+    ),
+    sort: Flag.Literals("sort", ["title", "linked", "recent"]).pipe(
+      Flag.withDescription("Article order; recent cannot be combined with filters"),
+      Flag.withDefault("title" as const),
+    ),
+    limit: limitFlag,
+    offset: offsetFlag,
+    json: jsonFlag,
+  },
+  listArticles,
+).pipe(Command.withDescription("Browse wiki articles by title, tag or Update"));
+
+const chunksCommand = Command.make(
+  "chunks",
+  {
+    path: Argument.String("path"),
+    start: Flag.Int("start"),
+    end: Flag.Int("end"),
+    vault: vaultFlag,
+    json: jsonFlag,
+  },
+  readChunks,
+).pipe(Command.withDescription("Read an inclusive range of indexed document chunks (up to 100)"));
+
+const linksCommand = Command.make(
+  "links",
+  { path: Argument.String("path"), vault: vaultFlag, json: jsonFlag },
+  readLinks,
+).pipe(Command.withDescription("Read an article's outgoing, incoming and related links"));
+
 const readCommand = Command.make(
   "read",
   {
@@ -270,6 +339,10 @@ const gm = Command.make("gm").pipe(
     sessionsCommand,
     sessionCommand,
     exportCommand,
+    searchCommand,
+    articlesCommand,
+    chunksCommand,
+    linksCommand,
     readCommand,
     apiCommand,
   ]),

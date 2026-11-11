@@ -2,7 +2,18 @@ import { randomUUID } from "node:crypto";
 
 import {
   Citation,
+  Chunk,
+  ChunkRangeQuery,
   CurrentAuth,
+  DocResponse,
+  LinkedArticles,
+  LinkQuery,
+  PageParamsQuery,
+  SearchQuery,
+  SessionPage,
+  VaultPage,
+  WikiArticlePage,
+  WikiListQuery,
   type Permission,
   SearchHit,
   PublicationPaper,
@@ -43,13 +54,19 @@ const failed = (error: { readonly detail: string } | { readonly message: string 
   new ToolFailed({ message: "detail" in error ? error.detail : error.message });
 
 const vaultId = Uuid.annotate({ description: "Vault id, from list_vaults" });
-const pageLimit = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 }));
+const pageFields = {
+  limit: Schema.optionalKey(Schema.toType(PageParamsQuery.fields.limit)),
+  offset: Schema.optionalKey(Schema.toType(PageParamsQuery.fields.offset)),
+};
+const page = (query: { readonly limit?: number; readonly offset?: number }) => ({
+  limit: query.limit ?? 50,
+  offset: query.offset ?? 0,
+});
 
 const ListVaults = Tool.make("list_vaults", {
   description: "List the vaults this key can reach. Every other tool takes one of their ids.",
-  success: Schema.Struct({
-    vaults: Schema.Array(Schema.Struct({ id: Uuid, name: Schema.String })),
-  }),
+  parameters: Schema.Struct(pageFields),
+  success: VaultPage,
   failure: ToolFailed,
   dependencies: [CurrentAuth],
 })
@@ -61,8 +78,8 @@ const SearchVault = Tool.make("search_vault", {
     "Search a vault's sources and wiki articles for passages about a subject. Returns the best-matching passages with their document path; read a whole document with read_document.",
   parameters: Schema.Struct({
     vault_id: vaultId,
-    query: Schema.String,
-    path: Schema.optionalKey(Schema.String).annotate({
+    query: SearchQuery.fields.q,
+    path: SearchQuery.fields.path.annotate({
       description: "Only search inside this document",
     }),
   }),
@@ -77,13 +94,33 @@ const ReadDocument = Tool.make("read_document", {
   description:
     "Read a whole article (wiki/<slug>.md) or source (raw/...md) by its path. Articles cite their sources as markdown links and footnotes.",
   parameters: Schema.Struct({ vault_id: vaultId, path: Schema.String }),
-  success: Schema.Struct({
-    path: Schema.String,
-    title: Schema.NullOr(Schema.String),
-    body: Schema.String,
-    archived: Schema.Boolean,
-    superseded_by: Schema.NullOr(Schema.String),
+  success: DocResponse,
+  failure: ToolFailed,
+  dependencies: [CurrentAuth],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.OpenWorld, false);
+
+const ReadChunks = Tool.make("read_chunks", {
+  description:
+    "Read an inclusive range of indexed document chunks, up to 100. Use the chunk_index returned by search_vault. Negative starts clamp to zero.",
+  parameters: Schema.Struct({
+    vault_id: vaultId,
+    path: ChunkRangeQuery.fields.path,
+    start: Schema.toType(ChunkRangeQuery.fields.start),
+    end: Schema.toType(ChunkRangeQuery.fields.end),
   }),
+  success: Schema.Struct({ chunks: Schema.Array(Chunk) }),
+  failure: ToolFailed,
+  dependencies: [CurrentAuth],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.OpenWorld, false);
+
+const ReadLinks = Tool.make("read_links", {
+  description: "Read a wiki article's outgoing, incoming and related articles.",
+  parameters: Schema.Struct({ vault_id: vaultId, ...LinkQuery.fields }),
+  success: LinkedArticles,
   failure: ToolFailed,
   dependencies: [CurrentAuth],
 })
@@ -92,19 +129,21 @@ const ReadDocument = Tool.make("read_document", {
 
 const ListArticles = Tool.make("list_articles", {
   description:
-    "List a vault's wiki articles, optionally only those whose title or summary contains some text.",
+    "List wiki articles by title/summary text, tag or Update id. Sort by title (default), linked or recent. Recent order cannot be combined with filters. Results include file_path and pagination; use offset for later pages.",
   parameters: Schema.Struct({
     vault_id: vaultId,
-    contains: Schema.optionalKey(Schema.String),
-    limit: Schema.optionalKey(pageLimit),
-    offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-  }),
-  success: Schema.Struct({
-    total: Schema.Number,
-    articles: Schema.Array(
-      Schema.Struct({ path: Schema.String, title: Schema.String, summary: Schema.String }),
+    ...WikiListQuery.fields,
+    ...pageFields,
+    sort: Schema.optionalKey(Schema.Literals(["title", "linked", "recent"])),
+  }).check(
+    Schema.makeFilter(
+      (query) =>
+        query.sort !== "recent" ||
+        (query.contains === undefined && query.tag === undefined && query.run === undefined) ||
+        "Recent article order cannot be combined with filters.",
     ),
-  }),
+  ),
+  success: WikiArticlePage,
   failure: ToolFailed,
   dependencies: [CurrentAuth],
 })
@@ -124,12 +163,8 @@ const QuerySources = Tool.make("query_sources", {
 
 const ListSessions = Tool.make("list_sessions", {
   description: "List a vault's question-and-answer sessions, newest first.",
-  parameters: Schema.Struct({ vault_id: vaultId, limit: Schema.optionalKey(pageLimit) }),
-  success: Schema.Struct({
-    sessions: Schema.Array(
-      Schema.Struct({ id: SessionId, question: Schema.String, updated_at: Schema.String }),
-    ),
-  }),
+  parameters: Schema.Struct({ vault_id: vaultId, ...pageFields }),
+  success: SessionPage,
   failure: ToolFailed,
   dependencies: [CurrentAuth],
 })
@@ -190,6 +225,8 @@ const GreatMindsTools = Toolkit.make(
   ListVaults,
   SearchVault,
   ReadDocument,
+  ReadChunks,
+  ReadLinks,
   ListArticles,
   QuerySources,
   ListSessions,
@@ -201,6 +238,8 @@ const toolPermissions: Readonly<Record<string, Permission>> = {
   list_vaults: "read",
   search_vault: "read",
   read_document: "read",
+  read_chunks: "read",
+  read_links: "read",
   list_articles: "read",
   query_sources: "read",
   list_sessions: "read",
@@ -226,10 +265,9 @@ const ToolHandlers = GreatMindsTools.toLayer(
     const userId = Effect.map(CurrentAuth, (current) => current.user_id);
 
     return GreatMindsTools.of({
-      list_vaults: () =>
+      list_vaults: (query) =>
         Effect.gen(function* () {
-          const page = yield* vaults.listVaults(yield* userId, { limit: 200, offset: 0 });
-          return { vaults: page.items.map((vault) => ({ id: vault.id, name: vault.name })) };
+          return yield* vaults.listVaults(yield* userId, page(query));
         }),
       search_vault: ({ vault_id, query, path }) =>
         Effect.gen(function* () {
@@ -239,48 +277,33 @@ const ToolHandlers = GreatMindsTools.toLayer(
         }).pipe(Effect.mapError(failed)),
       read_document: ({ vault_id, path }) =>
         Effect.gen(function* () {
-          const document = yield* documents.readDocument(yield* userId, vault_id, path);
-          return {
-            path: document.article.file_path,
-            title: document.article.title,
-            body: document.body,
-            archived: document.archived,
-            superseded_by: document.superseded_by,
-          };
+          return yield* documents.readDocument(yield* userId, vault_id, path);
         }).pipe(Effect.mapError(failed)),
-      list_articles: ({ vault_id, contains, limit, offset }) =>
+      read_chunks: ({ vault_id, ...query }) =>
         Effect.gen(function* () {
-          const page = yield* wiki.listArticles(yield* userId, vault_id, {
-            limit: limit ?? 50,
-            offset: offset ?? 0,
-            ...(contains === undefined ? {} : { contains }),
+          return { chunks: yield* documents.readChunks(yield* userId, vault_id, query) };
+        }).pipe(Effect.mapError(failed)),
+      read_links: ({ vault_id, ...query }) =>
+        Effect.gen(function* () {
+          return yield* documents.readLinks(yield* userId, vault_id, query);
+        }).pipe(Effect.mapError(failed)),
+      list_articles: ({ vault_id, sort, ...query }) =>
+        Effect.gen(function* () {
+          const user = yield* userId;
+          if (sort === "recent") return yield* wiki.listRecent(user, vault_id, page(query));
+          return yield* wiki.listArticles(user, vault_id, {
+            ...query,
+            ...page(query),
+            sort: sort ?? "title",
           });
-          return {
-            total: page.pagination.total,
-            articles: page.items.map((article) => ({
-              path: article.file_path,
-              title: article.title,
-              summary: article.precis,
-            })),
-          };
         }).pipe(Effect.mapError(failed)),
       query_sources: ({ vault_id, ...query }) =>
         Effect.gen(function* () {
           return yield* sources.querySources(yield* userId, vault_id, query);
         }).pipe(Effect.mapError(failed)),
-      list_sessions: ({ vault_id, limit }) =>
+      list_sessions: ({ vault_id, ...query }) =>
         Effect.gen(function* () {
-          const page = yield* sessions.listSessions(yield* userId, vault_id, {
-            limit: limit ?? 20,
-            offset: 0,
-          });
-          return {
-            sessions: page.items.map((session) => ({
-              id: session.id,
-              question: session.query,
-              updated_at: session.updated_at.toISOString(),
-            })),
-          };
+          return yield* sessions.listSessions(yield* userId, vault_id, page(query));
         }).pipe(Effect.mapError(failed)),
       read_session: ({ vault_id, session_id, format = "json", paper = "a4", ...selection }) =>
         Effect.gen(function* () {

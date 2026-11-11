@@ -51,6 +51,7 @@ import {
   runHistoryDatabase,
 } from "./fixtures/reply-history-database.ts";
 import { seedLegacySources } from "./fixtures/source-documents.ts";
+import { openMcp } from "./fixtures/mcp.ts";
 
 const initialTime = new Date("2026-07-09T12:00:00.000Z");
 const uuid = Schema.decodeUnknownSync(Uuid);
@@ -2446,6 +2447,87 @@ describe("read-only HTTP integration", () => {
     expect(pdfRenders).toBe(1);
   });
 
+  it("keeps MCP reading filters, pagination and document views identical to HTTP", async () => {
+    const created = await api("POST", "/auth/api-keys", currentFixture().aliceToken, {
+      label: "reading",
+      vault_ids: [id.vaultAlpha],
+      can_ask: false,
+      can_change: false,
+    });
+    expect(created.status).toBe(201);
+    const key = String(asRecord(created.body).raw_key);
+    const mcp = await openMcp(currentState().started.url, key);
+    const base = `/vaults/${id.vaultAlpha}`;
+    const cases: readonly [string, string, Record<string, unknown>][] = [
+      ["list_vaults", "/vaults?limit=1&offset=1", { limit: 1, offset: 1 }],
+      ["list_sessions", `${base}/sessions?limit=1&offset=1`, { limit: 1, offset: 1 }],
+      [
+        "list_articles",
+        `${base}/wiki?limit=1&offset=1&sort=linked&run=${id.runAlpha}`,
+        { limit: 1, offset: 1, sort: "linked", run: id.runAlpha },
+      ],
+      [
+        "list_articles",
+        `${base}/wiki?tag=practice&contains=alpha`,
+        { tag: "practice", contains: "alpha" },
+      ],
+      [
+        "list_articles",
+        `${base}/wiki/recent?limit=1&offset=1`,
+        { sort: "recent", limit: 1, offset: 1 },
+      ],
+      ["list_articles", `${base}/wiki?limit=0`, { limit: 0 }],
+      ["query_sources", `${base}/raw/sources/query`, { limit: 1, offset: 1 }],
+      [
+        "read_document",
+        `${base}/doc?path=wiki/alpha-practice.md`,
+        { path: "wiki/alpha-practice.md" },
+      ],
+      [
+        "read_chunks",
+        `${base}/chunks?path=raw/books/capital.md&start=0&end=3`,
+        { path: "raw/books/capital.md", start: 0, end: 3 },
+      ],
+      [
+        "read_links",
+        `${base}/links?path=wiki/alpha-practice.md`,
+        { path: "wiki/alpha-practice.md" },
+      ],
+    ];
+    for (const [name, path, args] of cases) {
+      const http = await api(
+        name === "query_sources" ? "POST" : "GET",
+        path,
+        key,
+        name === "query_sources" ? args : undefined,
+      );
+      expect(http.status).toBe(200);
+      const result = asRecord((await mcp.call(name, { vault_id: id.vaultAlpha, ...args })).result);
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toEqual(
+        name === "read_chunks" ? { chunks: http.body } : http.body,
+      );
+      if (name !== "list_vaults")
+        expect(
+          asRecord((await mcp.call(name, { ...args, vault_id: id.vaultBeta })).result).isError,
+        ).toBe(true);
+    }
+    for (const name of ["list_vaults", "list_sessions", "list_articles"])
+      for (const args of [{ limit: 201 }, { offset: -1 }, { limit: "1" }])
+        expect((await mcp.call(name, { vault_id: id.vaultAlpha, ...args })).error).toMatchObject({
+          code: -32602,
+        });
+    expect(
+      (
+        await mcp.call("list_articles", {
+          vault_id: id.vaultAlpha,
+          sort: "recent",
+          tag: "practice",
+        })
+      ).error,
+    ).toMatchObject({ code: -32602 });
+  });
+
   it("exposes the same private session and export contracts through MCP with a read-only key", async () => {
     const { aliceToken } = currentFixture();
     const created = await api("POST", "/auth/api-keys", aliceToken, {
@@ -2455,47 +2537,10 @@ describe("read-only HTTP integration", () => {
       can_change: false,
     });
     expect(created.status).toBe(201);
-    const headers = new Headers({
-      authorization: `Bearer ${asRecord(created.body).raw_key}`,
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-      "mcp-protocol-version": "2025-06-18",
-    });
-    let requestId = 0;
-    const request = async (method: string, params: unknown) => {
-      const response = await fetch(`${currentState().started.url}/v1/mcp`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          ...(method.startsWith("notifications/") ? {} : { id: ++requestId }),
-          method,
-          params,
-        }),
-      });
-      expect(response.ok).toBe(true);
-      const session = response.headers.get("mcp-session-id");
-      if (session) headers.set("mcp-session-id", session);
-      const text = await response.text();
-      const data = response.headers.get("content-type")?.includes("event-stream")
-        ? text
-            .split("\n")
-            .filter((line) => line.startsWith("data:"))
-            .map((line) => line.slice(5).trim())
-            .filter(Boolean)
-            .at(-1)
-        : text;
-      return asRecord(JSON.parse(data || "{}"));
-    };
-    await request("initialize", {
-      protocolVersion: "2025-06-18",
-      capabilities: {},
-      clientInfo: { name: "export-test", version: "1" },
-    });
-    await request("notifications/initialized", {});
+    const mcp = await openMcp(currentState().started.url, String(asRecord(created.body).raw_key));
     const params = { vault_id: id.vaultAlpha, session_id: id.sessionAliceMain };
     const call = (args: Record<string, unknown> = {}) =>
-      request("tools/call", { name: "read_session", arguments: { ...params, ...args } });
+      mcp.call("read_session", { ...params, ...args });
     const content = (message: Record<string, unknown>) =>
       asRecord(asRecord(asRecord(message.result).structuredContent).data);
     const path = sessionPath();

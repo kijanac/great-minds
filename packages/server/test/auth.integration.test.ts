@@ -26,6 +26,7 @@ import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { startServer } from "../src/server.ts";
 import { makeAppLayer } from "../src/app-layer.ts";
+import { readMcpResponse as messageOf } from "./fixtures/mcp.ts";
 import {
   replyHistoryTestDatabaseUrl,
   runHistoryDatabase,
@@ -1248,18 +1249,6 @@ describe("auth HTTP integration", () => {
         },
         body: JSON.stringify(body),
       });
-    const messageOf = async (response: Response) => {
-      const text = await response.text();
-      if (!(response.headers.get("content-type") ?? "").includes("event-stream"))
-        return asRecord(JSON.parse(text));
-      const data = text
-        .split("\n")
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trim())
-        .filter((line) => line !== "");
-      return asRecord(JSON.parse(data[data.length - 1] ?? "{}"));
-    };
-
     expect((await post({ jsonrpc: "2.0", id: 1, method: "tools/list" }, {})).status).toBe(401);
     const foreign = await post(
       { jsonrpc: "2.0", id: 1, method: "tools/list" },
@@ -1304,6 +1293,8 @@ describe("auth HTTP integration", () => {
       "list_vaults",
       "search_vault",
       "read_document",
+      "read_chunks",
+      "read_links",
       "list_articles",
       "query_sources",
       "list_sessions",
@@ -1313,12 +1304,15 @@ describe("auth HTTP integration", () => {
     expect(tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);
 
     const vaults = asRecord((await call("list_vaults", {})).result);
-    expect(asRecord(vaults.structuredContent)).toEqual({
-      vaults: [{ id: home, name: expect.any(String) }],
-    });
+    expect(asRecord(vaults.structuredContent)).toEqual(
+      (await api("GET", "/vaults", undefined, readerKey)).body,
+    );
     const articles = asRecord((await call("list_articles", { vault_id: home })).result);
     expect(articles.isError).not.toBe(true);
-    expect(asRecord(articles.structuredContent)).toEqual({ total: 0, articles: [] });
+    expect(asRecord(articles.structuredContent)).toEqual({
+      items: [],
+      pagination: { total: 0, limit: 50, offset: 0 },
+    });
 
     const elsewhere = asRecord((await call("list_articles", { vault_id: other })).result);
     expect(elsewhere).toMatchObject({
