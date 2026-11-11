@@ -2,6 +2,7 @@ import { Database, pipelineRuns } from "@great-minds/database";
 import {
   Forbidden,
   NotFound,
+  ServiceUnavailable,
   type JobListQuery,
   type JobPage,
   type JobProgressSnapshot,
@@ -15,6 +16,7 @@ import { Context, Effect, Layer, Schema, Stream } from "effect";
 import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 
 import { cancelCompileWorkflow, linkRunToIntent, queueCompile } from "./compile-intents.ts";
+import { AppConfig, missingModelKey, notConfiguredDetail } from "./config.ts";
 import { FileIngestBatches } from "./file-ingest-batches.ts";
 import { jobResponse } from "./job-response.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
@@ -51,7 +53,7 @@ type JobsServiceShape = {
     userId: Uuid,
     vaultId: Uuid,
     jobId: Uuid,
-  ) => Effect.Effect<JobResponse, Forbidden>;
+  ) => Effect.Effect<JobResponse, Forbidden | ServiceUnavailable>;
   readonly cancelCompile: (
     userId: Uuid,
     vaultId: Uuid,
@@ -82,6 +84,7 @@ export const JobsServiceLive = Layer.effect(
   JobsService,
   Effect.gen(function* () {
     const db = yield* Database;
+    const config = yield* AppConfig;
     const access = yield* VaultAccessService;
     const pipeline = yield* PipelineRunsService;
     const fileIngestBatches = yield* FileIngestBatches;
@@ -139,6 +142,17 @@ export const JobsServiceLive = Layer.effect(
       requestCompile: (userId, vaultId, jobId) =>
         Effect.gen(function* () {
           yield* access.requireOwner(userId, vaultId);
+          const missing = [
+            config.extractModel,
+            config.mapModel,
+            config.reduceModel,
+            config.renderModel,
+            config.embeddingModel,
+          ]
+            .map((model) => missingModelKey(config, model))
+            .find((key) => key !== undefined);
+          if (missing !== undefined)
+            return yield* new ServiceUnavailable({ detail: notConfiguredDetail(missing) });
           return yield* requestCompile(vaultId, jobId);
         }),
       cancelCompile: (userId, vaultId, runId) =>

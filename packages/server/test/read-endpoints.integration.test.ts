@@ -2460,6 +2460,8 @@ describe("read-only HTTP integration", () => {
     const mcp = await openMcp(currentState().started.url, key);
     for (const [name, route, args] of [
       ["list_sessions", "sessions", { limit: 1, offset: 1 }],
+      ["list_jobs", "jobs", { limit: 1, offset: 0, status: "completed" }],
+      ["read_job", `jobs/${id.runAlpha}`, { job_id: id.runAlpha }],
       ["list_articles", "wiki", { limit: 1, offset: 1, sort: "linked", run: id.runAlpha }],
       ["read_document", "doc", { path: "wiki/alpha-practice.md" }],
       ["read_chunks", "chunks", { path: "raw/books/capital.md", start: 0, end: 3 }],

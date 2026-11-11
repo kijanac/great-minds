@@ -26,7 +26,7 @@ import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { startServer } from "../src/server.ts";
 import { makeAppLayer } from "../src/app-layer.ts";
-import { readMcpResponse as messageOf } from "./fixtures/mcp.ts";
+import { openMcp, readMcpResponse as messageOf } from "./fixtures/mcp.ts";
 import {
   replyHistoryTestDatabaseUrl,
   runHistoryDatabase,
@@ -1185,9 +1185,31 @@ describe("auth HTTP integration", () => {
     );
     expect(update.status).toBe(403);
     expect(update.body).toMatchObject({ detail: refusal });
+    const mcp = await openMcp(currentState().started.url, pair.access_token);
+    expect((await mcp.call("start_update", { vault_id: home })).error).toMatchObject({
+      code: -32003,
+    });
 
     const user = await userByEmail("unsponsored@example.com");
     await runDb(Effect.flatMap(AuthService, (auth) => auth.setSponsored(user.id, true)));
+    const unavailable = await api(
+      "POST",
+      `/vaults/${home}/compile`,
+      { job_id: randomUUID() },
+      pair.access_token,
+    );
+    expect(unavailable.status).toBe(503);
+    expect(asRecord((await mcp.call("start_update", { vault_id: home })).result)).toMatchObject({
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: expect.stringContaining(
+            asString(asRecord(unavailable.body).detail, "configuration error"),
+          ),
+        },
+      ],
+    });
     const sponsored = await api(
       "GET",
       `/vaults/${home}/search?q=%20`,
@@ -1299,6 +1321,11 @@ describe("auth HTTP integration", () => {
       "query_sources",
       "list_sessions",
       "read_session",
+      "list_jobs",
+      "read_job",
+      "start_update",
+      "cancel_job",
+      "retry_url_job",
       "ask",
     ]);
     expect(tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);
@@ -1319,6 +1346,10 @@ describe("auth HTTP integration", () => {
       isError: true,
       content: [{ type: "text", text: expect.stringContaining("can't reach this vault") }],
     });
+    for (const name of ["start_update", "cancel_job", "retry_url_job"])
+      expect(
+        (await call(name, { vault_id: home, job_id: home, next_job_id: other })).error,
+      ).toMatchObject({ code: -32003 });
     const asked = await call("ask", { vault_id: home, question: "What is here?" });
     expect(asked.error).toMatchObject({
       code: -32003,

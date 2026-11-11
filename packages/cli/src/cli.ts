@@ -1,5 +1,6 @@
 import {
   PageParamsQuery,
+  PipelineRunFilter,
   PublicationPaper,
   SearchQuery,
   SourceQuery,
@@ -25,6 +26,8 @@ import {
   ask,
   followExistingRun,
   listRuns,
+  cancelRun,
+  retryRun,
   listVaults,
   login,
   logout,
@@ -123,22 +126,58 @@ const updateCommand = Command.make("update", { vault: vaultFlag, json: jsonFlag 
   Command.withDescription("Start an Update and follow it to the end"),
 );
 
-const runsCommand = Command.make("runs", pageFlags, listRuns).pipe(
-  Command.withDescription("List recent Updates and uploads"),
-);
+const runsCommand = Command.make(
+  "runs",
+  {
+    ...pageFlags,
+    status: Flag.Literals("status", PipelineRunFilter.literals).pipe(
+      Flag.withDescription("Only this status, or active"),
+      Flag.optional,
+    ),
+  },
+  listRuns,
+).pipe(Command.withDescription("List recent Updates and uploads"));
 
 const runCommand = Command.make(
   "run",
   {
-    run: Argument.String("id").pipe(
-      Argument.withSchema(Uuid),
-      Argument.withDescription("Run id (from gm runs)"),
+    run: Argument.String("id").pipe(Argument.withSchema(Uuid)),
+    once: Flag.Boolean("once").pipe(
+      Flag.withDescription("Read the current status without waiting"),
+      Flag.withDefault(false),
     ),
     vault: vaultFlag,
     json: jsonFlag,
   },
   followExistingRun,
 ).pipe(Command.withDescription("Follow a run until it ends and show what it changed"));
+
+const cancelCommand = Command.make(
+  "cancel",
+  {
+    run: Argument.String("id").pipe(Argument.withSchema(Uuid)),
+    vault: vaultFlag,
+    json: jsonFlag,
+  },
+  cancelRun,
+).pipe(Command.withDescription("Request cancellation of an Update or upload (owner only)"));
+
+const retryCommand = Command.make(
+  "retry",
+  {
+    run: Argument.String("id").pipe(Argument.withSchema(Uuid)),
+    jobId: Flag.String("job-id").pipe(
+      Flag.withSchema(Uuid),
+      Flag.withDescription("New UUID; reuse for the same retry if its response was lost"),
+      Flag.optional,
+    ),
+    vault: vaultFlag,
+    json: jsonFlag,
+  },
+  retryRun,
+).pipe(
+  Command.withDescription("Retry a failed or cancelled URL import and follow it (owner only)"),
+);
 
 const sourcesCommand = Command.make(
   "sources",
@@ -313,6 +352,8 @@ const gm = Command.make("gm").pipe(
     updateCommand,
     runsCommand,
     runCommand,
+    cancelCommand,
+    retryCommand,
     sourcesCommand,
     sessionsCommand,
     sessionCommand,

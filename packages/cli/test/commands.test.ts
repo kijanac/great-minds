@@ -310,9 +310,18 @@ describe("credentials", () => {
       vault_id: vaultId,
     });
     expect(
-      await failureTag(listRuns({ vault: Option.none(), limit: 20, offset: 0, json: false }), {
-        GM_API_URL: otherUrl,
-      }),
+      await failureTag(
+        listRuns({
+          vault: Option.none(),
+          limit: 20,
+          offset: 0,
+          status: Option.none(),
+          json: false,
+        }),
+        {
+          GM_API_URL: otherUrl,
+        },
+      ),
     ).toBe("NotSignedIn");
     expect(requests).toEqual([]);
 
@@ -333,9 +342,12 @@ describe("credentials", () => {
       request.path === "/v1/vaults"
         ? oneVault()
         : json(200, { items: [], pagination: { total: 0, limit: 20, offset: 0 } });
-    await run(listRuns({ vault: Option.none(), limit: 20, offset: 0, json: false }), {
-      GM_API_KEY: "gm_env",
-    });
+    await run(
+      listRuns({ vault: Option.none(), limit: 20, offset: 0, status: Option.none(), json: false }),
+      {
+        GM_API_KEY: "gm_env",
+      },
+    );
     expect(requests.map((request) => request.path)).toEqual([
       "/v1/vaults",
       `/v1/vaults/${vaultId}/jobs`,

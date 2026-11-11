@@ -22,6 +22,7 @@ import {
   Validation,
   type ChunkRangeQuery,
   type PageParams,
+  type PipelineRunFilter,
   type JobProgressSnapshot,
   type PublicationPaper,
   type SessionExportSelection,
@@ -424,23 +425,64 @@ export const update = (input: { readonly vault: Option.Option<string>; readonly 
     yield* followRun(connection, vaultId, job.id, input.json);
   });
 
-export const followExistingRun = (input: {
-  readonly run: Uuid;
-  readonly vault: Option.Option<string>;
-  readonly json: boolean;
-}) =>
+export const followExistingRun = (
+  input: ReadOptions & { readonly run: Uuid; readonly once: boolean },
+) =>
   Effect.gen(function* () {
     const { connection, vaultId } = yield* vaultConnection(input.vault);
+    if (input.once) {
+      const job = yield* connection.use(
+        connection.api.jobs.getJob({ params: { vault_id: vaultId, job_id: input.run } }),
+      );
+      return yield* input.json
+        ? printJson(job)
+        : Console.log(
+            `${job.id}  ${job.status}  ${job.current_phase}${job.error === null ? "" : `: ${job.error}`}`,
+          );
+    }
     yield* followRun(connection, vaultId, input.run, input.json);
   });
 
-export const listRuns = (input: ReadOptions & PageParams) =>
+export const cancelRun = (input: ReadOptions & { readonly run: Uuid }) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    yield* connection.use(
+      connection.api.compile.cancelCompile({ params: { vault_id: vaultId, run_id: input.run } }),
+    );
+    yield* input.json ? printJson({}) : Console.log(`Cancellation requested for ${input.run}.`);
+  });
+
+export const retryRun = (
+  input: ReadOptions & { readonly run: Uuid; readonly jobId: Option.Option<Uuid> },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const jobId = Option.getOrElse(input.jobId, newUuid);
+    yield* Console.error(
+      `Retry request ${jobId} (reuse --job-id ${jobId} if its response is lost)`,
+    );
+    const job = yield* connection.use(
+      connection.api.jobs.retryUrlJob({
+        params: { vault_id: vaultId, job_id: input.run },
+        payload: { job_id: jobId },
+      }),
+    );
+    yield* followRun(connection, vaultId, job.id, input.json);
+  });
+
+export const listRuns = (
+  input: ReadOptions & PageParams & { readonly status: Option.Option<PipelineRunFilter> },
+) =>
   Effect.gen(function* () {
     const { connection, vaultId } = yield* vaultConnection(input.vault);
     const page = yield* connection.use(
       connection.api.jobs.listJobs({
         params: { vault_id: vaultId },
-        query: { limit: input.limit, offset: input.offset },
+        query: {
+          limit: input.limit,
+          offset: input.offset,
+          ...Option.match(input.status, { onNone: () => ({}), onSome: (status) => ({ status }) }),
+        },
       }),
     );
     yield* printPage(

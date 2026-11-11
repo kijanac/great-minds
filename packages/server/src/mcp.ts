@@ -14,7 +14,13 @@ import {
   VaultPage,
   WikiArticlePage,
   WikiListQuery,
-  type Permission,
+  type EndpointName,
+  endpointPermissions,
+  modelEndpoints,
+  CompileRequest,
+  JobListQuery,
+  JobPage,
+  JobResponse,
   SearchHit,
   PublicationPaper,
   SessionExport,
@@ -32,6 +38,8 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { AuthService, keyRefusal, modelRefusal } from "./auth.ts";
 import { AppConfig } from "./config.ts";
 import { DocumentsService } from "./documents.ts";
+import { JobsService } from "./jobs.ts";
+import { UrlIngestService } from "./url-ingest.ts";
 import { SessionExportsService } from "./publication/service.ts";
 import { QueryService } from "./query.ts";
 import { RepliesService } from "./replies.ts";
@@ -204,6 +212,59 @@ const ReadSession = Tool.make("read_session", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.OpenWorld, false);
 
+const ListJobs = Tool.make("list_jobs", {
+  description:
+    "List Updates and uploads, newest first. Filter by status, including active; page with limit and offset.",
+  parameters: Schema.Struct({ vault_id: vaultId, ...JobListQuery.fields, ...pageFields }),
+  success: JobPage,
+  failure: ToolFailed,
+  dependencies: [CurrentAuth],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.OpenWorld, false);
+
+const ReadJob = Tool.make("read_job", {
+  description:
+    "Read an Update or upload's status, stages, warnings and error. Does not wait for completion.",
+  parameters: Schema.Struct({ vault_id: vaultId, job_id: Uuid }),
+  success: JobResponse,
+  failure: ToolFailed,
+  dependencies: [CurrentAuth],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.OpenWorld, false);
+
+const StartUpdate = Tool.make("start_update", {
+  description:
+    "Start a paid Update of the vault. Owner only. Returns the accepted job immediately; use read_job to monitor it. This starts new work, not a retry of an old job.",
+  parameters: Schema.Struct({ vault_id: vaultId }),
+  success: JobResponse,
+  failure: ToolFailed,
+  dependencies: [CurrentAuth],
+}).annotate(Tool.OpenWorld, false);
+
+const CancelJob = Tool.make("cancel_job", {
+  description:
+    "Request cancellation of an Update or upload. Owner only. Completed or missing jobs are unchanged; read_job confirms the current state.",
+  parameters: Schema.Struct({ vault_id: vaultId, job_id: Uuid }),
+  success: Schema.Struct({ job_id: Uuid }),
+  failure: ToolFailed,
+  dependencies: [CurrentAuth],
+}).annotate(Tool.OpenWorld, false);
+
+const RetryUrlJob = Tool.make("retry_url_job", {
+  description:
+    "Retry a failed or cancelled URL import. Owner only; uses paid models. next_job_id must be a fresh UUID; reuse it when repeating this same retry request. Returns the accepted job immediately. Not for file uploads or manual Updates.",
+  parameters: Schema.Struct({
+    vault_id: vaultId,
+    job_id: Uuid,
+    next_job_id: CompileRequest.fields.job_id,
+  }),
+  success: JobResponse,
+  failure: ToolFailed,
+  dependencies: [CurrentAuth],
+}).annotate(Tool.OpenWorld, false);
+
 const Ask = Tool.make("ask", {
   description:
     "Ask Great Minds' research agent a question about a vault. It searches and reads the vault, then answers in prose with numbered citations. Pass session_id to ask a follow-up in the same session. Answers use paid models and take a minute or more.",
@@ -231,23 +292,31 @@ const GreatMindsTools = Toolkit.make(
   QuerySources,
   ListSessions,
   ReadSession,
+  ListJobs,
+  ReadJob,
+  StartUpdate,
+  CancelJob,
+  RetryUrlJob,
   Ask,
 );
 
-const toolPermissions: Readonly<Record<string, Permission>> = {
-  list_vaults: "read",
-  search_vault: "read",
-  read_document: "read",
-  read_chunks: "read",
-  read_links: "read",
-  list_articles: "read",
-  query_sources: "read",
-  list_sessions: "read",
-  read_session: "read",
-  ask: "ask",
+const toolEndpoints: Readonly<Record<string, EndpointName>> = {
+  list_vaults: "listVaults",
+  search_vault: "searchVault",
+  read_document: "resolveDocument",
+  read_chunks: "readChunks",
+  read_links: "readLinks",
+  list_articles: "listWikiArticles",
+  query_sources: "querySources",
+  list_sessions: "listSessions",
+  read_session: "readSession",
+  list_jobs: "listJobs",
+  read_job: "getJob",
+  start_update: "requestCompile",
+  cancel_job: "cancelCompile",
+  retry_url_job: "retryUrlJob",
+  ask: "createReply",
 };
-
-const modelTools: ReadonlySet<string> = new Set(["search_vault", "ask"]);
 
 const newUuid = () => Uuid.make(randomUUID(), { disableChecks: true });
 
@@ -262,6 +331,8 @@ const ToolHandlers = GreatMindsTools.toLayer(
     const sources = yield* SourcesService;
     const exports = yield* SessionExportsService;
     const replies = yield* RepliesService;
+    const jobs = yield* JobsService;
+    const urlIngest = yield* UrlIngestService;
     const userId = Effect.map(CurrentAuth, (current) => current.user_id);
 
     return GreatMindsTools.of({
@@ -316,6 +387,27 @@ const ToolHandlers = GreatMindsTools.toLayer(
           Effect.map((data) => ({ data })),
           Effect.mapError(failed),
         ),
+      list_jobs: ({ vault_id, ...query }) =>
+        Effect.gen(function* () {
+          return yield* jobs.list(yield* userId, vault_id, { ...query, ...page(query) });
+        }).pipe(Effect.mapError(failed)),
+      read_job: ({ vault_id, job_id }) =>
+        Effect.gen(function* () {
+          return yield* jobs.get(yield* userId, vault_id, job_id);
+        }).pipe(Effect.mapError(failed)),
+      start_update: ({ vault_id }) =>
+        Effect.gen(function* () {
+          return yield* jobs.requestCompile(yield* userId, vault_id, newUuid());
+        }).pipe(Effect.mapError(failed)),
+      cancel_job: ({ vault_id, job_id }) =>
+        Effect.gen(function* () {
+          yield* jobs.cancelCompile(yield* userId, vault_id, job_id);
+          return { job_id };
+        }).pipe(Effect.mapError(failed)),
+      retry_url_job: ({ vault_id, job_id, next_job_id }) =>
+        Effect.gen(function* () {
+          return yield* urlIngest.retry(yield* userId, vault_id, job_id, next_job_id);
+        }).pipe(Effect.mapError(failed)),
       ask: ({ vault_id, question, session_id }) =>
         Effect.gen(function* () {
           const user = yield* userId;
@@ -352,9 +444,10 @@ const ToolHandlers = GreatMindsTools.toLayer(
 const KeyPermissions = McpServer.middleware((effect, { target }) =>
   Effect.gen(function* () {
     const current = yield* CurrentAuth;
+    const endpoint = toolEndpoints[target];
     const refusal =
-      keyRefusal(current, toolPermissions[target] ?? "account") ??
-      (modelTools.has(target) ? modelRefusal(current) : undefined);
+      keyRefusal(current, endpoint === undefined ? "account" : endpointPermissions[endpoint]) ??
+      (endpoint !== undefined && modelEndpoints.has(endpoint) ? modelRefusal(current) : undefined);
     if (refusal !== undefined) return yield* new KeyRefused({ message: refusal });
     return yield* effect;
   }),

@@ -67,6 +67,7 @@ import {
   runHistoryDatabase,
 } from "./fixtures/reply-history-database.ts";
 import { seedLegacySources } from "./fixtures/source-documents.ts";
+import { openMcp } from "./fixtures/mcp.ts";
 
 const initialTime = new Date("2026-07-10T12:00:00.000Z");
 const decodeUuid = Schema.decodeUnknownSync(Uuid);
@@ -1917,12 +1918,9 @@ describe("M3.1 write endpoint integration", () => {
     });
     expect(asRecord(resumed.body).targets).toEqual([]);
 
-    const cancelled = await api(
-      "POST",
-      `/vaults/${id.vault}/compile/${id.m32StagedRun}/cancel`,
-      aliceToken,
-    );
-    expect(cancelled.status).toBe(204);
+    const mcp = await openMcp(currentState().started.url, aliceToken);
+    const cancelled = await mcp.call("cancel_job", { vault_id: id.vault, job_id: id.m32StagedRun });
+    expect(asRecord(cancelled.result).structuredContent).toEqual({ job_id: id.m32StagedRun });
     expect(
       await fileExists(
         join(currentState().storageRoot, "staging", id.vault, id.m32StagedRun, hash),
@@ -3091,6 +3089,15 @@ describe("M3.1 write endpoint integration", () => {
           (row) => row.status === "failed",
         );
         expect(retriedRun.error).toContain("Failed to fetch URL: HTTP 500");
+        const mcp = await openMcp(currentState().started.url, aliceToken);
+        const repeated = await mcp.call("retry_url_job", {
+          vault_id: id.vault,
+          job_id: id.m32UrlFailRun,
+          next_job_id: id.m32UrlRetryRun,
+        });
+        expect(asRecord(repeated.result).structuredContent).toMatchObject({
+          id: id.m32UrlRetryRun,
+        });
 
         const reconciledUrl = `${origin}/reconcile`;
         await runDb(
