@@ -352,7 +352,6 @@ describe("compile and job HTTP routes", () => {
       stages: [],
       warnings: [],
       error: null,
-      stream_url: `/jobs/${ids.run}/stream`,
     });
 
     const second = await request(`/v1/vaults/${ids.vault}/compile`, current().aliceToken, {

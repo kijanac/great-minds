@@ -689,7 +689,6 @@ export const JobResponse = Schema.Struct({
   created_at: IsoDateTime,
   updated_at: IsoDateTime,
   completed_at: Schema.NullOr(IsoDateTime),
-  stream_url: Schema.String,
 });
 export type JobResponse = typeof JobResponse.Type;
 
