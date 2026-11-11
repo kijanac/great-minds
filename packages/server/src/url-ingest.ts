@@ -8,7 +8,7 @@ import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 
 import { backgroundLoop } from "./background-loop.ts";
 import { AppConfig } from "./config.ts";
-import { jobResponse } from "./job-response.ts";
+import { jobResponse, selectJobs } from "./job-response.ts";
 import { StructuredLogger } from "./logging.ts";
 import { progressSteps } from "./pipeline-runs.ts";
 import {
@@ -163,14 +163,12 @@ export const UrlIngestServiceLive = Layer.effect(
           ) {
             return yield* new BadRequest({ detail: "Job ID is already in use" });
           }
-          const runRows = yield* tx
-            .select()
-            .from(pipelineRuns)
+          const jobRows = yield* selectJobs(tx)
             .where(and(eq(pipelineRuns.id, jobId), eq(pipelineRuns.vaultId, vaultId)))
             .limit(1);
-          const run = runRows[0];
-          if (run === undefined) throw new Error(`URL pipeline run ${jobId} not found`);
-          return { request, response: jobResponse(run) };
+          const job = jobRows[0];
+          if (job === undefined) throw new Error(`URL pipeline run ${jobId} not found`);
+          return { request, response: jobResponse(job) };
         }),
       );
 

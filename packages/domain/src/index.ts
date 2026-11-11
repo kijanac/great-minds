@@ -597,6 +597,7 @@ export const FileIngestFile = Schema.Struct({
   mimetype: Schema.String,
   status: FileIngestFileStatus,
   error: Schema.NullOr(Schema.String),
+  source_id: Schema.NullOr(Uuid),
 });
 export type FileIngestFile = typeof FileIngestFile.Type;
 
@@ -678,6 +679,7 @@ export const JobResponse = Schema.Struct({
   id: Uuid,
   vault_id: Uuid,
   trigger: Schema.Literals(["staged_files", "url", "manual"] as const),
+  source_id: Schema.NullOr(Uuid),
   status: Schema.Literals(["pending", "running", "completed", "failed", "cancelled"] as const),
   current_phase: Schema.String,
   phase_status: Schema.String,

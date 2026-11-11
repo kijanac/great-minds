@@ -1782,6 +1782,9 @@ describe("M3.1 write endpoint integration", () => {
     expect(asArray(asRecord(prepared.body).targets)).toEqual(
       manifest.map((file) => ({ hash: file.hash, transport: "api" })),
     );
+    expect(asArray(asRecord(prepared.body).files).map((file) => asRecord(file).source_id)).toEqual(
+      manifest.map((file) => sourceIdForKey(id.vault, `upload:${file.hash}`)),
+    );
 
     const invalidHashForm = new FormData();
     invalidHashForm.append("file", new Blob(["invalid"]), "invalid.md");
@@ -1826,6 +1829,7 @@ describe("M3.1 write endpoint integration", () => {
       id: id.m32StagedRun,
       vault_id: id.vault,
       trigger: "staged_files",
+      source_id: null,
     });
 
     const completed = await waitFor(
@@ -1896,6 +1900,13 @@ describe("M3.1 write endpoint integration", () => {
     });
     expect(rows.batchFiles).toHaveLength(inputs.length);
     expect(new Set(rows.batchFiles.map((file) => file.status))).toEqual(new Set(["completed"]));
+    const finished = await api("GET", `/file-ingests/${id.m32StagedRun}`, aliceToken);
+    expect(asArray(asRecord(finished.body).files).map((file) => asRecord(file).source_id)).toEqual(
+      sourceIds,
+    );
+    const opened = await api("GET", `/vaults/${id.vault}/raw/sources/${sourceIds[0]}`, aliceToken);
+    expect(opened.status).toBe(200);
+    expect(asRecord(opened.body).body).toContain("Alpha upload body.");
 
     for (const input of inputs) {
       expect(
@@ -2936,6 +2947,9 @@ describe("M3.1 write endpoint integration", () => {
         expect(asRecord(mcpReplay.result).structuredContent).toMatchObject({ id: id.m32UrlRun });
         const canonicalUrl = `${origin}/ok`;
         const sourceId = sourceIdForKey(id.vault, `url:${canonicalUrl}`);
+        expect(asRecord(ownerSuccess.body).source_id).toBe(sourceId);
+        const ownerJob = await api("GET", `/vaults/${id.vault}/jobs/${id.m32UrlRun}`, aliceToken);
+        expect(asRecord(ownerJob.body)).toMatchObject({ trigger: "url", source_id: sourceId });
         const sourcePath = `raw/docs/ok-${sourceId}.md`;
         const markdown = await readVaultFile(id.vault, sourcePath);
         const incarnationId = decodeUuid(parseFrontmatter(markdown).frontmatter.source_incarnation);

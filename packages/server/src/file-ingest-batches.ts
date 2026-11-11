@@ -4,6 +4,7 @@ import {
   fileIngestFiles,
   pipelineRuns,
   sourceDocuments,
+  sourceIncarnations,
 } from "@great-minds/database";
 import {
   BadRequest,
@@ -24,7 +25,7 @@ import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 import { backgroundLoop } from "./background-loop.ts";
 import { ClockService } from "./clock.ts";
 import { rawFileHash } from "./crypto.ts";
-import { jobResponse } from "./job-response.ts";
+import { jobResponse, selectJobs } from "./job-response.ts";
 import { StructuredLogger } from "./logging.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
 import { admitSource, SourceDocumentsService } from "./source-documents.ts";
@@ -76,6 +77,7 @@ type FileRecord = {
   readonly needsCompile: boolean;
   readonly status: "pending" | "uploaded" | "processing" | "completed" | "failed" | "cancelled";
   readonly error: string | null;
+  readonly sourceId: Uuid | null;
 };
 
 const stagedContentType = (file: FileRecord) => file.mimetype || "application/octet-stream";
@@ -156,6 +158,7 @@ const batchResponse = (
     mimetype: file.mimetype,
     status: file.status,
     error: file.error,
+    source_id: file.sourceId,
   })),
   targets: [...targets],
 });
@@ -229,8 +232,13 @@ export const FileIngestBatchesLive = Layer.effect(
               needsCompile: fileIngestFiles.needsCompile,
               status: fileIngestFiles.status,
               error: fileIngestFiles.error,
+              sourceId: sourceIncarnations.sourceId,
             })
             .from(fileIngestFiles)
+            .leftJoin(
+              sourceIncarnations,
+              eq(sourceIncarnations.id, fileIngestFiles.sourceIncarnationId),
+            )
             .where(eq(fileIngestFiles.batchId, batchId))
             .orderBy(asc(fileIngestFiles.position)),
         )
@@ -457,11 +465,11 @@ export const FileIngestBatchesLive = Layer.effect(
           yield* dispatch(batch, files);
         }
         const rows = yield* db.query((d) =>
-          d.select().from(pipelineRuns).where(eq(pipelineRuns.id, batch.id)).limit(1),
+          selectJobs(d).where(eq(pipelineRuns.id, batch.id)).limit(1),
         );
-        const run = rows[0];
-        if (run === undefined) throw new Error(`Pipeline run missing for file ingest ${batch.id}`);
-        return jobResponse(run);
+        const job = rows[0];
+        if (job === undefined) throw new Error(`Pipeline run missing for file ingest ${batch.id}`);
+        return jobResponse(job);
       });
 
     const cancel = (batchId: Uuid) =>
