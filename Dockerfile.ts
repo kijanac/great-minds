@@ -34,6 +34,11 @@ RUN rm -f package.json pnpm-lock.yaml pnpm-workspace.yaml packages/*/tsconfig.js
 
 FROM node:26-slim AS runtime
 
+# Install Debian security fixes the base image may not have picked up yet.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes \
+    && rm -rf /var/lib/apt/lists/*
+
 # The server runs with node alone; drop the package managers bundled in the base image so
 # their dependencies (and vulnerabilities) don't ship.
 RUN rm -rf /usr/local/lib/node_modules/npm \
