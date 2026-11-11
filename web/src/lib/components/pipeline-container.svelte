@@ -6,48 +6,35 @@
   import { useQueryClient } from "@tanstack/svelte-query";
   import { onDestroy, tick } from "svelte";
   import { cubicOut } from "svelte/easing";
-  import { SvelteSet } from "svelte/reactivity";
   import { fly } from "svelte/transition";
 
   import { errorMessage, newUuid } from "@great-minds/client";
-  import {
-    continueFileIngest,
-    getFileIngestBatch,
-    hashFiles,
-    resumeFileIngestBatch,
-    type FileIngestBatch,
-    type HashedFile,
-    type UploadFailure,
-  } from "#lib/api/ingest.ts";
+  import { hashFiles, type FileIngestBatch, type HashedFile } from "#lib/api/ingest.ts";
   import { cancelJob, listJobs, requestCompile, retryUrlJob, startUrlJob } from "#lib/api/jobs.ts";
   import { auth } from "#lib/auth.svelte.ts";
   import RunOutcome from "#lib/components/run-outcome.svelte";
   import RunProgress from "#lib/components/run-progress.svelte";
   import { Alert, AlertDescription } from "#lib/components/ui/alert/index.ts";
   import { Button } from "#lib/components/ui/button/index.ts";
+  import {
+    fileIngestKey,
+    useFileIngestBatch,
+    useFileUpload,
+    useUploadState,
+  } from "#lib/hooks/use-file-ingest.svelte.ts";
   import { useJobSSE } from "#lib/hooks/use-job-sse.svelte.ts";
   import { useMe } from "#lib/hooks/use-me.svelte.ts";
   import { activeVault, useVaults } from "#lib/hooks/use-vault.svelte.ts";
-
-  interface FileUploadState {
-    uploadFiles?: readonly HashedFile[];
-    batch?: FileIngestBatch;
-  }
 
   let { routeJobId = null }: { routeJobId?: Uuid | null } = $props();
 
   const queryClient = useQueryClient();
   const vaults = useVaults();
   const me = useMe();
-  const uploadingBatchIds = new SvelteSet<Uuid>();
   let resolvedJobId = $state<Uuid | null>(null);
   let noJobFound = $state(false);
-  let resolveError = $state<string | null>(null);
-  let uploadFailures = $state<UploadFailure[]>([]);
-  let fileBatch = $state<FileIngestBatch | null>(null);
-  let routeContextResolved = $state(false);
-  let resolvedRouteId = $state<Uuid | null>(null);
-  let availableFiles = $state<readonly HashedFile[]>([]);
+  let pageError = $state<string | null>(null);
+  let checkedBatchId: Uuid | null = null;
   let resolverStarted = $state(false);
   let actionError = $state<string | null>(null);
   let componentActive = true;
@@ -63,11 +50,22 @@
   });
 
   const jobId = $derived(routeJobId ?? resolvedJobId);
+  const batchQuery = useFileIngestBatch(() => routeJobId);
+  const startUpload = useFileUpload();
+  const upload = useUploadState(() => routeJobId);
+  const fileBatch = $derived(batchQuery.data ?? null);
+  const resolveError = $derived(
+    pageError ??
+      (batchQuery.error ? errorMessage(batchQuery.error, "Job unavailable") : null) ??
+      (fileBatch?.status === "uploading" ? upload.error : null),
+  );
+  const uploadFailures = $derived(upload.failures);
+  const availableFiles = $derived(upload.files);
+  const uploadInProgress = $derived(upload.running);
   const urlParam = $derived(page.url.searchParams.get("url"));
-  const fileUpload = $derived(page.state as FileUploadState);
   const currentVault = $derived(vaults.data?.find((vault) => vault.id === activeVault.id) ?? null);
   const jobVaultId = $derived(
-    routeJobId && !routeContextResolved ? null : (fileBatch?.vault_id ?? activeVault.id ?? null),
+    routeJobId && batchQuery.isPending ? null : (fileBatch?.vault_id ?? activeVault.id ?? null),
   );
 
   const canManage = $derived(
@@ -82,7 +80,6 @@
   const receivedFileCount = $derived(
     fileBatch?.files.filter((file) => file.status !== "pending").length ?? 0,
   );
-  const uploadInProgress = $derived(fileBatch !== null && uploadingBatchIds.has(fileBatch.id));
   const awaitingFiles = $derived(
     fileBatch?.status === "uploading" &&
       !uploadInProgress &&
@@ -99,51 +96,17 @@
   }
 
   $effect(() => {
-    const id = routeJobId;
-    const uploadState = fileUpload;
-    if (!id) {
-      routeContextResolved = true;
-      return;
+    const batch = fileBatch;
+    if (!batch || checkedBatchId === batch.id) return;
+    checkedBatchId = batch.id;
+    pageError = null;
+    if (
+      !upload.running &&
+      batch.status === "uploading" &&
+      batch.files.every((file) => file.status !== "pending")
+    ) {
+      startUpload(batch, []);
     }
-    if (resolvedRouteId === id) return;
-
-    resolvedRouteId = id;
-    routeContextResolved = false;
-    resolveError = null;
-    uploadFailures = [];
-    const stateBatch = uploadState?.batch;
-    const stateFiles = uploadState?.uploadFiles ?? [];
-    availableFiles = stateFiles;
-
-    if (stateBatch?.id === id) {
-      fileBatch = stateBatch;
-      routeContextResolved = true;
-      if (stateFiles.length > 0) void runBatchUpload(stateBatch, stateFiles);
-      return;
-    }
-
-    const ownsRoute = captureRouteOwnership(() => routeJobId === id);
-    void (async () => {
-      try {
-        let batch = await getFileIngestBatch(id);
-        if (batch?.status === "uploading" && batch.created_by === auth.userId) {
-          batch = await resumeFileIngestBatch(id);
-        }
-        if (!ownsRoute()) return;
-        fileBatch = batch;
-        routeContextResolved = true;
-        if (
-          batch?.status === "uploading" &&
-          batch.files.every((file) => file.status !== "pending")
-        ) {
-          void runBatchUpload(batch, []);
-        }
-      } catch (error) {
-        if (!ownsRoute()) return;
-        routeContextResolved = true;
-        resolveError = errorMessage(error, "Job unavailable");
-      }
-    })();
   });
 
   $effect(() => {
@@ -152,13 +115,12 @@
     if (resolverStarted || routeJobId || !vaultId) return;
     if (currentUrl && !vaults.isFetched) return;
     resolverStarted = true;
-    uploadFailures = [];
     const ownsResolver = captureRouteOwnership(
       () => routeJobId === null && page.url.pathname === "/pipeline" && urlParam === currentUrl,
     );
 
     if (currentUrl && !canManage) {
-      resolveError = "Only vault owners can add sources or update this vault.";
+      pageError = "Only vault owners can add sources or update this vault.";
       return;
     }
 
@@ -188,60 +150,15 @@
         }
       } catch (error) {
         if (!ownsResolver()) return;
-        resolveError = errorMessage(error, "Job unavailable");
+        pageError = errorMessage(error, "Job unavailable");
       }
     })();
   });
 
-  async function runBatchUpload(batch: FileIngestBatch, files: readonly HashedFile[]) {
-    const ownsRoute = captureRouteOwnership(() => routeJobId === batch.id);
-    if (!ownsRoute() || uploadingBatchIds.has(batch.id) || batch.status !== "uploading") {
-      return;
-    }
-    uploadingBatchIds.add(batch.id);
-    availableFiles = files;
-    resolveError = null;
-    uploadFailures = [];
-    try {
-      for await (const event of continueFileIngest(batch, files)) {
-        const routeIsCurrent = ownsRoute();
-        if (routeIsCurrent && event.batch) fileBatch = event.batch;
-        if (routeIsCurrent && event.failures && event.failures.length > 0) {
-          uploadFailures = event.failures;
-        }
-        if (event.phase === "error") {
-          if (routeIsCurrent) resolveError = event.error ?? "Upload failed";
-          return;
-        }
-        if (event.phase === "processing") {
-          const vaultId = event.batch?.vault_id ?? batch.vault_id;
-          await queryClient.invalidateQueries({
-            queryKey: ["vault", vaultId, "active-job"],
-          });
-          if (ownsRoute()) {
-            availableFiles = [];
-            goto(`/pipeline/runs/${batch.id}`, {
-              shallow: true,
-              replace: true,
-            });
-          }
-          return;
-        }
-      }
-    } catch (error) {
-      if (!ownsRoute()) return;
-      resolveError = errorMessage(error, "Upload unavailable");
-      try {
-        const recovered = await getFileIngestBatch(batch.id);
-        if (!ownsRoute()) return;
-        fileBatch = recovered;
-        if (recovered?.status === "cancelled") resolveError = null;
-      } catch {
-        // Keep the last durable snapshot visible; SSE will continue reconnecting.
-      }
-    } finally {
-      uploadingBatchIds.delete(batch.id);
-    }
+  function uploadFiles(files: readonly HashedFile[]) {
+    if (!fileBatch) return;
+    pageError = null;
+    startUpload(fileBatch, files);
   }
 
   function reselectFiles() {
@@ -258,9 +175,11 @@
       const selected = Array.from(input.files ?? []);
       input.remove();
       void hashFiles(selected)
-        .then((files) => runBatchUpload(batch, files))
+        .then((files) => {
+          if (fileBatch?.id === batch.id) uploadFiles(files);
+        })
         .catch((error) => {
-          resolveError = errorMessage(error, "Files could not be read");
+          pageError = errorMessage(error, "Files could not be read");
         });
     };
     input.oncancel = () => input.remove();
@@ -277,14 +196,14 @@
       return;
     }
     if (fileBatch) {
-      fileBatch = {
+      queryClient.setQueryData(fileIngestKey(fileBatch.id), {
         ...fileBatch,
         status: "cancelled",
         error: "Update cancelled",
         targets: [],
-      };
+      } satisfies FileIngestBatch);
     }
-    resolveError = null;
+    pageError = null;
   }
 
   async function retry() {
@@ -423,7 +342,7 @@
                   variant="outline"
                   size="xs"
                   onclick={() => {
-                    if (fileBatch) void runBatchUpload(fileBatch, availableFiles);
+                    uploadFiles(availableFiles);
                   }}
                   class="h-auto rounded-sm border-gold-dim px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold uppercase hover:bg-gold/10"
                 >
