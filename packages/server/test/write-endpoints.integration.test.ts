@@ -1225,13 +1225,25 @@ describe("M3.1 write endpoint integration", () => {
     expect(fetched.status).toBe(200);
     expect(asRecord(fetched.body).id).toBe(proposalId);
 
-    const editorReview = await api(
-      "PATCH",
-      `/vaults/${id.vault}/proposals/${proposalId}`,
-      bobToken,
-      { status: "approved" },
-    );
-    expect(editorReview.status).toBe(403);
+    const ownerMcp = await openMcp(currentState().started.url, aliceToken);
+    const editorMcp = await openMcp(currentState().started.url, bobToken);
+    expect(
+      asRecord(
+        (await ownerMcp.call("list_proposals", { vault_id: id.vault, status: "pending" })).result,
+      ).structuredContent,
+    ).toEqual(listed.body);
+    expect(
+      asRecord(
+        (await ownerMcp.call("read_proposal", { vault_id: id.vault, proposal_id: proposalId }))
+          .result,
+      ).structuredContent,
+    ).toEqual(fetched.body);
+    const editorReview = await editorMcp.call("review_proposal", {
+      vault_id: id.vault,
+      proposal_id: proposalId,
+      status: "approved",
+    });
+    expect(asRecord(editorReview.result).isError).toBe(true);
 
     const approved = await api("PATCH", `/vaults/${id.vault}/proposals/${proposalId}`, aliceToken, {
       status: "approved",
@@ -1244,13 +1256,13 @@ describe("M3.1 write endpoint integration", () => {
     expect(await countTable(compileIntents)).toBe(1);
     expect(await countTable(sourceDocuments)).toBe(1);
 
-    const secondCreate = await api("POST", `/vaults/${id.vault}/proposals`, bobToken, {
+    const secondCreate = await editorMcp.call("create_proposal", {
+      vault_id: id.vault,
       content: "A second proposed source body.",
       content_type: "texts",
       title: "Second Proposed Source",
     });
-    expect(secondCreate.status).toBe(201);
-    const secondProposalId = String(asRecord(secondCreate.body).id);
+    const secondProposalId = String(asRecord(asRecord(secondCreate.result).structuredContent).id);
     const secondApproved = await api(
       "PATCH",
       `/vaults/${id.vault}/proposals/${secondProposalId}`,
@@ -1288,14 +1300,15 @@ describe("M3.1 write endpoint integration", () => {
     );
     expect(reviewedAgain.status).toBe(409);
     expect(reviewedAgain.body).toMatchObject({ detail: "Proposal already approved" });
-    const retriedApproval = await api(
-      "PATCH",
-      `/vaults/${id.vault}/proposals/${proposalId}`,
-      aliceToken,
-      { status: "approved" },
-    );
-    expect(retriedApproval.status).toBe(200);
-    expect(retriedApproval.body).toMatchObject({ status: "approved", application: "applied" });
+    const retriedApproval = await ownerMcp.call("review_proposal", {
+      vault_id: id.vault,
+      proposal_id: proposalId,
+      status: "approved",
+    });
+    expect(asRecord(retriedApproval.result).structuredContent).toMatchObject({
+      status: "approved",
+      application: "applied",
+    });
     expect(await countTable(sourceDocuments)).toBe(2);
 
     const rejectCreate = await api("POST", `/vaults/${id.vault}/proposals`, bobToken, {
@@ -1536,13 +1549,12 @@ describe("M3.1 write endpoint integration", () => {
     );
     expect(request.status).toBe(201);
     const deletionProposalId = String(asRecord(request.body).id);
-    const duplicate = await api(
-      "POST",
-      `/vaults/${id.vault}/raw/sources/${id.source}/deletion-request`,
-      bobToken,
-    );
-    expect(duplicate.status).toBe(201);
-    expect(asRecord(duplicate.body).id).toBe(deletionProposalId);
+    const editorMcp = await openMcp(currentState().started.url, bobToken);
+    const duplicate = await editorMcp.call("request_source_deletion", {
+      vault_id: id.vault,
+      source_id: id.source,
+    });
+    expect(asRecord(asRecord(duplicate.result).structuredContent).id).toBe(deletionProposalId);
 
     const approved = await api(
       "PATCH",
@@ -1565,12 +1577,19 @@ describe("M3.1 write endpoint integration", () => {
     fixture = await seedBase();
     const { aliceToken: freshAliceToken } = currentFixture();
     await seedSourceGraph();
-    const deleted = await api(
-      "DELETE",
-      `/vaults/${id.vault}/raw/sources/${id.source}`,
-      freshAliceToken,
-    );
-    expect(deleted.status).toBe(204);
+    const ownerMcp = await openMcp(currentState().started.url, freshAliceToken);
+    const read = await api("GET", `/vaults/${id.vault}/raw/sources/${id.source}`, freshAliceToken);
+    expect(read.status).toBe(200);
+    expect(
+      asRecord(
+        (await ownerMcp.call("read_source", { vault_id: id.vault, source_id: id.source })).result,
+      ).structuredContent,
+    ).toEqual(read.body);
+    const deleted = await ownerMcp.call("delete_source", {
+      vault_id: id.vault,
+      source_id: id.source,
+    });
+    expect(asRecord(deleted.result).structuredContent).toEqual({ source_id: id.source });
     expect(await countTable(sourceDocuments)).toBe(0);
     expect(await countTable(ideas)).toBe(0);
     expect(await countTable(topicMembership)).toBe(0);
@@ -2034,13 +2053,14 @@ describe("M3.1 write endpoint integration", () => {
     expect(ownerText).not.toContain("intent:");
 
     currentState().clock.set(new Date(initialTime.getTime() + 1000));
-    const editor = await api("POST", `/vaults/${id.vault}/ingest/user-suggestion`, bobToken, {
+    const mcp = await openMcp(currentState().started.url, bobToken);
+    const editor = await mcp.call("submit_suggestion", {
+      vault_id: id.vault,
       body: "Editor suggestion.",
       anchored_to: "Editor Anchor",
       anchored_section: "The passage the editor selected.",
     });
-    expect(editor.status).toBe(201);
-    const editorResult = asRecord(editor.body);
+    const editorResult = asRecord(asRecord(editor.result).structuredContent);
     expect(editorResult.mode).toBe("proposed");
     const editorPath = String(editorResult.file_path);
     const proposalRows = await runDb(

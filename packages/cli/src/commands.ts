@@ -22,6 +22,11 @@ import {
   Validation,
   type ChunkRangeQuery,
   type IngestedDocument,
+  type Proposal,
+  type ProposalOverview,
+  type ProposalStatus,
+  type ProposalUpdate,
+  type UserSuggestion,
   type RawSource,
   type ReferenceCreate,
   type ReferencePromote,
@@ -698,6 +703,118 @@ export const promoteReference = (input: ReadOptions & ReferencePromote) =>
       }),
     );
     yield* printDocument(document, input.json);
+  });
+
+const proposalLine = (value: ProposalOverview) =>
+  `${value.id}  ${value.status}${value.application === null ? "" : ` / ${value.application}`}  ${value.title ?? ""}`;
+const printProposal = (value: Proposal, json: boolean) =>
+  json ? printJson(value) : Console.log(proposalLine(value));
+
+export const source = (
+  input: ReadOptions & {
+    readonly source_id: Uuid;
+    readonly action: "read" | "delete" | "request-deletion";
+  },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const params = { vault_id: vaultId, source_id: input.source_id };
+    if (input.action === "delete") {
+      yield* connection.use(connection.api.sources.deleteSource({ params }));
+      return yield* input.json ? printJson({}) : Console.log(`Deleted source ${input.source_id}.`);
+    }
+    if (input.action === "read") {
+      const document = yield* connection.use(connection.api.sources.readSource({ params }));
+      return yield* input.json ? printJson(document) : Console.log(document.body);
+    }
+    const requested = yield* connection.use(
+      connection.api.sources.requestSourceDeletion({ params }),
+    );
+    yield* printProposal(requested, input.json);
+  });
+
+export const listProposals = (
+  input: ReadOptions & PageParams & { readonly status: Option.Option<ProposalStatus> },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const page = yield* connection.use(
+      connection.api.proposals.listProposals({
+        params: { vault_id: vaultId },
+        query: {
+          limit: input.limit,
+          offset: input.offset,
+          ...Option.match(input.status, { onNone: () => ({}), onSome: (status) => ({ status }) }),
+        },
+      }),
+    );
+    yield* printPage(page, input.json, "No proposals match.", proposalLine);
+  });
+
+export const proposal = (
+  input: ReadOptions & { readonly proposal_id: Uuid } & (
+      | { readonly action: "read" }
+      | { readonly action: "review"; readonly status: ProposalUpdate["status"] }
+    ),
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const params = { vault_id: vaultId, proposal_id: input.proposal_id };
+    const result = yield* connection.use(
+      input.action === "read"
+        ? connection.api.proposals.getProposal({ params })
+        : connection.api.proposals.reviewProposal({ params, payload: { status: input.status } }),
+    );
+    yield* printProposal(result, input.json);
+  });
+
+export const createProposal = (
+  input: ReadOptions & {
+    readonly file: string;
+    readonly title: Option.Option<string>;
+    readonly author: Option.Option<string>;
+    readonly contentType: Option.Option<string>;
+  },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const fs = yield* FileSystem.FileSystem;
+    const result = yield* connection.use(
+      connection.api.proposals.createProposal({
+        params: { vault_id: vaultId },
+        payload: {
+          content: yield* fs.readFileString(input.file),
+          ...Option.match(input.title, { onNone: () => ({}), onSome: (title) => ({ title }) }),
+          ...Option.match(input.author, { onNone: () => ({}), onSome: (author) => ({ author }) }),
+          ...Option.match(input.contentType, {
+            onNone: () => ({}),
+            onSome: (content_type) => ({ content_type }),
+          }),
+        },
+      }),
+    );
+    yield* printProposal(result, input.json);
+  });
+
+export const submitSuggestion = (
+  input: ReadOptions & Omit<UserSuggestion, "body"> & { readonly file: string },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const fs = yield* FileSystem.FileSystem;
+    const result = yield* connection.use(
+      connection.api.ingest.ingestUserSuggestion({
+        params: { vault_id: vaultId },
+        payload: {
+          body: yield* fs.readFileString(input.file),
+          anchored_to: input.anchored_to,
+          anchored_section: input.anchored_section,
+        },
+      }),
+    );
+    yield* input.json
+      ? printJson(result)
+      : Console.log(`${result.mode}: ${result.file_path}  ${result.id}`);
   });
 
 const shortDate = (date: Date) => date.toISOString().slice(0, 16).replace("T", " ");

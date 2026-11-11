@@ -55,6 +55,23 @@ Personal references belong to the signed-in account, not a selected vault. Savin
 
 URL imports use a caller-chosen `job_id` in MCP; the CLI generates and prints it unless supplied. Reuse it only for the same URL/origin request after a lost response. Markdown imports create a new source on every call and return its identity/path, with normal server metadata and paragraph anchors; do not blindly retry them. Neither transport gains access to private-network URLs. MCP does not read file paths on the caller's computer; use `gm add` for local files.
 
+## Sources and proposals
+
+| Capability | CLI | MCP |
+| --- | --- | --- |
+| Read by source identity | `gm source read <id>` | `read_source` |
+| Delete a source | `gm source delete <id>` | `delete_source` |
+| Request source deletion | `gm source request-deletion <id>` | `request_source_deletion` |
+| List proposals | `gm proposals [--status pending]` | `list_proposals` |
+| Read proposal metadata/status | `gm proposal read <id>` | `read_proposal` |
+| Propose Markdown | `gm proposal create <file> [--title ...] [--author ...] [--content-type ...]` | `create_proposal` |
+| Review a proposal | `gm proposal review <id> <decision>` | `review_proposal` |
+| Submit a correction/note | `gm suggest <file> [--anchor <document-path>] [--passage <quoted-text>]` | `submit_suggestion` |
+
+Source IDs are available in `gm sources --json`. Owners delete sources directly; editors request deletion for owner review. Deletion retires the source but does not start an Update or remove generated articles. It has no undo.
+
+Review decisions are `approved` or `rejected`. Repeating the same decision is safe; changing it conflicts. An approved proposal can still be `applying`, or end `not_applied`; inspect its application status before claiming the change finished. Suggestions become sources directly for owners and proposals for editors. Creating a proposal or suggestion creates new content each time; do not blindly repeat an uncertain request.
+
 ## Permissions
 
 CLI and MCP API keys remain subject to both key scope and vault membership/role checks. Reading is not permission to ask paid questions or change content. The server distinguishes `read`, `ask`, `change`, and browser-session-only `account` operations. MCP maps tools to the canonical HTTP endpoint permission/model policies rather than keeping another policy list. A raw `gm api` call does not bypass these checks.

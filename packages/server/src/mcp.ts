@@ -39,6 +39,14 @@ import {
   SessionId,
   SourceQuery,
   SourceQueryPage,
+  SourceIdParams,
+  Proposal,
+  ProposalPage,
+  ProposalCreate,
+  ProposalUpdate,
+  ProposalListQuery,
+  UserSuggestion,
+  UserSuggestionResult,
   Uuid,
 } from "@great-minds/domain";
 import { Effect, Layer, Schema } from "effect";
@@ -55,6 +63,7 @@ import { parseCanonicalSourceUrl } from "./source-identity.ts";
 import { UrlIngestService } from "./url-ingest.ts";
 import { SessionExportsService } from "./publication/service.ts";
 import { QueryService } from "./query.ts";
+import { ProposalsService } from "./proposals.ts";
 import { RepliesService } from "./replies.ts";
 import { SessionsService } from "./sessions.ts";
 import { SourcesService } from "./sources.ts";
@@ -321,6 +330,66 @@ const PromoteReference = tool("promote_reference", {
   success: IngestedDocument,
 });
 
+const ReadSource = tool("read_source", {
+  description: "Read a vault source by its stable id, including its body and metadata.",
+  parameters: SourceIdParams,
+  success: DocResponse,
+  readOnly: true,
+});
+
+const DeleteSource = tool("delete_source", {
+  description:
+    "Permanently delete a source from a vault (owner only). Does not run an Update or remove generated articles. There is no undo.",
+  parameters: SourceIdParams,
+  success: Schema.Struct({ source_id: Uuid }),
+});
+
+const RequestSourceDeletion = tool("request_source_deletion", {
+  description:
+    "Ask the owner to delete a vault source. Editors only; owners use delete_source. Returns the pending proposal.",
+  parameters: SourceIdParams,
+  success: Proposal,
+});
+
+const ListProposals = tool("list_proposals", {
+  description: "List vault source proposals with optional status and pagination.",
+  parameters: Schema.Struct({
+    vault_id: vaultId,
+    ...pageFields,
+    status: ProposalListQuery.fields.status,
+  }),
+  success: ProposalPage,
+  readOnly: true,
+});
+
+const ReadProposal = tool("read_proposal", {
+  description: "Read a proposal's metadata, decision and application status.",
+  parameters: Schema.Struct({ vault_id: vaultId, proposal_id: Uuid }),
+  success: Proposal,
+  readOnly: true,
+});
+
+const CreateProposal = tool("create_proposal", {
+  description:
+    "Propose Markdown source content for an owner to review. Does not immediately publish the source. Each call creates a new proposal; do not retry blindly.",
+  parameters: Schema.Struct({ vault_id: vaultId, ...ProposalCreate.fields }),
+  success: Proposal,
+});
+
+const ReviewProposal = tool("review_proposal", {
+  description:
+    "Approve or reject a source proposal (owner only). Repeating the same decision is safe; changing it conflicts. Approval can still be applying; inspect application before claiming completion.",
+  parameters: Schema.Struct({ vault_id: vaultId, proposal_id: Uuid, ...ProposalUpdate.fields }),
+  success: Proposal,
+});
+
+const SubmitSuggestion = tool("submit_suggestion", {
+  description:
+    "Submit a correction or note, optionally anchored to a document and passage. Owners add it directly; editors submit a proposal. Each call creates new content; do not retry blindly.",
+  parameters: Schema.Struct({ vault_id: vaultId, ...UserSuggestion.fields }),
+  success: UserSuggestionResult,
+});
+
 const Ask = tool("ask", {
   description:
     "Ask Great Minds' research agent a question about a vault. It searches and reads the vault, then answers in prose with numbered citations. Pass session_id to ask a follow-up in the same session. Answers use paid models and take a minute or more.",
@@ -359,6 +428,14 @@ const GreatMindsTools = Toolkit.make(
   RenameReference,
   DeleteReference,
   PromoteReference,
+  ReadSource,
+  DeleteSource,
+  RequestSourceDeletion,
+  ListProposals,
+  ReadProposal,
+  CreateProposal,
+  ReviewProposal,
+  SubmitSuggestion,
   Ask,
 );
 
@@ -385,6 +462,14 @@ const toolEndpoints: Readonly<Record<string, EndpointName>> = {
   rename_reference: "updateReference",
   delete_reference: "deleteReference",
   promote_reference: "promoteReference",
+  read_source: "readSource",
+  delete_source: "deleteSource",
+  request_source_deletion: "requestSourceDeletion",
+  list_proposals: "listProposals",
+  read_proposal: "getProposal",
+  create_proposal: "createProposal",
+  review_proposal: "reviewProposal",
+  submit_suggestion: "ingestUserSuggestion",
   ask: "createReply",
 };
 
@@ -405,6 +490,7 @@ const ToolHandlers = GreatMindsTools.toLayer(
     const urlIngest = yield* UrlIngestService;
     const ingest = yield* IngestService;
     const references = yield* UserDocumentsService;
+    const proposals = yield* ProposalsService;
     const userId = Effect.map(CurrentAuth, (current) => current.user_id);
 
     return GreatMindsTools.of({
@@ -517,6 +603,39 @@ const ToolHandlers = GreatMindsTools.toLayer(
       promote_reference: ({ vault_id, ...input }) =>
         Effect.gen(function* () {
           return (yield* ingest.promoteReference(yield* userId, vault_id, input)).document;
+        }).pipe(Effect.mapError(failed)),
+      read_source: ({ vault_id, source_id }) =>
+        Effect.gen(function* () {
+          return yield* documents.readSource(yield* userId, vault_id, source_id);
+        }).pipe(Effect.mapError(failed)),
+      delete_source: ({ vault_id, source_id }) =>
+        Effect.gen(function* () {
+          yield* sources.deleteSource(yield* userId, vault_id, source_id);
+          return { source_id };
+        }).pipe(Effect.mapError(failed)),
+      request_source_deletion: ({ vault_id, source_id }) =>
+        Effect.gen(function* () {
+          return yield* sources.requestSourceDeletion(yield* userId, vault_id, source_id);
+        }).pipe(Effect.mapError(failed)),
+      list_proposals: ({ vault_id, ...query }) =>
+        Effect.gen(function* () {
+          return yield* proposals.list(yield* userId, vault_id, { ...query, ...page(query) });
+        }).pipe(Effect.mapError(failed)),
+      read_proposal: ({ vault_id, proposal_id }) =>
+        Effect.gen(function* () {
+          return yield* proposals.get(yield* userId, vault_id, proposal_id);
+        }).pipe(Effect.mapError(failed)),
+      create_proposal: ({ vault_id, ...input }) =>
+        Effect.gen(function* () {
+          return yield* proposals.create(yield* userId, vault_id, input);
+        }).pipe(Effect.mapError(failed)),
+      review_proposal: ({ vault_id, proposal_id, ...input }) =>
+        Effect.gen(function* () {
+          return yield* proposals.review(yield* userId, vault_id, proposal_id, input);
+        }).pipe(Effect.mapError(failed)),
+      submit_suggestion: ({ vault_id, ...input }) =>
+        Effect.gen(function* () {
+          return yield* ingest.ingestUserSuggestion(yield* userId, vault_id, input);
         }).pipe(Effect.mapError(failed)),
       ask: ({ vault_id, question, session_id }) =>
         Effect.gen(function* () {

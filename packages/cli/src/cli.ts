@@ -1,6 +1,8 @@
 import {
   PageParamsQuery,
   PipelineRunFilter,
+  ProposalStatus,
+  ProposalUpdate,
   PublicationPaper,
   RawSource,
   SearchQuery,
@@ -19,6 +21,11 @@ import {
   listReferences,
   reference,
   promoteReference,
+  source,
+  listProposals,
+  proposal,
+  createProposal,
+  submitSuggestion,
   callApi,
   exportSession,
   listSessions,
@@ -50,9 +57,10 @@ const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDefault(false),
 );
 
+const vaultFlags = { vault: vaultFlag, json: jsonFlag };
+
 const pageFlags = {
-  vault: vaultFlag,
-  json: jsonFlag,
+  ...vaultFlags,
   limit: Flag.Int("limit").pipe(
     Flag.withSchema(Schema.toType(SourceQuery.fields.limit)),
     Flag.withDescription("How many to list (1-200)"),
@@ -256,6 +264,91 @@ const referenceCommand = Command.make("reference").pipe(
   ]),
 );
 
+const sourceFlags = {
+  ...vaultFlags,
+  source_id: Argument.String("id").pipe(Argument.withSchema(Uuid)),
+};
+const sourceCommand = Command.make("source").pipe(
+  Command.withDescription("Read or remove a vault source by id"),
+  Command.withSubcommands([
+    Command.make("read", sourceFlags, (input) => source({ ...input, action: "read" })).pipe(
+      Command.withDescription("Read the source body"),
+    ),
+    Command.make("delete", sourceFlags, (input) => source({ ...input, action: "delete" })).pipe(
+      Command.withDescription("Permanently delete a source (owner only); does not run an Update"),
+    ),
+    Command.make("request-deletion", sourceFlags, (input) =>
+      source({ ...input, action: "request-deletion" }),
+    ).pipe(Command.withDescription("Ask the owner to delete a source (editors only)")),
+  ]),
+);
+
+const proposalsCommand = Command.make(
+  "proposals",
+  {
+    ...pageFlags,
+    status: Flag.Literals("status", ProposalStatus.literals).pipe(Flag.optional),
+  },
+  listProposals,
+).pipe(Command.withDescription("List source proposals and their application status"));
+
+const proposalFlags = {
+  ...vaultFlags,
+  proposal_id: Argument.String("id").pipe(Argument.withSchema(Uuid)),
+};
+const proposalCommand = Command.make("proposal").pipe(
+  Command.withDescription("Create, read or review a source proposal"),
+  Command.withSubcommands([
+    Command.make("read", proposalFlags, (input) => proposal({ ...input, action: "read" })),
+    Command.make(
+      "review",
+      {
+        ...proposalFlags,
+        status: Argument.Literals("decision", ProposalUpdate.fields.status.literals),
+      },
+      (input) => proposal({ ...input, action: "review" }),
+    ).pipe(
+      Command.withDescription(
+        "Approve or reject a proposal (owner only); application may still be pending",
+      ),
+    ),
+    Command.make(
+      "create",
+      {
+        ...vaultFlags,
+        file: Argument.Path("file", { mustExist: true }),
+        title: Flag.String("title").pipe(Flag.optional),
+        author: Flag.String("author").pipe(Flag.optional),
+        contentType: Flag.String("content-type").pipe(Flag.optional),
+      },
+      createProposal,
+    ).pipe(
+      Command.withDescription("Propose Markdown from a file; each call creates a new proposal"),
+    ),
+  ]),
+);
+
+const suggestCommand = Command.make(
+  "suggest",
+  {
+    ...vaultFlags,
+    file: Argument.Path("file", { mustExist: true }),
+    anchored_to: Flag.String("anchor").pipe(
+      Flag.withDescription("Document path this suggestion concerns"),
+      Flag.withDefault(""),
+    ),
+    anchored_section: Flag.String("passage").pipe(
+      Flag.withDescription("Original passage to quote"),
+      Flag.withDefault(""),
+    ),
+  },
+  submitSuggestion,
+).pipe(
+  Command.withDescription(
+    "Submit a note or correction; owners add it directly, editors propose it",
+  ),
+);
+
 const sourcesCommand = Command.make(
   "sources",
   {
@@ -436,6 +529,10 @@ const gm = Command.make("gm").pipe(
     cancelCommand,
     retryCommand,
     sourcesCommand,
+    sourceCommand,
+    proposalsCommand,
+    proposalCommand,
+    suggestCommand,
     sessionsCommand,
     sessionCommand,
     exportCommand,

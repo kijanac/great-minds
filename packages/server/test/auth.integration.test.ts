@@ -1334,6 +1334,14 @@ describe("auth HTTP integration", () => {
       "rename_reference",
       "delete_reference",
       "promote_reference",
+      "read_source",
+      "delete_source",
+      "request_source_deletion",
+      "list_proposals",
+      "read_proposal",
+      "create_proposal",
+      "review_proposal",
+      "submit_suggestion",
       "ask",
     ]);
     expect(tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);
