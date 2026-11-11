@@ -1,6 +1,8 @@
 import {
+  PageParamsQuery,
   PublicationPaper,
   SearchQuery,
+  SourceQuery,
   SessionExportSelection,
   SessionId,
   Uuid,
@@ -38,6 +40,21 @@ const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Print machine-readable JSON instead of text"),
   Flag.withDefault(false),
 );
+
+const pageFlags = {
+  vault: vaultFlag,
+  json: jsonFlag,
+  limit: Flag.Int("limit").pipe(
+    Flag.withSchema(Schema.toType(SourceQuery.fields.limit)),
+    Flag.withDescription("How many to list (1-200)"),
+    Flag.withDefault(20),
+  ),
+  offset: Flag.Int("offset").pipe(
+    Flag.withSchema(Schema.toType(PageParamsQuery.fields.offset)),
+    Flag.withDescription("Skip this many results"),
+    Flag.withDefault(0),
+  ),
+};
 
 const loginCommand = Command.make(
   "login",
@@ -106,22 +123,9 @@ const updateCommand = Command.make("update", { vault: vaultFlag, json: jsonFlag 
   Command.withDescription("Start an Update and follow it to the end"),
 );
 
-const runsCommand = Command.make(
-  "runs",
-  {
-    vault: vaultFlag,
-    limit: Flag.Int("limit").pipe(
-      Flag.filter(
-        (limit) => limit >= 1 && limit <= 200,
-        (limit) => `--limit must be between 1 and 200 (got ${limit})`,
-      ),
-      Flag.withDescription("How many runs to list (1-200)"),
-      Flag.withDefault(20),
-    ),
-    json: jsonFlag,
-  },
-  listRuns,
-).pipe(Command.withDescription("List recent Updates and uploads"));
+const runsCommand = Command.make("runs", pageFlags, listRuns).pipe(
+  Command.withDescription("List recent Updates and uploads"),
+);
 
 const runCommand = Command.make(
   "run",
@@ -136,28 +140,10 @@ const runCommand = Command.make(
   followExistingRun,
 ).pipe(Command.withDescription("Follow a run until it ends and show what it changed"));
 
-const limitFlag = Flag.Int("limit").pipe(
-  Flag.filter(
-    (limit) => limit >= 1 && limit <= 200,
-    (limit) => `--limit must be between 1 and 200 (got ${limit})`,
-  ),
-  Flag.withDescription("How many to list (1-200)"),
-  Flag.withDefault(20),
-);
-
-const offsetFlag = Flag.Int("offset").pipe(
-  Flag.filter(
-    (offset) => offset >= 0,
-    (offset) => `--offset can't be negative (got ${offset})`,
-  ),
-  Flag.withDescription("Skip this many results"),
-  Flag.withDefault(0),
-);
-
 const sourcesCommand = Command.make(
   "sources",
   {
-    vault: vaultFlag,
+    ...pageFlags,
     tags: Flag.String("tag").pipe(
       Flag.withDescription("Only sources with this tag (repeat for several)"),
       Flag.atLeast(0),
@@ -183,18 +169,13 @@ const sourcesCommand = Command.make(
       Flag.withDescription("date (oldest first), date_desc or title"),
       Flag.withDefault("date" as const),
     ),
-    limit: limitFlag,
-    offset: offsetFlag,
-    json: jsonFlag,
   },
   listSources,
 ).pipe(Command.withDescription("Filter the vault's sources by their metadata"));
 
-const sessionsCommand = Command.make(
-  "sessions",
-  { vault: vaultFlag, limit: limitFlag, offset: offsetFlag, json: jsonFlag },
-  listSessions,
-).pipe(Command.withDescription("List recent sessions, newest first"));
+const sessionsCommand = Command.make("sessions", pageFlags, listSessions).pipe(
+  Command.withDescription("List recent sessions, newest first"),
+);
 
 const sessionArgument = Argument.String("id").pipe(
   Argument.withSchema(SessionId),
@@ -257,7 +238,7 @@ const searchCommand = Command.make(
 const articlesCommand = Command.make(
   "articles",
   {
-    vault: vaultFlag,
+    ...pageFlags,
     contains: Flag.String("contains").pipe(
       Flag.withDescription("Text in the title or summary"),
       Flag.optional,
@@ -272,9 +253,6 @@ const articlesCommand = Command.make(
       Flag.withDescription("Article order; recent cannot be combined with filters"),
       Flag.withDefault("title" as const),
     ),
-    limit: limitFlag,
-    offset: offsetFlag,
-    json: jsonFlag,
   },
   listArticles,
 ).pipe(Command.withDescription("Browse wiki articles by title, tag or Update"));

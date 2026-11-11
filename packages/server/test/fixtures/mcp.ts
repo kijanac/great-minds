@@ -50,6 +50,5 @@ export const openMcp = async (baseUrl: string, token: string) => {
   return {
     call: (name: string, args: Record<string, unknown>) =>
       request("tools/call", { name, arguments: args }),
-    list: () => request("tools/list", {}),
   };
 };

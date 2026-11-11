@@ -434,29 +434,21 @@ export const followExistingRun = (input: {
     yield* followRun(connection, vaultId, input.run, input.json);
   });
 
-export const listRuns = (input: {
-  readonly vault: Option.Option<string>;
-  readonly limit: number;
-  readonly json: boolean;
-}) =>
+export const listRuns = (input: ReadOptions & PageParams) =>
   Effect.gen(function* () {
     const { connection, vaultId } = yield* vaultConnection(input.vault);
     const page = yield* connection.use(
       connection.api.jobs.listJobs({
         params: { vault_id: vaultId },
-        query: { limit: input.limit, offset: 0 },
+        query: { limit: input.limit, offset: input.offset },
       }),
     );
-    if (input.json) return yield* printJson(page);
-    if (page.items.length === 0) return yield* Console.log("No runs yet.");
-    for (const run of page.items)
-      yield* Console.log(
-        `${run.id}  ${run.status.padEnd(9)}  ${run.created_at.toISOString().slice(0, 16).replace("T", " ")}  ${run.trigger}`,
-      );
-    if (page.pagination.total > page.items.length)
-      yield* Console.error(
-        `(${page.items.length} of ${page.pagination.total}; --limit up to 200 shows more)`,
-      );
+    yield* printPage(
+      page,
+      input.json,
+      "No runs yet.",
+      (run) => `${run.id}  ${run.status.padEnd(9)}  ${shortDate(run.created_at)}  ${run.trigger}`,
+    );
   });
 
 const UPLOAD_CONCURRENCY = 4;
