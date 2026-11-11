@@ -2,13 +2,12 @@
 
 FROM ghcr.io/typst/typst:0.15.1@sha256:032e292249bcd378480cc7c142cfa324b63ef8aadeb88d7e7230320c4c9c422f AS typst
 
-FROM node:24-slim AS workspace
+FROM node:26-slim AS workspace
 
 ENV CI=true
 WORKDIR /workspace
 
-RUN corepack enable
-RUN corepack prepare pnpm@11.7.0 --activate
+RUN npm install --global pnpm@11.7.0
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/cli/package.json packages/cli/package.json
@@ -33,12 +32,17 @@ RUN rm -rf packages/cli packages/client packages/server/test packages/server/scr
 RUN rm -rf packages/server/node_modules/@types
 RUN rm -f package.json pnpm-lock.yaml pnpm-workspace.yaml packages/*/tsconfig.json
 
-FROM node:24-slim AS runtime
+FROM node:26-slim AS runtime
+
+# Install Debian security fixes the base image may not have picked up yet.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes \
+    && rm -rf /var/lib/apt/lists/*
 
 # The server runs with node alone; drop the package managers bundled in the base image so
 # their dependencies (and vulnerabilities) don't ship.
-RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
-    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+RUN rm -rf /usr/local/lib/node_modules/npm \
+    /usr/local/bin/npm /usr/local/bin/npx \
     /usr/local/bin/yarn /usr/local/bin/yarnpkg /usr/local/bin/pnpm /usr/local/bin/pnpx
 
 RUN groupadd --system --gid 999 app
