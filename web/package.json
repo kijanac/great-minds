@@ -17,7 +17,7 @@
     "@great-minds/domain": "workspace:*",
     "@internationalized/date": "3.12.2",
     "@lucide/svelte": "1.25.0",
-    "@simplewebauthn/browser": "13.3.0",
+    "@simplewebauthn/browser": "14.0.0",
     "@tanstack/svelte-query": "6.1.36",
     "bits-ui": "2.18.1",
     "class-variance-authority": "0.7.1",
