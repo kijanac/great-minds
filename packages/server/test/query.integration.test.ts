@@ -48,6 +48,7 @@ import { SessionsService } from "../src/sessions.ts";
 import { ReplyAdmission } from "../src/conversation-history/admission.ts";
 import { ReplySettlement } from "../src/conversation-history/settlement.ts";
 import { completion } from "./fixtures/conversation-history.ts";
+import { openMcp } from "./fixtures/mcp.ts";
 import { parseHistory } from "../src/conversation-history/history.ts";
 import type { HistoryStoreShape } from "../src/conversation-history/store.ts";
 import { storageBackendError } from "../src/storage/object-store.ts";
@@ -638,7 +639,10 @@ describe("query stream", () => {
         return response.session_id;
       }),
     );
-    expect((await api(`${repliesPath}/${replyId}/stop`, {})).response.status).toBe(204);
+    const mcp = await openMcp(currentState().started.url, currentState().token);
+    expect(
+      (await mcp.call("stop_reply", { vault_id: id.vault, reply_id: replyId })).result,
+    ).toMatchObject({ structuredContent: { reply_id: replyId } });
     await runDb(
       Effect.gen(function* () {
         const service = yield* RepliesService;
@@ -1666,12 +1670,16 @@ describe("query stream", () => {
       (await api(`/vaults/${id.vault}/sessions/${first.session_id}/continue`, {})).response.status,
     ).toBe(200);
     const retryId = crypto.randomUUID();
-    const retried = await retryReply(first.reply_id, retryId);
+    const mcp = await openMcp(currentState().started.url, currentState().token);
+    const retried = await mcp.call("retry_reply", {
+      vault_id: id.vault,
+      reply_id: first.reply_id,
+      next_reply_id: retryId,
+    });
     const replay = await retryReply(first.reply_id, retryId);
-    expect(retried.response.status).toBe(202);
     expect(replay.response.status).toBe(202);
-    expect(JSON.parse(replay.text)).toEqual(JSON.parse(retried.text));
-    expect(Schema.decodeUnknownSync(CreateReplyResponse)(JSON.parse(retried.text))).toEqual({
+    expect(retried.result).toMatchObject({ structuredContent: JSON.parse(replay.text) });
+    expect(Schema.decodeUnknownSync(CreateReplyResponse)(JSON.parse(replay.text))).toEqual({
       reply_id: retryId,
       session_id: first.session_id,
     });

@@ -2001,11 +2001,16 @@ describe("read-only HTTP integration", () => {
       `${id.sessionAliceBtw}.jsonl`,
     );
     const historyBefore = await readFile(historyPath);
-    const continued = await Promise.all([
-      api("POST", `${path}/continue`, aliceToken),
-      api("POST", `${path}/continue`, aliceToken),
-    ]);
-    expect(continued.map((response) => response.status)).toEqual([200, 200]);
+    const mcp = await openMcp(currentState().started.url, aliceToken);
+    const continueNote = () =>
+      mcp.call("continue_session", {
+        vault_id: id.vaultAlpha,
+        session_id: id.sessionAliceBtw,
+      });
+    for (const response of await Promise.all([continueNote(), continueNote()]))
+      expect(response.result).toMatchObject({
+        structuredContent: { session_id: id.sessionAliceBtw },
+      });
     expect(await readFile(historyPath)).toEqual(historyBefore);
     const metadata = await runDb(
       Effect.gen(function* () {

@@ -5,6 +5,9 @@ import {
   Chunk,
   ChunkRangeQuery,
   CurrentAuth,
+  CreateReplyResponse,
+  RetryReplyRequest,
+  PromoteExchangeResponse,
   DocResponse,
   IngestedDocument,
   RawSource,
@@ -228,6 +231,34 @@ const GreatMindsTools = Toolkit.make(
     }),
     readOnly: true,
   }),
+  tool("stop_reply", "stopReply", {
+    description:
+      "Request a stop for one of your replies. Already settled replies are unchanged. Returns the requested reply_id, not a guarantee that generation stopped; read_session shows its state.",
+    parameters: Schema.Struct({ vault_id: vaultId, reply_id: Uuid }),
+    success: Schema.Struct({ reply_id: Uuid }),
+  }),
+  tool("retry_reply", "retryReply", {
+    description:
+      "Retry one of your failed replies using paid models. Supply a new next_reply_id UUID; reuse the same failed reply_id and next_reply_id after a lost response. Retains the question and exchange. Returns accepted identities immediately; read_session shows progress.",
+    parameters: Schema.Struct({
+      vault_id: vaultId,
+      reply_id: Uuid,
+      next_reply_id: RetryReplyRequest.fields.reply_id,
+    }),
+    success: CreateReplyResponse,
+  }),
+  tool("continue_session", "continueAsSession", {
+    description:
+      "Make your saved side note a standalone conversation for future replies. Preserves its id and history; does not generate an answer. Follow up with ask using the returned session_id.",
+    parameters: Schema.Struct({ vault_id: vaultId, session_id: SessionId }),
+    success: Schema.Struct({ session_id: SessionId }),
+  }),
+  tool("promote_answer", "promoteSessionExchange", {
+    description:
+      "Add your completed or stopped nonempty answer to the vault, preserving its citations and origin. Owners ingest directly; editors propose it. Requires sponsorship. Read the mode before claiming it was added. Use the exchange exId from read_session; repeats reuse an existing source or pending proposal.",
+    parameters: Schema.Struct({ vault_id: vaultId, session_id: SessionId, exchange_id: Uuid }),
+    success: PromoteExchangeResponse,
+  }),
   tool("list_jobs", "listJobs", {
     description:
       "List Updates and uploads, newest first. Filter by status, including active; page with limit and offset.",
@@ -443,6 +474,16 @@ const ToolHandlers = GreatMindsTools.toLayer(
             return { markdown: yield* exports.readMarkdown(user, vault_id, session_id, selection) };
           }),
         ).pipe(Effect.map((data) => ({ data }))),
+      stop_reply: ({ vault_id, reply_id }) =>
+        asUser((user) => replies.stop(user, vault_id, reply_id).pipe(Effect.as({ reply_id }))),
+      retry_reply: ({ vault_id, reply_id, next_reply_id }) =>
+        asUser((user) => replies.retry(user, vault_id, reply_id, next_reply_id)),
+      continue_session: ({ vault_id, session_id }) =>
+        asUser((user) =>
+          sessions.continueAsSession(user, vault_id, session_id).pipe(Effect.as({ session_id })),
+        ),
+      promote_answer: ({ vault_id, session_id, exchange_id }) =>
+        asUser((user) => sessions.promoteExchange(user, vault_id, session_id, exchange_id)),
       list_jobs: ({ vault_id, ...query }) =>
         asUser((user) => jobs.list(user, vault_id, { ...query, ...page(query) })),
       read_job: ({ vault_id, job_id }) => asUser((user) => jobs.get(user, vault_id, job_id)),

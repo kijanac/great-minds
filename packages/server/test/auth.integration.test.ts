@@ -1186,9 +1186,18 @@ describe("auth HTTP integration", () => {
     expect(update.status).toBe(403);
     expect(update.body).toMatchObject({ detail: refusal });
     const mcp = await openMcp(currentState().started.url, pair.access_token);
-    expect((await mcp.call("start_update", { vault_id: home })).error).toMatchObject({
-      code: -32003,
-    });
+    for (const name of ["start_update", "retry_reply", "promote_answer"])
+      expect(
+        (
+          await mcp.call(name, {
+            vault_id: home,
+            reply_id: home,
+            next_reply_id: randomUUID(),
+            session_id: home,
+            exchange_id: home,
+          })
+        ).error,
+      ).toMatchObject({ code: -32003 });
 
     const user = await userByEmail("unsponsored@example.com");
     await runDb(Effect.flatMap(AuthService, (auth) => auth.setSponsored(user.id, true)));
@@ -1321,6 +1330,10 @@ describe("auth HTTP integration", () => {
       "query_sources",
       "list_sessions",
       "read_session",
+      "stop_reply",
+      "retry_reply",
+      "continue_session",
+      "promote_answer",
       "list_jobs",
       "read_job",
       "start_update",
@@ -1362,9 +1375,27 @@ describe("auth HTTP integration", () => {
       isError: true,
       content: [{ type: "text", text: expect.stringContaining("can't reach this vault") }],
     });
-    for (const name of ["start_update", "cancel_job", "retry_url_job"])
+    for (const name of [
+      "start_update",
+      "cancel_job",
+      "retry_url_job",
+      "stop_reply",
+      "retry_reply",
+      "continue_session",
+      "promote_answer",
+    ])
       expect(
-        (await call(name, { vault_id: home, job_id: home, next_job_id: other })).error,
+        (
+          await call(name, {
+            vault_id: home,
+            job_id: home,
+            next_job_id: other,
+            reply_id: home,
+            next_reply_id: other,
+            session_id: home,
+            exchange_id: other,
+          })
+        ).error,
       ).toMatchObject({ code: -32003 });
     const asked = await call("ask", { vault_id: home, question: "What is here?" });
     expect(asked.error).toMatchObject({

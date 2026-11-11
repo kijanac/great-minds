@@ -3293,13 +3293,13 @@ describe("M3.1 write endpoint integration", () => {
     });
     expect(await countTable(compileIntents)).toBe(1);
 
-    const ownerReplay = await api(
-      "POST",
-      `/vaults/${id.vault}/sessions/${sessionId}/exchanges/${EX_PROMOTE}/promote`,
-      aliceToken,
-    );
-    expect(ownerReplay.status).toBe(201);
-    expect(ownerReplay.body).toMatchObject({
+    const ownerMcp = await openMcp(currentState().started.url, aliceToken);
+    const ownerReplay = await ownerMcp.call("promote_answer", {
+      vault_id: id.vault,
+      session_id: sessionId,
+      exchange_id: EX_PROMOTE,
+    });
+    expect(asRecord(ownerReplay.result).structuredContent).toMatchObject({
       mode: "ingested",
       path: ownerSourcePath,
       title: null,
@@ -3308,13 +3308,13 @@ describe("M3.1 write endpoint integration", () => {
 
     const editorSourceId = sourceIdForKey(id.vault, `session:${editorSessionId}:${EX_PROPOSAL}`);
     const editorSourcePath = `raw/sessions/${EX_PROPOSAL}-${editorSourceId}.md`;
-    const editorPromote = await api(
-      "POST",
-      `/vaults/${id.vault}/sessions/${editorSessionId}/exchanges/${EX_PROPOSAL}/promote`,
-      bobToken,
-    );
-    expect(editorPromote.status).toBe(201);
-    const editorBody = asRecord(editorPromote.body);
+    const editorMcp = await openMcp(currentState().started.url, bobToken);
+    const editorPromote = await editorMcp.call("promote_answer", {
+      vault_id: id.vault,
+      session_id: editorSessionId,
+      exchange_id: EX_PROPOSAL,
+    });
+    const editorBody = asRecord(asRecord(editorPromote.result).structuredContent);
     expect(editorBody).toMatchObject({
       mode: "proposed",
       path: editorSourcePath,
