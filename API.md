@@ -1660,7 +1660,6 @@ Response: `201 Created` with a `JobResponse`:
 | `created_at` | ISO 8601 | Creation time. |
 | `updated_at` | ISO 8601 | Last update time. |
 | `completed_at` | ISO 8601 or `null` | Completion time. |
-| `stream_url` | string | Relative URL of the job's event stream (`/v1/vaults/:vault_id/jobs/:job_id/stream`). |
 
 Errors: `400 BadRequest`, `403 Forbidden`, `422 Validation`.
 

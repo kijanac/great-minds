@@ -14,5 +14,4 @@ export const jobResponse = (row: typeof pipelineRuns.$inferSelect): JobResponse 
   created_at: row.createdAt,
   updated_at: row.updatedAt,
   completed_at: row.completedAt,
-  stream_url: `/jobs/${row.id}/stream`,
 });

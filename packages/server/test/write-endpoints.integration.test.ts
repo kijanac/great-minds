@@ -2921,7 +2921,6 @@ describe("M3.1 write endpoint integration", () => {
           status: "pending",
           current_phase: "source_ingest",
           phase_status: "started",
-          stream_url: `/jobs/${id.m32UrlRun}/stream`,
         });
         await waitForPipelineRun(
           id.m32UrlRun,

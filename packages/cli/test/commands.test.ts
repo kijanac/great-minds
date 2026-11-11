@@ -467,7 +467,6 @@ describe("gm update", () => {
       created_at: now,
       updated_at: now,
       completed_at: null,
-      stream_url: "",
     });
 
   it("follows the stages and lists what changed, including merges and what was left out", async () => {
