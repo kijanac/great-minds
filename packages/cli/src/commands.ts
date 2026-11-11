@@ -43,7 +43,7 @@ import {
   type Uuid,
   type Vault,
 } from "@great-minds/domain";
-import { Console, Effect, FileSystem, Option, Stream } from "effect";
+import { Console, Effect, FileSystem, Option, Record, Stream } from "effect";
 
 import { CliFetch, connect, type Connection } from "./connection.ts";
 import { Credentials } from "./credentials.ts";
@@ -494,7 +494,7 @@ export const listRuns = (
         query: {
           limit: input.limit,
           offset: input.offset,
-          ...Option.match(input.status, { onNone: () => ({}), onSome: (status) => ({ status }) }),
+          ...Record.getSomes({ status: input.status }),
         },
       }),
     );
@@ -612,7 +612,7 @@ export const addUrl = (
         payload: {
           job_id: jobId,
           url: input.url,
-          ...Option.match(input.origin, { onNone: () => ({}), onSome: (origin) => ({ origin }) }),
+          ...Record.getSomes({ origin: input.origin }),
         },
       }),
     );
@@ -635,7 +635,7 @@ export const ingestText = (
         payload: {
           content: yield* fs.readFileString(input.file),
           dest: input.dest,
-          ...Option.match(input.origin, { onNone: () => ({}), onSome: (origin) => ({ origin }) }),
+          ...Record.getSomes({ origin: input.origin }),
         },
       }),
     );
@@ -744,7 +744,7 @@ export const listProposals = (
         query: {
           limit: input.limit,
           offset: input.offset,
-          ...Option.match(input.status, { onNone: () => ({}), onSome: (status) => ({ status }) }),
+          ...Record.getSomes({ status: input.status }),
         },
       }),
     );
@@ -784,11 +784,10 @@ export const createProposal = (
         params: { vault_id: vaultId },
         payload: {
           content: yield* fs.readFileString(input.file),
-          ...Option.match(input.title, { onNone: () => ({}), onSome: (title) => ({ title }) }),
-          ...Option.match(input.author, { onNone: () => ({}), onSome: (author) => ({ author }) }),
-          ...Option.match(input.contentType, {
-            onNone: () => ({}),
-            onSome: (content_type) => ({ content_type }),
+          ...Record.getSomes({
+            title: input.title,
+            author: input.author,
+            content_type: input.contentType,
           }),
         },
       }),
@@ -839,14 +838,13 @@ export const listSources = (input: {
         params: { vault_id: vaultId },
         payload: {
           ...(input.tags.length === 0 ? {} : { tags: input.tags }),
-          ...Option.match(input.author, { onNone: () => ({}), onSome: (author) => ({ author }) }),
-          ...Option.match(input.genre, { onNone: () => ({}), onSome: (genre) => ({ genre }) }),
-          ...Option.match(input.from, {
-            onNone: () => ({}),
-            onSome: (date_from) => ({ date_from }),
+          ...Record.getSomes({
+            author: input.author,
+            genre: input.genre,
+            date_from: input.from,
+            date_to: input.to,
           }),
-          ...Option.match(input.to, { onNone: () => ({}), onSome: (date_to) => ({ date_to }) }),
-          ...Option.match(input.fields, { onNone: () => ({}), onSome: (fields) => ({ fields }) }),
+          ...Record.getSomes({ fields: input.fields }),
           sort: input.sort,
           limit: input.limit,
           offset: input.offset,
@@ -936,7 +934,7 @@ export const search = (
         params: { vault_id: vaultId },
         query: {
           q: input.query,
-          ...Option.match(input.path, { onNone: () => ({}), onSome: (path) => ({ path }) }),
+          ...Record.getSomes({ path: input.path }),
         },
       }),
     );
@@ -971,12 +969,8 @@ export const listArticles = (
             query: {
               ...query,
               sort: input.sort,
-              ...Option.match(input.contains, {
-                onNone: () => ({}),
-                onSome: (contains) => ({ contains }),
-              }),
-              ...Option.match(input.tag, { onNone: () => ({}), onSome: (tag) => ({ tag }) }),
-              ...Option.match(input.run, { onNone: () => ({}), onSome: (run) => ({ run }) }),
+              ...Record.getSomes({ contains: input.contains, tag: input.tag }),
+              ...Record.getSomes({ run: input.run }),
             },
           }),
     );
