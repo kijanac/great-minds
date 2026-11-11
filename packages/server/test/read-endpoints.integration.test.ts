@@ -2494,13 +2494,14 @@ describe("read-only HTTP integration", () => {
     });
     await request("notifications/initialized", {});
     const params = { vault_id: id.vaultAlpha, session_id: id.sessionAliceMain };
-    const call = (name: string, args: Record<string, unknown> = params) =>
-      request("tools/call", { name, arguments: args });
+    const call = (args: Record<string, unknown> = {}) =>
+      request("tools/call", { name: "read_session", arguments: { ...params, ...args } });
     const content = (message: Record<string, unknown>) =>
-      asRecord(asRecord(message.result).structuredContent);
+      asRecord(asRecord(asRecord(message.result).structuredContent).data);
     const path = sessionPath();
-    const saved = content(await call("get_session"));
+    const saved = content(await call());
     expect(saved).toEqual((await api("GET", path, aliceToken)).body);
+    expect(content(await call({ format: "json" }))).toEqual(saved);
     const session = Schema.decodeUnknownSync(SessionResponse)(saved);
     const root = session.events.find((event) => event.type === "exchange")!;
     const note = session.threads.find((thread) => thread.availability === "available")!;
@@ -2510,17 +2511,15 @@ describe("read-only HTTP integration", () => {
       { session_id: note.session.id, exchange_id: reply.exId, role: "assistant" },
       { session_id: session.id, exchange_id: root.exId, role: "user" },
     ];
-    expect(content(await call("read_session")).markdown).toBe(
+    expect(content(await call({ format: "markdown" })).markdown).toBe(
       await (await rawApi("GET", `${path}/markdown`, aliceToken)).text(),
     );
-    const selected = content(await call("read_session", { ...params, messages })).markdown;
+    const selected = content(await call({ format: "markdown", messages })).markdown;
     expect(selected).toBe(
       await (await rawApi("POST", `${path}/markdown`, aliceToken, { messages })).text(),
     );
     expect(pdfRenders).toBe(0);
-    const prepared = content(
-      await call("export_session", { ...params, messages, paper: "us-letter" }),
-    );
+    const prepared = content(await call({ format: "pdf", messages, paper: "us-letter" }));
     expect(prepared).toEqual(
       (await api("POST", `${path}/export`, aliceToken, { messages, paper: "us-letter" })).body,
     );
@@ -2528,39 +2527,37 @@ describe("read-only HTTP integration", () => {
     expect(new TextDecoder().decode(Schema.decodeUnknownSync(SessionExport)(prepared).pdf)).toBe(
       "%PDF-controlled-renderer",
     );
-    const whole = content(await call("export_session"));
+    const whole = content(await call({ format: "pdf" }));
     expect(whole.paper).toBe("a4");
-    expect(whole.markdown).toBe(content(await call("read_session")).markdown);
-    for (const tool of ["read_session", "get_session", "export_session"]) {
-      expect(
-        asRecord((await call(tool, { ...params, session_id: id.sessionBob })).result).isError,
-      ).toBe(true);
-      expect(
-        asRecord((await call(tool, { ...params, vault_id: id.vaultBeta })).result).isError,
-      ).toBe(true);
+    expect(whole.markdown).toBe(content(await call({ format: "markdown" })).markdown);
+    for (const format of ["json", "markdown", "pdf"]) {
+      expect(asRecord((await call({ format, session_id: id.sessionBob })).result).isError).toBe(
+        true,
+      );
+      expect(asRecord((await call({ format, vault_id: id.vaultBeta })).result).isError).toBe(true);
     }
-    for (const tool of ["read_session", "export_session"]) {
-      expect((await call(tool, { ...params, messages: [] })).error).toMatchObject({ code: -32602 });
+    for (const format of ["markdown", "pdf"]) {
+      expect((await call({ format, messages: [] })).error).toMatchObject({ code: -32602 });
       expect(
-        (await call(tool, { ...params, messages: [{ ...messages[0], role: "unknown" }] })).error,
+        (await call({ format, messages: [{ ...messages[0], role: "unknown" }] })).error,
       ).toMatchObject({ code: -32602 });
       expect(
         asRecord(
-          (
-            await call(tool, {
-              ...params,
-              messages: [{ ...messages[0], exchange_id: id.vaultBeta }],
-            })
-          ).result,
+          (await call({ format, messages: [{ ...messages[0], exchange_id: id.vaultBeta }] }))
+            .result,
         ).isError,
       ).toBe(true);
     }
-    expect((await call("export_session", { ...params, paper: "invalid" })).error).toMatchObject({
-      code: -32602,
-    });
+    for (const invalid of [
+      { messages },
+      { format: "json", messages },
+      { format: "invalid" },
+      { format: "pdf", paper: "invalid" },
+    ])
+      expect((await call(invalid)).error).toMatchObject({ code: -32602 });
     await writeFile(historyFile(id.sessionAliceBtw), "{invalid}\n");
-    for (const tool of ["read_session", "export_session"])
-      expect(asRecord((await call(tool)).result).isError).toBe(true);
+    for (const format of ["markdown", "pdf"])
+      expect(asRecord((await call({ format })).result).isError).toBe(true);
     expect(pdfRenders).toBe(3);
   });
 

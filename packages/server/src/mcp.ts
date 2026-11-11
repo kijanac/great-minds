@@ -7,7 +7,6 @@ import {
   SearchHit,
   PublicationPaper,
   SessionExport,
-  SessionExportRequest,
   SessionExportSelection,
   SessionResponse,
   SessionId,
@@ -139,40 +138,31 @@ const ListSessions = Tool.make("list_sessions", {
 
 const ReadSession = Tool.make("read_session", {
   description:
-    "Read a conversation as Markdown, optionally selecting individual messages. Omit messages for the whole conversation. Get message identities with get_session.",
+    "Read a saved conversation; the result is wrapped in data. Default json returns structured events and attached notes: each exchange has exId, query (user) and answer (assistant). Markdown returns prose without PDF rendering. PDF returns base64 pdf bytes plus matching Markdown; decode the bytes to save a file. For Markdown/PDF, optionally select messages using session_id, exchange_id (exId), and role; omit messages for everything. Does not publish, store an artifact, or call a model.",
   parameters: Schema.Struct({
     vault_id: vaultId,
     session_id: SessionId,
+    format: Schema.optionalKey(Schema.Literals(["json", "markdown", "pdf"])),
     ...SessionExportSelection.fields,
+    paper: Schema.optionalKey(PublicationPaper).annotate({
+      description: "PDF paper size; defaults to a4. Ignored for other formats.",
+    }),
+  }).check(
+    Schema.makeFilter(
+      (input) =>
+        input.messages === undefined ||
+        input.format === "markdown" ||
+        input.format === "pdf" ||
+        "Message selection requires format markdown or pdf.",
+    ),
+  ),
+  success: Schema.Struct({
+    data: Schema.Union([
+      SessionResponse,
+      SessionExport,
+      Schema.Struct({ markdown: Schema.String }),
+    ]),
   }),
-  success: Schema.Struct({ markdown: Schema.String }),
-  failure: ToolFailed,
-  dependencies: [CurrentAuth],
-})
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.OpenWorld, false);
-
-const GetSession = Tool.make("get_session", {
-  description:
-    "Read a conversation's structured events and attached notes. Each exchange has an exId, query (user) and answer (assistant). Select messages using session_id, exchange_id (exId), and role with read_session or export_session.",
-  parameters: Schema.Struct({ vault_id: vaultId, session_id: SessionId }),
-  success: SessionResponse,
-  failure: ToolFailed,
-  dependencies: [CurrentAuth],
-})
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.OpenWorld, false);
-
-const ExportSession = Tool.make("export_session", {
-  description:
-    "Prepare a conversation as PDF and matching Markdown. Returns PDF bytes as base64 in pdf; decode them to save a .pdf file. Omit messages for everything, or select identities from get_session. For Markdown without PDF rendering, use read_session. Does not publish, save to the vault, or call a model.",
-  parameters: Schema.Struct({
-    vault_id: vaultId,
-    session_id: SessionId,
-    ...SessionExportRequest.fields,
-    paper: Schema.optionalKey(PublicationPaper),
-  }),
-  success: SessionExport,
   failure: ToolFailed,
   dependencies: [CurrentAuth],
 })
@@ -204,8 +194,6 @@ const GreatMindsTools = Toolkit.make(
   QuerySources,
   ListSessions,
   ReadSession,
-  GetSession,
-  ExportSession,
   Ask,
 );
 
@@ -217,8 +205,6 @@ const toolPermissions: Readonly<Record<string, Permission>> = {
   query_sources: "read",
   list_sessions: "read",
   read_session: "read",
-  get_session: "read",
-  export_session: "read",
   ask: "ask",
 };
 
@@ -296,23 +282,17 @@ const ToolHandlers = GreatMindsTools.toLayer(
             })),
           };
         }).pipe(Effect.mapError(failed)),
-      read_session: ({ vault_id, session_id, ...selection }) =>
+      read_session: ({ vault_id, session_id, format = "json", paper = "a4", ...selection }) =>
         Effect.gen(function* () {
-          return {
-            markdown: yield* exports.readMarkdown(yield* userId, vault_id, session_id, selection),
-          };
-        }).pipe(Effect.mapError(failed)),
-      get_session: ({ vault_id, session_id }) =>
-        Effect.gen(function* () {
-          return yield* sessions.readSession(yield* userId, vault_id, session_id);
-        }).pipe(Effect.mapError(failed)),
-      export_session: ({ vault_id, session_id, paper, ...selection }) =>
-        Effect.gen(function* () {
-          return yield* exports.prepare(yield* userId, vault_id, session_id, {
-            ...selection,
-            paper: paper ?? "a4",
-          });
-        }).pipe(Effect.mapError(failed)),
+          const user = yield* userId;
+          if (format === "json") return yield* sessions.readSession(user, vault_id, session_id);
+          if (format === "pdf")
+            return yield* exports.prepare(user, vault_id, session_id, { ...selection, paper });
+          return { markdown: yield* exports.readMarkdown(user, vault_id, session_id, selection) };
+        }).pipe(
+          Effect.map((data) => ({ data })),
+          Effect.mapError(failed),
+        ),
       ask: ({ vault_id, question, session_id }) =>
         Effect.gen(function* () {
           const user = yield* userId;

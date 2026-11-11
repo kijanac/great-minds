@@ -51,15 +51,15 @@ gm export "$session" --messages "$messages" --output selected.pdf
 
 `--messages` takes the JSON array described above. Get exchange IDs from `exId` in `gm session --json`, including the appropriate attached-note session ID. The default is PDF on A4. `--output` is required; files are created with owner-only permissions and existing files are never overwritten. Markdown is written as UTF-8, PDF as decoded bytes. `--json` prints a `{ path, format }` receipt instead of a human confirmation. API failures leave no output file, and Markdown never invokes the PDF renderer. `gm session "$session"` remains the whole-conversation Markdown-to-stdout command.
 
-MCP exposes the same operations at `/v1/mcp`:
+MCP exposes one `read_session` tool at `/v1/mcp`, taking `vault_id`, `session_id` and an optional `format`. Its result is `{ data: ... }`, containing the following representation:
 
-| Tool | Parameters beyond `vault_id`, `session_id` | Result |
+| Format | Options | Result |
 | --- | --- | --- |
-| `get_session` | None | The API's structured `SessionResponse`, with root events and attached-note identities |
-| `read_session` | Optional `messages` | `{ markdown }`, without PDF rendering |
-| `export_session` | Optional `messages`; `paper` defaults to `a4` | The API's `SessionExport`: title, preparation time, paper, Markdown and base64 PDF |
+| `json` (default) | None | The API's structured `SessionResponse`, with root events and attached-note identities |
+| `markdown` | Optional `messages` | `{ markdown }`, without PDF rendering |
+| `pdf` | Optional `messages`; `paper` defaults to `a4` | The API's `SessionExport`: title, preparation time, paper, Markdown and base64 PDF |
 
-These tools require read access only, not ask/change permission. They do not call a model, publish content or store an artifact. Decode the `pdf` field to save a PDF; it is not a URL or server path. Existing `read_session` calls without a selection are unchanged. Domain failures use the existing MCP tool-error response; malformed parameters use the protocol's invalid-parameters error. Neither client retries an export automatically.
+Selection requires an explicit Markdown or PDF format; passing `messages` in JSON mode is rejected rather than ignored. Paper size is used only for PDF. The tool requires read access only, not ask/change permission. It does not call a model, publish content or store an artifact. Decode the `pdf` field to save a PDF; it is not a URL or server path. Domain failures use the existing MCP tool-error response; malformed parameters use the protocol's invalid-parameters error. Neither client retries an export automatically.
 
 ## Development checks
 
