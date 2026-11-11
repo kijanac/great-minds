@@ -1,8 +1,6 @@
 <script lang="ts">
-  import { dev } from "$app/env";
   import { page } from "$app/state";
   import { QueryClientProvider } from "@tanstack/svelte-query";
-  import { SvelteQueryDevtools } from "@tanstack/svelte-query-devtools";
   import { onMount } from "svelte";
 
   import "../index.css";
@@ -38,7 +36,4 @@
   <AppShell utility={isShareRoute ? undefined : cornerMenu}>
     {@render children()}
   </AppShell>
-  {#if dev}
-    <SvelteQueryDevtools initialIsOpen={false} />
-  {/if}
 </QueryClientProvider>
