@@ -1760,7 +1760,7 @@ const RefsApiGroup = HttpApiGroup.make("refs")
   .add(
     HttpApiEndpoint.post("createReference", "/me/refs", {
       payload: ReferenceCreate,
-      success: CreatedReferenceDetail,
+      success: [CreatedReferenceDetail, ReferenceDetail] as const,
       error: [BadRequestResponse, ValidationResponse] as const,
     }).middleware(AuthMiddleware),
   )
@@ -1971,7 +1971,7 @@ const IngestApiGroup = HttpApiGroup.make("ingest").add(
   HttpApiEndpoint.post("promoteReference", "/vaults/:vault_id/ingest/reference", {
     params: VaultIdParams,
     payload: ReferencePromote,
-    success: CreatedIngestedDocument,
+    success: [CreatedIngestedDocument, IngestedDocument] as const,
     error: [
       BadRequestResponse,
       ForbiddenResponse,

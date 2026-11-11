@@ -19,14 +19,31 @@ import {
 import {
   isUuid,
   uploadKind,
+  Validation,
+  type ChunkRangeQuery,
+  type IngestedDocument,
+  type Proposal,
+  type ProposalOverview,
+  type ProposalStatus,
+  type ProposalUpdate,
+  type UserSuggestion,
+  type RawSource,
+  type ReferenceCreate,
+  type ReferencePromote,
+  type ReferenceUpdate,
+  type ReferenceIdParams,
+  type PageParams,
+  type PipelineRunFilter,
   type JobProgressSnapshot,
+  type PublicationPaper,
+  type SessionExportSelection,
   type ReplySource,
   type RunOutcome,
   type SessionId,
   type Uuid,
   type Vault,
 } from "@great-minds/domain";
-import { Console, Effect, FileSystem, Option, Stream } from "effect";
+import { Console, Effect, FileSystem, Option, Record, Stream } from "effect";
 
 import { CliFetch, connect, type Connection } from "./connection.ts";
 import { Credentials } from "./credentials.ts";
@@ -47,7 +64,33 @@ import {
   VaultUseNeedsLogin,
 } from "./errors.ts";
 
+type ReadOptions = { readonly vault: Option.Option<string>; readonly json: boolean };
+
 const printJson = (value: unknown) => Console.log(JSON.stringify(value, null, 2));
+const printDocument = (document: IngestedDocument, json: boolean) =>
+  json ? printJson(document) : Console.log(`${document.file_path}  ${document.id}`);
+
+const printPage = <A>(
+  page: {
+    readonly items: readonly A[];
+    readonly pagination: { readonly offset: number; readonly total: number };
+  },
+  json: boolean,
+  empty: string,
+  line: (item: A) => string,
+) =>
+  Effect.gen(function* () {
+    if (json) return yield* printJson(page);
+    const { offset, total } = page.pagination;
+    if (page.items.length === 0)
+      return yield* Console.log(total === 0 ? empty : `No items at this offset (${total} total).`);
+    for (const item of page.items) yield* Console.log(line(item));
+    const last = offset + page.items.length;
+    if (last < total || offset > 0)
+      yield* Console.error(
+        `(${offset + 1}-${last} of ${total}${last < total ? `; --offset ${last} shows more` : ""})`,
+      );
+  });
 
 const signedInConnection = Effect.gen(function* () {
   const credentials = yield* Credentials;
@@ -395,39 +438,72 @@ export const update = (input: { readonly vault: Option.Option<string>; readonly 
     yield* followRun(connection, vaultId, job.id, input.json);
   });
 
-export const followExistingRun = (input: {
-  readonly run: Uuid;
-  readonly vault: Option.Option<string>;
-  readonly json: boolean;
-}) =>
+export const followExistingRun = (
+  input: ReadOptions & { readonly run: Uuid; readonly once: boolean },
+) =>
   Effect.gen(function* () {
     const { connection, vaultId } = yield* vaultConnection(input.vault);
+    if (input.once) {
+      const job = yield* connection.use(
+        connection.api.jobs.getJob({ params: { vault_id: vaultId, job_id: input.run } }),
+      );
+      return yield* input.json
+        ? printJson(job)
+        : Console.log(
+            `${job.id}  ${job.status}  ${job.current_phase}${job.error === null ? "" : `: ${job.error}`}`,
+          );
+    }
     yield* followRun(connection, vaultId, input.run, input.json);
   });
 
-export const listRuns = (input: {
-  readonly vault: Option.Option<string>;
-  readonly limit: number;
-  readonly json: boolean;
-}) =>
+export const cancelRun = (input: ReadOptions & { readonly run: Uuid }) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    yield* connection.use(
+      connection.api.compile.cancelCompile({ params: { vault_id: vaultId, run_id: input.run } }),
+    );
+    yield* input.json ? printJson({}) : Console.log(`Cancellation requested for ${input.run}.`);
+  });
+
+export const retryRun = (
+  input: ReadOptions & { readonly run: Uuid; readonly jobId: Option.Option<Uuid> },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const jobId = Option.getOrElse(input.jobId, newUuid);
+    yield* Console.error(
+      `Retry request ${jobId} (reuse --job-id ${jobId} if its response is lost)`,
+    );
+    const job = yield* connection.use(
+      connection.api.jobs.retryUrlJob({
+        params: { vault_id: vaultId, job_id: input.run },
+        payload: { job_id: jobId },
+      }),
+    );
+    yield* followRun(connection, vaultId, job.id, input.json);
+  });
+
+export const listRuns = (
+  input: ReadOptions & PageParams & { readonly status: Option.Option<PipelineRunFilter> },
+) =>
   Effect.gen(function* () {
     const { connection, vaultId } = yield* vaultConnection(input.vault);
     const page = yield* connection.use(
       connection.api.jobs.listJobs({
         params: { vault_id: vaultId },
-        query: { limit: input.limit, offset: 0 },
+        query: {
+          limit: input.limit,
+          offset: input.offset,
+          ...Record.getSomes({ status: input.status }),
+        },
       }),
     );
-    if (input.json) return yield* printJson(page);
-    if (page.items.length === 0) return yield* Console.log("No runs yet.");
-    for (const run of page.items)
-      yield* Console.log(
-        `${run.id}  ${run.status.padEnd(9)}  ${run.created_at.toISOString().slice(0, 16).replace("T", " ")}  ${run.trigger}`,
-      );
-    if (page.pagination.total > page.items.length)
-      yield* Console.error(
-        `(${page.items.length} of ${page.pagination.total}; --limit up to 200 shows more)`,
-      );
+    yield* printPage(
+      page,
+      input.json,
+      "No runs yet.",
+      (run) => `${run.id}  ${run.status.padEnd(9)}  ${shortDate(run.created_at)}  ${run.trigger}`,
+    );
   });
 
 const UPLOAD_CONCURRENCY = 4;
@@ -517,6 +593,229 @@ export const add = (input: {
     yield* followRun(connection, vaultId, job.id, input.json);
   });
 
+export const addUrl = (
+  input: ReadOptions & {
+    readonly url: string;
+    readonly jobId: Option.Option<Uuid>;
+    readonly origin: Option.Option<string>;
+  },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const jobId = Option.getOrElse(input.jobId, newUuid);
+    yield* Console.error(
+      `Import request ${jobId} (reuse --job-id ${jobId} if its response is lost)`,
+    );
+    const job = yield* connection.use(
+      connection.api.jobs.startUrlJob({
+        params: { vault_id: vaultId },
+        payload: {
+          job_id: jobId,
+          url: input.url,
+          ...Record.getSomes({ origin: input.origin }),
+        },
+      }),
+    );
+    yield* followRun(connection, vaultId, job.id, input.json);
+  });
+
+export const ingestText = (
+  input: ReadOptions & {
+    readonly file: string;
+    readonly dest: RawSource["dest"];
+    readonly origin: Option.Option<string>;
+  },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const fs = yield* FileSystem.FileSystem;
+    const document = yield* connection.use(
+      connection.api.ingest.ingestRaw({
+        params: { vault_id: vaultId },
+        payload: {
+          content: yield* fs.readFileString(input.file),
+          dest: input.dest,
+          ...Record.getSomes({ origin: input.origin }),
+        },
+      }),
+    );
+    yield* printDocument(document, input.json);
+  });
+
+export const listReferences = (input: PageParams & { readonly json: boolean }) =>
+  Effect.gen(function* () {
+    const { connection } = yield* signedInConnection;
+    const page = yield* connection.use(
+      connection.api.refs.listReferences({
+        query: { limit: input.limit, offset: input.offset },
+      }),
+    );
+    yield* printPage(
+      page,
+      input.json,
+      "No personal references yet.",
+      (ref) => `${ref.id}  ${ref.file_path}  ${ref.title ?? ""}`,
+    );
+  });
+
+export const reference = (
+  input: { readonly json: boolean } & (
+    | ({ readonly action: "save" } & ReferenceCreate)
+    | ({ readonly action: "read" } & ReferencePromote)
+    | ({ readonly action: "rename" } & ReferenceIdParams & ReferenceUpdate)
+    | ({ readonly action: "delete" } & ReferenceIdParams)
+  ),
+) =>
+  Effect.gen(function* () {
+    const { connection } = yield* signedInConnection;
+    if (input.action === "delete") {
+      yield* connection.use(
+        connection.api.refs.deleteReference({ params: { reference_id: input.reference_id } }),
+      );
+      return yield* input.json
+        ? printJson({})
+        : Console.log(`Deleted reference ${input.reference_id}.`);
+    }
+    if (input.action === "read") {
+      const document = yield* connection.use(
+        connection.api.refs.resolveReference({ query: { path: input.path } }),
+      );
+      return yield* input.json ? printJson(document) : Console.log(document.body);
+    }
+    const document = yield* connection.use(
+      input.action === "save"
+        ? connection.api.refs.createReference({ payload: { url: input.url } })
+        : connection.api.refs.updateReference({
+            params: { reference_id: input.reference_id },
+            payload: { title: input.title },
+          }),
+    );
+    yield* printDocument(document, input.json);
+  });
+
+export const promoteReference = (input: ReadOptions & ReferencePromote) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const document = yield* connection.use(
+      connection.api.ingest.promoteReference({
+        params: { vault_id: vaultId },
+        payload: { path: input.path },
+      }),
+    );
+    yield* printDocument(document, input.json);
+  });
+
+const proposalLine = (value: ProposalOverview) =>
+  `${value.id}  ${value.status}${value.application === null ? "" : ` / ${value.application}`}  ${value.title ?? ""}`;
+const printProposal = (value: Proposal, json: boolean) =>
+  json ? printJson(value) : Console.log(proposalLine(value));
+
+export const source = (
+  input: ReadOptions & {
+    readonly source_id: Uuid;
+    readonly action: "read" | "delete" | "request-deletion";
+  },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const params = { vault_id: vaultId, source_id: input.source_id };
+    if (input.action === "delete") {
+      yield* connection.use(connection.api.sources.deleteSource({ params }));
+      return yield* input.json ? printJson({}) : Console.log(`Deleted source ${input.source_id}.`);
+    }
+    if (input.action === "read") {
+      const document = yield* connection.use(connection.api.sources.readSource({ params }));
+      return yield* input.json ? printJson(document) : Console.log(document.body);
+    }
+    const requested = yield* connection.use(
+      connection.api.sources.requestSourceDeletion({ params }),
+    );
+    yield* printProposal(requested, input.json);
+  });
+
+export const listProposals = (
+  input: ReadOptions & PageParams & { readonly status: Option.Option<ProposalStatus> },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const page = yield* connection.use(
+      connection.api.proposals.listProposals({
+        params: { vault_id: vaultId },
+        query: {
+          limit: input.limit,
+          offset: input.offset,
+          ...Record.getSomes({ status: input.status }),
+        },
+      }),
+    );
+    yield* printPage(page, input.json, "No proposals match.", proposalLine);
+  });
+
+export const proposal = (
+  input: ReadOptions & { readonly proposal_id: Uuid } & (
+      | { readonly action: "read" }
+      | { readonly action: "review"; readonly status: ProposalUpdate["status"] }
+    ),
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const params = { vault_id: vaultId, proposal_id: input.proposal_id };
+    const result = yield* connection.use(
+      input.action === "read"
+        ? connection.api.proposals.getProposal({ params })
+        : connection.api.proposals.reviewProposal({ params, payload: { status: input.status } }),
+    );
+    yield* printProposal(result, input.json);
+  });
+
+export const createProposal = (
+  input: ReadOptions & {
+    readonly file: string;
+    readonly title: Option.Option<string>;
+    readonly author: Option.Option<string>;
+    readonly contentType: Option.Option<string>;
+  },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const fs = yield* FileSystem.FileSystem;
+    const result = yield* connection.use(
+      connection.api.proposals.createProposal({
+        params: { vault_id: vaultId },
+        payload: {
+          content: yield* fs.readFileString(input.file),
+          ...Record.getSomes({
+            title: input.title,
+            author: input.author,
+            content_type: input.contentType,
+          }),
+        },
+      }),
+    );
+    yield* printProposal(result, input.json);
+  });
+
+export const submitSuggestion = (
+  input: ReadOptions & Omit<UserSuggestion, "body"> & { readonly file: string },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const fs = yield* FileSystem.FileSystem;
+    const result = yield* connection.use(
+      connection.api.ingest.ingestUserSuggestion({
+        params: { vault_id: vaultId },
+        payload: {
+          body: yield* fs.readFileString(input.file),
+          anchored_to: input.anchored_to,
+          anchored_section: input.anchored_section,
+        },
+      }),
+    );
+    yield* input.json
+      ? printJson(result)
+      : Console.log(`${result.mode}: ${result.file_path}  ${result.id}`);
+  });
+
 const shortDate = (date: Date) => date.toISOString().slice(0, 16).replace("T", " ");
 
 export const listSources = (input: {
@@ -539,55 +838,41 @@ export const listSources = (input: {
         params: { vault_id: vaultId },
         payload: {
           ...(input.tags.length === 0 ? {} : { tags: input.tags }),
-          ...Option.match(input.author, { onNone: () => ({}), onSome: (author) => ({ author }) }),
-          ...Option.match(input.genre, { onNone: () => ({}), onSome: (genre) => ({ genre }) }),
-          ...Option.match(input.from, {
-            onNone: () => ({}),
-            onSome: (date_from) => ({ date_from }),
+          ...Record.getSomes({
+            author: input.author,
+            genre: input.genre,
+            date_from: input.from,
+            date_to: input.to,
           }),
-          ...Option.match(input.to, { onNone: () => ({}), onSome: (date_to) => ({ date_to }) }),
-          ...Option.match(input.fields, { onNone: () => ({}), onSome: (fields) => ({ fields }) }),
+          ...Record.getSomes({ fields: input.fields }),
           sort: input.sort,
           limit: input.limit,
           offset: input.offset,
         },
       }),
     );
-    if (input.json) return yield* printJson(page);
-    if (page.items.length === 0) return yield* Console.log("No sources match.");
-    for (const source of page.items) {
+    yield* printPage(page, input.json, "No sources match.", (source) => {
       const by = source.author === null ? "" : `  ${source.author}`;
       const date = source.published_date === null ? "" : `  ${source.published_date}`;
-      yield* Console.log(`${source.file_path}  ${source.title ?? ""}${by}${date}`);
-    }
-    const last = page.pagination.offset + page.items.length;
-    if (last < page.pagination.total || page.pagination.offset > 0)
-      yield* Console.error(
-        `(${page.pagination.offset + 1}-${last} of ${page.pagination.total}${last < page.pagination.total ? `; --offset ${last} shows more` : ""})`,
-      );
+      return `${source.file_path}  ${source.title ?? ""}${by}${date}`;
+    });
   });
 
-export const listSessions = (input: {
-  readonly vault: Option.Option<string>;
-  readonly limit: number;
-  readonly json: boolean;
-}) =>
+export const listSessions = (input: ReadOptions & PageParams) =>
   Effect.gen(function* () {
     const { connection, vaultId } = yield* vaultConnection(input.vault);
     const page = yield* connection.use(
       connection.api.sessions.listSessions({
         params: { vault_id: vaultId },
-        query: { limit: input.limit, offset: 0 },
+        query: { limit: input.limit, offset: input.offset },
       }),
     );
-    if (input.json) return yield* printJson(page);
-    if (page.items.length === 0) return yield* Console.log("No sessions yet.");
-    for (const session of page.items)
-      yield* Console.log(`${session.id}  ${shortDate(session.updated_at)}  ${session.query}`);
-    if (page.pagination.total > page.items.length)
-      yield* Console.error(
-        `(${page.items.length} of ${page.pagination.total}; --limit up to 200 shows more)`,
-      );
+    yield* printPage(
+      page,
+      input.json,
+      "No sessions yet.",
+      (session) => `${session.id}  ${shortDate(session.updated_at)}  ${session.query}`,
+    );
   });
 
 export const readSession = (input: {
@@ -605,6 +890,131 @@ export const readSession = (input: {
     yield* Console.log(
       yield* connection.use(connection.api.sessions.readSessionMarkdown({ params })),
     );
+  });
+
+export const exportSession = (input: {
+  readonly session: SessionId;
+  readonly vault: Option.Option<string>;
+  readonly format: "pdf" | "markdown";
+  readonly paper: PublicationPaper;
+  readonly messages: Option.Option<SessionExportSelection["messages"]>;
+  readonly output: string;
+  readonly json: boolean;
+}) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const params = { vault_id: vaultId, session_id: input.session };
+    const payload = Option.isSome(input.messages) ? { messages: input.messages.value } : {};
+    const bytes =
+      input.format === "pdf"
+        ? (yield* connection.use(
+            connection.api.sessions.prepareSessionExport({
+              params,
+              payload: { ...payload, paper: input.paper },
+            }),
+          )).pdf
+        : new TextEncoder().encode(
+            yield* connection.use(
+              connection.api.sessions.prepareSessionMarkdown({ params, payload }),
+            ),
+          );
+    yield* fs.writeFile(input.output, bytes, { flag: "wx", mode: 0o600 });
+    if (input.json) return yield* printJson({ path: input.output, format: input.format });
+    yield* Console.log(`Saved ${input.format === "pdf" ? "PDF" : "Markdown"} to ${input.output}`);
+  });
+
+export const search = (
+  input: ReadOptions & { readonly query: string; readonly path: Option.Option<string> },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const hits = yield* connection.use(
+      connection.api.documents.searchVault({
+        params: { vault_id: vaultId },
+        query: {
+          q: input.query,
+          ...Record.getSomes({ path: input.path }),
+        },
+      }),
+    );
+    if (input.json) return yield* printJson(hits);
+    if (hits.length === 0) return yield* Console.log("No matching passages.");
+    for (const hit of hits)
+      yield* Console.log(`${hit.path} [chunk ${hit.chunk_index}]  ${hit.heading}\n${hit.text}\n`);
+  });
+
+export const listArticles = (
+  input: ReadOptions &
+    PageParams & {
+      readonly contains: Option.Option<string>;
+      readonly tag: Option.Option<string>;
+      readonly run: Option.Option<Uuid>;
+      readonly sort: "title" | "linked" | "recent";
+    },
+) =>
+  Effect.gen(function* () {
+    if (input.sort === "recent" && [input.contains, input.tag, input.run].some(Option.isSome))
+      return yield* new Validation({
+        detail: "Recent article order cannot be combined with filters.",
+      });
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const params = { vault_id: vaultId };
+    const query = { limit: input.limit, offset: input.offset };
+    const page = yield* connection.use(
+      input.sort === "recent"
+        ? connection.api.wiki.listRecentWikiArticles({ params, query })
+        : connection.api.wiki.listWikiArticles({
+            params,
+            query: {
+              ...query,
+              sort: input.sort,
+              ...Record.getSomes({ contains: input.contains, tag: input.tag }),
+              ...Record.getSomes({ run: input.run }),
+            },
+          }),
+    );
+    yield* printPage(
+      page,
+      input.json,
+      "No articles match.",
+      (article) => `${article.file_path}  ${article.title}`,
+    );
+  });
+
+export const readChunks = (input: ReadOptions & ChunkRangeQuery) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const chunks = yield* connection.use(
+      connection.api.documents.readChunks({
+        params: { vault_id: vaultId },
+        query: { path: input.path, start: input.start, end: input.end },
+      }),
+    );
+    if (input.json) return yield* printJson(chunks);
+    if (chunks.length === 0) return yield* Console.log("No chunks in this range.");
+    for (const chunk of chunks)
+      yield* Console.log(
+        `${chunk.path} [chunk ${chunk.chunk_index}]  ${chunk.heading}\n${chunk.body}\n`,
+      );
+  });
+
+export const readLinks = (input: ReadOptions & { readonly path: string }) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const links = yield* connection.use(
+      connection.api.documents.readLinks({
+        params: { vault_id: vaultId },
+        query: { path: input.path },
+      }),
+    );
+    if (input.json) return yield* printJson(links);
+    for (const [kind, articles] of Object.entries(links)) {
+      yield* Console.log(`${kind}:`);
+      if (articles.length === 0) yield* Console.log("  None");
+      for (const article of articles)
+        yield* Console.log(`  ${article.file_path}  ${article.title}`);
+    }
   });
 
 export const readDocument = (input: {

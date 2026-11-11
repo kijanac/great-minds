@@ -1137,6 +1137,14 @@ current page).
 
 Errors: `403 Forbidden`, `422 Validation`.
 
+#### POST /v1/vaults/:vault_id/raw/sources/query
+
+Auth: required; read access to the vault.
+
+Filters source metadata using `SourceQuery`. All body fields are optional: `tags` (all must match), `author`, `genre`, `date_from`, `date_to`, `fields` (vault-defined metadata name/value pairs), `sort` (`date`, `date_desc`, `title`), `limit` (1–200, default 50), and `offset` (default 0). Dates accept `YYYY`, `YYYY-MM`, or `YYYY-MM-DD` precision. Unlike the catalog endpoint above, the response is an `items`/`pagination` page without facets.
+
+The same operation is available as `gm sources` and MCP `query_sources`. It reads metadata without invoking a model.
+
 #### GET /v1/vaults/:vault_id/raw/sources/:source_id
 
 Auth: required.
@@ -1925,6 +1933,14 @@ also includes wiki articles:
 
 Errors: `400 BadRequest`, `403 Forbidden`, `404 NotFound`, `422 Validation`.
 
+#### GET /v1/vaults/:vault_id/search
+
+Auth: required; read access to the vault and sponsorship for server models.
+
+Query parameters: `q` (required, 1–2000 characters) and optional `path` to restrict retrieval to one document. Returns an array of `SearchHit` objects: `path`, `chunk_index`, `heading`, `text`, and `score`. This retrieves passages rather than generating a prose answer and may invoke the embedding model.
+
+Available as `gm search <query> [--path <document>]` and MCP `search_vault` (whose query parameter is named `query` and whose result wraps the array in `hits`).
+
 #### GET /v1/vaults/:vault_id/chunks
 
 Auth: required.
@@ -2200,7 +2216,7 @@ Response: `200` JSON (`SessionExport`):
 
 The response is not `application/pdf`. Decode `pdf` for preview/download and reuse those bytes rather than calling the endpoint again. Uses `Cache-Control: private, no-store` and `X-Content-Type-Options: nosniff`. Cancellation interrupts rendering; clients must not automatically retry an interrupted preparation. An explicit new request prepares current saved content again.
 
-Private source links require access to the original vault. Images are linked descriptions in PDF, not fetched assets. See [publication setup and limitations](docs/conversations.md#publication).
+Private source links require access to the original vault. Images are linked descriptions in PDF, not fetched assets. See [publication setup and limitations](docs/conversations.md#publication) and [CLI/MCP equivalents](docs/conversations.md#api-cli-and-mcp).
 
 Errors: `403 Forbidden`, `404 NotFound`, `409 Conflict` (included content still generating/saving), `503 ServiceUnavailable` (required history unavailable, renderer busy, or PDF preparation failed), `422 Validation`. Ordinary authentication failures remain `401 Unauthorized`.
 
@@ -2530,6 +2546,8 @@ Errors: `404 NotFound` (unknown, expired, or revoked share),
 
 ## Integration guide
 
+For first-class commands, tools and their response conventions, see [Command line and MCP](docs/interfaces.md).
+
 This section walks through a complete integration: authenticate with an API
 key, list your vaults, create a reply, and consume its stream. It assumes a
 base URL stored in `$BASE` (for example `https://api.example.com`) and the
@@ -2767,6 +2785,7 @@ Every error body has the same shape:
 | GET | `/v1/vaults/:vault_id/wiki` | required | wiki |
 | GET | `/v1/vaults/:vault_id/wiki/recent` | required | wiki |
 | GET | `/v1/vaults/:vault_id/raw/sources` | required | sources |
+| POST | `/v1/vaults/:vault_id/raw/sources/query` | required | sources |
 | GET | `/v1/vaults/:vault_id/raw/sources/:source_id` | required | sources |
 | DELETE | `/v1/vaults/:vault_id/raw/sources/:source_id` | required | sources |
 | POST | `/v1/vaults/:vault_id/raw/sources/:source_id/deletion-request` | required | sources |
@@ -2795,6 +2814,7 @@ Every error body has the same shape:
 | GET | `/v1/costs` | required | costs |
 | GET | `/v1/vaults/:vault_id/costs` | required | costs |
 | GET | `/v1/vaults/:vault_id/doc` | required | documents |
+| GET | `/v1/vaults/:vault_id/search` | required | documents |
 | GET | `/v1/vaults/:vault_id/chunks` | required | documents |
 | GET | `/v1/vaults/:vault_id/links` | required | documents |
 | POST | `/v1/vaults/:vault_id/sessions/:session_id/exchanges/:exchange_id/promote` | required | sessions |

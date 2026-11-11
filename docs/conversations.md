@@ -35,6 +35,32 @@ Each server process permits one PDF render, rejecting contention rather than que
 
 Production Docker builds install verified fonts and Typst 0.15.1 with their applicable upstream notices. `PUBLIC_WEB_URL` must be the public HTTP(S) app URL for document links. `TYPST_BINARY` can override the compiler path; `TMPDIR` controls temporary plaintext placement. Hosted users install nothing. See [API.md](../API.md) for endpoints, response types and error statuses.
 
+### API, CLI and MCP
+
+All three interfaces use the same publication service and selection schema. Omit `messages` to export the whole saved conversation. To select messages, pass a nonempty array of `{ session_id, exchange_id, role }`, where role is `user` or `assistant`. Output follows saved conversation order, not request order. Explicit selections omit attached-note origin passages. The same ownership, vault access, readiness and history-integrity checks apply everywhere.
+
+The CLI resolves the vault and API key as it does for other commands:
+
+```sh
+gm session "$session" --json
+gm export "$session" --output conversation.pdf
+gm export "$session" --paper us-letter --output letter.pdf
+gm export "$session" --format markdown --output conversation.md
+gm export "$session" --messages "$messages" --output selected.pdf
+```
+
+`--messages` takes the JSON array described above. Get exchange IDs from `exId` in `gm session --json`, including the appropriate attached-note session ID. The default is PDF on A4. `--output` is required; files are created with owner-only permissions and existing files are never overwritten. Markdown is written as UTF-8, PDF as decoded bytes. `--json` prints a `{ path, format }` receipt instead of a human confirmation. API failures leave no output file, and Markdown never invokes the PDF renderer. `gm session "$session"` remains the whole-conversation Markdown-to-stdout command.
+
+MCP exposes one `read_session` tool at `/v1/mcp`, taking `vault_id`, `session_id` and an optional `format`. Its result is `{ data: ... }`, containing the following representation:
+
+| Format | Options | Result |
+| --- | --- | --- |
+| `json` (default) | None | The API's structured `SessionResponse`, with root events and attached-note identities |
+| `markdown` | Optional `messages` | `{ markdown }`, without PDF rendering |
+| `pdf` | Optional `messages`; `paper` defaults to `a4` | The API's `SessionExport`: title, preparation time, paper, Markdown and base64 PDF |
+
+Selection requires an explicit Markdown or PDF format; passing `messages` in JSON mode is rejected rather than ignored. Paper size is used only for PDF. The tool requires read access only, not ask/change permission. It does not call a model, publish content or store an artifact. Decode the `pdf` field to save a PDF; it is not a URL or server path. Domain failures use the existing MCP tool-error response; malformed parameters use the protocol's invalid-parameters error. Neither client retries an export automatically.
+
 ## Development checks
 
 Run from the workspace root:
