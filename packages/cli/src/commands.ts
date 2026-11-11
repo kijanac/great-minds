@@ -21,6 +21,12 @@ import {
   uploadKind,
   Validation,
   type ChunkRangeQuery,
+  type IngestedDocument,
+  type RawSource,
+  type ReferenceCreate,
+  type ReferencePromote,
+  type ReferenceUpdate,
+  type ReferenceIdParams,
   type PageParams,
   type PipelineRunFilter,
   type JobProgressSnapshot,
@@ -56,6 +62,8 @@ import {
 type ReadOptions = { readonly vault: Option.Option<string>; readonly json: boolean };
 
 const printJson = (value: unknown) => Console.log(JSON.stringify(value, null, 2));
+const printDocument = (document: IngestedDocument, json: boolean) =>
+  json ? printJson(document) : Console.log(`${document.file_path}  ${document.id}`);
 
 const printPage = <A>(
   page: {
@@ -578,6 +586,118 @@ export const add = (input: {
       `Added ${plural(files.length, "file")}; run ${job.id} (gm run ${job.id} to follow it again)`,
     );
     yield* followRun(connection, vaultId, job.id, input.json);
+  });
+
+export const addUrl = (
+  input: ReadOptions & {
+    readonly url: string;
+    readonly jobId: Option.Option<Uuid>;
+    readonly origin: Option.Option<string>;
+  },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const jobId = Option.getOrElse(input.jobId, newUuid);
+    yield* Console.error(
+      `Import request ${jobId} (reuse --job-id ${jobId} if its response is lost)`,
+    );
+    const job = yield* connection.use(
+      connection.api.jobs.startUrlJob({
+        params: { vault_id: vaultId },
+        payload: {
+          job_id: jobId,
+          url: input.url,
+          ...Option.match(input.origin, { onNone: () => ({}), onSome: (origin) => ({ origin }) }),
+        },
+      }),
+    );
+    yield* followRun(connection, vaultId, job.id, input.json);
+  });
+
+export const ingestText = (
+  input: ReadOptions & {
+    readonly file: string;
+    readonly dest: RawSource["dest"];
+    readonly origin: Option.Option<string>;
+  },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const fs = yield* FileSystem.FileSystem;
+    const document = yield* connection.use(
+      connection.api.ingest.ingestRaw({
+        params: { vault_id: vaultId },
+        payload: {
+          content: yield* fs.readFileString(input.file),
+          dest: input.dest,
+          ...Option.match(input.origin, { onNone: () => ({}), onSome: (origin) => ({ origin }) }),
+        },
+      }),
+    );
+    yield* printDocument(document, input.json);
+  });
+
+export const listReferences = (input: PageParams & { readonly json: boolean }) =>
+  Effect.gen(function* () {
+    const { connection } = yield* signedInConnection;
+    const page = yield* connection.use(
+      connection.api.refs.listReferences({
+        query: { limit: input.limit, offset: input.offset },
+      }),
+    );
+    yield* printPage(
+      page,
+      input.json,
+      "No personal references yet.",
+      (ref) => `${ref.id}  ${ref.file_path}  ${ref.title ?? ""}`,
+    );
+  });
+
+export const reference = (
+  input: { readonly json: boolean } & (
+    | ({ readonly action: "save" } & ReferenceCreate)
+    | ({ readonly action: "read" } & ReferencePromote)
+    | ({ readonly action: "rename" } & ReferenceIdParams & ReferenceUpdate)
+    | ({ readonly action: "delete" } & ReferenceIdParams)
+  ),
+) =>
+  Effect.gen(function* () {
+    const { connection } = yield* signedInConnection;
+    if (input.action === "delete") {
+      yield* connection.use(
+        connection.api.refs.deleteReference({ params: { reference_id: input.reference_id } }),
+      );
+      return yield* input.json
+        ? printJson({})
+        : Console.log(`Deleted reference ${input.reference_id}.`);
+    }
+    if (input.action === "read") {
+      const document = yield* connection.use(
+        connection.api.refs.resolveReference({ query: { path: input.path } }),
+      );
+      return yield* input.json ? printJson(document) : Console.log(document.body);
+    }
+    const document = yield* connection.use(
+      input.action === "save"
+        ? connection.api.refs.createReference({ payload: { url: input.url } })
+        : connection.api.refs.updateReference({
+            params: { reference_id: input.reference_id },
+            payload: { title: input.title },
+          }),
+    );
+    yield* printDocument(document, input.json);
+  });
+
+export const promoteReference = (input: ReadOptions & ReferencePromote) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const document = yield* connection.use(
+      connection.api.ingest.promoteReference({
+        params: { vault_id: vaultId },
+        payload: { path: input.path },
+      }),
+    );
+    yield* printDocument(document, input.json);
   });
 
 const shortDate = (date: Date) => date.toISOString().slice(0, 16).replace("T", " ");

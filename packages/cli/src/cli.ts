@@ -2,6 +2,7 @@ import {
   PageParamsQuery,
   PipelineRunFilter,
   PublicationPaper,
+  RawSource,
   SearchQuery,
   SourceQuery,
   SessionExportSelection,
@@ -13,6 +14,11 @@ import { Argument, Command, Flag } from "effect/cli";
 
 import {
   add,
+  addUrl,
+  ingestText,
+  listReferences,
+  reference,
+  promoteReference,
   callApi,
   exportSession,
   listSessions,
@@ -177,6 +183,77 @@ const retryCommand = Command.make(
   retryRun,
 ).pipe(
   Command.withDescription("Retry a failed or cancelled URL import and follow it (owner only)"),
+);
+
+const addUrlCommand = Command.make(
+  "add-url",
+  {
+    url: Argument.String("url"),
+    jobId: Flag.String("job-id").pipe(
+      Flag.withSchema(Uuid),
+      Flag.withDescription("New UUID; reuse for this same import after a lost response"),
+      Flag.optional,
+    ),
+    origin: Flag.String("origin").pipe(Flag.optional),
+    vault: vaultFlag,
+    json: jsonFlag,
+  },
+  addUrl,
+).pipe(Command.withDescription("Import a public URL into a vault and follow the resulting job"));
+
+const ingestCommand = Command.make(
+  "ingest",
+  {
+    file: Argument.Path("file", { mustExist: true }),
+    dest: Flag.String("dest").pipe(
+      Flag.withSchema(RawSource.fields.dest),
+      Flag.withDescription("raw/ Markdown path; the server appends a UUID"),
+    ),
+    origin: Flag.String("origin").pipe(Flag.optional),
+    vault: vaultFlag,
+    json: jsonFlag,
+  },
+  ingestText,
+).pipe(
+  Command.withDescription(
+    "Import Markdown directly from a file as a new source and queue an Update",
+  ),
+);
+
+const referencesCommand = Command.make(
+  "references",
+  {
+    limit: pageFlags.limit,
+    offset: pageFlags.offset,
+    json: jsonFlag,
+  },
+  listReferences,
+).pipe(Command.withDescription("List personal Reading Room references"));
+
+const referenceId = Argument.String("id").pipe(Argument.withSchema(Uuid));
+const referenceCommand = Command.make("reference").pipe(
+  Command.withDescription("Save, read and manage personal Reading Room references"),
+  Command.withSubcommands([
+    Command.make("save", { url: Argument.String("url"), json: jsonFlag }, (input) =>
+      reference({ ...input, action: "save" }),
+    ).pipe(Command.withDescription("Save a public URL without adding it to a vault")),
+    Command.make("read", { path: Argument.String("path"), json: jsonFlag }, (input) =>
+      reference({ ...input, action: "read" }),
+    ).pipe(Command.withDescription("Read a refs/ document")),
+    Command.make(
+      "rename",
+      { reference_id: referenceId, title: Argument.String("title"), json: jsonFlag },
+      (input) => reference({ ...input, title: input.title || null, action: "rename" }),
+    ).pipe(Command.withDescription("Change the title; an empty title clears it")),
+    Command.make("delete", { reference_id: referenceId, json: jsonFlag }, (input) =>
+      reference({ ...input, action: "delete" }),
+    ).pipe(Command.withDescription("Permanently delete a personal reference")),
+    Command.make(
+      "promote",
+      { path: Argument.String("path"), vault: vaultFlag, json: jsonFlag },
+      promoteReference,
+    ).pipe(Command.withDescription("Add a refs/ document to a vault and queue an Update")),
+  ]),
 );
 
 const sourcesCommand = Command.make(
@@ -349,6 +426,10 @@ const gm = Command.make("gm").pipe(
     vaultCommand,
     askCommand,
     addCommand,
+    addUrlCommand,
+    ingestCommand,
+    referencesCommand,
+    referenceCommand,
     updateCommand,
     runsCommand,
     runCommand,

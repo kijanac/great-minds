@@ -1639,11 +1639,12 @@ describe("M3.1 write endpoint integration", () => {
 
   it("ingests raw markdown with owner guards, frontmatter, hashes, and compile intents", async () => {
     const { aliceToken, bobToken } = currentFixture();
-    const raw = await api("POST", `/vaults/${id.vault}/ingest`, aliceToken, {
+    const input = {
       content: "# Raw Title\n\nRaw body paragraph.",
       dest: "raw/docs/raw-direct.md",
       origin: "fixture",
-    });
+    };
+    const raw = await api("POST", `/vaults/${id.vault}/ingest`, aliceToken, input);
     expect(raw.status).toBe(201);
     const rawResult = asRecord(raw.body);
     const rawId = decodeUuid(rawResult.id);
@@ -1687,6 +1688,15 @@ describe("M3.1 write endpoint integration", () => {
     });
     expect(asRecord(readById.body).body).toBe("# Raw Title\n\nRaw body paragraph. ^p0\n");
     expect(await countTable(compileIntents)).toBe(1);
+
+    const mcp = await openMcp(currentState().started.url, aliceToken);
+    const added = asRecord(
+      asRecord((await mcp.call("ingest_text", { vault_id: id.vault, ...input })).result)
+        .structuredContent,
+    );
+    const addedRead = await api("GET", `/vaults/${id.vault}/raw/sources/${added.id}`, aliceToken);
+    expect(addedRead.status).toBe(200);
+    expect(asRecord(addedRead.body).body).toBe(asRecord(readById.body).body);
 
     const editorDenied = await api("POST", `/vaults/${id.vault}/ingest`, bobToken, {
       content: "Denied",
@@ -2376,11 +2386,9 @@ describe("M3.1 write endpoint integration", () => {
         expect(await countTable(searchIndex)).toBe(0);
         expect(await countTable(compileIntents)).toBe(0);
 
-        const duplicate = await api("POST", "/me/refs", aliceToken, {
-          url: `${origin}/article`,
-        });
-        expect(duplicate.status).toBe(200);
-        expect(asRecord(duplicate.body).id).toBe(createdBody.id);
+        const mcp = await openMcp(currentState().started.url, aliceToken);
+        const duplicate = await mcp.call("save_reference", { url: `${origin}/article` });
+        expect(asRecord(duplicate.result).structuredContent).toEqual(createdBody);
         expect(articleRequests).toBe(1);
 
         const listed = await api("GET", "/me/refs?limit=10&offset=0", aliceToken);
@@ -2400,6 +2408,18 @@ describe("M3.1 write endpoint integration", () => {
           reference: createdBody,
         });
         expect(String(asRecord(read.body).body)).toContain("First personal paragraph");
+        expect(
+          asRecord((await mcp.call("list_references", { limit: 10, offset: 0 })).result)
+            .structuredContent,
+        ).toEqual(listed.body);
+        expect(
+          asRecord((await mcp.call("read_reference", { path: referencePath })).result)
+            .structuredContent,
+        ).toEqual(read.body);
+        const otherMcp = await openMcp(currentState().started.url, bobToken);
+        expect(
+          asRecord((await otherMcp.call("read_reference", { path: referencePath })).result).isError,
+        ).toBe(true);
 
         const otherUser = await api(
           "GET",
@@ -2454,8 +2474,10 @@ describe("M3.1 write endpoint integration", () => {
         expect(storyTwoRead.status).toBe(200);
         expect(asRecord(asRecord(storyTwoRead.body).reference).url).toBe(`${origin}/two/story`);
 
-        const deleted = await api("DELETE", `/me/refs/${createdBody.id}`, aliceToken);
-        expect(deleted.status).toBe(204);
+        const deleted = await mcp.call("delete_reference", { reference_id: createdBody.id });
+        expect(asRecord(deleted.result).structuredContent).toEqual({
+          reference_id: createdBody.id,
+        });
         expect(await userFileExists(id.alice, referencePath)).toBe(false);
         const deletedAgain = await api("DELETE", `/me/refs/${createdBody.id}`, aliceToken);
         expect(deletedAgain.status).toBe(404);
@@ -2573,14 +2595,12 @@ describe("M3.1 write endpoint integration", () => {
         expect(cleared.status).toBe(200);
         expect(asRecord(cleared.body).title).toBeNull();
 
-        const explicitNull = await api(
-          "PATCH",
-          `/me/refs/${asRecord(created.body).id}`,
-          aliceToken,
-          { title: null },
-        );
-        expect(explicitNull.status).toBe(200);
-        expect(asRecord(explicitNull.body).title).toBeNull();
+        const mcp = await openMcp(currentState().started.url, aliceToken);
+        const explicitNull = await mcp.call("rename_reference", {
+          reference_id: asRecord(created.body).id,
+          title: null,
+        });
+        expect(asRecord(asRecord(explicitNull.result).structuredContent).title).toBeNull();
 
         const otherUser = await api("PATCH", `/me/refs/${asRecord(created.body).id}`, bobToken, {
           title: "Sneaky",
@@ -2743,11 +2763,12 @@ describe("M3.1 write endpoint integration", () => {
         expect(await countTable(userDocuments)).toBe(1);
         expect(await readUserFile(id.alice, referencePath)).toBe(personalBefore);
 
-        const repeated = await api("POST", `/vaults/${id.vault}/ingest/reference`, aliceToken, {
+        const mcp = await openMcp(currentState().started.url, aliceToken);
+        const repeated = await mcp.call("promote_reference", {
+          vault_id: id.vault,
           path: referencePath,
         });
-        expect(repeated.status).toBe(200);
-        expect(repeated.body).toEqual(promoted.body);
+        expect(asRecord(repeated.result).structuredContent).toEqual(promoted.body);
         expect(await countTable(sourceDocuments)).toBe(1);
         expect(await countTable(compileIntents)).toBe(1);
 
@@ -2868,6 +2889,7 @@ describe("M3.1 write endpoint integration", () => {
           }),
         );
 
+        const mcp = await openMcp(currentState().started.url, aliceToken);
         const ownerSuccess = await api("POST", `/vaults/${id.vault}/jobs/url`, aliceToken, {
           job_id: id.m32UrlRun,
           url: `${origin}/ok#ignored-fragment`,
@@ -2886,6 +2908,12 @@ describe("M3.1 write endpoint integration", () => {
           (row) => row.currentPhase === "source_ingest" && row.phaseStatus === "completed",
         );
 
+        const mcpReplay = await mcp.call("ingest_url", {
+          vault_id: id.vault,
+          job_id: id.m32UrlRun,
+          url: `${origin}/ok#another-fragment`,
+        });
+        expect(asRecord(mcpReplay.result).structuredContent).toMatchObject({ id: id.m32UrlRun });
         const canonicalUrl = `${origin}/ok`;
         const sourceId = sourceIdForKey(id.vault, `url:${canonicalUrl}`);
         const sourcePath = `raw/docs/ok-${sourceId}.md`;
@@ -3089,7 +3117,6 @@ describe("M3.1 write endpoint integration", () => {
           (row) => row.status === "failed",
         );
         expect(retriedRun.error).toContain("Failed to fetch URL: HTTP 500");
-        const mcp = await openMcp(currentState().started.url, aliceToken);
         const repeated = await mcp.call("retry_url_job", {
           vault_id: id.vault,
           job_id: id.m32UrlFailRun,

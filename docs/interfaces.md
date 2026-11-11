@@ -39,6 +39,22 @@ Job lists share the domain's status filters and pagination. MCP start/retry oper
 
 Only failed/cancelled URL imports have a retry operation. A retry has a new UUID (`next_job_id` in MCP); reuse that UUID if repeating the same retry after losing its response. The CLI generates and prints one before submitting unless `--job-id` supplies it. File uploads retain their existing batch recovery, while `start_update`/`gm update` start new work and must not be blindly repeated after an uncertain response. Starting/retrying paid work requires sponsorship; cancellation does not. All three require vault ownership and the key's change permission.
 
+## Ingestion and personal references
+
+| Capability | CLI | MCP |
+| --- | --- | --- |
+| Local files/folders | `gm add <paths...>` | Use the CLI/API upload lifecycle |
+| Import a URL into a vault | `gm add-url <url> [--job-id <uuid>]` | `ingest_url` |
+| Import Markdown directly | `gm ingest <file> --dest raw/docs/name.md` | `ingest_text` |
+| Personal reference list | `gm references` | `list_references` |
+| Save/read a personal reference | `gm reference save <url>`, `gm reference read <refs/path.md>` | `save_reference`, `read_reference` |
+| Rename/delete a reference | `gm reference rename <id> <title>`, `gm reference delete <id>` | `rename_reference`, `delete_reference` |
+| Add a reference to a vault | `gm reference promote <refs/path.md>` | `promote_reference` |
+
+Personal references belong to the signed-in account, not a selected vault. Saving one fetches its public URL but does not start an Update; repeat saves reuse the existing reference. Renaming changes only its title (empty CLI title / MCP null clears it). Deletion has no undo and does not remove copies already promoted into vaults. Promotion requires vault ownership and sponsorship and reuses an existing promoted copy. All adapters retain the API's existing personal-reference permissions.
+
+URL imports use a caller-chosen `job_id` in MCP; the CLI generates and prints it unless supplied. Reuse it only for the same URL/origin request after a lost response. Markdown imports create a new source on every call and return its identity/path, with normal server metadata and paragraph anchors; do not blindly retry them. Neither transport gains access to private-network URLs. MCP does not read file paths on the caller's computer; use `gm add` for local files.
+
 ## Permissions
 
 CLI and MCP API keys remain subject to both key scope and vault membership/role checks. Reading is not permission to ask paid questions or change content. The server distinguishes `read`, `ask`, `change`, and browser-session-only `account` operations. MCP maps tools to the canonical HTTP endpoint permission/model policies rather than keeping another policy list. A raw `gm api` call does not bypass these checks.

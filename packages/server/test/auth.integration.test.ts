@@ -1326,6 +1326,14 @@ describe("auth HTTP integration", () => {
       "start_update",
       "cancel_job",
       "retry_url_job",
+      "ingest_url",
+      "ingest_text",
+      "list_references",
+      "read_reference",
+      "save_reference",
+      "rename_reference",
+      "delete_reference",
+      "promote_reference",
       "ask",
     ]);
     expect(tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);
