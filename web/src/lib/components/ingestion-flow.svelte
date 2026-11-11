@@ -11,9 +11,11 @@
   import { Button } from "#lib/components/ui/button/index.ts";
   import { Input } from "#lib/components/ui/input/index.ts";
   import { newUuid } from "@great-minds/client";
+  import { useFileUpload } from "#lib/hooks/use-file-ingest.svelte.ts";
   import type { DroppedFile } from "#lib/types.ts";
 
   const HASH_CONCURRENCY = 4;
+  const startUpload = useFileUpload();
 
   interface FileBase {
     id: Uuid;
@@ -381,9 +383,8 @@
       const batch = await createFileIngestBatch(uploadFiles);
       if (!ownsNavigation()) return;
       files = [];
-      await goto(`/pipeline/runs/${batch.id}`, {
-        state: { uploadFiles, batch },
-      });
+      startUpload(batch, uploadFiles);
+      await goto(`/pipeline/runs/${batch.id}`);
     } catch (error) {
       if (!ownsNavigation()) return;
       importError = error instanceof Error ? error.message : "Unable to start file upload";
