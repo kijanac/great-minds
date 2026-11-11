@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { NodeServices } from "@effect/platform-node";
-import { citationsOf, Uuid } from "@great-minds/domain";
+import { citationsOf, SessionId, SessionExportSelection, Uuid } from "@great-minds/domain";
 import {
   Cause,
   ConfigProvider,
@@ -23,6 +23,7 @@ import {
   add,
   ask,
   callApi,
+  exportSession,
   listRuns,
   login,
   logout,
@@ -579,6 +580,79 @@ describe("gm update", () => {
 });
 
 describe("reading", () => {
+  it.each(["pdf", "markdown"] as const)(
+    "exports %s through the shared API without overwriting private files",
+    async (format) => {
+      const session = SessionId.make("conversation");
+      const pdf = Buffer.from([37, 80, 68, 70, 45, 0, 255]);
+      const markdown = "# Conversation\n\nCafé — a cited answer.[^1]\n";
+      const selection = Schema.decodeUnknownSync(SessionExportSelection)({
+        messages: [{ session_id: session, exchange_id: replyId, role: "assistant" }],
+      });
+      route = (request) => {
+        if (request.path === `/v1/vaults/${vaultId}`) return vaultDetail();
+        if (request.path.endsWith("/export"))
+          return json(200, {
+            title: "Conversation",
+            prepared_at: now,
+            paper: "us-letter",
+            markdown,
+            pdf: pdf.toString("base64"),
+          });
+        if (request.path.endsWith("/markdown"))
+          return new Response(markdown, { headers: { "content-type": "text/markdown" } });
+        return json(404, {});
+      };
+      const env = { GM_API_KEY: "gm_export", GM_VAULT: vaultId, GM_API_URL: apiUrl };
+      const input = {
+        session,
+        vault: Option.none(),
+        format,
+        paper: "us-letter" as const,
+        messages: Option.some(selection.messages),
+        output: join(directory, `selected.${format}`),
+        json: true,
+      };
+      await run(exportSession(input), env);
+      expect(requests.at(-1)).toMatchObject({
+        method: "POST",
+        auth: "Bearer gm_export",
+        path: `/v1/vaults/${vaultId}/sessions/${session}/${format === "pdf" ? "export" : "markdown"}`,
+      });
+      expect(JSON.parse(requests.at(-1)!.body)).toEqual({
+        ...selection,
+        ...(format === "pdf" ? { paper: "us-letter" } : {}),
+      });
+      expect(await readFile(input.output)).toEqual(format === "pdf" ? pdf : Buffer.from(markdown));
+      expect((await stat(input.output)).mode & 0o777).toBe(0o600);
+      expect(stdout).toEqual([JSON.stringify({ path: input.output, format }, null, 2)]);
+      expect(stderr).toEqual([]);
+      await writeFile(input.output, "keep this file");
+      expect(Exit.isFailure(await exit(exportSession(input), env))).toBe(true);
+      expect(await readFile(input.output, "utf8")).toBe("keep this file");
+      await run(
+        exportSession({
+          ...input,
+          messages: Option.none(),
+          output: join(directory, `whole.${format}`),
+        }),
+        env,
+      );
+      expect(JSON.parse(requests.at(-1)!.body)).toEqual(
+        format === "pdf" ? { paper: "us-letter" } : {},
+      );
+      route = (request) =>
+        request.path === `/v1/vaults/${vaultId}`
+          ? vaultDetail()
+          : json(409, { _tag: "Conflict", detail: "Still saving" });
+      const failedOutput = join(directory, "failed");
+      expect(await failureTag(exportSession({ ...input, output: failedOutput }), env)).toBe(
+        "Conflict",
+      );
+      await expect(stat(failedOutput)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
   it("gm read prints a document's text and says when it is archived", async () => {
     await saveCredentials({
       api_url: apiUrl,
@@ -650,6 +724,20 @@ describe("the gm command", { timeout: 30_000 }, () => {
       },
       encoding: "utf8",
     });
+
+  it("rejects invalid export arguments before connecting", () => {
+    expect(gm(["export", "--help"]).status).toBe(0);
+    for (const args of [[], ["--messages", "[]"], ["--messages", "not-json"]]) {
+      const result = gm([
+        "export",
+        "s",
+        ...args,
+        ...(args.length === 0 ? [] : ["--output", join(directory, "export")]),
+      ]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).not.toContain("not signed in");
+    }
+  });
 
   it("exits 0 for help, 1 with a one-line error for a failure", () => {
     expect(gm([]).status).toBe(0);

@@ -2200,7 +2200,7 @@ Response: `200` JSON (`SessionExport`):
 
 The response is not `application/pdf`. Decode `pdf` for preview/download and reuse those bytes rather than calling the endpoint again. Uses `Cache-Control: private, no-store` and `X-Content-Type-Options: nosniff`. Cancellation interrupts rendering; clients must not automatically retry an interrupted preparation. An explicit new request prepares current saved content again.
 
-Private source links require access to the original vault. Images are linked descriptions in PDF, not fetched assets. See [publication setup and limitations](docs/conversations.md#publication).
+Private source links require access to the original vault. Images are linked descriptions in PDF, not fetched assets. See [publication setup and limitations](docs/conversations.md#publication) and [CLI/MCP equivalents](docs/conversations.md#api-cli-and-mcp).
 
 Errors: `403 Forbidden`, `404 NotFound`, `409 Conflict` (included content still generating/saving), `503 ServiceUnavailable` (required history unavailable, renderer busy, or PDF preparation failed), `422 Validation`. Ordinary authentication failures remain `401 Unauthorized`.
 

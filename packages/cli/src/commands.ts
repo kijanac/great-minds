@@ -20,6 +20,8 @@ import {
   isUuid,
   uploadKind,
   type JobProgressSnapshot,
+  type PublicationPaper,
+  type SessionExportSelection,
   type ReplySource,
   type RunOutcome,
   type SessionId,
@@ -605,6 +607,38 @@ export const readSession = (input: {
     yield* Console.log(
       yield* connection.use(connection.api.sessions.readSessionMarkdown({ params })),
     );
+  });
+
+export const exportSession = (input: {
+  readonly session: SessionId;
+  readonly vault: Option.Option<string>;
+  readonly format: "pdf" | "markdown";
+  readonly paper: PublicationPaper;
+  readonly messages: Option.Option<SessionExportSelection["messages"]>;
+  readonly output: string;
+  readonly json: boolean;
+}) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const params = { vault_id: vaultId, session_id: input.session };
+    const payload = Option.isSome(input.messages) ? { messages: input.messages.value } : {};
+    const bytes =
+      input.format === "pdf"
+        ? (yield* connection.use(
+            connection.api.sessions.prepareSessionExport({
+              params,
+              payload: { ...payload, paper: input.paper },
+            }),
+          )).pdf
+        : new TextEncoder().encode(
+            yield* connection.use(
+              connection.api.sessions.prepareSessionMarkdown({ params, payload }),
+            ),
+          );
+    yield* fs.writeFile(input.output, bytes, { flag: "wx", mode: 0o600 });
+    if (input.json) return yield* printJson({ path: input.output, format: input.format });
+    yield* Console.log(`Saved ${input.format === "pdf" ? "PDF" : "Markdown"} to ${input.output}`);
   });
 
 export const readDocument = (input: {

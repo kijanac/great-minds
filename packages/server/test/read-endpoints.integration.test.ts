@@ -2446,6 +2446,124 @@ describe("read-only HTTP integration", () => {
     expect(pdfRenders).toBe(1);
   });
 
+  it("exposes the same private session and export contracts through MCP with a read-only key", async () => {
+    const { aliceToken } = currentFixture();
+    const created = await api("POST", "/auth/api-keys", aliceToken, {
+      label: "export reader",
+      vault_ids: [id.vaultAlpha],
+      can_ask: false,
+      can_change: false,
+    });
+    expect(created.status).toBe(201);
+    const headers = new Headers({
+      authorization: `Bearer ${asRecord(created.body).raw_key}`,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "mcp-protocol-version": "2025-06-18",
+    });
+    let requestId = 0;
+    const request = async (method: string, params: unknown) => {
+      const response = await fetch(`${currentState().started.url}/v1/mcp`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          ...(method.startsWith("notifications/") ? {} : { id: ++requestId }),
+          method,
+          params,
+        }),
+      });
+      expect(response.ok).toBe(true);
+      const session = response.headers.get("mcp-session-id");
+      if (session) headers.set("mcp-session-id", session);
+      const text = await response.text();
+      const data = response.headers.get("content-type")?.includes("event-stream")
+        ? text
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trim())
+            .filter(Boolean)
+            .at(-1)
+        : text;
+      return asRecord(JSON.parse(data || "{}"));
+    };
+    await request("initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "export-test", version: "1" },
+    });
+    await request("notifications/initialized", {});
+    const params = { vault_id: id.vaultAlpha, session_id: id.sessionAliceMain };
+    const call = (name: string, args: Record<string, unknown> = params) =>
+      request("tools/call", { name, arguments: args });
+    const content = (message: Record<string, unknown>) =>
+      asRecord(asRecord(message.result).structuredContent);
+    const path = sessionPath();
+    const saved = content(await call("get_session"));
+    expect(saved).toEqual((await api("GET", path, aliceToken)).body);
+    const session = Schema.decodeUnknownSync(SessionResponse)(saved);
+    const root = session.events.find((event) => event.type === "exchange")!;
+    const note = session.threads.find((thread) => thread.availability === "available")!;
+    if (note.availability !== "available") throw new Error("Expected an available note");
+    const reply = note.events.find((event) => event.type === "exchange")!;
+    const messages = [
+      { session_id: note.session.id, exchange_id: reply.exId, role: "assistant" },
+      { session_id: session.id, exchange_id: root.exId, role: "user" },
+    ];
+    expect(content(await call("read_session")).markdown).toBe(
+      await (await rawApi("GET", `${path}/markdown`, aliceToken)).text(),
+    );
+    const selected = content(await call("read_session", { ...params, messages })).markdown;
+    expect(selected).toBe(
+      await (await rawApi("POST", `${path}/markdown`, aliceToken, { messages })).text(),
+    );
+    expect(pdfRenders).toBe(0);
+    const prepared = content(
+      await call("export_session", { ...params, messages, paper: "us-letter" }),
+    );
+    expect(prepared).toEqual(
+      (await api("POST", `${path}/export`, aliceToken, { messages, paper: "us-letter" })).body,
+    );
+    expect(prepared.markdown).toBe(selected);
+    expect(new TextDecoder().decode(Schema.decodeUnknownSync(SessionExport)(prepared).pdf)).toBe(
+      "%PDF-controlled-renderer",
+    );
+    const whole = content(await call("export_session"));
+    expect(whole.paper).toBe("a4");
+    expect(whole.markdown).toBe(content(await call("read_session")).markdown);
+    for (const tool of ["read_session", "get_session", "export_session"]) {
+      expect(
+        asRecord((await call(tool, { ...params, session_id: id.sessionBob })).result).isError,
+      ).toBe(true);
+      expect(
+        asRecord((await call(tool, { ...params, vault_id: id.vaultBeta })).result).isError,
+      ).toBe(true);
+    }
+    for (const tool of ["read_session", "export_session"]) {
+      expect((await call(tool, { ...params, messages: [] })).error).toMatchObject({ code: -32602 });
+      expect(
+        (await call(tool, { ...params, messages: [{ ...messages[0], role: "unknown" }] })).error,
+      ).toMatchObject({ code: -32602 });
+      expect(
+        asRecord(
+          (
+            await call(tool, {
+              ...params,
+              messages: [{ ...messages[0], exchange_id: id.vaultBeta }],
+            })
+          ).result,
+        ).isError,
+      ).toBe(true);
+    }
+    expect((await call("export_session", { ...params, paper: "invalid" })).error).toMatchObject({
+      code: -32602,
+    });
+    await writeFile(historyFile(id.sessionAliceBtw), "{invalid}\n");
+    for (const tool of ["read_session", "export_session"])
+      expect(asRecord((await call(tool)).result).isError).toBe(true);
+    expect(pdfRenders).toBe(3);
+  });
+
   it("pages every source exactly once when a bulk import gives sources tied timestamps", async () => {
     const { aliceToken } = currentFixture();
     const sources = Array.from({ length: 137 }, (_, index) => ({

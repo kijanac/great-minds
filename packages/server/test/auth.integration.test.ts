@@ -1308,6 +1308,8 @@ describe("auth HTTP integration", () => {
       "query_sources",
       "list_sessions",
       "read_session",
+      "get_session",
+      "export_session",
       "ask",
     ]);
     expect(tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);

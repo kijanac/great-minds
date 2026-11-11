@@ -1,9 +1,11 @@
-import { SessionId, Uuid } from "@great-minds/domain";
+import { PublicationPaper, SessionExportSelection, SessionId, Uuid } from "@great-minds/domain";
+import { Schema } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 
 import {
   add,
   callApi,
+  exportSession,
   listSessions,
   listSources,
   readDocument,
@@ -182,18 +184,49 @@ const sessionsCommand = Command.make(
   listSessions,
 ).pipe(Command.withDescription("List recent sessions, newest first"));
 
+const sessionArgument = Argument.String("id").pipe(
+  Argument.withSchema(SessionId),
+  Argument.withDescription("Session id (from gm sessions or gm ask)"),
+);
+
 const sessionCommand = Command.make(
   "session",
   {
-    session: Argument.String("id").pipe(
-      Argument.withSchema(SessionId),
-      Argument.withDescription("Session id (from gm sessions or gm ask)"),
-    ),
+    session: sessionArgument,
     vault: vaultFlag,
     json: jsonFlag,
   },
   readSession,
 ).pipe(Command.withDescription("Print a session as markdown"));
+
+const exportCommand = Command.make(
+  "export",
+  {
+    session: sessionArgument,
+    vault: vaultFlag,
+    format: Flag.Literals("format", ["pdf", "markdown"]).pipe(Flag.withDefault("pdf" as const)),
+    paper: Flag.Literals("paper", PublicationPaper.literals).pipe(
+      Flag.withDescription("PDF paper size (default: a4; ignored for Markdown)"),
+      Flag.withDefault("a4" as const),
+    ),
+    messages: Flag.String("messages").pipe(
+      Flag.withSchema(Schema.fromJsonString(SessionExportSelection.fields.messages)),
+      Flag.withDescription(
+        "JSON array of {session_id, exchange_id, role}; omit for all messages. IDs: gm session <id> --json",
+      ),
+      Flag.optional,
+    ),
+    output: Flag.Path("output").pipe(
+      Flag.withDescription("New file to save; existing files are never overwritten"),
+    ),
+    json: jsonFlag,
+  },
+  exportSession,
+).pipe(
+  Command.withDescription(
+    "Save a conversation or selected messages as PDF or Markdown (default: PDF)",
+  ),
+);
 
 const readCommand = Command.make(
   "read",
@@ -236,6 +269,7 @@ const gm = Command.make("gm").pipe(
     sourcesCommand,
     sessionsCommand,
     sessionCommand,
+    exportCommand,
     readCommand,
     apiCommand,
   ]),

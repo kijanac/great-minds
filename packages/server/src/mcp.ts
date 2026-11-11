@@ -5,6 +5,11 @@ import {
   CurrentAuth,
   type Permission,
   SearchHit,
+  PublicationPaper,
+  SessionExport,
+  SessionExportRequest,
+  SessionExportSelection,
+  SessionResponse,
   SessionId,
   SourceQuery,
   SourceQueryPage,
@@ -133,9 +138,41 @@ const ListSessions = Tool.make("list_sessions", {
   .annotate(Tool.OpenWorld, false);
 
 const ReadSession = Tool.make("read_session", {
-  description: "Read a session's questions and answers as markdown.",
-  parameters: Schema.Struct({ vault_id: vaultId, session_id: SessionId }),
+  description:
+    "Read a conversation as Markdown, optionally selecting individual messages. Omit messages for the whole conversation. Get message identities with get_session.",
+  parameters: Schema.Struct({
+    vault_id: vaultId,
+    session_id: SessionId,
+    ...SessionExportSelection.fields,
+  }),
   success: Schema.Struct({ markdown: Schema.String }),
+  failure: ToolFailed,
+  dependencies: [CurrentAuth],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.OpenWorld, false);
+
+const GetSession = Tool.make("get_session", {
+  description:
+    "Read a conversation's structured events and attached notes. Each exchange has an exId, query (user) and answer (assistant). Select messages using session_id, exchange_id (exId), and role with read_session or export_session.",
+  parameters: Schema.Struct({ vault_id: vaultId, session_id: SessionId }),
+  success: SessionResponse,
+  failure: ToolFailed,
+  dependencies: [CurrentAuth],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.OpenWorld, false);
+
+const ExportSession = Tool.make("export_session", {
+  description:
+    "Prepare a conversation as PDF and matching Markdown. Returns PDF bytes as base64 in pdf; decode them to save a .pdf file. Omit messages for everything, or select identities from get_session. For Markdown without PDF rendering, use read_session. Does not publish, save to the vault, or call a model.",
+  parameters: Schema.Struct({
+    vault_id: vaultId,
+    session_id: SessionId,
+    ...SessionExportRequest.fields,
+    paper: Schema.optionalKey(PublicationPaper),
+  }),
+  success: SessionExport,
   failure: ToolFailed,
   dependencies: [CurrentAuth],
 })
@@ -167,6 +204,8 @@ const GreatMindsTools = Toolkit.make(
   QuerySources,
   ListSessions,
   ReadSession,
+  GetSession,
+  ExportSession,
   Ask,
 );
 
@@ -178,6 +217,8 @@ const toolPermissions: Readonly<Record<string, Permission>> = {
   query_sources: "read",
   list_sessions: "read",
   read_session: "read",
+  get_session: "read",
+  export_session: "read",
   ask: "ask",
 };
 
@@ -255,9 +296,22 @@ const ToolHandlers = GreatMindsTools.toLayer(
             })),
           };
         }).pipe(Effect.mapError(failed)),
-      read_session: ({ vault_id, session_id }) =>
+      read_session: ({ vault_id, session_id, ...selection }) =>
         Effect.gen(function* () {
-          return { markdown: yield* exports.readMarkdown(yield* userId, vault_id, session_id) };
+          return {
+            markdown: yield* exports.readMarkdown(yield* userId, vault_id, session_id, selection),
+          };
+        }).pipe(Effect.mapError(failed)),
+      get_session: ({ vault_id, session_id }) =>
+        Effect.gen(function* () {
+          return yield* sessions.readSession(yield* userId, vault_id, session_id);
+        }).pipe(Effect.mapError(failed)),
+      export_session: ({ vault_id, session_id, paper, ...selection }) =>
+        Effect.gen(function* () {
+          return yield* exports.prepare(yield* userId, vault_id, session_id, {
+            ...selection,
+            paper: paper ?? "a4",
+          });
         }).pipe(Effect.mapError(failed)),
       ask: ({ vault_id, question, session_id }) =>
         Effect.gen(function* () {

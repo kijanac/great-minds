@@ -14,7 +14,7 @@ How Great Minds turns a vault's sources into a wiki, as the code runs today (Nov
 
 ## Surfaces
 
-One HTTP API (`packages/domain` defines it, `packages/server` serves it). The web app (`web`), the `gm` command line (`packages/cli`) and any future MCP adapter are sibling clients of that API, sharing `packages/client`. Operators administer a server with the `great-minds` admin CLI (`packages/server/src/main.ts`: `serve`, `migrate`, `users`, `keys`).
+One HTTP API (`packages/domain` defines it, `packages/server` serves it). The web app (`web`) and `gm` command line (`packages/cli`) are sibling clients sharing `packages/client`. The server-hosted MCP adapter (`packages/server/src/mcp.ts`, `/v1/mcp`) calls the same application services as the HTTP handlers, reusing domain schemas and enforcing API-key permissions; it does not make loopback HTTP calls. Conversation export follows this same split. Operators administer a server with the `great-minds` admin CLI (`packages/server/src/main.ts`: `serve`, `migrate`, `users`, `keys`).
 
 ## Per-vault configuration
 
