@@ -390,7 +390,9 @@ describe("gm ask", () => {
       if (request.path === `/v1/vaults/${vaultId}`) return vaultDetail();
       if (request.method === "POST" && request.path === `/v1/vaults/${vaultId}/replies`)
         return json(202, { reply_id: replyId, session_id: "session-1" });
-      if (request.path === `/v1/vaults/${vaultId}/replies/${replyId}/stream`)
+      if (request.path === `/v1/vaults/${vaultId}/replies/${replyId}/stream`) {
+        expect(stderr[0]).toContain(`gm reply stop ${replyId} --vault ${vaultId}`);
+        expect(stderr[1]).toContain("session session-1");
         return events([
           reply("running", "", [source("search", "liquidationism", null)]),
           reply("completed", "It was a tendency ([Liquidationism](wiki/liquidationism.md)).", [
@@ -398,6 +400,7 @@ describe("gm ask", () => {
             source("article", "wiki/liquidationism.md", "Liquidationism"),
           ]),
         ]);
+      }
       return json(404, {});
     };
     await run(
@@ -414,7 +417,7 @@ describe("gm ask", () => {
       question: "What was liquidationism?",
       session: { kind: "new", conversation_kind: "session" },
     });
-    expect(stderr[0]).toBe('  searching for "liquidationism"');
+    expect(stderr[2]).toBe('  searching for "liquidationism"');
     expect(stdout).toEqual([
       "It was a tendency ([Liquidationism](wiki/liquidationism.md)).",
       "",

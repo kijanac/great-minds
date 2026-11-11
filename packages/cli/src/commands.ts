@@ -21,6 +21,7 @@ import {
   uploadKind,
   Validation,
   type ChunkRangeQuery,
+  type CreateReplyResponse,
   type IngestedDocument,
   type Proposal,
   type ProposalOverview,
@@ -303,26 +304,18 @@ const describeStep = (source: ReplySource) => {
   }
 };
 
-export const ask = (input: {
-  readonly question: string;
-  readonly session: Option.Option<SessionId>;
-  readonly vault: Option.Option<string>;
-  readonly json: boolean;
-}) =>
+const followAnswer = (
+  connection: Connection,
+  vaultId: Uuid,
+  created: CreateReplyResponse,
+  json: boolean,
+) =>
   Effect.gen(function* () {
-    const { connection, vaultId } = yield* vaultConnection(input.vault);
-    const created = yield* connection.use(
-      connection.api.replies.createReply({
-        params: { vault_id: vaultId },
-        payload: replyRequest({
-          question: input.question,
-          exchangeId: newUuid(),
-          originScope: "vault",
-          conversation: Option.isSome(input.session)
-            ? { kind: "existing", id: input.session.value }
-            : { kind: "new", conversationKind: "session", idempotencyKey: newUuid() },
-        }),
-      }),
+    yield* Console.error(
+      `reply ${created.reply_id}  (stop: gm reply stop ${created.reply_id} --vault ${vaultId})`,
+    );
+    yield* Console.error(
+      `session ${created.session_id}  (follow up: gm ask --vault ${vaultId} --session ${created.session_id} "…")`,
     );
     const shown = new Set<string>();
     const reply = yield* lastSnapshot(
@@ -342,10 +335,10 @@ export const ask = (input: {
       ),
       "answer",
     );
-    if (input.json) yield* printJson(reply);
+    if (json) yield* printJson(reply);
     if (reply.status !== "completed")
       return yield* new ReplyNotCompleted({ status: reply.status, error: reply.error });
-    if (!input.json) {
+    if (!json) {
       yield* Console.log(reply.answer.trim());
       const cited = reply.citations;
       if (cited.length > 0) {
@@ -355,9 +348,84 @@ export const ask = (input: {
           yield* Console.log(`  [${citation.n}] ${citation.label}  ${citation.path}`);
       }
     }
-    yield* Console.error(
-      `session ${reply.session_id}  (follow up: gm ask --session ${reply.session_id} "…")`,
+  });
+
+export const ask = (
+  input: ReadOptions & { readonly question: string; readonly session: Option.Option<SessionId> },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const created = yield* connection.use(
+      connection.api.replies.createReply({
+        params: { vault_id: vaultId },
+        payload: replyRequest({
+          question: input.question,
+          exchangeId: newUuid(),
+          originScope: "vault",
+          conversation: Option.isSome(input.session)
+            ? { kind: "existing", id: input.session.value }
+            : { kind: "new", conversationKind: "session", idempotencyKey: newUuid() },
+        }),
+      }),
     );
+    yield* followAnswer(connection, vaultId, created, input.json);
+  });
+
+export const stopReply = (input: ReadOptions & { readonly reply: Uuid }) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    yield* connection.use(
+      connection.api.replies.stopReply({ params: { vault_id: vaultId, reply_id: input.reply } }),
+    );
+    yield* input.json
+      ? printJson({ reply_id: input.reply })
+      : Console.log(`Stop requested for ${input.reply}.`);
+  });
+
+export const retryReply = (
+  input: ReadOptions & { readonly reply: Uuid; readonly replyId: Option.Option<Uuid> },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const replyId = Option.getOrElse(input.replyId, newUuid);
+    yield* Console.error(
+      `Retry request ${replyId} (reuse --reply-id ${replyId} if its response is lost)`,
+    );
+    const created = yield* connection.use(
+      connection.api.replies.retryReply({
+        params: { vault_id: vaultId, reply_id: input.reply },
+        payload: { reply_id: replyId },
+      }),
+    );
+    yield* followAnswer(connection, vaultId, created, input.json);
+  });
+
+export const continueSession = (input: ReadOptions & { readonly session: SessionId }) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    yield* connection.use(
+      connection.api.sessions.continueAsSession({
+        params: { vault_id: vaultId, session_id: input.session },
+      }),
+    );
+    yield* input.json
+      ? printJson({ session_id: input.session })
+      : Console.log(`Continue with: gm ask --vault ${vaultId} --session ${input.session} "…"`);
+  });
+
+export const promoteAnswer = (
+  input: ReadOptions & { readonly session: SessionId; readonly exchange: Uuid },
+) =>
+  Effect.gen(function* () {
+    const { connection, vaultId } = yield* vaultConnection(input.vault);
+    const result = yield* connection.use(
+      connection.api.sessions.promoteSessionExchange({
+        params: { vault_id: vaultId, session_id: input.session, exchange_id: input.exchange },
+      }),
+    );
+    yield* input.json
+      ? printJson(result)
+      : Console.log(`${result.mode}  ${result.path}  ${result.document_id ?? result.proposal_id}`);
   });
 
 const outcomeLines = (outcome: RunOutcome) => {

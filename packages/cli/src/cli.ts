@@ -36,6 +36,10 @@ import {
   readLinks,
   readDocument,
   readSession,
+  continueSession,
+  promoteAnswer,
+  stopReply,
+  retryReply,
   ask,
   followExistingRun,
   listRuns,
@@ -121,7 +125,7 @@ const gm = Command.make("gm").pipe(
         question: Argument.String("question").pipe(Argument.withDescription("Your question")),
         session: Flag.String("session").pipe(
           Flag.withSchema(SessionId),
-          Flag.withDescription("Continue an earlier session (its id is printed after each answer)"),
+          Flag.withDescription("Continue an earlier session (its id is printed before waiting)"),
           Flag.optional,
         ),
         ...vaultFlags,
@@ -131,6 +135,27 @@ const gm = Command.make("gm").pipe(
       Command.withDescription(
         "Ask the vault a question; shows the agent's steps as it works, then the answer and its sources",
       ),
+    ),
+    Command.make("reply").pipe(
+      Command.withDescription("Stop or retry one of your replies"),
+      Command.withSubcommands([
+        Command.make("stop", { reply: idArgument, ...vaultFlags }, stopReply).pipe(
+          Command.withDescription("Request a stop; already settled replies are unchanged"),
+        ),
+        Command.make(
+          "retry",
+          {
+            reply: idArgument,
+            replyId: Flag.String("reply-id").pipe(
+              Flag.withSchema(Uuid),
+              Flag.withDescription("New UUID; reuse for this same retry after a lost response"),
+              Flag.optional,
+            ),
+            ...vaultFlags,
+          },
+          retryReply,
+        ).pipe(Command.withDescription("Retry a failed reply and follow its answer")),
+      ]),
     ),
     Command.make(
       "add",
@@ -357,6 +382,28 @@ const gm = Command.make("gm").pipe(
     ),
     Command.make("session", { session: sessionArgument, ...vaultFlags }, readSession).pipe(
       Command.withDescription("Print a session as markdown"),
+    ),
+    Command.make(
+      "continue-session",
+      { session: sessionArgument, ...vaultFlags },
+      continueSession,
+    ).pipe(
+      Command.withDescription(
+        "Make a saved side note standalone for future replies; keeps its history",
+      ),
+    ),
+    Command.make(
+      "promote-answer",
+      {
+        session: sessionArgument,
+        exchange: Argument.String("exchange").pipe(Argument.withSchema(Uuid)),
+        ...vaultFlags,
+      },
+      promoteAnswer,
+    ).pipe(
+      Command.withDescription(
+        "Add a saved answer to the vault, or propose it if you are an editor",
+      ),
     ),
     Command.make(
       "export",
