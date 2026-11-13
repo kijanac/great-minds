@@ -260,13 +260,9 @@ export const makeReplyAdmission = (
         ) {
           return yield* new BadRequest({ detail: "Select a completed answer to start a BTW" });
         }
-        if (anchor.settlement.context_messages === null) {
-          return yield* new BadRequest({
-            detail: "The selected answer has no recorded model context",
-          });
-        }
         anchorReplyId = anchor.accepted.reply_id;
-        context = { session_id: parent.id, reply_id: anchor.accepted.reply_id };
+        const parentReplyId = yield* contextParentFor(history);
+        if (parentReplyId !== null) context = { session_id: parent.id, reply_id: parentReplyId };
       }
       const now = yield* clock.now;
       const bytes = yield* random.bytes(16);

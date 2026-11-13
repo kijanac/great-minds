@@ -547,7 +547,7 @@ describe("durable admission", () => {
     ),
   );
 
-  it("anchors context at the selected answer and keeps it while the parent advances", () =>
+  it("separates annotation from context and freezes the cutoff while the parent advances", () =>
     withAdmission((f) =>
       Effect.gen(function* () {
         const first = command();
@@ -563,7 +563,7 @@ describe("durable admission", () => {
         const original = decodeRequest((yield* f.reply(input.reply_id)).request);
         expect(original.header).toMatchObject({
           anchor_reply_id: first.reply_id,
-          context: { session_id: parent.session_id, reply_id: first.reply_id },
+          context: { session_id: parent.session_id, reply_id: second.reply_id },
         });
         yield* f.finalize(pending.reply_id);
         yield* f.admission.admit(input.reply_id);

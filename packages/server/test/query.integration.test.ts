@@ -1852,7 +1852,7 @@ describe("query stream", () => {
     expect(costs.lookups).toEqual([]);
   });
 
-  it("keeps branch context at the anchored answer, projects its saved notes, and changes only future mode on Continue", async () => {
+  it("keeps branch context fixed, projects its saved notes, and changes only future mode on Continue", async () => {
     const language = makeScriptedLanguageModel({
       streams: [
         { kind: "parts", parts: [tokenPart("Parent answer."), finishPart("stop")] },
@@ -1922,6 +1922,8 @@ describe("query stream", () => {
     const branch = [
       ["user", "Parent question"],
       ["assistant", "Parent answer."],
+      ["user", "Before note"],
+      ["assistant", "Before answer."],
       ["user", 'Passage:\n> Parent answer.\n\nHighlighted: "answer"\n\nFirst BTW'],
       ["assistant", "First BTW answer."],
     ];
