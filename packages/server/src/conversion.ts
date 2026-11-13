@@ -1,7 +1,4 @@
-import { Defuddle } from "defuddle/node";
-import { JSDOM } from "jsdom";
 import { uploadKind } from "@great-minds/domain";
-import { OfficeParser } from "officeparser";
 
 const compactMarkdown = (markdown: string) =>
   markdown
@@ -23,6 +20,7 @@ export type ExtractedArticle = {
 };
 
 export const htmlToMarkdown = async (html: string, url: string): Promise<ExtractedArticle> => {
+  const [{ JSDOM }, { Defuddle }] = await Promise.all([import("jsdom"), import("defuddle/node")]);
   const dom = new JSDOM(html, { url });
   const article = await Defuddle(dom, url, { markdown: true });
   const title = nullableString(article.title);
@@ -54,6 +52,7 @@ export const stagedFileToMarkdown = async (
     return markdownWithTitle(converted.title, converted.markdown);
   }
   if (kind === "office") {
+    const { OfficeParser } = await import("officeparser");
     const parsed = await OfficeParser.parseOffice(Buffer.from(rawBytes), {
       newlineDelimiter: "\n",
       ignoreNotes: false,

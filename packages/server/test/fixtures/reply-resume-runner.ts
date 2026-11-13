@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { Effect, Layer, Schema, Stream } from "effect";
 
 import { makeAppLayer } from "../../src/app-layer.ts";
+import { TestWorkflowEngineLive } from "./workflow-engine.ts";
 import type { HistoryStoreShape } from "../../src/conversation-history/store.ts";
 import { LanguageModel, type StreamChatInput } from "../../src/llm.ts";
 import { ParallelSearchService } from "../../src/parallel.ts";
@@ -95,6 +96,7 @@ const decorateHistory = (histories: HistoryStoreShape): HistoryStoreShape => ({
 });
 
 const MainLive = makeAppLayer({
+  workflowEngine: TestWorkflowEngineLive,
   languageModel: LanguageLive,
   parallelSearch: SearchLive,
   decorateHistory,

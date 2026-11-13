@@ -56,6 +56,7 @@ import {
   replyHistoryTestDatabaseUrl,
   resetWorkflowQueue,
 } from "./fixtures/reply-history-database.ts";
+import { TestWorkflowEngineLive } from "./fixtures/workflow-engine.ts";
 import { seedLegacySources } from "./fixtures/source-documents.ts";
 import { TokenService } from "../src/tokens.ts";
 import {
@@ -261,6 +262,7 @@ const startHarness = async (options: HarnessOptions) => {
     );
   const decorateHistory = options.historyStore;
   const appLayer = makeAppLayer({
+    workflowEngine: TestWorkflowEngineLive,
     config: configLayer,
     clock: clock.layer,
     mailer: makeTestMailer().layer,
@@ -297,6 +299,7 @@ const startLiveHarness = async () => {
     }),
   );
   const appLayer = makeAppLayer({
+    workflowEngine: TestWorkflowEngineLive,
     config: configLayer,
     clock: clock.layer,
     mailer: makeTestMailer().layer,
