@@ -310,13 +310,6 @@ const lengthCues = {
   query: "\n\n(Match the length to what this question needs; when in doubt, be shorter.)",
 } as const;
 
-export const withoutLengthCue = (message: LlmMessage): LlmMessage => {
-  if (message.role !== "user" || typeof message.content !== "string") return message;
-  const content = message.content;
-  const cue = Object.values(lengthCues).find((suffix) => content.endsWith(suffix));
-  return cue === undefined ? message : { ...message, content: content.slice(0, -cue.length) };
-};
-
 export const webSearchGuidance =
   "WEB SEARCH: Use web_search only for facts about reality the knowledge base lacks — what happened, when, who, how many. The analysis is always yours, drawn from this knowledge base's framework applied to those facts; never take your interpretation, lessons, or strategic conclusions from a web source — not even with attribution. You may report what an outside source claims only when the question is itself about those claims (e.g. \"how did different groups read this event\"); otherwise do not repeat or lean on another author's analysis. Exhaust the knowledge base first. Cite web facts as [title](url).";
 
