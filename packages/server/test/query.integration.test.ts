@@ -54,7 +54,7 @@ import type { HistoryStoreShape } from "../src/conversation-history/store.ts";
 import { storageBackendError } from "../src/storage/object-store.ts";
 import {
   replyHistoryTestDatabaseUrl,
-  runHistoryDatabase,
+  resetWorkflowQueue,
 } from "./fixtures/reply-history-database.ts";
 import { seedLegacySources } from "./fixtures/source-documents.ts";
 import { TokenService } from "../src/tokens.ts";
@@ -243,7 +243,7 @@ const insertUser = (userId: Uuid, email: string) =>
   );
 
 const startHarness = async (options: HarnessOptions) => {
-  await runHistoryDatabase(Effect.void);
+  await resetWorkflowQueue();
   const clock = makeTestClock(initialTime);
   const storageRoot = await mkdtemp(join(tmpdir(), "great-minds-query-storage-"));
   const configLayer = Layer.succeed(
@@ -281,7 +281,7 @@ const startHarness = async (options: HarnessOptions) => {
 };
 
 const startLiveHarness = async () => {
-  await runHistoryDatabase(Effect.void);
+  await resetWorkflowQueue();
   const key = process.env.OPENROUTER_API_KEY;
   if (key === undefined || key.length === 0) {
     throw new Error("OPENROUTER_API_KEY is required when RUN_LIVE_LLM_SMOKE=1");
