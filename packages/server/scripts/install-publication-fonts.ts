@@ -1,14 +1,23 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
 
 import { fontAssets, publicationFonts } from "../src/publication/assets.ts";
 
+const verified = (bytes: Uint8Array, sha256: string) =>
+  createHash("sha256").update(bytes).digest("hex") === sha256;
+
 const install = Effect.gen(function* () {
-  yield* Effect.promise(() => rm(publicationFonts, { recursive: true, force: true }));
   yield* Effect.promise(() => mkdir(publicationFonts, { recursive: true }));
+  const wanted = new Set(fontAssets.map((asset) => asset.name));
+  for (const name of yield* Effect.promise(() => readdir(publicationFonts)))
+    if (!wanted.has(name))
+      yield* Effect.promise(() => rm(join(publicationFonts, name), { recursive: true }));
   for (const asset of fontAssets) {
+    const target = join(publicationFonts, asset.name);
+    const existing = yield* Effect.promise(() => readFile(target).catch(() => undefined));
+    if (existing !== undefined && verified(existing, asset.sha256)) continue;
     const bytes = yield* asset.url.protocol === "file:"
       ? Effect.promise(() => readFile(asset.url))
       : Effect.gen(function* () {
@@ -19,9 +28,9 @@ const install = Effect.gen(function* () {
             );
           return new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()));
         });
-    if (createHash("sha256").update(bytes).digest("hex") !== asset.sha256)
+    if (!verified(bytes, asset.sha256))
       return yield* Effect.die(new Error(`Font checksum mismatch: ${asset.name}`));
-    yield* Effect.promise(() => writeFile(join(publicationFonts, asset.name), bytes));
+    yield* Effect.promise(() => writeFile(target, bytes));
   }
   console.log(`Installed verified publication fonts and licenses in ${publicationFonts}`);
 });
