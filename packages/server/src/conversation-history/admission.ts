@@ -449,7 +449,7 @@ export const makeReplyAdmission = (
           const request = {
             version: 1,
             command,
-            mode: command.brief === undefined ? session.replyMode : command.brief ? "btw" : "query",
+            mode: session.replyMode,
             header: target.kind === "new" ? target.header : null,
             attempt: {
               type: "attempt",

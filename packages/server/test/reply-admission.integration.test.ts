@@ -601,22 +601,6 @@ describe("durable admission", () => {
       }),
     ));
 
-  it("takes brevity from each question and keeps a failed question's on retry", () =>
-    withAdmission((f) =>
-      Effect.gen(function* () {
-        const first = command();
-        const response = yield* f.admission.accept(f.userId, f.vaultId, first);
-        yield* f.finalize(first.reply_id);
-        const brief = followUp(response.session_id, { brief: true });
-        yield* f.admission.accept(f.userId, f.vaultId, brief);
-        expect(decodeRequest((yield* f.reply(brief.reply_id)).request).mode).toBe("btw");
-        yield* failReply(f, brief.reply_id);
-        const retryId = nextId();
-        yield* f.admission.retry(f.userId, f.vaultId, brief.reply_id, retryId);
-        expect(decodeRequest((yield* f.reply(retryId)).request).mode).toBe("btw");
-      }),
-    ));
-
   it.each(["missing", "orphan", "suffix", "unknown-context"] as const)(
     "refuses %s history without reserving or repairing",
     (state) =>
