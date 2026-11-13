@@ -249,9 +249,6 @@ export const makeReplyAdmission = (
         if (parent === undefined || parent.userId !== userId) {
           return yield* new NotFound({ detail: "Session not found" });
         }
-        if (parent.placement !== "standalone") {
-          return yield* new BadRequest({ detail: "Nested BTWs aren't supported" });
-        }
         const history = yield* readHistory(parent);
         const anchor = history.turns
           .find((turn) => turn.exchange_id === origin.exchange_id)
@@ -263,9 +260,13 @@ export const makeReplyAdmission = (
         ) {
           return yield* new BadRequest({ detail: "Select a completed answer to start a BTW" });
         }
+        if (anchor.settlement.context_messages === null) {
+          return yield* new BadRequest({
+            detail: "The selected answer has no recorded model context",
+          });
+        }
         anchorReplyId = anchor.accepted.reply_id;
-        const parentReplyId = yield* contextParentFor(history);
-        if (parentReplyId !== null) context = { session_id: parent.id, reply_id: parentReplyId };
+        context = { session_id: parent.id, reply_id: anchor.accepted.reply_id };
       }
       const now = yield* clock.now;
       const bytes = yield* random.bytes(16);
@@ -452,7 +453,7 @@ export const makeReplyAdmission = (
           const request = {
             version: 1,
             command,
-            mode: session.replyMode,
+            mode: command.brief === undefined ? session.replyMode : command.brief ? "btw" : "query",
             header: target.kind === "new" ? target.header : null,
             attempt: {
               type: "attempt",

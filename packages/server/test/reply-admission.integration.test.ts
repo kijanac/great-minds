@@ -547,7 +547,7 @@ describe("durable admission", () => {
     ),
   );
 
-  it("separates annotation from context and freezes the cutoff while the parent advances", () =>
+  it("anchors context at the selected answer and keeps it while the parent advances", () =>
     withAdmission((f) =>
       Effect.gen(function* () {
         const first = command();
@@ -563,7 +563,7 @@ describe("durable admission", () => {
         const original = decodeRequest((yield* f.reply(input.reply_id)).request);
         expect(original.header).toMatchObject({
           anchor_reply_id: first.reply_id,
-          context: { session_id: parent.session_id, reply_id: second.reply_id },
+          context: { session_id: parent.session_id, reply_id: first.reply_id },
         });
         yield* f.finalize(pending.reply_id);
         yield* f.admission.admit(input.reply_id);
@@ -574,21 +574,12 @@ describe("durable admission", () => {
       }),
     ));
 
-  it("rejects nested inline origins, other owners and absent answers before reserving a child", () =>
+  it("anchors in an anchored conversation's answer, rejecting other owners and absent answers", () =>
     withAdmission((f) =>
       Effect.gen(function* () {
         const input = btwCommand();
         const parent = yield* f.admission.accept(f.userId, f.vaultId, input);
         yield* f.finalize(input.reply_id);
-        yield* expectFailure(
-          f.admission.reserve(
-            f.userId,
-            f.vaultId,
-            answerThread(parent.session_id, input.exchange_id),
-          ),
-          "BadRequest",
-        );
-        yield* f.updateSession(parent.session_id, { placement: "standalone", replyMode: "query" });
         yield* expectFailure(
           f.admission.reserve(
             f.memberId,
@@ -602,6 +593,27 @@ describe("durable admission", () => {
           "BadRequest",
         );
         expect(yield* f.allSessions()).toHaveLength(1);
+        const nested = answerThread(parent.session_id, input.exchange_id);
+        yield* f.admission.reserve(f.userId, f.vaultId, nested);
+        expect(decodeRequest((yield* f.reply(nested.reply_id)).request).header).toMatchObject({
+          context: { session_id: parent.session_id, reply_id: input.reply_id },
+        });
+      }),
+    ));
+
+  it("takes brevity from each question and keeps a failed question's on retry", () =>
+    withAdmission((f) =>
+      Effect.gen(function* () {
+        const first = command();
+        const response = yield* f.admission.accept(f.userId, f.vaultId, first);
+        yield* f.finalize(first.reply_id);
+        const brief = followUp(response.session_id, { brief: true });
+        yield* f.admission.accept(f.userId, f.vaultId, brief);
+        expect(decodeRequest((yield* f.reply(brief.reply_id)).request).mode).toBe("btw");
+        yield* failReply(f, brief.reply_id);
+        const retryId = nextId();
+        yield* f.admission.retry(f.userId, f.vaultId, brief.reply_id, retryId);
+        expect(decodeRequest((yield* f.reply(retryId)).request).mode).toBe("btw");
       }),
     ));
 

@@ -1441,6 +1441,7 @@ export const CreateReplyRequest = Schema.Struct({
   origin_path: QueryRequest.fields.origin_path,
   origin_scope: QueryRequest.fields.origin_scope,
   extra_instructions: QueryRequest.fields.extra_instructions,
+  brief: Schema.optionalKey(Schema.Boolean),
   reply_id: Uuid,
   exchange_id: Uuid,
   session: Schema.Union([
