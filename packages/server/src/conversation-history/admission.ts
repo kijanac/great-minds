@@ -249,9 +249,6 @@ export const makeReplyAdmission = (
         if (parent === undefined || parent.userId !== userId) {
           return yield* new NotFound({ detail: "Session not found" });
         }
-        if (parent.placement !== "standalone") {
-          return yield* new BadRequest({ detail: "Nested BTWs aren't supported" });
-        }
         const history = yield* readHistory(parent);
         const anchor = history.turns
           .find((turn) => turn.exchange_id === origin.exchange_id)

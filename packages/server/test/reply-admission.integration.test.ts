@@ -574,21 +574,12 @@ describe("durable admission", () => {
       }),
     ));
 
-  it("rejects nested inline origins, other owners and absent answers before reserving a child", () =>
+  it("anchors in an anchored conversation's answer, rejecting other owners and absent answers", () =>
     withAdmission((f) =>
       Effect.gen(function* () {
         const input = btwCommand();
         const parent = yield* f.admission.accept(f.userId, f.vaultId, input);
         yield* f.finalize(input.reply_id);
-        yield* expectFailure(
-          f.admission.reserve(
-            f.userId,
-            f.vaultId,
-            answerThread(parent.session_id, input.exchange_id),
-          ),
-          "BadRequest",
-        );
-        yield* f.updateSession(parent.session_id, { placement: "standalone", replyMode: "query" });
         yield* expectFailure(
           f.admission.reserve(
             f.memberId,
@@ -602,6 +593,11 @@ describe("durable admission", () => {
           "BadRequest",
         );
         expect(yield* f.allSessions()).toHaveLength(1);
+        const nested = answerThread(parent.session_id, input.exchange_id);
+        yield* f.admission.reserve(f.userId, f.vaultId, nested);
+        expect(decodeRequest((yield* f.reply(nested.reply_id)).request).header).toMatchObject({
+          context: { session_id: parent.session_id, reply_id: input.reply_id },
+        });
       }),
     ));
 
