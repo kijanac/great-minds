@@ -64,8 +64,9 @@ import { VaultsService } from "../src/vaults.ts";
 import { ConversationTurnFixture, savedConversation } from "./fixtures/saved-conversation.ts";
 import {
   replyHistoryTestDatabaseUrl,
-  runHistoryDatabase,
+  resetWorkflowQueue,
 } from "./fixtures/reply-history-database.ts";
+import { TestWorkflowEngineLive } from "./fixtures/workflow-engine.ts";
 import { seedLegacySources } from "./fixtures/source-documents.ts";
 import { openMcp } from "./fixtures/mcp.ts";
 
@@ -226,6 +227,7 @@ const buildTestState = async () => {
   const storageRoot = await mkdtemp(join(tmpdir(), "great-minds-write-storage-"));
   const configLayer = Layer.succeed(AppConfig, testConfig(databaseUrl(), storageRoot));
   const appLayer = makeAppLayer({
+    workflowEngine: TestWorkflowEngineLive,
     config: configLayer,
     clock: clock.layer,
     mailer: mailer.layer,
@@ -791,7 +793,7 @@ const waitFor = async <A>(
 
 describe("M3.1 write endpoint integration", () => {
   beforeAll(async () => {
-    await runHistoryDatabase(Effect.void);
+    await resetWorkflowQueue();
     state = await buildTestState();
   });
 

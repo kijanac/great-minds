@@ -34,8 +34,9 @@ import { TokenService } from "../src/tokens.ts";
 import { ConversationTurnFixture, savedConversation } from "./fixtures/saved-conversation.ts";
 import {
   replyHistoryTestDatabaseUrl,
-  runHistoryDatabase,
+  resetWorkflowQueue,
 } from "./fixtures/reply-history-database.ts";
+import { TestWorkflowEngineLive } from "./fixtures/workflow-engine.ts";
 
 const initialTime = new Date("2026-07-10T12:00:00.000Z");
 const decodeUuid = Schema.decodeUnknownSync(Uuid);
@@ -162,6 +163,7 @@ const buildTestState = async () => {
   const storageRoot = await mkdtemp(join(tmpdir(), "great-minds-shares-storage-"));
   const configLayer = Layer.succeed(AppConfig, testConfig(databaseUrl(), storageRoot));
   const appLayer = makeAppLayer({
+    workflowEngine: TestWorkflowEngineLive,
     config: configLayer,
     clock: clock.layer,
     mailer: mailer.layer,
@@ -310,7 +312,7 @@ const createSession = (idempotencyKey: string, query: string, answer: string) =>
 
 describe("share links", () => {
   beforeAll(async () => {
-    await runHistoryDatabase(Effect.void);
+    await resetWorkflowQueue();
     state = await buildTestState();
   });
 

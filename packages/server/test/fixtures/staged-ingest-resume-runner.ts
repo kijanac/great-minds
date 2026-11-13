@@ -17,7 +17,7 @@ import {
   StagedFileIngestWorkflowLive,
 } from "../../src/staged-file-ingest-workflow.ts";
 import { ContentStorage, StagedStorage } from "../../src/storage.ts";
-import { WorkflowEngineLive } from "../../src/workflow-engine.ts";
+import { TestWorkflowEngineLive } from "./workflow-engine.ts";
 
 const mode = process.argv[2];
 const vaultIdInput = process.argv[3];
@@ -127,7 +127,7 @@ const SourceDocumentsLive = SourceDocumentsServiceLive.pipe(
   Layer.provideMerge(StorageLive),
   Layer.provideMerge(BaseLive),
 );
-const EngineLive = WorkflowEngineLive.pipe(Layer.provideMerge(BaseLive));
+const EngineLive = TestWorkflowEngineLive.pipe(Layer.provideMerge(BaseLive));
 
 const PauseAfterPersistLive = StagedFileIngestWorkflow.toLayer(() => {
   const persist = Activity.make({

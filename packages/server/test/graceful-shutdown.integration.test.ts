@@ -7,10 +7,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Effect, Option, Schema } from "effect";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { openLocalConditionalObjectStore } from "../src/storage/local-conditional-object-store.ts";
 import { failure } from "./fixtures/history-storage.ts";
+import { resetWorkflowQueue } from "./fixtures/reply-history-database.ts";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -111,6 +112,8 @@ const startMain = (dataDir: string, port: number) => {
 };
 
 describe("production process lifetime", () => {
+  beforeEach(resetWorkflowQueue);
+
   it("runs admin commands beside a server on local storage", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "gm-admin-"));
     const port = await availablePort();

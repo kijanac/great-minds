@@ -30,6 +30,8 @@ import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { jobSseHeartbeatChunk, startServer } from "../src/server.ts";
 import { TokenService } from "../src/tokens.ts";
+import { resetWorkflowQueue } from "./fixtures/reply-history-database.ts";
+import { TestWorkflowEngineLive } from "./fixtures/workflow-engine.ts";
 
 const now = new Date("2026-07-12T12:00:00.000Z");
 const uuid = Schema.decodeUnknownSync(Uuid);
@@ -281,9 +283,11 @@ const seed = () =>
   );
 
 beforeEach(async () => {
+  await resetWorkflowQueue();
   const dataDir = await mkdtemp(join(tmpdir(), "great-minds-jobs-http-"));
   const clock = makeTestClock(now);
   const layer = makeAppLayer({
+    workflowEngine: TestWorkflowEngineLive,
     config: Layer.succeed(AppConfig, config(dataDir)),
     clock: clock.layer,
     mailer: makeTestMailer().layer,

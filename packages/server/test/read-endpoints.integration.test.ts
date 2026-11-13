@@ -48,8 +48,9 @@ import { startServer } from "../src/server.ts";
 import { TokenService } from "../src/tokens.ts";
 import {
   replyHistoryTestDatabaseUrl,
-  runHistoryDatabase,
+  resetWorkflowQueue,
 } from "./fixtures/reply-history-database.ts";
+import { TestWorkflowEngineLive } from "./fixtures/workflow-engine.ts";
 import { seedLegacySources } from "./fixtures/source-documents.ts";
 import { openMcp } from "./fixtures/mcp.ts";
 
@@ -227,6 +228,7 @@ const buildTestState = async () => {
   const storageRoot = await mkdtemp(join(tmpdir(), "great-minds-read-storage-"));
   const configLayer = Layer.succeed(AppConfig, testConfig(databaseUrl(), storageRoot));
   const appLayer = makeAppLayer({
+    workflowEngine: TestWorkflowEngineLive,
     config: configLayer,
     decorateHistory: decorateReadHistories,
     pdfRenderer: Layer.succeed(PdfRenderer, {
@@ -1078,7 +1080,7 @@ const asArray = (value: unknown) => {
 
 describe("read-only HTTP integration", () => {
   beforeAll(async () => {
-    await runHistoryDatabase(Effect.void);
+    await resetWorkflowQueue();
     state = await buildTestState();
   });
 
