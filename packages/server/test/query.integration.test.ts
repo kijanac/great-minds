@@ -617,6 +617,11 @@ afterEach(async () => {
   }
 });
 
+const lengthCue = (question: string) =>
+  `${question}\n\n(Match the length to what this question needs; when in doubt, be shorter.)`;
+const briefCue = (question: string) =>
+  `${question}\n\n(Keep the answer brief: one or two short paragraphs.)`;
+
 describe("query stream", () => {
   it("persists a stop before preparation without starting a model request", async () => {
     const language = makeScriptedLanguageModel({ streams: [] });
@@ -731,9 +736,9 @@ describe("query stream", () => {
       expect(language.streamCalls).toHaveLength(2);
       expect(language.streamCalls[1].messages).toEqual(
         expect.arrayContaining([
-          { role: "user", content: "A question to stop" },
+          { role: "user", content: lengthCue("A question to stop") },
           ...(answer ? [{ role: "assistant", content: answer }] : []),
-          { role: "user", content: "Continue from there" },
+          { role: "user", content: lengthCue("Continue from there") },
         ]),
       );
       expect(
@@ -1464,7 +1469,7 @@ describe("query stream", () => {
     expect(events[1]).toMatchObject({ type: "attempt", question: "What does this claim imply?" });
     const recorded = events.find((event) => event.type === "settlement");
     expect(recorded?.context_messages?.filter((message) => message.role === "user")).toEqual([
-      { role: "user", content: composed },
+      { role: "user", content: lengthCue(composed) },
     ]);
     await finishReply({
       question: "What follows?",
@@ -1494,7 +1499,7 @@ describe("query stream", () => {
       expect(hits[0].call).toEqual(read.call);
       expect(hits[0].index).toBeLessThan(
         call.messages.findIndex(
-          (message) => message.role === "user" && message.content === composed,
+          (message) => message.role === "user" && message.content === lengthCue(composed),
         ),
       );
     }
@@ -1502,7 +1507,7 @@ describe("query stream", () => {
       language.streamCalls[1]!.messages.filter((message) => message.role === "user").map(
         (message) => message.content,
       ),
-    ).toEqual([composed, "What follows?"]);
+    ).toEqual([lengthCue(composed), lengthCue("What follows?")]);
     expect(
       language.streamCalls[1]!.messages.find(
         (message) => message.role === "tool" && message.tool_call_id === read.call.id,
@@ -1528,7 +1533,7 @@ describe("query stream", () => {
     );
     expect(
       third.filter((message) => message.role === "user").map((message) => message.content),
-    ).toEqual([composed, "What follows?", "And then?"]);
+    ).toEqual([lengthCue(composed), lengthCue("What follows?"), lengthCue("And then?")]);
     expect(
       third
         .filter((message) => message.role === "assistant" && !message.tool_calls)
@@ -1692,7 +1697,9 @@ describe("query stream", () => {
     expect(
       messages.filter((message) => message.role === "user").map((message) => message.content),
     ).toEqual([
-      'Passage:\n> The surrounding passage.\n\nHighlighted: "The highlighted claim."\n\nTry this answer',
+      lengthCue(
+        'Passage:\n> The surrounding passage.\n\nHighlighted: "The highlighted claim."\n\nTry this answer',
+      ),
     ]);
     expect(String(messages[0].content)).not.toContain("This is a BTW");
     expect(language.streamCalls).toHaveLength(3);
@@ -1920,26 +1927,23 @@ describe("query stream", () => {
     const dialogue = (messages: readonly LlmMessage[]) =>
       messages.filter((m) => m.role !== "system").map((m) => [m.role, m.content]);
     const branch = [
-      ["user", "Parent question"],
+      ["user", lengthCue("Parent question")],
       ["assistant", "Parent answer."],
-      ["user", "Before note"],
+      ["user", lengthCue("Before note")],
       ["assistant", "Before answer."],
-      ["user", 'Passage:\n> Parent answer.\n\nHighlighted: "answer"\n\nFirst BTW'],
+      ["user", briefCue('Passage:\n> Parent answer.\n\nHighlighted: "answer"\n\nFirst BTW')],
       ["assistant", "First BTW answer."],
     ];
     expect(String(language.streamCalls[3]!.messages[0].content)).toContain("This is a BTW");
     expect(dialogue(language.streamCalls[3]!.messages)).toEqual(branch);
     expect(dialogue(language.streamCalls[5]!.messages)).toEqual([
       ...branch,
-      ["user", "Second BTW"],
+      ["user", briefCue("Second BTW")],
       ["assistant", "Second BTW answer."],
     ]);
     expect(dialogue(language.streamCalls[4]!.messages)).toEqual([
-      ["user", "Parent question"],
-      ["assistant", "Parent answer."],
-      ["user", "Before note"],
-      ["assistant", "Before answer."],
-      ["user", "Main follow-up"],
+      ...branch.slice(0, 4),
+      ["user", lengthCue("Main follow-up")],
       ["assistant", "Main answer."],
     ]);
     const path = `/vaults/${id.vault}/sessions/${root.session_id}`;
@@ -1982,9 +1986,9 @@ describe("query stream", () => {
     expect(String(language.streamCalls[6]!.messages[0].content)).not.toContain("This is a BTW");
     expect(dialogue(language.streamCalls[6]!.messages)).toEqual([
       ...branch,
-      ["user", "Second BTW"],
+      ["user", briefCue("Second BTW")],
       ["assistant", "Second BTW answer."],
-      ["user", "Continue the thought"],
+      ["user", lengthCue("Continue the thought")],
       ["assistant", "Continued answer."],
     ]);
   });
@@ -2007,9 +2011,9 @@ describe("query stream", () => {
         (message) => [message.role, message.content],
       ),
     ).toEqual([
-      ["user", "First question"],
+      ["user", lengthCue("First question")],
       ["assistant", "A."],
-      ["user", "Third question"],
+      ["user", lengthCue("Third question")],
       ["assistant", "C."],
     ]);
     const saved = Schema.decodeUnknownSync(SessionResponse)(
