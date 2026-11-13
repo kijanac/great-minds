@@ -58,7 +58,7 @@ import {
 import { ContentStorage, StagedStorage, StagedUploadGateway } from "../src/storage.ts";
 import { LOST_RUN_ERROR, settleRuns } from "../src/run-settlement.ts";
 import { VaultAccessServiceLive } from "../src/vaults.ts";
-import { WorkflowEngineLive } from "../src/workflow-engine.ts";
+import { TestWorkflowEngineLive } from "./fixtures/workflow-engine.ts";
 
 const uuid = Schema.decodeUnknownSync(Uuid);
 
@@ -309,7 +309,7 @@ const CompilePhasesLiveLayer = CompilePhasesLive.pipe(
   Layer.provideMerge(StorageLive),
   Layer.provideMerge(BaseLive),
 );
-const EngineLive = WorkflowEngineLive.pipe(Layer.provideMerge(BaseLive));
+const EngineLive = TestWorkflowEngineLive.pipe(Layer.provideMerge(BaseLive));
 const WorkflowHandlersLive = Layer.mergeAll(StagedFileIngestWorkflowLive, CompileWorkflowLive).pipe(
   Layer.provideMerge(SourceDocumentsLive),
   Layer.provideMerge(CompilePhasesLiveLayer),

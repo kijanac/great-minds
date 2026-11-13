@@ -71,6 +71,7 @@ try {
     OPENROUTER_API_KEY: "",
     PARALLEL_API_KEY: "",
     RUN_LIVE_LLM_SMOKE: "0",
+    NODE_COMPILE_CACHE: join(tmpdir(), "great-minds-test-compile-cache"),
     ...(binary === undefined ? {} : { TYPST_BINARY: binary }),
   };
   await run(

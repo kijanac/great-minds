@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 
-import { NodeHttpServer } from "@effect/platform-node";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
   AuthMiddleware,
   BadRequest,

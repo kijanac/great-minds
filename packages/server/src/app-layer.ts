@@ -138,6 +138,7 @@ export type AppLayerServices =
 
 export type AppLayerOverrides = {
   readonly config?: Layer.Layer<AppConfig>;
+  readonly workflowEngine?: typeof WorkflowEngineLive;
   readonly decorateHistory?: (histories: HistoryStoreShape) => HistoryStoreShape;
   readonly pdfRenderer?: Layer.Layer<PdfRenderer>;
   readonly clock?: Layer.Layer<ClockService>;
@@ -151,9 +152,10 @@ export type AppLayerOverrides = {
 };
 
 export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
-  const PostgresLive = Layer.mergeAll(DatabaseLive, WorkflowEngineLive).pipe(
-    Layer.provide(PgClientLive),
-  );
+  const PostgresLive = Layer.mergeAll(
+    DatabaseLive,
+    overrides.workflowEngine ?? WorkflowEngineLive,
+  ).pipe(Layer.provide(PgClientLive));
   const InfrastructureLive = Layer.mergeAll(
     PostgresLive,
     overrides.clock ?? ClockLive,

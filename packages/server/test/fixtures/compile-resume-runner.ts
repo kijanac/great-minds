@@ -21,7 +21,7 @@ import {
   PipelineRunsServiceLive,
   progressSteps,
 } from "../../src/pipeline-runs.ts";
-import { WorkflowEngineLive } from "../../src/workflow-engine.ts";
+import { TestWorkflowEngineLive } from "./workflow-engine.ts";
 
 const mode = process.argv[2] as "pause" | "resume" | "cancel" | undefined;
 const intentIdInput = process.argv[3];
@@ -95,7 +95,7 @@ const BaseLive = Layer.mergeAll(
 );
 const PipelineLive = PipelineRunsServiceLive.pipe(Layer.provideMerge(BaseLive));
 const PhasesProvidedLive = PhasesLive.pipe(Layer.provideMerge(PipelineLive));
-const EngineLive = WorkflowEngineLive.pipe(Layer.provideMerge(BaseLive));
+const EngineLive = TestWorkflowEngineLive.pipe(Layer.provideMerge(BaseLive));
 const HandlersLive = CompileWorkflowLive.pipe(
   Layer.provideMerge(PhasesProvidedLive),
   Layer.provideMerge(PipelineLive),
