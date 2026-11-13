@@ -175,7 +175,7 @@ describe("default prompts", () => {
       "place_in_article.md": "c7467eb781f0e545298ca85da6cfc8cd33fdea301d8597b79e342efa064d67fc",
       "propose_topics.md": "d906ea9a0c763f7747f56fc9dcb2e8524e85780e9279e4a5669344881d6c1e49",
       "query.md": "d02c29eb9d1367ef61e230741aee22feb3a2dea6564956ff2a433a34c876afee",
-      "query_btw.md": "1415f3050b8c6b36867f2f0390281c775a3103991a6ad5a3e296fd7d42cdc138",
+      "query_btw.md": "340a1376c87b7353e1da78f408ea9bc7566acd9d8a8916c45ffb937659fe7a11",
       "write_article.md": "35ee32e8fcddf52457c77e542975f83ca429184318d2ba3000ddd9ce26540324",
     } as const;
     const names = (await readdir(directory)).filter((name) => name.endsWith(".md")).sort();

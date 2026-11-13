@@ -42,6 +42,7 @@ import {
   type QueryPreparedToolCall as QueryPreparedToolCallType,
   QueryPreparedToolCall,
   QueryService,
+  withoutLengthCue,
 } from "./query.ts";
 import { SessionsService } from "./sessions.ts";
 import { ContentStorage, vaultOwner } from "./storage.ts";
@@ -468,7 +469,7 @@ export const RepliesServiceLive = Layer.effect(
                   Effect.map((question) => [{ role: "user" as const, content: question }]),
                   Effect.catchTag("Forbidden", () => Effect.succeed(null)),
                 )
-            : checkpoint.query.messages.slice(checkpoint.query.turnStart);
+            : checkpoint.query.messages.slice(checkpoint.query.turnStart).map(withoutLengthCue);
         let result: ReplySettlementResult;
         if (row.stopRequested || outcome === "stopped") {
           result = { status: "stopped", context_messages: messages, generation };
