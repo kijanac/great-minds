@@ -35,3 +35,11 @@ export const runHistoryDatabase = <Value, Error>(
       }),
     ).pipe(Effect.provide(TestDatabase)),
   );
+
+export const resetWorkflowQueue = () =>
+  runHistoryDatabase(
+    Effect.gen(function* () {
+      const sql = yield* PgClient.PgClient;
+      yield* sql`drop table if exists cluster_messages, cluster_replies, cluster_migrations cascade`;
+    }).pipe(Effect.orDie),
+  );
