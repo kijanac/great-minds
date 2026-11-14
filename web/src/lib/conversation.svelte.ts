@@ -1,5 +1,6 @@
 import { browser } from "$app/env";
 import type {
+  OriginSessionDetail,
   SessionActivity,
   SessionId,
   SessionOrigin,
@@ -8,81 +9,85 @@ import type {
 } from "@great-minds/domain";
 
 import { createReply, retryReply, stopReply, type CreateReplyPayload } from "#lib/api/replies.ts";
-import { Btw } from "#lib/btw.svelte.ts";
-import type { Exchange, Phase, SelectionInfo } from "#lib/types.ts";
 import { newUuid, replyRequest } from "@great-minds/client";
 import { LIVE_UPDATES_UNAVAILABLE, tailReply } from "#lib/reply-tail.ts";
 import { replayExchanges } from "#lib/session-events.ts";
-import { isAbortError } from "#lib/utils.ts";
+import type { Exchange, Phase, SelectionInfo, TextAnchor, ThreadLike } from "#lib/types.ts";
+import { genId, isAbortError } from "#lib/utils.ts";
 
-type MainReplyAttempt = {
+type ReplyAttempt = {
   exchangeId: Uuid;
   payload: CreateReplyPayload;
 };
 
-type SubmissionState = { status: "ready" } | { status: "failed"; attempt: MainReplyAttempt };
+type SubmissionState = { status: "ready" } | { status: "failed"; attempt: ReplyAttempt };
 
-export interface SessionOptions {
+export interface ConversationOptions {
   saved?: SessionResponse;
-  originPath?: string;
+  detail?: OriginSessionDetail;
+  origin?: SessionOrigin | null;
   initialQuery?: string;
-  onSessionCreated?: (sessionId: SessionId) => void;
-  onOpenSession?: (sessionId: SessionId) => void;
+  onCreated?: (sessionId: SessionId) => void;
 }
 
-export class Session {
+export class Conversation implements ThreadLike {
   activity = $state<SessionActivity | null>(null);
   connectionError = $state<string | null>(null);
-  thread = $state<Exchange[]>([]);
+  exchanges = $state<Exchange[]>([]);
   sessionId = $state<SessionId | null>(null);
-  chips = $state<string[]>([]);
-  followUpDraft = $state("");
   submission = $state<SubmissionState>({ status: "ready" });
   stopping = $state(false);
   stopFailed = $state(false);
-  popover = $state<SelectionInfo | null>(null);
+  readonly id: string;
   readonly origin: SessionOrigin | null;
   readonly originTitle: string | null;
+  readonly anchor: TextAnchor;
+  readonly createdAt: Date | null;
+  readonly unavailable: string | null;
 
-  #onSessionCreated: ((sessionId: SessionId) => void) | undefined;
-  #onOpenSession: ((sessionId: SessionId) => void) | undefined;
+  #title: string | null;
+  #onCreated: ((sessionId: SessionId) => void) | undefined;
   #idempotencyKey: Uuid | null = null;
   #retry: { previousReplyId: Uuid; replyId: Uuid } | null = null;
   #abortController: AbortController | null = null;
   #destroyed = false;
 
-  constructor(options: SessionOptions = {}) {
-    this.thread = replayExchanges(options.saved?.events ?? []);
-    this.activity = options.saved?.activity ?? null;
-    this.sessionId = options.saved?.id ?? null;
-    this.origin = options.saved
-      ? (options.saved.events.find((event) => event.type === "meta")?.origin ?? null)
-      : options.originPath
-        ? {
-            kind: "document",
-            doc_path: options.originPath,
-            origin_scope: "vault",
-            anchor: null,
-            paragraph: null,
-            paragraph_index: null,
-          }
-        : null;
-    this.originTitle = options.saved?.origin_title ?? null;
-    this.#onSessionCreated = options.onSessionCreated;
-    this.#onOpenSession = options.onOpenSession;
-    for (const detail of options.saved?.threads ?? []) {
-      const origin = detail.session.origin;
+  constructor(options: ConversationOptions = {}) {
+    const { saved, detail } = options;
+    const meta = saved?.events.find((event) => event.type === "meta");
+    this.sessionId = saved?.id ?? detail?.session.id ?? null;
+    this.id = this.sessionId === null ? genId("thread") : `thread:${this.sessionId}`;
+    this.origin = detail
+      ? detail.session.origin
+      : saved
+        ? (meta?.origin ?? null)
+        : (options.origin ?? null);
+    this.originTitle = detail?.session.origin_title ?? saved?.origin_title ?? null;
+    this.#title = detail?.session.query ?? meta?.query ?? null;
+    this.createdAt = detail?.session.created_at ?? null;
+    this.unavailable = detail?.availability === "unavailable" ? detail.detail : null;
+    this.anchor = {
+      blockOffset: this.origin?.paragraph_index ?? -1,
+      quote: this.origin?.anchor ?? "",
+      context: this.origin?.paragraph ?? "",
+    };
+    this.#onCreated = options.onCreated;
+    const content = saved ?? (detail?.availability === "available" ? detail : null);
+    this.exchanges = replayExchanges(content?.events ?? []);
+    this.activity = content?.activity ?? null;
+    for (const child of saved?.threads ?? []) {
+      const origin = child.session.origin;
       if (origin?.kind !== "answer") continue;
-      this.thread
+      this.exchanges
         .find((exchange) => exchange.id === origin.exchange_id)
-        ?.btws.push(new Btw(origin, this.#onOpenSession, detail));
+        ?.btws.push(new Conversation({ detail: child }));
     }
 
     if (browser) {
       queueMicrotask(() => {
         if (this.#destroyed) return;
-        if (!options.saved && options.initialQuery) {
-          void this.#runExchange(options.initialQuery);
+        if (content === null && this.unavailable === null && options.initialQuery) {
+          void this.#runExchange(options.initialQuery, false);
         } else {
           this.#resumePendingReplies();
         }
@@ -90,28 +95,44 @@ export class Session {
     }
   }
 
+  get title(): string {
+    return this.#title ?? this.exchanges[0]?.query ?? "";
+  }
+
+  get draft(): boolean {
+    return this.sessionId === null;
+  }
+
   get phase(): Phase {
     const pending = this.activity
-      ? this.thread.find((exchange) => exchange.replyId === this.activity?.reply_id)
-      : this.thread.find((exchange) => exchange.status === "running");
+      ? this.exchanges.find((exchange) => exchange.replyId === this.activity?.reply_id)
+      : this.exchanges.find((exchange) => exchange.status === "running");
 
     if (this.activity?.status === "settling" || (this.activity && pending?.status !== "running"))
       return "finalizing";
     if (pending?.status === "running") return pending.answer.length > 0 ? "streaming" : "searching";
-    return this.thread.length > 0 ? "done" : "idle";
+    return this.exchanges.length > 0 ? "done" : "idle";
+  }
+
+  get canAsk(): boolean {
+    return this.unavailable === null && (this.phase === "idle" || this.phase === "done");
+  }
+
+  get canStop(): boolean {
+    return this.activity !== null && this.activity.status !== "settling" && !this.stopping;
   }
 
   destroy = (): void => {
     this.#destroyed = true;
     this.#retry = null;
     this.#abortController?.abort();
-    for (const exchange of this.thread) {
+    for (const exchange of this.exchanges) {
       for (const btw of exchange.btws) btw.destroy();
     }
   };
 
   #updateExchange = (id: Uuid, patch: Partial<Exchange>): void => {
-    this.thread = this.thread.map((exchange) =>
+    this.exchanges = this.exchanges.map((exchange) =>
       exchange.id === id ? { ...exchange, ...patch } : exchange,
     );
   };
@@ -123,8 +144,7 @@ export class Session {
   ): Promise<void> => {
     const outcome = await tailReply(replyId, controller.signal, {
       conversationId: () => this.sessionId,
-      turn: () => this.thread.find((exchange) => exchange.id === exchangeId),
-      alwaysShowThinking: true,
+      turn: () => this.exchanges.find((exchange) => exchange.id === exchangeId),
       apply: (updated, activity) => {
         this.#updateExchange(exchangeId, updated);
         this.activity = activity;
@@ -149,7 +169,7 @@ export class Session {
   };
 
   #resumePendingReplies = (): void => {
-    const pendingExchange = this.thread.find(
+    const pendingExchange = this.exchanges.find(
       (exchange) => exchange.replyId === this.activity?.reply_id,
     );
     if (pendingExchange?.replyId) {
@@ -159,40 +179,42 @@ export class Session {
     }
   };
 
-  #makeMainReplyAttempt = (question: string): MainReplyAttempt => {
+  #makeAttempt = (question: string, inline: boolean): ReplyAttempt => {
     const exchangeId = newUuid();
     this.#idempotencyKey ??= newUuid();
+    const origin = this.origin;
 
     const payload: CreateReplyPayload = replyRequest({
       question,
       exchangeId,
-      originScope: "vault",
-      ...(this.sessionId === null && this.origin?.kind === "document"
-        ? { originPath: this.origin.doc_path }
+      inline,
+      originScope: origin?.kind === "document" ? origin.origin_scope : "vault",
+      ...(this.sessionId === null && origin?.kind === "document" && !origin.anchor
+        ? { originPath: origin.doc_path }
         : {}),
       conversation:
         this.sessionId !== null
           ? { kind: "existing", id: this.sessionId }
           : {
               kind: "new",
-              conversationKind: "session",
+              conversationKind: origin?.anchor ? "btw" : "session",
               idempotencyKey: this.#idempotencyKey,
-              ...(this.origin ? { origin: this.origin } : {}),
+              ...(origin ? { origin } : {}),
             },
     });
     return { exchangeId, payload };
   };
 
-  #runExchange = async (question: string): Promise<boolean> => {
+  #runExchange = async (question: string, inline: boolean): Promise<boolean> => {
     this.stopFailed = false;
     const attempt =
       this.submission.status === "failed" && this.submission.attempt.payload.question === question
         ? this.submission.attempt
-        : this.#makeMainReplyAttempt(question);
+        : this.#makeAttempt(question, inline);
     this.submission = { status: "ready" };
     this.connectionError = null;
-    this.thread = [
-      ...this.thread,
+    this.exchanges = [
+      ...this.exchanges,
       {
         id: attempt.exchangeId,
         query: attempt.payload.question,
@@ -213,8 +235,7 @@ export class Session {
     try {
       created = await createReply(attempt.payload, controller.signal);
     } catch (error) {
-      const remaining = this.thread.filter((exchange) => exchange.id !== attempt.exchangeId);
-      this.thread = remaining;
+      this.exchanges = this.exchanges.filter((exchange) => exchange.id !== attempt.exchangeId);
       if (isAbortError(error) || controller.signal.aborted) return false;
       console.error("Query failed:", error);
       this.submission = { status: "failed", attempt };
@@ -226,24 +247,24 @@ export class Session {
     this.activity = { reply_id: created.reply_id, status: "running" };
     if (this.sessionId === null) {
       this.sessionId = created.session_id;
-      this.#onSessionCreated?.(created.session_id);
+      this.#onCreated?.(created.session_id);
     }
     void this.#tailExchange(attempt.exchangeId, created.reply_id, controller);
     return true;
   };
 
-  submitQuery = (question: string): void => {
-    if (this.phase !== "idle" && this.phase !== "done") return;
-    void this.#runExchange(question);
+  ask = (question: string, inline = false): Promise<boolean> => {
+    if (this.#destroyed || !this.canAsk || !question.trim()) return Promise.resolve(false);
+    return this.#runExchange(question, inline);
   };
 
-  retryExchange = (exchangeId: Uuid): void => {
-    if (this.phase !== "done") return;
-    const index = this.thread.findIndex((exchange) => exchange.id === exchangeId);
-    const previous = this.thread[index];
+  retry = (exchangeId: Uuid): void => {
+    if (this.#destroyed || this.phase !== "done") return;
+    const index = this.exchanges.findIndex((exchange) => exchange.id === exchangeId);
+    const previous = this.exchanges[index];
     if (
       previous === undefined ||
-      index !== this.thread.length - 1 ||
+      index !== this.exchanges.length - 1 ||
       previous.status !== "failed" ||
       previous.replyId === undefined
     ) {
@@ -284,36 +305,12 @@ export class Session {
       } catch (error) {
         if (isAbortError(error) || controller.signal.aborted) return;
         console.error("Reply retry failed:", error);
-        this.thread = this.thread.map((exchange) =>
+        this.exchanges = this.exchanges.map((exchange) =>
           exchange.id === exchangeId ? previous : exchange,
         );
       }
     })();
   };
-
-  submitFollowUp = (): void => {
-    if (this.phase !== "done") return;
-    const draft = this.followUpDraft;
-    const selectedChips = [...this.chips];
-    const parts = [...selectedChips.map((chip) => `re: "${chip}"`), draft.trim()].filter(Boolean);
-    const question = parts.join(" — ");
-    if (!question.trim()) return;
-
-    void (async () => {
-      const accepted = await this.#runExchange(question);
-      if (!accepted) return;
-      if (this.followUpDraft === draft) {
-        this.followUpDraft = "";
-      }
-      if (selectedChips.every((chip, index) => this.chips[index] === chip)) {
-        this.chips = this.chips.slice(selectedChips.length);
-      }
-    })();
-  };
-
-  get canStop(): boolean {
-    return this.activity !== null && this.activity.status !== "settling" && !this.stopping;
-  }
 
   stop = async (): Promise<void> => {
     const replyId = this.activity?.reply_id;
@@ -333,21 +330,9 @@ export class Session {
     this.submission = { status: "ready" };
   };
 
-  addChip = (text: string): void => {
-    this.clearSubmissionFailure();
-    this.chips = [...this.chips, text];
-    this.popover = null;
-    window.getSelection()?.removeAllRanges();
-  };
-
-  removeChip = (index: number): void => {
-    this.clearSubmissionFailure();
-    this.chips = this.chips.filter((_, itemIndex) => itemIndex !== index);
-  };
-
   startBtw = (info: SelectionInfo): void => {
     if (!this.sessionId) return;
-    const exchange = this.thread.find((item) => item.id === info.exchangeId);
+    const exchange = this.exchanges.find((item) => item.id === info.exchangeId);
 
     if (
       !exchange ||
@@ -357,8 +342,8 @@ export class Session {
       return;
 
     exchange.btws.push(
-      new Btw(
-        {
+      new Conversation({
+        origin: {
           kind: "answer",
           session_id: this.sessionId,
           exchange_id: info.exchangeId,
@@ -366,26 +351,12 @@ export class Session {
           paragraph_index: info.blockOffset,
           paragraph: info.context,
         },
-        this.#onOpenSession,
-      ),
+      }),
     );
-    this.popover = null;
-    window.getSelection()?.removeAllRanges();
-  };
-
-  #findBtw = (btwId: string): Btw | undefined =>
-    this.thread.flatMap((exchange) => exchange.btws).find((btw) => btw.id === btwId);
-
-  replyBtw = (btwId: string, userText: string): void => {
-    this.#findBtw(btwId)?.reply(userText);
-  };
-
-  retryBtw = (btwId: string, turnId: Uuid): void => {
-    this.#findBtw(btwId)?.retry(turnId);
   };
 
   dismissBtw = (btwId: string): void => {
-    this.thread = this.thread.map((exchange) => {
+    this.exchanges = this.exchanges.map((exchange) => {
       const target = exchange.btws.find((btw) => btw.id === btwId);
       if (!target?.draft || target.exchanges.length > 0) return exchange;
       target.destroy();
@@ -394,17 +365,5 @@ export class Session {
         btws: exchange.btws.filter((btw) => btw.id !== btwId),
       };
     });
-  };
-
-  openBtwSession = (btwId: string): void => {
-    void this.#findBtw(btwId)?.openSession();
-  };
-
-  handleSelection = (info: SelectionInfo | null): void => {
-    this.popover = info;
-  };
-
-  clearPopover = (): void => {
-    this.popover = null;
   };
 }

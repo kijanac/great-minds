@@ -27,10 +27,7 @@
     streaming,
     panelDocked = false,
     onSelection,
-    onBtwReply,
-    onBtwRetry,
     onBtwDismiss,
-    onBtwOpenSession,
     onLinkClick,
     variant = "answer",
     marginFootnotes = true,
@@ -51,10 +48,7 @@
     streaming: boolean;
     panelDocked?: boolean;
     onSelection?: (info: SelectionInfo) => void;
-    onBtwReply?: (btwId: string, text: string) => void;
-    onBtwRetry?: (btwId: string, turnId: Uuid) => void;
     onBtwDismiss?: (btwId: string) => void;
-    onBtwOpenSession?: (btwId: string) => void;
     onLinkClick?: (event: MouseEvent) => void;
     variant?: "answer" | "article";
     marginFootnotes?: boolean;
@@ -438,10 +432,7 @@
                 onOpenChange={() => toggleThread(btw.id)}
                 hideWhenClosed={!btw.draft}
                 {readOnly}
-                onReply={onBtwReply}
-                onRetry={onBtwRetry}
                 onDismiss={onBtwDismiss}
-                onOpenSession={onBtwOpenSession}
               />
             {/each}
           {/if}

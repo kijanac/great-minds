@@ -20,10 +20,10 @@
   import ThreadSurface from "#lib/components/thread-surface.svelte";
   import { Button } from "#lib/components/ui/button/index.ts";
   import { unsponsoredNotice, useMe } from "#lib/hooks/use-me.svelte.ts";
-  import type { Session } from "#lib/session.svelte.ts";
+  import type { Conversation } from "#lib/conversation.svelte.ts";
   import { sessionOriginHref } from "#lib/session-origin.ts";
   import { passageMark, revealPassage } from "#lib/passage-navigation.ts";
-  import type { SourceRef } from "#lib/types.ts";
+  import type { Exchange, SelectionInfo, SourceRef } from "#lib/types.ts";
   import { docDisplayName } from "#lib/utils.ts";
 
   let {
@@ -36,7 +36,7 @@
     onLinkClick,
     receive,
   }: {
-    session: Session;
+    session: Conversation;
     activeCard: string | null;
     vaultRole?: MemberRole | null;
     panelDocked?: boolean;
@@ -54,7 +54,7 @@
     onOpenPath(path, match ? Number(match[1]) : null);
   };
 
-  const readMore = (exchange: Session["thread"][number]) => {
+  const readMore = (exchange: Exchange) => {
     const seen = new Set<string>();
     return exchange.thinking
       .flatMap((block) => block.sources)
@@ -67,7 +67,7 @@
   };
 
   const outline = $derived(
-    session.thread.flatMap((exchange, index) => [
+    session.exchanges.flatMap((exchange, index) => [
       ...(index === 0
         ? []
         : [
@@ -158,13 +158,32 @@
     previousScrollTop = viewport.scrollTop;
   }
 
+  let followUpDraft = $state("");
+  let chips = $state<string[]>([]);
+  let popover = $state<SelectionInfo | null>(null);
+
   async function submitFollowUp() {
-    const previous = session.thread.at(-1)?.id;
-    session.submitFollowUp();
-    if (session.thread.at(-1)?.id === previous) return;
-    await tick();
-    following = true;
-    followBottom("smooth");
+    const draft = followUpDraft;
+    const selectedChips = [...chips];
+    const question = [...selectedChips.map((chip) => `re: "${chip}"`), draft.trim()]
+      .filter(Boolean)
+      .join(" — ");
+    const previous = session.exchanges.at(-1)?.id;
+    const accepted = session.ask(question);
+    if (session.exchanges.at(-1)?.id !== previous) {
+      await tick();
+      following = true;
+      followBottom("smooth");
+    }
+    if (!(await accepted)) return;
+    if (followUpDraft === draft) followUpDraft = "";
+    if (selectedChips.every((chip, index) => chips[index] === chip))
+      chips = chips.slice(selectedChips.length);
+  }
+
+  function clearSelection() {
+    popover = null;
+    window.getSelection()?.removeAllRanges();
   }
 
   $effect(() => {
@@ -192,9 +211,9 @@
   $effect(() => {
     const target = page.url.searchParams.get("thread");
     if (!target || focusedThread === target) return;
-    const thread = session.thread
+    const thread = session.exchanges
       .flatMap((exchange) => exchange.btws)
-      .find((btw) => btw.conversation?.id === target);
+      .find((btw) => btw.sessionId === target);
     if (!thread) return;
     focusedThread = target;
     void tick().then(() => {
@@ -208,17 +227,16 @@
       !origin?.anchor &&
       session.phase === "done" &&
       session.submission.status !== "failed" &&
-      session.thread.length === 1 &&
-      (session.thread[0]?.error === null || session.thread[0]?.error === undefined),
+      session.exchanges.length === 1 &&
+      (session.exchanges[0]?.error === null || session.exchanges[0]?.error === undefined),
   );
 
   function handleSelectionChange() {
-    if (!session.popover) return;
+    if (!popover) return;
     const selection = document.getSelection();
     if (selection && !selection.isCollapsed) return;
-    const popover = document.querySelector("[data-popover]");
-    if (popover?.contains(document.activeElement)) return;
-    session.clearPopover();
+    if (document.querySelector("[data-popover]")?.contains(document.activeElement)) return;
+    popover = null;
   }
 </script>
 
@@ -277,7 +295,7 @@
     {/if}
 
     {#snippet conversation()}
-      {#each session.thread as exchange, index (exchange.id)}
+      {#each session.exchanges as exchange, index (exchange.id)}
         {@const streaming = exchange.status === "running" && session.phase !== "finalizing"}
         <section id={`exchange-${exchange.id}`} class="scroll-mt-6">
           {#if index === 0}
@@ -323,11 +341,8 @@
                 btws={exchange.btws}
                 {streaming}
                 {panelDocked}
-                onSelection={session.handleSelection}
-                onBtwReply={session.replyBtw}
-                onBtwRetry={session.retryBtw}
+                onSelection={(info) => (popover = info)}
                 onBtwDismiss={session.dismissBtw}
-                onBtwOpenSession={session.openBtwSession}
                 onCitation={(citation) => openCitation(citation.href, citation.path)}
               />
             </div>
@@ -339,9 +354,9 @@
               stopped={exchange.status === "stopped"}
               onRetry={exchange.status === "failed" &&
               session.phase === "done" &&
-              index === session.thread.length - 1 &&
+              index === session.exchanges.length - 1 &&
               exchange.replyId
-                ? () => session.retryExchange(exchange.id)
+                ? () => session.retry(exchange.id)
                 : undefined}
             />
           {:else if exchange.status === "completed" && !exchange.answer}
@@ -421,8 +436,8 @@
 
 {#if session.phase !== "idle"}
   <FollowUpBar
-    bind:value={session.followUpDraft}
-    chips={session.chips}
+    bind:value={followUpDraft}
+    {chips}
     disabled={session.phase !== "done" || !me.canUseModels}
     submissionFailed={session.submission.status === "failed"}
     stopping={session.stopping}
@@ -430,7 +445,10 @@
     finalizing={session.phase === "finalizing"}
     onStop={session.canStop ? session.stop : undefined}
     onValueChange={session.clearSubmissionFailure}
-    onRemoveChip={session.removeChip}
+    onRemoveChip={(index) => {
+      session.clearSubmissionFailure();
+      chips = chips.filter((_, itemIndex) => itemIndex !== index);
+    }}
     onSubmit={submitFollowUp}
   />
   {#if !me.canUseModels}
@@ -442,21 +460,21 @@
   {/if}
 {/if}
 
-{#if session.popover}
+{#if popover}
+  {@const selection = popover}
   <SelectionPopover
-    info={session.popover}
-    onDismiss={session.clearPopover}
+    info={selection}
+    onDismiss={() => (popover = null)}
     onFollowUp={() => {
-      if (session.popover) {
-        session.addChip(session.popover.quote);
-        dismissOnboardingHint();
-      }
+      session.clearSubmissionFailure();
+      chips = [...chips, selection.quote];
+      clearSelection();
+      dismissOnboardingHint();
     }}
     onBtw={() => {
-      if (session.popover) {
-        session.startBtw(session.popover);
-        dismissOnboardingHint();
-      }
+      session.startBtw(selection);
+      clearSelection();
+      dismissOnboardingHint();
     }}
   />
 {/if}

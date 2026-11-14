@@ -12,7 +12,7 @@
 </script>
 
 <svelte:head>
-  <title>Session | Great Minds</title>
+  <title>Conversation | Great Minds</title>
 </svelte:head>
 
 {#if sessionId}

@@ -27,7 +27,7 @@
   import { useSessions } from "#lib/hooks/use-sessions.svelte.ts";
   import { activeVault, useVaultDetail, useVaults } from "#lib/hooks/use-vault.svelte.ts";
   import { SessionExport as ExportController } from "#lib/hooks/use-session-export.svelte.ts";
-  import { Session } from "#lib/session.svelte.ts";
+  import { Conversation } from "#lib/conversation.svelte.ts";
 
   let {
     saved,
@@ -51,12 +51,20 @@
   }));
   const card = usePanelCard();
 
-  const session = new Session({
+  const session = new Conversation({
     saved: initial.saved,
     initialQuery: initial.initialQuery,
-    originPath: initial.origin,
-    onOpenSession: (id) => void goto(`/sessions/${id}`),
-    onSessionCreated: handleSessionCreated,
+    origin: initial.origin
+      ? {
+          kind: "document",
+          doc_path: initial.origin,
+          origin_scope: "vault",
+          anchor: null,
+          paragraph: null,
+          paragraph_index: null,
+        }
+      : null,
+    onCreated: handleSessionCreated,
   });
   onDestroy(session.destroy);
   const publication = new ExportController(() => session.sessionId);
@@ -67,7 +75,7 @@
     exportButton?.focus();
   }
   const exportBusy = $derived(session.phase !== "done");
-  let query = $state(initial.initialQuery ?? session.thread[0]?.query ?? "");
+  let query = $state(initial.initialQuery ?? session.exchanges[0]?.query ?? "");
 
   const [send, receive] = crossfade({
     duration: 280,
@@ -89,7 +97,7 @@
 
   function submit() {
     if (!query.trim()) return;
-    session.submitQuery(query);
+    void session.ask(query);
   }
 </script>
 
