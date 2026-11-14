@@ -599,11 +599,7 @@ const makeSessions = Effect.gen(function* () {
     listSessions: (userId, vaultId, params) =>
       Effect.gen(function* () {
         yield* access.requireMember(userId, vaultId);
-        const where = and(
-          eq(sessions.vaultId, vaultId),
-          eq(sessions.userId, userId),
-          eq(sessions.placement, "standalone"),
-        );
+        const where = and(eq(sessions.vaultId, vaultId), eq(sessions.userId, userId));
         const counts = yield* db.query((d) =>
           d
             .select({ total: sql<number>`count(*)::int` })

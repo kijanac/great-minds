@@ -45,14 +45,6 @@ export function loadSession(sessionId: SessionId): Promise<SessionResponse> {
   return run(readSession(selectedVault(), sessionId));
 }
 
-export function continueAsSession(sessionId: SessionId): Promise<void> {
-  return run(
-    api.sessions.continueAsSession({
-      params: { vault_id: selectedVault(), session_id: sessionId },
-    }),
-  );
-}
-
 export function readSession(vaultId: Uuid, sessionId: SessionId) {
   return withApiErrors(
     api.sessions.readSession({ params: { vault_id: vaultId, session_id: sessionId } }),

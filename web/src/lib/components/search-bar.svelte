@@ -121,7 +121,7 @@
           }}
           class="w-full border-t border-ink-subtle px-[18px] py-2 text-left font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-muted-foreground transition-colors hover:text-gold focus-visible:text-gold focus-visible:outline-none"
         >
-          all sessions
+          all conversations
         </button>
       {/if}
     </div>

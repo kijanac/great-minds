@@ -50,9 +50,7 @@
   const card = usePanelCard(readerScope);
   let btwPath: string | null = initialPath;
   let docThreads = $state<DocThreads | null>(
-    initialPath === null
-      ? null
-      : new DocThreads(initialPath, readerScope, (id) => void goto(`/sessions/${id}`)),
+    initialPath === null ? null : new DocThreads(initialPath, readerScope),
   );
   const documentQuery =
     initialSourceId !== null
@@ -105,7 +103,7 @@
     const target = page.url.searchParams.get("thread");
     const threads = docThreads;
     if (!target || body === null || !threads || threads.loading || focusedThread === target) return;
-    const thread = threads.threads.find((item) => item.conversation?.id === target);
+    const thread = threads.threads.find((item) => item.sessionId === target);
     if (!thread) return;
     focusedThread = target;
     void tick().then(() => threads.jumpTo(thread.id));
@@ -128,7 +126,7 @@
     if (currentPath === "" || currentPath === btwPath) return;
     docThreads?.destroy();
     btwPath = currentPath;
-    docThreads = new DocThreads(currentPath, readerScope, (id) => void goto(`/sessions/${id}`));
+    docThreads = new DocThreads(currentPath, readerScope);
     popover = null;
     suggestionTarget = null;
   });
@@ -252,12 +250,9 @@
         jumpableThreads={docThreads.jumpable}
         expandedThreads={docThreads.expanded}
         onToggleThread={docThreads.toggleExpanded}
-        onOpenSession={docThreads.openSession}
         onThreadJump={docThreads.jumpTo}
         documentId={document.id}
         onSelection={(info) => (popover = info)}
-        onBtwReply={docThreads.replyThread}
-        onBtwRetry={docThreads.retryThread}
         onBtwDismiss={docThreads.dismissEmpty}
       />
     {:else}

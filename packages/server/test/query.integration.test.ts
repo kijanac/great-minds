@@ -1037,11 +1037,12 @@ describe("query stream", () => {
     expect(language.streamCalls).toHaveLength(0);
   });
 
-  it("prepares an accepted BTW after continuation without changing its frozen mode", async () => {
+  it("keeps an accepted BTW's frozen mode after continuation and lets each question ask inline", async () => {
     const language = makeScriptedLanguageModel({
       streams: [
         { kind: "parts", parts: [tokenPart("Brief answer."), finishPart("stop")] },
         { kind: "parts", parts: [tokenPart("Further answer."), finishPart("stop")] },
+        { kind: "parts", parts: [tokenPart("Brief again."), finishPart("stop")] },
       ],
     });
     await startHarness({ language });
@@ -1085,13 +1086,20 @@ describe("query stream", () => {
     });
     expect(next.snapshots.at(-1)?.status).toBe("completed");
     expect(String(language.streamCalls[1].messages[0].content)).not.toContain("This is a BTW");
+    const inline = await runReply({
+      question: "And briefly?",
+      inline: true,
+      session: { kind: "existing", id: accepted.session_id },
+    });
+    expect(inline.snapshots.at(-1)?.status).toBe("completed");
+    expect(String(language.streamCalls[2].messages[0].content)).toContain("This is a BTW");
     const records = await readSessionEvents(accepted.session_id);
     expect(
       records
         .filter((record) => record.type === "settlement")
         .map((record) => record.generation?.mode),
-    ).toEqual(["btw", "query"]);
-    expect(language.streamCalls).toHaveLength(2);
+    ).toEqual(["btw", "query", "btw"]);
+    expect(language.streamCalls).toHaveLength(3);
   });
 
   it("redispatches a marked operation when its workflow is absent without generating twice", async () => {
