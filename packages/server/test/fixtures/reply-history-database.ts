@@ -24,7 +24,7 @@ export const runHistoryDatabase = <Value, Error>(
             current_setting('great_minds.test_purpose', true) as purpose
         `.pipe(Effect.orDie);
         if (
-          marker?.database_name !== "gm_reply_history_test" ||
+          !/^gm_reply_history_test_\d+$/.test(marker?.database_name ?? "") ||
           marker.purpose !== "reply-history"
         ) {
           return yield* Effect.die(

@@ -29,8 +29,9 @@ import { makeAppLayer } from "../src/app-layer.ts";
 import { openMcp, readMcpResponse as messageOf } from "./fixtures/mcp.ts";
 import {
   replyHistoryTestDatabaseUrl,
-  runHistoryDatabase,
+  resetWorkflowQueue,
 } from "./fixtures/reply-history-database.ts";
+import { TestWorkflowEngineLive } from "./fixtures/workflow-engine.ts";
 
 const initialTime = new Date("2026-07-09T12:00:00.000Z");
 
@@ -118,13 +119,14 @@ const testConfig = (url: string, dataDir: string): AppConfigShape => ({
 const buildTestState = async () => {
   const clock = makeTestClock(initialTime);
   const mailer = makeTestMailer();
-  await runHistoryDatabase(Effect.void);
+  await resetWorkflowQueue();
   const storageRoot = await mkdtemp(join(tmpdir(), "great-minds-auth-"));
   const configLayer = Layer.succeed(
     AppConfig,
     testConfig(replyHistoryTestDatabaseUrl, storageRoot),
   );
   const appLayer = makeAppLayer({
+    workflowEngine: TestWorkflowEngineLive,
     config: configLayer,
     clock: clock.layer,
     mailer: mailer.layer,

@@ -1,7 +1,7 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -15,6 +15,7 @@ const compose = [
   fileURLToPath(new URL("./docker-compose.history.yml", import.meta.url)),
 ];
 const output = promisify(execFile);
+const workers = Math.min(4, availableParallelism());
 let active: ChildProcess | undefined;
 let interrupted: NodeJS.Signals | undefined;
 let compilerDirectory: string | undefined;
@@ -72,6 +73,7 @@ try {
     PARALLEL_API_KEY: "",
     RUN_LIVE_LLM_SMOKE: "0",
     NODE_COMPILE_CACHE: join(tmpdir(), "great-minds-test-compile-cache"),
+    REPLY_HISTORY_TEST_WORKERS: String(workers),
     ...(binary === undefined ? {} : { TYPST_BINARY: binary }),
   };
   await run(
@@ -79,6 +81,19 @@ try {
     ["--experimental-strip-types", "packages/server/src/main.ts", "migrate"],
     env,
   );
+  await run("docker", [
+    ...compose,
+    "exec",
+    "-T",
+    "db",
+    "psql",
+    "--username=postgres",
+    "--set=ON_ERROR_STOP=1",
+    ...Array.from({ length: workers }, (_, index) => [
+      "--command",
+      `create database gm_reply_history_test_${index + 1} template gm_reply_history_test`,
+    ]).flat(),
+  ]);
   await run(
     "pnpm",
     [
@@ -87,7 +102,7 @@ try {
       "run",
       "--config",
       "packages/server/vitest.config.ts",
-      "--no-file-parallelism",
+      `--maxWorkers=${workers}`,
       ...(all
         ? ["packages/server/test", ...selectors.slice(1)]
         : selectors.length > 0
