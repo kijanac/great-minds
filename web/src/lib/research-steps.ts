@@ -20,6 +20,14 @@ export interface LookupStep {
 
 export type ResearchStep = ReadStep | LookupStep;
 
+export interface ReadingTrail {
+  readonly step: ReadStep;
+  readonly found: SourceRef | null;
+  readonly within: readonly SourceRef[];
+  readonly cited: ReadonlyMap<number, number>;
+  readonly focus: number | null;
+}
+
 export interface ResearchRound {
   readonly key: string;
   readonly note: string | null;
@@ -31,13 +39,18 @@ const sections = (ranges: readonly ChunkRange[] | undefined) =>
     Array.from({ length: range.end - range.start + 1 }, (_, index) => range.start + index),
   );
 
+const citedChunk = (citation: Citation) => {
+  const match = /#\^p(\d+)$/.exec(citation.href);
+  return match === null ? null : Number(match[1]);
+};
+
 const citedSections = (citations: readonly Citation[]) => {
   const cited = new Map<string, Set<number>>();
   for (const citation of citations) {
-    const match = /#\^p(\d+)$/.exec(citation.href);
-    if (match === null) continue;
+    const chunk = citedChunk(citation);
+    if (chunk === null) continue;
     const chunks = cited.get(citation.path) ?? new Set<number>();
-    chunks.add(Number(match[1]));
+    chunks.add(chunk);
     cited.set(citation.path, chunks);
   }
   return cited;
@@ -145,4 +158,34 @@ export const answerText = (exchange: Exchange) => {
     )
     ? ""
     : exchange.answer;
+};
+
+export const readingTrail = (
+  exchange: Exchange,
+  label: string,
+  focus: number | null = null,
+): ReadingTrail | null => {
+  const sources = exchange.thinking.flatMap((block) => block.sources);
+  const step = researchRounds(sources, exchange.citations)
+    .flatMap((round) => round.steps)
+    .find((item): item is ReadStep => item.kind === "read" && item.source.label === label);
+  if (step === undefined) return null;
+  return {
+    step,
+    found:
+      sources.find(
+        (source) =>
+          source.type === "search" &&
+          source.path === null &&
+          source.hits?.some((hit) => hit.path === label),
+      ) ?? null,
+    within: sources.filter((source) => source.type === "search" && source.path === label),
+    cited: new Map(
+      exchange.citations.flatMap((citation) => {
+        const chunk = citation.path === label ? citedChunk(citation) : null;
+        return chunk === null ? [] : [[chunk, citation.n] as const];
+      }),
+    ),
+    focus,
+  };
 };

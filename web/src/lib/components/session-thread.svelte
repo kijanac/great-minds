@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from "$app/state";
-  import type { MemberRole } from "@great-minds/domain";
+  import { citationPath, type MemberRole } from "@great-minds/domain";
   import { tick } from "svelte";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
   import type { crossfade } from "svelte/transition";
@@ -23,7 +23,7 @@
   import type { Conversation } from "#lib/conversation.svelte.ts";
   import { sessionOriginHref } from "#lib/session-origin.ts";
   import { passageMark, revealPassage } from "#lib/passage-navigation.ts";
-  import { answerText } from "#lib/research-steps.ts";
+  import { answerText, readingTrail, type ReadingTrail } from "#lib/research-steps.ts";
   import type { Exchange, SelectionInfo, SourceRef } from "#lib/types.ts";
   import { docDisplayName } from "#lib/utils.ts";
 
@@ -33,6 +33,7 @@
     vaultRole = null,
     panelDocked = false,
     onCardClick,
+    onOpenTrail,
     onOpenPath,
     onLinkClick,
     receive,
@@ -42,6 +43,7 @@
     vaultRole?: MemberRole | null;
     panelDocked?: boolean;
     onCardClick: (source: SourceRef) => void;
+    onOpenTrail: (trail: ReadingTrail) => void;
     onOpenPath: (path: string, chunk: number | null) => void;
     onLinkClick?: (event: MouseEvent) => void;
     receive?: ReturnType<typeof crossfade>[1];
@@ -49,10 +51,26 @@
 
   const me = useMe();
 
-  const openCitation = (href: string, path: string) => {
+  const openCitation = (exchange: Exchange, href: string, path: string) => {
     const fragment = href.split("#", 2)[1] ?? "";
     const match = /^\^p(\d+)$/.exec(decodeURIComponent(fragment));
-    onOpenPath(path, match ? Number(match[1]) : null);
+    const chunk = match ? Number(match[1]) : null;
+    const trail = readingTrail(exchange, path, chunk);
+    if (trail) onOpenTrail(trail);
+    else onOpenPath(path, chunk);
+  };
+
+  const openSource = (exchange: Exchange, source: SourceRef) => {
+    const trail = readingTrail(exchange, source.label);
+    if (trail) onOpenTrail(trail);
+    else onCardClick(source);
+  };
+
+  let hotPath = $state<string | null>(null);
+  const hoverCitation = (event: Event) => {
+    const href =
+      event.target instanceof Element ? event.target.closest("a")?.getAttribute("href") : null;
+    hotPath = href ? citationPath(href) : null;
   };
 
   const readMore = (exchange: Exchange) => {
@@ -331,10 +349,30 @@
             />
           {/if}
 
-          <ResearchTrace {exchange} onOpen={onCardClick} />
+          <ResearchTrace
+            {exchange}
+            hot={hotPath}
+            onOpen={(source) => openSource(exchange, source)}
+          />
 
           {#if answerText(exchange)}
-            <div data-answer>
+            <div
+              data-answer
+              role="presentation"
+              onmouseover={hoverCitation}
+              onfocusin={hoverCitation}
+              onmouseleave={() => (hotPath = null)}
+              onclick={(event) => {
+                const href =
+                  event.target instanceof Element
+                    ? event.target.closest("a")?.getAttribute("href")
+                    : null;
+                if (!href?.startsWith("raw/")) return;
+                event.preventDefault();
+                event.stopPropagation();
+                openCitation(exchange, href, citationPath(href));
+              }}
+            >
               <AnswerBlock
                 text={answerText(exchange)}
                 citations={exchange.citations}
@@ -344,7 +382,7 @@
                 {panelDocked}
                 onSelection={(info) => (popover = info)}
                 onBtwDismiss={session.dismissBtw}
-                onCitation={(citation) => openCitation(citation.href, citation.path)}
+                onCitation={(citation) => openCitation(exchange, citation.href, citation.path)}
               />
             </div>
           {/if}
@@ -383,7 +421,7 @@
                           class="mx-1.5 text-ink-border">·</span
                         >{/if}<button
                         type="button"
-                        onclick={() => onCardClick(source)}
+                        onclick={() => openSource(exchange, source)}
                         class={`underline decoration-gold-dim underline-offset-[3px] hover:text-gold ${activeCard === source.label ? "text-gold" : "text-gold-muted"}`}
                         >{source.title ?? source.label}</button
                       >{/each}

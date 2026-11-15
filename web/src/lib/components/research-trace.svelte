@@ -17,10 +17,12 @@
   let {
     exchange,
     compact = false,
+    hot = null,
     onOpen,
   }: {
     exchange: Exchange;
     compact?: boolean;
+    hot?: string | null;
     onOpen?: (source: SourceRef) => void;
   } = $props();
 
@@ -177,7 +179,7 @@
 {#snippet row(step: ResearchStep)}
   {@const now = active(step)}
   <li
-    class="step relative animate-[slide-up_0.42s_cubic-bezier(0.25,1,0.5,1)_both] py-1"
+    class={`step relative animate-[slide-up_0.42s_cubic-bezier(0.25,1,0.5,1)_both] rounded-sm py-1 transition-colors ${hot === step.source.label ? "bg-[color-mix(in_oklab,var(--gold)_9%,transparent)]" : ""}`}
     data-kind={step.kind}
     data-state={step.pending ? "pending" : now ? "active" : "done"}
   >
@@ -291,6 +293,7 @@
                 this={onOpen ? "button" : "span"}
                 type={onOpen ? "button" : undefined}
                 class="spine"
+                class:hot={hot === step.source.label}
                 data-kind={step.source.type}
                 data-tip={`${title(step.source)} · ${readLabel(step)}`}
                 aria-label={`${title(step.source)}, ${readLabel(step)}`}
@@ -415,6 +418,7 @@
     border-color: var(--gold-muted);
   }
   .spine:hover,
+  .spine.hot,
   .spine:focus-visible {
     transform: translateY(-3px);
     border-color: var(--gold);
