@@ -12,7 +12,6 @@ export interface ReplyTailOwner {
   readonly conversationId: () => SessionId | null;
   readonly turn: () => Exchange | undefined;
   readonly apply: (updated: Exchange, activity: SessionActivity | null) => void;
-  readonly alwaysShowThinking?: boolean;
 }
 
 export const tailReply = async (
@@ -25,7 +24,7 @@ export const tailReply = async (
       if (signal.aborted || snapshot.session_id !== owner.conversationId()) return "abandoned";
       const current = owner.turn();
       if (current?.replyId !== replyId) return "abandoned";
-      const updated = applyReplySnapshot(current, snapshot, owner.alwaysShowThinking);
+      const updated = applyReplySnapshot(current, snapshot);
       if (updated === null) continue;
       owner.apply(updated, replyActivity(snapshot, updated));
     }

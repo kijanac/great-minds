@@ -6,7 +6,6 @@
   import type { crossfade } from "svelte/transition";
 
   import AnswerBlock from "#lib/components/answer-block.svelte";
-  import AnswerSteps from "#lib/components/answer-steps.svelte";
   import { outlineOf } from "#lib/citations.ts";
   import FollowUpBar from "#lib/components/follow-up-bar.svelte";
   import OnboardingHint, {
@@ -14,6 +13,7 @@
     onboardingHintSeen,
   } from "#lib/components/onboarding-hint.svelte";
   import PromoteButton from "#lib/components/promote-button.svelte";
+  import ResearchTrace from "#lib/components/research-trace.svelte";
   import ReplyInterrupted from "#lib/components/reply-interrupted.svelte";
   import SelectionPopover from "#lib/components/selection-popover.svelte";
   import SessionPassage from "#lib/components/session-passage.svelte";
@@ -23,6 +23,7 @@
   import type { Conversation } from "#lib/conversation.svelte.ts";
   import { sessionOriginHref } from "#lib/session-origin.ts";
   import { passageMark, revealPassage } from "#lib/passage-navigation.ts";
+  import { answerText } from "#lib/research-steps.ts";
   import type { Exchange, SelectionInfo, SourceRef } from "#lib/types.ts";
   import { docDisplayName } from "#lib/utils.ts";
 
@@ -330,12 +331,12 @@
             />
           {/if}
 
-          <AnswerSteps blocks={exchange.thinking} {streaming} onOpen={onCardClick} />
+          <ResearchTrace {exchange} onOpen={onCardClick} />
 
-          {#if exchange.answer}
+          {#if answerText(exchange)}
             <div data-answer>
               <AnswerBlock
-                text={exchange.answer}
+                text={answerText(exchange)}
                 citations={exchange.citations}
                 exchangeId={exchange.id}
                 btws={exchange.btws}

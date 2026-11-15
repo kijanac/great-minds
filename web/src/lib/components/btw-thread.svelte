@@ -6,17 +6,16 @@
   import Square from "@lucide/svelte/icons/square";
   import { tick } from "svelte";
 
-  import ArticleBadge from "#lib/components/article-badge.svelte";
-  import FilterBadge from "#lib/components/filter-badge.svelte";
   import MarkdownView from "#lib/components/markdown-view.svelte";
   import ReplyInterrupted from "#lib/components/reply-interrupted.svelte";
   import ReplySubmissionError from "#lib/components/reply-submission-error.svelte";
-  import SearchBadge from "#lib/components/search-badge.svelte";
+  import ResearchTrace from "#lib/components/research-trace.svelte";
   import ThreadSurface from "#lib/components/thread-surface.svelte";
   import ThreadTurn from "#lib/components/thread-turn.svelte";
   import * as Collapsible from "#lib/components/ui/collapsible/index.ts";
   import { Button } from "#lib/components/ui/button/index.ts";
   import { Conversation } from "#lib/conversation.svelte.ts";
+  import { answerText } from "#lib/research-steps.ts";
   import type { ThreadLike } from "#lib/types.ts";
 
   let {
@@ -112,37 +111,21 @@
 
       <Collapsible.Content>
         {#each btw.exchanges as exchange, index (exchange.id)}
-          {@const sources = exchange.thinking.flatMap((block) => block.sources)}
+          {@const answer = answerText(exchange)}
           <div class="mt-4">
             <ThreadTurn query={exchange.query}>
-              {#if sources.length > 0}
-                <div class="mb-[9px] flex flex-wrap gap-[5px]">
-                  {#each sources as source, index (`${source.type}:${index}:${source.label}`)}
-                    {#if source.type === "search"}
-                      <SearchBadge {source} />
-                    {:else if source.type === "query"}
-                      <FilterBadge summary={source.label} pending={source.pending === true} />
-                    {:else}
-                      <ArticleBadge {source} />
-                    {/if}
-                  {/each}
-                </div>
-              {/if}
+              <ResearchTrace {exchange} compact />
 
-              {#if exchange.status === "running" && !exchange.answer}
+              {#if exchange.status === "running" && !answer && live?.phase === "finalizing"}
                 <div
                   class="mb-[9px] animate-[pulse-fade_1.6s_ease-in-out_infinite] text-[length:var(--text-small)] leading-[1.72] text-warm-faint"
                 >
-                  {live?.phase === "finalizing"
-                    ? "saving response…"
-                    : sources.length > 0
-                      ? "reading..."
-                      : "thinking..."}
+                  saving response…
                 </div>
               {:else}
-                {#if exchange.answer}
+                {#if answer}
                   <div class="mb-3 text-[length:var(--text-small)] leading-[1.85] text-warm-dim">
-                    <MarkdownView source={exchange.answer} variant="btw" />
+                    <MarkdownView source={answer} variant="btw" />
                     {#if exchange.status === "running" && live?.phase !== "finalizing"}
                       <span
                         class="ml-px inline-block h-2.5 w-px animate-[blink_1s_step-end_infinite] bg-gold-muted align-middle"

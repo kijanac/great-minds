@@ -36,6 +36,7 @@ export interface Exchange {
   error?: string | null;
   status: SessionExchangeEvent["status"];
   version: number | null;
+  startedAt?: Date;
 }
 
 // Where a BTW is anchored: the source offset of its block (exact, stable,
