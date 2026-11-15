@@ -1443,6 +1443,7 @@ export const CreateReplyRequest = Schema.Struct({
   extra_instructions: QueryRequest.fields.extra_instructions,
   reply_id: Uuid,
   exchange_id: Uuid,
+  inline: Schema.optionalKey(Schema.Boolean),
   session: Schema.Union([
     CreateReplySession,
     Schema.Struct({

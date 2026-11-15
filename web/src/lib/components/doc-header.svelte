@@ -12,7 +12,7 @@
   import * as Collapsible from "#lib/components/ui/collapsible/index.ts";
   import { CHIP_BASE, CHIP_INACTIVE } from "#lib/chip.ts";
   import { useReferenceRename } from "#lib/hooks/use-references.svelte.ts";
-  import type { ThreadLike } from "#lib/types.ts";
+  import type { Conversation } from "#lib/conversation.svelte.ts";
   import { cn, formatShortDate } from "#lib/utils.ts";
   import type { ReferencePromotionAction as PromotionAction } from "#lib/types.ts";
   import { tick } from "svelte";
@@ -28,7 +28,6 @@
     threads = [],
     jumpableThreads = null,
     onThreadJump,
-    onThreadOpen,
   }: {
     document: Article;
     scope: DocumentScope;
@@ -37,12 +36,11 @@
     archived?: boolean;
     supersededBy?: string | null;
     onSupersessorClick?: (slug: string) => void;
-    threads?: ThreadLike[];
+    threads?: Conversation[];
     // Thread ids whose anchor block resolves in the rendered body; others
     // keep their row but lose the jump affordance. Null = all jumpable.
     jumpableThreads?: Set<string> | null;
     onThreadJump?: (threadId: string) => void;
-    onThreadOpen?: (threadId: string) => void;
   } = $props();
 
   let extraOpen = $state(false);
@@ -53,21 +51,9 @@
   let titleInput = $state<HTMLInputElement | null>(null);
   let renameError = $state<string | null>(null);
   const rename = useReferenceRename();
-  const notes = $derived(threads.filter((thread) => thread.conversation?.kind === "btw"));
-  const conversations = $derived(
-    threads.flatMap((thread) =>
-      thread.conversation?.kind === "session"
-        ? [
-            {
-              id: thread.id,
-              query: thread.conversation.query,
-              createdAt: thread.createdAt,
-            },
-          ]
-        : [],
-    ),
-  );
-  const showThreadsChip = $derived(notes.length + conversations.length > 0);
+  const notes = $derived(threads.filter((thread) => !thread.draft && thread.anchor.quote));
+  const conversations = $derived(threads.filter((thread) => !thread.draft && !thread.anchor.quote));
+  const total = $derived(notes.length + conversations.length);
   const shortQuote = (quote: string) => (quote.length > 44 ? `${quote.slice(0, 44)}...` : quote);
   const metadata = $derived(articleMeta(document));
   const metaParts = $derived(
@@ -253,16 +239,13 @@
     </p>
   {/if}
 
-  {#if showThreadsChip}
+  {#if total > 0}
     <Collapsible.Root bind:open={threadsOpen} class="mt-4">
       <Collapsible.Trigger
         class="flex h-auto items-center gap-2 rounded-sm border border-ink-border bg-ink-raised px-3 py-1.5 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-warm-faint transition-colors hover:border-gold-dim hover:text-warm"
       >
         <span class="text-gold-muted">⊹</span>
-        <span>
-          {notes.length} BTW{notes.length === 1 ? "" : "s"} ·
-          {conversations.length} session{conversations.length === 1 ? "" : "s"}
-        </span>
+        <span>{total} conversation{total === 1 ? "" : "s"}</span>
         {#if threadsOpen}
           <ChevronDown size={11} />
         {:else}
@@ -275,7 +258,7 @@
             <p
               class="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-muted uppercase"
             >
-              BTWs
+              on passages
             </p>
             {#each notes as note (note.id)}
               {@const jumpable = jumpableThreads === null || jumpableThreads.has(note.id)}
@@ -310,19 +293,18 @@
             <p
               class="font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold-muted uppercase"
             >
-              sessions
+              about the whole text
             </p>
             {#each conversations as conversation (conversation.id)}
-              <button
-                type="button"
-                onclick={() => onThreadOpen?.(conversation.id)}
+              <a
+                href={`/sessions/${conversation.sessionId}`}
                 class="group flex w-full items-baseline gap-2 text-left"
               >
                 <CornerUpRight size={11} class="shrink-0 translate-y-px text-gold-muted" />
                 <span
                   class="min-w-0 flex-1 truncate font-serif text-[length:var(--text-small)] text-warm-dim italic transition-colors group-hover:text-warm"
                 >
-                  “{shortQuote(conversation.query)}”
+                  “{shortQuote(conversation.title)}”
                 </span>
                 <span
                   class="shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost lowercase"
@@ -334,7 +316,7 @@
                 >
                   open
                 </span>
-              </button>
+              </a>
             {/each}
           {/if}
         </div>

@@ -1,9 +1,15 @@
-import type { Citation, ReplySource, SessionExchangeEvent, Uuid } from "@great-minds/domain";
+import type {
+  Citation,
+  ReplySource,
+  SessionExchangeEvent,
+  SessionId,
+  Uuid,
+} from "@great-minds/domain";
 import type { UnmentionedLink } from "#lib/api/lint.ts";
 import type { SessionSummary } from "#lib/api/sessions.ts";
 import type { SourceDocumentSummary, SourceTypeFacet } from "#lib/api/sources.ts";
 import type { WikiArticleOverview } from "#lib/api/wiki.ts";
-import type { Btw } from "#lib/btw.svelte.ts";
+import type { Conversation } from "#lib/conversation.svelte.ts";
 
 export type SourceRef = ReplySource;
 
@@ -25,7 +31,7 @@ export interface Exchange {
   thinking: readonly ThinkingBlock[];
   answer: string;
   citations: readonly Citation[];
-  btws: Btw[];
+  btws: Conversation[];
   replyId?: Uuid;
   error?: string | null;
   status: SessionExchangeEvent["status"];
@@ -44,13 +50,7 @@ export interface TextAnchor {
 
 export interface ThreadLike {
   id: string;
-  conversation: Pick<SessionSummary, "id" | "kind" | "query"> | null;
-  error?: string | null;
-  promoting?: boolean;
-  busy?: boolean;
-  finalizing?: boolean;
-  unavailable?: string | null;
-  connectionError?: string | null;
+  sessionId: SessionId | null;
   anchor: TextAnchor;
   exchanges: Exchange[];
   draft: boolean;

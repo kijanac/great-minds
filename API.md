@@ -2046,7 +2046,7 @@ Errors: `400 BadRequest` (not completed/stopped, or no nonempty answer), `403 Fo
 
 Auth: required.
 
-Lists the caller's standalone sessions in this vault, most recently updated first. Inline BTWs remain available through their origin or parent conversation.
+Lists the caller's conversations in this vault, standalone and anchored (BTWs) alike, most recently updated first. Each item carries its `origin`, so clients can show what an anchored conversation is about.
 
 The native conversation contract below is implemented in this checkout, not yet deployed through a production data cutover. See [conversation authority and cutover boundaries](docs/conversations.md).
 
@@ -2260,6 +2260,7 @@ Request fields:
 | `origin_path` | string | no | Path of the document the question is about. |
 | `origin_scope` | `"vault"` \| `"personal"` | no | Whether the origin document is vault content or the user's personal documents. Defaults to `"vault"`. |
 | `extra_instructions` | string | no | Additional instructions for how to answer. |
+| `inline` | boolean | no | Whether the question was asked inline beside its passage. `true` answers as a BTW with a brief-answer cue; `false` uses the default style. When omitted, the conversation's future-reply default applies. |
 
 **New session — `session.kind: "new"`**:
 
@@ -2278,7 +2279,7 @@ Request fields:
 | `kind` | `"existing"` | yes | Append to a saved session. |
 | `id` | `SessionId` | yes | Destination session. |
 
-Answer style is frozen from the conversation's future-reply default at acceptance, not supplied as client `mode`. A new BTW has `conversation_kind: "btw"` and a document/answer origin. Follow-ups target that BTW's own session ID. Continue changes the default for later acceptance without changing earlier attempts.
+Answer style is frozen at acceptance from `inline` when present, otherwise from the conversation's future-reply default; it is not supplied as client `mode`. A retry keeps the original request's `inline`. A new BTW has `conversation_kind: "btw"` and a document/answer origin. Follow-ups target that BTW's own session ID. Continue changes the default for later acceptance without changing earlier attempts.
 
 Response: `202 Accepted` with a `CreateReplyResponse`:
 

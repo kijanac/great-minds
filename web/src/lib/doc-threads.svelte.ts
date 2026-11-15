@@ -1,13 +1,11 @@
-import type { SessionId, Uuid } from "@great-minds/domain";
-
 import { listSessionsByOrigin, type OriginScope } from "#lib/api/sessions.ts";
-import { Btw } from "#lib/btw.svelte.ts";
+import { Conversation } from "#lib/conversation.svelte.ts";
 import { passageMark, revealPassage } from "#lib/passage-navigation.ts";
 import type { SelectionInfo } from "#lib/types.ts";
 import { isAbortError } from "#lib/utils.ts";
 
 export class DocThreads {
-  threads = $state<Btw[]>([]);
+  threads = $state<Conversation[]>([]);
   loading = $state(true);
   error = $state<string | null>(null);
   jumpable = $state<Set<string>>(new Set());
@@ -18,7 +16,6 @@ export class DocThreads {
   constructor(
     private readonly originPath: string,
     private readonly originScope: OriginScope,
-    private readonly onOpenSession: (sessionId: SessionId) => void,
   ) {
     void this.#load();
   }
@@ -33,9 +30,7 @@ export class DocThreads {
       const details = await listSessionsByOrigin(this.originPath, this.#controller.signal);
       if (this.#controller.signal.aborted) return;
       this.threads = details.flatMap((detail) =>
-        detail.session.origin?.kind === "document"
-          ? [new Btw(detail.session.origin, this.onOpenSession, detail)]
-          : [],
+        detail.session.origin?.kind === "document" ? [new Conversation({ detail })] : [],
       );
       this.refreshJumpable();
     } catch (error) {
@@ -69,12 +64,12 @@ export class DocThreads {
     this.jumpable = next;
   };
 
-  #findThread = (threadId: string): Btw | undefined =>
+  #findThread = (threadId: string): Conversation | undefined =>
     this.threads.find((thread) => thread.id === threadId);
 
   startThread = (info: SelectionInfo): void => {
-    const thread = new Btw(
-      {
+    const thread = new Conversation({
+      origin: {
         kind: "document",
         doc_path: this.originPath,
         origin_scope: this.originScope,
@@ -82,19 +77,10 @@ export class DocThreads {
         paragraph: info.context,
         paragraph_index: info.blockOffset,
       },
-      this.onOpenSession,
-    );
+    });
     this.threads = [...this.threads, thread];
     this.expanded = new Set([...this.expanded, thread.id]);
     this.refreshJumpable();
-  };
-
-  replyThread = (threadId: string, userText: string): void => {
-    this.#findThread(threadId)?.reply(userText);
-  };
-
-  retryThread = (threadId: string, turnId: Uuid): void => {
-    this.#findThread(threadId)?.retry(turnId);
   };
 
   dismissEmpty = (threadId: string): void => {
@@ -112,10 +98,6 @@ export class DocThreads {
     if (next.has(threadId)) next.delete(threadId);
     else next.add(threadId);
     this.expanded = next;
-  };
-
-  openSession = (threadId: string): void => {
-    void this.#findThread(threadId)?.openSession();
   };
 
   /** Expand a thread and scroll its anchor mark into view (chip "jump").

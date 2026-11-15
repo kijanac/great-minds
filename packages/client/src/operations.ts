@@ -66,11 +66,13 @@ export const replyRequest = (input: {
   readonly exchangeId: Uuid;
   readonly originScope: OriginScope;
   readonly originPath?: string;
+  readonly inline?: boolean;
   readonly conversation: ReplyConversation;
 }): CreateReplyRequest => ({
   reply_id: newUuid(),
   exchange_id: input.exchangeId,
   question: input.question,
+  ...(input.inline === undefined ? {} : { inline: input.inline }),
   ...(input.originPath === undefined ? {} : { origin_path: input.originPath }),
   origin_scope: input.originScope,
   session:

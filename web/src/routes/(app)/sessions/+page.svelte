@@ -18,13 +18,15 @@
   const filtered = $derived.by(() => {
     const term = filter.trim().toLowerCase();
     return term
-      ? sessions.filter((session) => session.query.toLowerCase().includes(term))
+      ? sessions.filter((session) =>
+          `${session.query} ${session.origin?.anchor ?? ""}`.toLowerCase().includes(term),
+        )
       : sessions;
   });
 </script>
 
 <svelte:head>
-  <title>Sessions | Great Minds</title>
+  <title>Conversations | Great Minds</title>
 </svelte:head>
 
 <div class="flex h-dvh flex-col overflow-hidden">
@@ -38,12 +40,15 @@
       />
     </div>
   {/snippet}
-  <PageHeader title="sessions" trailing={filterInput} onHome={() => void goto("/")} />
+  <PageHeader title="conversations" trailing={filterInput} onHome={() => void goto("/")} />
 
   <div class="min-h-0 flex-1 overflow-y-auto">
     <main class="mx-auto max-w-[740px] px-4 pt-8 pb-20 md:px-10">
       {#if query.error}
-        <ErrorState message="Couldn't load your sessions." onRetry={() => void query.refetch()} />
+        <ErrorState
+          message="Couldn't load your conversations."
+          onRetry={() => void query.refetch()}
+        />
       {:else if query.isLoading}
         <div class="space-y-4">
           {#each [0, 1, 2, 3] as row (row)}
@@ -54,16 +59,18 @@
           {/each}
         </div>
       {:else if filtered.length === 0 && filter}
-        <p class="text-[length:var(--text-body)] text-warm-faint">No sessions match your filter.</p>
+        <p class="text-[length:var(--text-body)] text-warm-faint">
+          No conversations match your filter.
+        </p>
       {:else if filtered.length === 0}
         <div class="pt-8 text-center">
           <p class="mb-2 font-serif text-[length:var(--text-body)] text-warm-dim">
-            No sessions yet
+            No conversations yet
           </p>
           <p
             class="mb-6 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost"
           >
-            Ask a question from home, or continue a BTW as a session.
+            Ask a question from home, or highlight a passage and ask with btw.
           </p>
           <Button
             variant="ghost"

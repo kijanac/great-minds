@@ -5,7 +5,8 @@
   import AnswerBlock from "#lib/components/answer-block.svelte";
   import DocHeader from "#lib/components/doc-header.svelte";
   import { Button } from "#lib/components/ui/button/index.ts";
-  import type { ReferencePromotionAction, SelectionInfo, ThreadLike } from "#lib/types.ts";
+  import type { Conversation } from "#lib/conversation.svelte.ts";
+  import type { ReferencePromotionAction, SelectionInfo } from "#lib/types.ts";
 
   let {
     document,
@@ -23,12 +24,9 @@
     jumpableThreads = null,
     expandedThreads = null,
     onToggleThread,
-    onOpenSession,
     onThreadJump,
     documentId,
     onSelection,
-    onBtwReply,
-    onBtwRetry,
     onBtwDismiss,
   }: {
     document: Article;
@@ -42,16 +40,13 @@
     onRelatedClick?: (filePath: string) => void;
     onLinkClick?: (event: MouseEvent) => void;
     panelDocked?: boolean;
-    threads?: ThreadLike[];
+    threads?: Conversation[];
     jumpableThreads?: Set<string> | null;
     expandedThreads?: Set<string> | null;
     onToggleThread?: (threadId: string) => void;
-    onOpenSession?: (threadId: string) => void;
     onThreadJump?: (threadId: string) => void;
     documentId: Uuid;
     onSelection: (info: SelectionInfo) => void;
-    onBtwReply: (btwId: string, text: string) => void;
-    onBtwRetry?: (btwId: string, turnId: Uuid) => void;
     onBtwDismiss?: (btwId: string) => void;
   } = $props();
 </script>
@@ -70,12 +65,9 @@
     {panelDocked}
     {onLinkClick}
     {onSelection}
-    {onBtwReply}
-    {onBtwRetry}
     {onBtwDismiss}
     {expandedThreads}
     {onToggleThread}
-    onBtwOpenSession={onOpenSession}
   >
     {#snippet header(showTitle)}
       <DocHeader
@@ -89,7 +81,6 @@
         {threads}
         {jumpableThreads}
         {onThreadJump}
-        onThreadOpen={onOpenSession}
       />
     {/snippet}
   </AnswerBlock>

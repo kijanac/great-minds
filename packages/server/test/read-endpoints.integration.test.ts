@@ -1762,12 +1762,20 @@ describe("read-only HTTP integration", () => {
     expect(listed.status).toBe(200);
     const page = asPage(listed.body);
     const sessions = itemRecords(page);
-    expect(page.pagination).toEqual({ limit: 50, offset: 0, total: 2 });
+    expect(page.pagination).toEqual({ limit: 50, offset: 0, total: 5 });
     expect(sessions.map((session) => session.id)).toEqual([
+      id.sessionMalformed,
+      id.sessionNoMarkdown,
       id.sessionAliceMain,
+      id.sessionAliceBtw,
       id.sessionAliceOlder,
     ]);
-    expect(sessions[1]).toMatchObject({
+    expect(sessions[3]).toMatchObject({
+      kind: "btw",
+      origin: { kind: "answer", session_id: id.sessionAliceMain, anchor: "concrete passage" },
+      origin_title: "How should study circles use source material?",
+    });
+    expect(sessions[4]).toMatchObject({
       id: id.sessionAliceOlder,
       query: "Earlier organizing question",
       user_id: id.alice,
@@ -1783,14 +1791,14 @@ describe("read-only HTTP integration", () => {
     );
     expect(secondPage.status).toBe(200);
     expect(itemRecords(asPage(secondPage.body)).map((session) => session.id)).toEqual([
-      id.sessionAliceOlder,
+      id.sessionNoMarkdown,
     ]);
 
     const zero = await api("GET", `/vaults/${id.vaultAlpha}/sessions?limit=0`, aliceToken);
     expect(zero.status).toBe(200);
     expect(asPage(zero.body)).toEqual({
       items: [],
-      pagination: { limit: 0, offset: 0, total: 2 },
+      pagination: { limit: 0, offset: 0, total: 5 },
     });
 
     const bobList = await api("GET", `/vaults/${id.vaultAlpha}/sessions`, bobToken);
@@ -1802,7 +1810,7 @@ describe("read-only HTTP integration", () => {
     expect(pastEnd.status).toBe(200);
     expect(asPage(pastEnd.body)).toEqual({
       items: [],
-      pagination: { limit: 50, offset: 99, total: 2 },
+      pagination: { limit: 50, offset: 99, total: 5 },
     });
 
     const overCap = await api("GET", `/vaults/${id.vaultAlpha}/sessions?limit=201`, aliceToken);
@@ -1822,7 +1830,7 @@ describe("read-only HTTP integration", () => {
     });
   });
 
-  it("serves document BTWs at their origin while the main list uses conversation kind", async () => {
+  it("serves document conversations at their origin and lists anchored ones too", async () => {
     const { aliceToken, bobToken, malloryToken } = currentFixture();
     const docPath = "refs/article.md";
     await runDb(
@@ -1916,12 +1924,11 @@ describe("read-only HTTP integration", () => {
       ),
     ]);
 
-    // The main list keeps unanchored origin sessions but drops anchored threads.
     const listed = await api("GET", `/vaults/${id.vaultAlpha}/sessions`, aliceToken);
     expect(listed.status).toBe(200);
     const listedIds = itemRecords(asPage(listed.body)).map((session) => session.id);
     expect(listedIds).toContain("s-origin-plain");
-    expect(listedIds).not.toContain("s-origin-anchored");
+    expect(listedIds).toContain("s-origin-anchored");
     expect(listedIds).not.toContain("s-origin-bob");
 
     const byOrigin = await api(
