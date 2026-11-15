@@ -16,6 +16,7 @@
   import { Button } from "#lib/components/ui/button/index.ts";
   import { Conversation } from "#lib/conversation.svelte.ts";
   import { answerText } from "#lib/research-steps.ts";
+  import { rawSourceHref, useSourceOpener } from "#lib/source-opener.ts";
   import type { ThreadLike } from "#lib/types.ts";
 
   let {
@@ -35,6 +36,7 @@
   } = $props();
 
   const live = $derived(btw instanceof Conversation && !readOnly ? btw : null);
+  const opener = useSourceOpener();
   let input = $state("");
   let inputElement: HTMLTextAreaElement | null = $state(null);
   const isStreaming = $derived(live !== null && live.phase !== "idle" && live.phase !== "done");
@@ -114,7 +116,13 @@
           {@const answer = answerText(exchange)}
           <div class="mt-4">
             <ThreadTurn query={exchange.query}>
-              <ResearchTrace {exchange} compact />
+              <ResearchTrace
+                {exchange}
+                compact
+                onOpen={opener && live
+                  ? (source) => opener.openSource(exchange, source)
+                  : undefined}
+              />
 
               {#if exchange.status === "running" && !answer && live?.phase === "finalizing"}
                 <div
@@ -124,7 +132,17 @@
                 </div>
               {:else}
                 {#if answer}
-                  <div class="mb-3 text-[length:var(--text-small)] leading-[1.85] text-warm-dim">
+                  <div
+                    class="mb-3 text-[length:var(--text-small)] leading-[1.85] text-warm-dim"
+                    role="presentation"
+                    onclick={(event) => {
+                      const href = opener && live ? rawSourceHref(event) : null;
+                      if (href === null) return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      opener?.openCitation(exchange, href);
+                    }}
+                  >
                     <MarkdownView source={answer} variant="btw" />
                     {#if exchange.status === "running" && live?.phase !== "finalizing"}
                       <span

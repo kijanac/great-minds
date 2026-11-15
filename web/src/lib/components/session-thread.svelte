@@ -23,7 +23,8 @@
   import type { Conversation } from "#lib/conversation.svelte.ts";
   import { sessionOriginHref } from "#lib/session-origin.ts";
   import { passageMark, revealPassage } from "#lib/passage-navigation.ts";
-  import { answerText, readingTrail, type ReadingTrail } from "#lib/research-steps.ts";
+  import { answerText, type ReadingTrail } from "#lib/research-steps.ts";
+  import { provideSourceOpener, rawSourceHref } from "#lib/source-opener.ts";
   import type { Exchange, SelectionInfo, SourceRef } from "#lib/types.ts";
   import { docDisplayName } from "#lib/utils.ts";
 
@@ -51,20 +52,11 @@
 
   const me = useMe();
 
-  const openCitation = (exchange: Exchange, href: string, path: string) => {
-    const fragment = href.split("#", 2)[1] ?? "";
-    const match = /^\^p(\d+)$/.exec(decodeURIComponent(fragment));
-    const chunk = match ? Number(match[1]) : null;
-    const trail = readingTrail(exchange, path, chunk);
-    if (trail) onOpenTrail(trail);
-    else onOpenPath(path, chunk);
-  };
-
-  const openSource = (exchange: Exchange, source: SourceRef) => {
-    const trail = readingTrail(exchange, source.label);
-    if (trail) onOpenTrail(trail);
-    else onCardClick(source);
-  };
+  const opener = provideSourceOpener({
+    openTrail: (trail) => onOpenTrail(trail),
+    toggle: (source) => onCardClick(source),
+    openPath: (path, chunk) => onOpenPath(path, chunk),
+  });
 
   let hotPath = $state<string | null>(null);
   const hoverCitation = (event: Event) => {
@@ -352,7 +344,7 @@
           <ResearchTrace
             {exchange}
             hot={hotPath}
-            onOpen={(source) => openSource(exchange, source)}
+            onOpen={(source) => opener.openSource(exchange, source)}
           />
 
           {#if answerText(exchange)}
@@ -363,14 +355,11 @@
               onfocusin={hoverCitation}
               onmouseleave={() => (hotPath = null)}
               onclick={(event) => {
-                const href =
-                  event.target instanceof Element
-                    ? event.target.closest("a")?.getAttribute("href")
-                    : null;
-                if (!href?.startsWith("raw/")) return;
+                const href = rawSourceHref(event);
+                if (href === null) return;
                 event.preventDefault();
                 event.stopPropagation();
-                openCitation(exchange, href, citationPath(href));
+                opener.openCitation(exchange, href);
               }}
             >
               <AnswerBlock
@@ -382,7 +371,7 @@
                 {panelDocked}
                 onSelection={(info) => (popover = info)}
                 onBtwDismiss={session.dismissBtw}
-                onCitation={(citation) => openCitation(exchange, citation.href, citation.path)}
+                onCitation={(citation) => opener.openCitation(exchange, citation.href)}
               />
             </div>
           {/if}
@@ -421,7 +410,7 @@
                           class="mx-1.5 text-ink-border">·</span
                         >{/if}<button
                         type="button"
-                        onclick={() => openSource(exchange, source)}
+                        onclick={() => opener.openSource(exchange, source)}
                         class={`underline decoration-gold-dim underline-offset-[3px] hover:text-gold ${activeCard === source.label ? "text-gold" : "text-gold-muted"}`}
                         >{source.title ?? source.label}</button
                       >{/each}

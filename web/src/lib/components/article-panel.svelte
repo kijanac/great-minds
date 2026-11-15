@@ -81,12 +81,21 @@
       items.push({ kind: "gap", from: next, to: total - 1 });
     return items;
   });
+  let body: HTMLDivElement | undefined = $state();
+  const jump = (section: number, behavior: ScrollBehavior = "smooth") => {
+    const gaps = [...(body?.querySelectorAll<HTMLElement>("[data-gap-from]") ?? [])];
+    const target =
+      body?.querySelector(`#panel-passage-${section}`) ??
+      gaps.find(
+        (gap) => Number(gap.dataset.gapFrom) <= section && section <= Number(gap.dataset.gapTo),
+      ) ??
+      body?.querySelector(`[id="^p${section}"]`);
+    target?.scrollIntoView({ block: "center", behavior });
+  };
   $effect(() => {
     const focus = trail?.focus;
     if (focus === null || focus === undefined || passages.length === 0) return;
-    requestAnimationFrame(() =>
-      document.getElementById(`panel-passage-${focus}`)?.scrollIntoView({ block: "center" }),
-    );
+    requestAnimationFrame(() => jump(focus, "instant"));
   });
 </script>
 
@@ -156,12 +165,12 @@
         {/if}
       </dl>
       {#if trail.step.source.chunks}
-        <div class="mt-3"><SourceStrip step={trail.step} width={300} /></div>
+        <div class="mt-3"><SourceStrip step={trail.step} width={360} onPick={jump} /></div>
       {/if}
     {/if}
   </div>
 
-  <div class="min-h-0 flex-1 overflow-y-auto">
+  <div bind:this={body} class="min-h-0 flex-1 overflow-y-auto">
     <div class="px-5 py-[18px]">
       {#if loading}
         <div class="space-y-3">
@@ -171,7 +180,13 @@
           <Skeleton class="h-4 w-2/3 bg-ink-raised" />
         </div>
       {:else if content?.mode === "doc"}
-        <MarkdownView source={content.body} variant="panel" stripBlockRefs {onLinkClick} />
+        <MarkdownView
+          source={content.body}
+          variant="panel"
+          stripBlockRefs
+          resolveBlockRefs={trail !== null}
+          {onLinkClick}
+        />
       {:else if content?.mode === "chunks"}
         <div class="space-y-2">
           {#if content.chunks.length === 0}
@@ -180,6 +195,8 @@
             {#each passages as item, index (item.kind === "gap" ? `gap:${item.from}` : item.chunk.chunk_index)}
               {#if item.kind === "gap"}
                 <div
+                  data-gap-from={item.from}
+                  data-gap-to={item.to}
                   class="flex items-center gap-3 py-1 font-mono text-[length:var(--text-chrome)] text-warm-ghost before:h-px before:flex-1 before:border-t before:border-dashed before:border-ink-border after:h-px after:flex-1 after:border-t after:border-dashed after:border-ink-border"
                 >
                   {span(item.from, item.to)} · not read

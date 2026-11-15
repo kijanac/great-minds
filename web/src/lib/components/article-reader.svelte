@@ -30,6 +30,7 @@
   import { usePanelCard } from "#lib/hooks/use-panel-card.svelte.ts";
   import { usePanelContent } from "#lib/hooks/use-panel-content.svelte.ts";
   import type { SelectionInfo } from "#lib/types.ts";
+  import { provideSourceOpener } from "#lib/source-opener.ts";
   import { displayTitle } from "#lib/utils.ts";
 
   let {
@@ -48,6 +49,7 @@
   const initialSourceId = untrack(() => sourceId);
   const readerScope = untrack(() => scope);
   const card = usePanelCard(readerScope);
+  provideSourceOpener(card);
   let btwPath: string | null = initialPath;
   let docThreads = $state<DocThreads | null>(
     initialPath === null ? null : new DocThreads(initialPath, readerScope),
@@ -191,6 +193,7 @@
     {#if card.selectedCard}
       <ArticlePanel
         card={card.selectedCard}
+        trail={card.trail}
         content={panelQuery.data ?? null}
         loading={panelQuery.isLoading}
         context="citation"
