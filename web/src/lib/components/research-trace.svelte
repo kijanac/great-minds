@@ -82,7 +82,7 @@
     const source = step.source;
     if (step.kind === "read")
       return `${now ? "reading" : "read"} ${source.type === "article" ? "article" : "source"}`;
-    if (step.kind === "links") return `${now ? "following" : "followed"} links from`;
+    if (step.kind === "links") return `${now ? "looking" : "looked"} for articles linked to`;
     if (step.kind === "query")
       return topic(source.label) === null
         ? `${now ? "filtering" : "filtered"} sources by`
@@ -98,8 +98,8 @@
   const result = (step: ResearchStep) => {
     const count = step.source.results;
     if (step.pending || count === undefined) return null;
+    if (step.kind === "links") return `found ${count}`;
     if (count === 0) return "none";
-    if (step.kind === "links") return plural(count, "linked article");
     if (step.kind === "query")
       return plural(count, topic(step.source.label) === null ? "source" : "article");
     if (step.source.scope === "web") return plural(count, "result");
