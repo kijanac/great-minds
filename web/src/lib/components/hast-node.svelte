@@ -53,12 +53,12 @@
       td: "border-b border-ink-subtle px-2 py-1.5 text-warm-faint",
     },
     article: {
-      h1: "mt-8 mb-4 scroll-mt-20 text-[length:var(--text-heading)] font-bold text-foreground first:mt-0 data-[arrived]:border-l-2 data-[arrived]:border-gold data-[arrived]:bg-gold/10 data-[arrived]:pl-3",
-      h2: "mt-8 mb-3 scroll-mt-20 text-[length:var(--text-heading)] font-bold text-foreground first:mt-0 data-[arrived]:border-l-2 data-[arrived]:border-gold data-[arrived]:bg-gold/10 data-[arrived]:pl-3",
-      h3: "mt-6 mb-2 scroll-mt-20 font-mono text-[length:var(--text-caption)] font-medium tracking-[0.14em] text-gold uppercase data-[arrived]:border-l-2 data-[arrived]:border-gold data-[arrived]:bg-gold/10 data-[arrived]:pl-3",
-      p: "mb-4 scroll-mt-20 text-[length:var(--text-body)] leading-[1.85] text-warm-dim data-[arrived]:border-l-2 data-[arrived]:border-gold data-[arrived]:bg-gold/10 data-[arrived]:pl-3",
-      ul: "mb-4 ml-2 list-inside list-disc scroll-mt-20 text-[length:var(--text-body)] leading-[1.85] text-warm-dim data-[arrived]:border-l-2 data-[arrived]:border-gold data-[arrived]:bg-gold/10 data-[arrived]:pl-3",
-      ol: "mb-4 ml-2 list-inside list-decimal scroll-mt-20 text-[length:var(--text-body)] leading-[1.85] text-warm-dim data-[arrived]:border-l-2 data-[arrived]:border-gold data-[arrived]:bg-gold/10 data-[arrived]:pl-3",
+      h1: "mt-8 mb-4 scroll-mt-20 text-[length:var(--text-heading)] font-bold text-foreground first:mt-0 data-[arrived]:border-l-2 data-[arrived]:border-gold data-[arrived]:bg-gold/10 data-[arrived]:-ml-3.5 data-[arrived]:pl-3",
+      h2: "mt-8 mb-3 scroll-mt-20 text-[length:var(--text-heading)] font-bold text-foreground first:mt-0 data-[arrived]:border-l-2 data-[arrived]:border-gold data-[arrived]:bg-gold/10 data-[arrived]:-ml-3.5 data-[arrived]:pl-3",
+      h3: "mt-6 mb-2 scroll-mt-20 font-mono text-[length:var(--text-caption)] font-medium tracking-[0.14em] text-gold uppercase data-[arrived]:border-l-2 data-[arrived]:border-gold data-[arrived]:bg-gold/10 data-[arrived]:-ml-3.5 data-[arrived]:pl-3",
+      p: "mb-4 scroll-mt-20 text-[length:var(--text-body)] leading-[1.85] text-warm-dim data-[arrived]:border-l-2 data-[arrived]:border-gold data-[arrived]:bg-gold/10 data-[arrived]:-ml-3.5 data-[arrived]:pl-3",
+      ul: "mb-4 ml-2 list-inside list-disc scroll-mt-20 text-[length:var(--text-body)] leading-[1.85] text-warm-dim data-[arrived]:border-l-2 data-[arrived]:border-gold data-[arrived]:bg-gold/10 data-[arrived]:-ml-3.5 data-[arrived]:pl-3",
+      ol: "mb-4 ml-2 list-inside list-decimal scroll-mt-20 text-[length:var(--text-body)] leading-[1.85] text-warm-dim data-[arrived]:border-l-2 data-[arrived]:border-gold data-[arrived]:bg-gold/10 data-[arrived]:-ml-3.5 data-[arrived]:pl-3",
       li: "mb-1",
       blockquote:
         "my-4 scroll-mt-20 border-l-2 border-gold-dim pl-4 text-[length:var(--text-body)] leading-[1.85] text-warm-faint italic data-[arrived]:border-gold data-[arrived]:bg-gold/10",

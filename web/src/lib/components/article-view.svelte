@@ -4,6 +4,7 @@
   import type { Article, DocumentScope, LinkItem } from "#lib/api/doc.ts";
   import AnswerBlock from "#lib/components/answer-block.svelte";
   import DocHeader from "#lib/components/doc-header.svelte";
+  import PassageLink from "#lib/components/passage-link.svelte";
   import { Button } from "#lib/components/ui/button/index.ts";
   import type { Conversation } from "#lib/conversation.svelte.ts";
   import type { ReferencePromotionAction, SelectionInfo } from "#lib/types.ts";
@@ -49,9 +50,16 @@
     onSelection: (info: SelectionInfo) => void;
     onBtwDismiss?: (btwId: string) => void;
   } = $props();
+
+  let article = $state<HTMLElement>();
 </script>
 
-<article data-lean class="mx-auto max-w-[740px] px-4 pt-6 pb-20 select-text md:px-10">
+<article
+  bind:this={article}
+  data-lean
+  class="mx-auto max-w-[740px] px-4 pt-6 pb-20 select-text md:px-10"
+>
+  <PassageLink root={article} />
   <AnswerBlock
     text={body}
     documentTitle={document.kind === "reference" ? null : document.title}
