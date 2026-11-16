@@ -13,6 +13,7 @@ import type { SourceRef } from "#lib/types.ts";
 export type PanelContent =
   | { mode: "doc"; body: string }
   | { mode: "chunks"; chunks: readonly DocChunk[] }
+  | { mode: "outline" }
   | { mode: "links"; links: LinkedArticles };
 
 export async function loadPanelContent(
@@ -38,11 +39,13 @@ export async function loadPanelContent(
     const groups = await Promise.all(
       card.ranges.map((range) => fetchChunks(path, range.start, range.end, signal)),
     );
+    const chunks = new Map(groups.flat().map((chunk) => [chunk.chunk_index, chunk]));
     return {
       mode: "chunks",
-      chunks: groups.reduce((all, chunks) => all.concat(chunks), [] as DocChunk[]),
+      chunks: [...chunks.values()].sort((a, b) => a.chunk_index - b.chunk_index),
     };
   }
+  if (card.outline === true && !card.full) return { mode: "outline" };
 
   const document = source ?? (await readDocument(path, signal));
   return { mode: "doc", body: document.body };

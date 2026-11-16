@@ -45,9 +45,8 @@
     footnoteMode,
     footnoteDefinitions,
     activeFootnote,
-    pinnedFootnotes,
     onFootnoteHover,
-    onFootnoteToggle,
+    onFootnoteOpen,
   })}
     <HastNodeView
       node={tree}
@@ -56,9 +55,8 @@
       {footnoteMode}
       {footnoteDefinitions}
       {activeFootnote}
-      {pinnedFootnotes}
       {onFootnoteHover}
-      {onFootnoteToggle}
+      {onFootnoteOpen}
     />
   {/snippet}
 </FootnoteNotes>

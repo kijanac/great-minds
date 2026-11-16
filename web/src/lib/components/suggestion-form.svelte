@@ -54,7 +54,7 @@
   class="max-h-[70dvh] shrink-0 overflow-y-auto border-t border-ink-subtle bg-background px-4 pt-4 pb-[max(3.5rem,env(safe-area-inset-bottom))] sm:pb-5 md:px-10 md:pt-5"
   aria-labelledby="suggestion-heading"
 >
-  <div class="mx-auto max-w-[740px]">
+  <div data-lean class="mx-auto max-w-[740px]">
     {#if submittedMode}
       <div
         class="flex flex-col gap-4 py-2 sm:flex-row sm:items-center sm:justify-between"
