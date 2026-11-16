@@ -16,10 +16,9 @@
     topLevel = false,
     footnoteMode = "popover",
     activeFootnote = null,
-    pinnedFootnotes = [],
     footnoteDefinitions,
     onFootnoteHover,
-    onFootnoteToggle,
+    onFootnoteOpen,
   }: {
     node: HastNode;
     variant: Variant;
@@ -29,10 +28,9 @@
     topLevel?: boolean;
     footnoteMode?: "margin" | "popover";
     activeFootnote?: string | null;
-    pinnedFootnotes?: string[];
     footnoteDefinitions?: FootnoteDefinitions;
     onFootnoteHover?: (id: string | null) => void;
-    onFootnoteToggle?: (id: string) => void;
+    onFootnoteOpen?: (id: string) => void;
   } = $props();
 
   const CLASSES: Record<Variant, Record<string, string>> = {
@@ -154,7 +152,6 @@
   const elementId = $derived(typeof node.properties?.id === "string" ? node.properties.id : null);
   const external = $derived(href?.startsWith("http") ?? false);
   const footnoteContent = $derived(footnoteId ? (footnoteDefinitions?.[footnoteId] ?? null) : null);
-  const pinnedFootnote = $derived(footnoteId ? pinnedFootnotes.includes(footnoteId) : false);
 </script>
 
 {#snippet childNodes()}
@@ -166,10 +163,9 @@
       topLevel={node.type === "root"}
       {footnoteMode}
       {activeFootnote}
-      {pinnedFootnotes}
       {footnoteDefinitions}
       {onFootnoteHover}
-      {onFootnoteToggle}
+      {onFootnoteOpen}
     />
   {/each}
 {/snippet}
@@ -220,23 +216,22 @@
       target={external ? "_blank" : undefined}
       rel={external ? "noopener noreferrer" : undefined}
       onclick={(event) => {
-        if (footnoteId && onFootnoteToggle) {
+        if (footnoteId && onFootnoteOpen) {
           event.preventDefault();
-          onFootnoteToggle(footnoteId);
+          onFootnoteOpen(footnoteId);
           return;
         }
         onLinkClick?.(event);
       }}
       onmouseenter={() => footnoteId && onFootnoteHover?.(footnoteId)}
       onmouseleave={() => footnoteId && onFootnoteHover?.(null)}
+      onfocus={() => footnoteId && onFootnoteHover?.(footnoteId)}
+      onblur={() => footnoteId && onFootnoteHover?.(null)}
       class={cn(
-        "text-gold underline decoration-gold/30 underline-offset-2 transition-colors hover:decoration-gold/60",
-        footnoteId &&
-          (activeFootnote === footnoteId || pinnedFootnote) &&
-          "text-warm-dim decoration-gold/60",
+        "text-gold underline decoration-gold/30 underline-offset-2 transition-colors hover:decoration-gold/60 data-[peeking]:decoration-gold/70",
+        footnoteId && activeFootnote === footnoteId && "text-warm-dim decoration-gold/60",
         className,
       )}
-      aria-expanded={footnoteId ? pinnedFootnote : undefined}
     >
       {@render childNodes()}
     </a>{#if citation}<sup class="ml-px"

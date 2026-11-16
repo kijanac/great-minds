@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from "$app/state";
-  import { citationPath, type MemberRole } from "@great-minds/domain";
+  import type { MemberRole } from "@great-minds/domain";
   import { tick } from "svelte";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
   import type { crossfade } from "svelte/transition";
@@ -24,7 +24,7 @@
   import { sessionOriginHref } from "#lib/session-origin.ts";
   import { passageMark, revealPassage } from "#lib/passage-navigation.ts";
   import { answerText, type ReadingTrail } from "#lib/research-steps.ts";
-  import { provideSourceOpener, rawSourceHref } from "#lib/source-opener.ts";
+  import { provideSourceOpener } from "#lib/source-opener.ts";
   import type { Exchange, SelectionInfo, SourceRef } from "#lib/types.ts";
   import { docDisplayName } from "#lib/utils.ts";
 
@@ -57,13 +57,6 @@
     toggle: (source) => onCardClick(source),
     openPath: (path, chunk) => onOpenPath(path, chunk),
   });
-
-  let hotPath = $state<string | null>(null);
-  const hoverCitation = (event: Event) => {
-    const href =
-      event.target instanceof Element ? event.target.closest("a")?.getAttribute("href") : null;
-    hotPath = href ? citationPath(href) : null;
-  };
 
   const readMore = (exchange: Exchange) => {
     const seen = new Set<string>();
@@ -341,27 +334,10 @@
             />
           {/if}
 
-          <ResearchTrace
-            {exchange}
-            hot={hotPath}
-            onOpen={(source) => opener.openSource(exchange, source)}
-          />
+          <ResearchTrace {exchange} onOpen={(source) => opener.openSource(exchange, source)} />
 
           {#if answerText(exchange)}
-            <div
-              data-answer
-              role="presentation"
-              onmouseover={hoverCitation}
-              onfocusin={hoverCitation}
-              onmouseleave={() => (hotPath = null)}
-              onclick={(event) => {
-                const href = rawSourceHref(event);
-                if (href === null) return;
-                event.preventDefault();
-                event.stopPropagation();
-                opener.openCitation(exchange, href);
-              }}
-            >
+            <div data-answer>
               <AnswerBlock
                 text={answerText(exchange)}
                 citations={exchange.citations}
@@ -372,6 +348,10 @@
                 onSelection={(info) => (popover = info)}
                 onBtwDismiss={session.dismissBtw}
                 onCitation={(citation) => opener.openCitation(exchange, citation.href)}
+                sourceTitle={(path) =>
+                  exchange.thinking
+                    .flatMap((block) => block.sources)
+                    .find((source) => source.label === path)?.title ?? null}
               />
             </div>
           {/if}

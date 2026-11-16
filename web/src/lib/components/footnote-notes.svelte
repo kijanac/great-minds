@@ -12,9 +12,8 @@
     footnoteMode: "margin" | "popover";
     footnoteDefinitions: FootnoteDefinitions;
     activeFootnote: string | null;
-    pinnedFootnotes: string[];
     onFootnoteHover: (id: string | null) => void;
-    onFootnoteToggle: (id: string) => void;
+    onFootnoteOpen: (id: string) => void;
   }
 
   export interface MarginDot {
@@ -50,16 +49,12 @@
   let viewportWide = $state(false);
   let coarsePointer = $state(false);
   let hoveredFootnote = $state<string | null>(null);
-  let pinnedFootnotes = $state<string[]>([]);
+  let leaving = 0;
   let notePositions = $state<Record<string, number>>({});
   let dotPositions = $state<Record<string, number>>({});
 
   const presentation = $derived(buildFootnotePresentation(roots, idPrefix));
-  const visibleNotes = $derived(
-    presentation.notes.filter(
-      (note) => note.id === hoveredFootnote || pinnedFootnotes.includes(note.id),
-    ),
-  );
+  const visibleNotes = $derived(presentation.notes.filter((note) => note.id === hoveredFootnote));
   const marginEnabled = $derived(marginFootnotes && viewportWide && !coarsePointer && !panelDocked);
 
   $effect(() => {
@@ -160,25 +155,27 @@
   $effect(() => {
     resetKey;
     hoveredFootnote = null;
-    pinnedFootnotes = [];
   });
 
   $effect(() => {
     if (marginEnabled) return;
     hoveredFootnote = null;
-    pinnedFootnotes = [];
   });
 
-  function toggleFootnote(id: string): void {
-    pinnedFootnotes = pinnedFootnotes.includes(id)
-      ? pinnedFootnotes.filter((candidate) => candidate !== id)
-      : [...pinnedFootnotes, id];
+  function hover(id: string | null): void {
+    clearTimeout(leaving);
+    if (id !== null) hoveredFootnote = id;
+    else leaving = window.setTimeout(() => (hoveredFootnote = null), 220);
+  }
+
+  function openFootnote(id: string): void {
+    root?.querySelector<HTMLElement>(`[data-margin-note="${CSS.escape(id)}"] a[href]`)?.click();
+    hoveredFootnote = null;
   }
 
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key !== "Escape" || !marginEnabled) return;
     hoveredFootnote = null;
-    pinnedFootnotes = [];
   }
 </script>
 
@@ -189,9 +186,8 @@
     footnoteMode: marginEnabled ? "margin" : "popover",
     footnoteDefinitions: presentation.definitions,
     activeFootnote: hoveredFootnote,
-    pinnedFootnotes,
-    onFootnoteHover: (id) => (hoveredFootnote = id),
-    onFootnoteToggle: toggleFootnote,
+    onFootnoteHover: hover,
+    onFootnoteOpen: openFootnote,
   })}
 
   {#if marginEnabled}
@@ -199,6 +195,8 @@
       {#each visibleNotes as note (note.id)}
         <aside
           data-margin-note={note.id}
+          onmouseenter={() => hover(note.id)}
+          onmouseleave={() => hover(null)}
           class={`pointer-events-auto absolute left-[calc(100%+2rem)] w-[clamp(150px,calc((100vw-740px)/2-3rem),260px)] font-serif text-[length:var(--text-caption)] leading-[1.6] text-warm-dim transition-opacity ${note.id in notePositions ? "opacity-100" : "opacity-0"}`}
           style:top={`${notePositions[note.id] ?? 0}px`}
         >

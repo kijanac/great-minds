@@ -1,4 +1,4 @@
-import type { ChunkRange, Citation } from "@great-minds/domain";
+import { citationPath, type ChunkRange } from "@great-minds/domain";
 
 import type { Exchange, SourceRef } from "#lib/types.ts";
 
@@ -39,29 +39,28 @@ const sections = (ranges: readonly ChunkRange[] | undefined) =>
     Array.from({ length: range.end - range.start + 1 }, (_, index) => range.start + index),
   );
 
-const citedChunk = (citation: Citation) => {
-  const match = /#\^p(\d+)$/.exec(citation.href);
+export const citedChunk = (href: string) => {
+  const fragment = href.split("#", 2)[1] ?? "";
+  const match = /^(?:\^|%5E)p(\d+)$/i.exec(fragment);
   return match === null ? null : Number(match[1]);
 };
 
-const citedSections = (citations: readonly Citation[]) => {
+const citedSections = (answer: string) => {
   const cited = new Map<string, Set<number>>();
-  for (const citation of citations) {
-    const chunk = citedChunk(citation);
+  for (const [, href = ""] of answer.matchAll(/\]\(((?:raw|wiki)\/[^)\s]+)\)/g)) {
+    const chunk = citedChunk(href);
     if (chunk === null) continue;
-    const chunks = cited.get(citation.path) ?? new Set<number>();
+    const path = citationPath(href);
+    const chunks = cited.get(path) ?? new Set<number>();
     chunks.add(chunk);
-    cited.set(citation.path, chunks);
+    cited.set(path, chunks);
   }
   return cited;
 };
 
 const isRead = (source: SourceRef) => source.type === "article" || source.type === "raw";
 
-export const researchRounds = (
-  sources: readonly SourceRef[],
-  citations: readonly Citation[] = [],
-): ResearchRound[] => {
+export const researchRounds = (sources: readonly SourceRef[], answer = ""): ResearchRound[] => {
   const resolved = new Map(
     sources.filter((source) => isRead(source) && !source.pending).map((s) => [s.label, s]),
   );
@@ -74,7 +73,7 @@ export const researchRounds = (
       hits.set(hit.path, chunks);
     }
   }
-  const cited = citedSections(citations);
+  const cited = citedSections(answer);
   const reads = new Map<string, ReadStep & { fetching: Set<number> }>();
   const steps: ResearchStep[] = [];
   for (const source of sources) {
@@ -166,7 +165,7 @@ export const readingTrail = (
   focus: number | null = null,
 ): ReadingTrail | null => {
   const sources = exchange.thinking.flatMap((block) => block.sources);
-  const step = researchRounds(sources, exchange.citations)
+  const step = researchRounds(sources, exchange.answer)
     .flatMap((round) => round.steps)
     .find((item): item is ReadStep => item.kind === "read" && item.source.label === label);
   if (step === undefined) return null;
@@ -181,10 +180,10 @@ export const readingTrail = (
       ) ?? null,
     within: sources.filter((source) => source.type === "search" && source.path === label),
     cited: new Map(
-      exchange.citations.flatMap((citation) => {
-        const chunk = citation.path === label ? citedChunk(citation) : null;
-        return chunk === null ? [] : [[chunk, citation.n] as const];
-      }),
+      [...step.cited].map((chunk) => [
+        chunk,
+        exchange.citations.find((citation) => citation.path === label)?.n ?? 0,
+      ]),
     ),
     focus,
   };
