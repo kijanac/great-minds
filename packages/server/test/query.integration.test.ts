@@ -1785,26 +1785,46 @@ describe("query stream", () => {
       answer: "Answer.",
       error: null,
       sources: [
-        { type: "query", label: "contains: Alpha, sort: central" },
-        { type: "query", label: "tags: theory, author: Lenin" },
-        { type: "search", label: "capital", scope: "kb" },
+        { type: "query", label: "contains: Alpha, sort: central", round: 1, results: 1 },
+        { type: "query", label: "tags: theory, author: Lenin", round: 1, results: 1 },
+        {
+          type: "search",
+          label: "capital",
+          scope: "kb",
+          round: 1,
+          results: 1,
+          hits: [{ path: "wiki/alpha.md", title: "Alpha", chunks: [0] }],
+        },
         {
           type: "search",
           label: "value",
           scope: "kb",
           path: "raw/texts/source.md",
           title: "Raw Source",
+          round: 1,
+          results: 2,
+          hits: [{ path: "raw/texts/source.md", title: "Raw Source", chunks: [0, 1] }],
         },
         // Links resolves into its pending slot in place; article/raw
         // resolutions re-push at the end (read+expand collapse to one card).
-        { type: "links", label: "wiki/alpha.md", title: "Alpha" },
-        { type: "article", label: "wiki/alpha.md", title: "Alpha", full: true },
+        { type: "links", label: "wiki/alpha.md", title: "Alpha", round: 2, results: 1 },
+        {
+          type: "article",
+          label: "wiki/alpha.md",
+          title: "Alpha",
+          full: true,
+          chunks: 1,
+          round: 2,
+        },
         {
           type: "raw",
           label: "raw/texts/source.md",
           title: "Raw Source",
-          full: true,
+          full: false,
+          outline: true,
+          chunks: 2,
           ranges: [{ start: 0, end: 1 }],
+          round: 2,
         },
       ],
     });
@@ -2362,7 +2382,13 @@ describe("query stream", () => {
       sources: [
         { type: "links", label: "wiki/alpha.md" },
         { type: "article", label: "wiki/alpha.md", full: true },
-        { type: "raw", label: "raw/texts/source.md", full: true, ranges: [{ start: 0, end: 1 }] },
+        {
+          type: "raw",
+          label: "raw/texts/source.md",
+          full: false,
+          outline: true,
+          ranges: [{ start: 0, end: 1 }],
+        },
       ],
     });
     expect(terminal?.sources).not.toEqual(

@@ -106,6 +106,7 @@
     {#if card.selectedCard}
       <ArticlePanel
         card={card.selectedCard}
+        trail={card.trail}
         content={panelQuery.data ?? null}
         loading={panelQuery.isLoading}
         context="agent"
@@ -251,6 +252,7 @@
                 vaultRole={vaultDetail.data?.role ?? null}
                 panelDocked={!!card.selectedCard}
                 onCardClick={card.toggle}
+                onOpenTrail={card.openTrail}
                 onOpenPath={card.openPath}
                 onLinkClick={card.onLinkClick}
                 {receive}

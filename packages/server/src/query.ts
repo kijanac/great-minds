@@ -17,7 +17,9 @@ import {
   SourceQuery,
   type OriginScope,
   type QueryRequest,
+  type QuerySourceArticle,
   type QuerySourceData,
+  type QuerySourceSearch,
   QuerySourceData as QuerySourceDataSchema,
   Uuid,
 } from "@great-minds/domain";
@@ -237,6 +239,9 @@ type ToolResult = {
   readonly source?: QuerySourceData;
 };
 
+type SourceDetail = Pick<QuerySourceArticle, "full" | "outline" | "chunks"> &
+  Pick<QuerySourceSearch, "results" | "hits">;
+
 type SafeLogFields = Record<string, string | number | boolean | null | undefined>;
 
 class ToolMiss extends Data.TaggedError("ToolMiss")<{
@@ -254,7 +259,13 @@ const maxRangeChunks = 40;
 const articlesPerPage = 25;
 const rrfK = 60;
 const maxSearchResults = 20;
+const maxSourceHits = 8;
 const searchArmMultiplier = 2;
+
+const fetchRange = (rawStart: number, rawEnd: number) => {
+  const start = Math.max(0, Math.min(rawStart, rawEnd));
+  return { start, end: Math.min(Math.max(rawStart, rawEnd), start + maxRangeChunks - 1) };
+};
 
 const first = <A>(values: readonly A[]) => values[0];
 
@@ -560,6 +571,7 @@ export const QueryServiceLive = Layer.effect(
     const sourceEvent = (
       context: QueryExecutionState,
       tool: QueryTool,
+      detail: SourceDetail = {},
     ): Effect.Effect<QuerySourceData | undefined> =>
       Effect.gen(function* () {
         const source = pendingSourceEvent(tool);
@@ -579,16 +591,62 @@ export const QueryServiceLive = Layer.effect(
           context.trace.searches.push(`${tool.args.query} · in ${tool.args.path}`);
         }
         if (source.type === "article" || source.type === "raw") {
-          return { ...source, ...(yield* documentForPath(context.vaultId, source.path)) };
-        }
-        if ("title" in source && source.path !== undefined) {
           return {
             ...source,
-            title: (yield* documentForPath(context.vaultId, source.path)).title,
+            ...(yield* documentForPath(context.vaultId, source.path)),
+            ...(detail.full === true ? { full: true } : {}),
+            ...(detail.outline === true ? { outline: true } : {}),
+            ...(detail.chunks === undefined ? {} : { chunks: detail.chunks }),
           };
         }
-        return source;
+        const results = detail.results === undefined ? {} : { results: detail.results };
+        if (source.type === "query") return { ...source, ...results };
+        const title =
+          source.path === undefined
+            ? {}
+            : { title: (yield* documentForPath(context.vaultId, source.path)).title };
+        if (source.type === "links") return { ...source, ...title, ...results };
+        return {
+          ...source,
+          ...title,
+          ...results,
+          ...(detail.hits === undefined ? {} : { hits: detail.hits }),
+        };
       });
+
+    const documentChunks = (vaultId: Uuid, path: string) =>
+      db
+        .query((d) =>
+          d
+            .select({ count: sql<number>`count(*)::int` })
+            .from(searchIndex)
+            .where(
+              and(
+                eq(searchIndex.vaultId, vaultId),
+                eq(searchIndex.path, path),
+                gte(searchIndex.chunkIndex, 0),
+              ),
+            ),
+        )
+        .pipe(Effect.map((rows) => (first(rows)?.count ?? 0) || undefined));
+
+    const sourceHits = (
+      vaultId: Uuid,
+      rows: readonly { readonly path: string; readonly chunkIndex: number }[],
+    ) => {
+      const byPath = new Map<string, number[]>();
+      for (const row of rows) {
+        const chunks = byPath.get(row.path);
+        if (chunks !== undefined) chunks.push(row.chunkIndex);
+        else if (byPath.size < maxSourceHits) byPath.set(row.path, [row.chunkIndex]);
+      }
+      return Effect.forEach(
+        byPath,
+        ([path, chunks]) =>
+          documentForPath(vaultId, path).pipe(Effect.map(({ title }) => ({ path, title, chunks }))),
+        { concurrency: 4 },
+      );
+    };
 
     const pendingSourceEvent = (tool: QueryTool): QuerySourceData | undefined => {
       if (tool.name === "read_document" || tool.name === "expand_context") {
@@ -600,8 +658,7 @@ export const QueryServiceLive = Layer.effect(
             document_id: null,
             path,
             title: null,
-            start: tool.args.start,
-            end: tool.args.end,
+            ...fetchRange(tool.args.start, tool.args.end),
           };
         }
         return { type, document_id: null, path, title: null };
@@ -686,13 +743,20 @@ export const QueryServiceLive = Layer.effect(
         const content = yield* read.pipe(
           Effect.mapError(() => new ToolMiss({ message: `Document not found: ${path}` })),
         );
-        const source = emitSource
-          ? yield* sourceEvent(context, { name: "read_document", args: { path } })
-          : undefined;
+        const chunks =
+          scope === "personal" ? undefined : yield* documentChunks(context.vaultId, path);
+        const readSource = (detail: SourceDetail) =>
+          emitSource
+            ? sourceEvent(
+                context,
+                { name: "read_document", args: { path } },
+                { ...detail, ...(chunks === undefined ? {} : { chunks }) },
+              )
+            : Effect.succeed(undefined);
         if (scope === "personal" || content.length <= readWholeLimit) {
           return {
             content: `# ${path} [${context.vaultLabel}]\n\n${content}`,
-            source,
+            source: yield* readSource({ full: true }),
           };
         }
         const outline = yield* sectionOutline(context.vaultId, path);
@@ -701,7 +765,7 @@ export const QueryServiceLive = Layer.effect(
             content:
               `# ${path} [${context.vaultLabel}]\n\n` +
               `This document is large (${content.length.toLocaleString("en-US")} chars) and is not searchable yet: indexing it for search has not completed, so search_in_document and expand_context cannot reach its text. Tell the user it is not searchable yet rather than treating it as empty.`,
-            source,
+            source: yield* readSource({}),
           };
         const lines = outline.map(
           (section) =>
@@ -713,7 +777,7 @@ export const QueryServiceLive = Layer.effect(
             `This document is large (${content.length.toLocaleString("en-US")} chars) — do NOT read it from the top. To find the passages relevant to your question, call search_in_document(path, query). Use expand_context(path, start, end) only on a range a search hit or a specific section below points to.\n\n` +
             "Section outline (a map, not the text):\n\n" +
             lines.join("\n"),
-          source,
+          source: yield* readSource({ outline: true }),
         };
       });
 
@@ -861,7 +925,11 @@ export const QueryServiceLive = Layer.effect(
           context.vaultId,
           yield* searchRows(context, query),
         );
-        const source = yield* sourceEvent(context, { name: "search_content", args: { query } });
+        const source = yield* sourceEvent(
+          context,
+          { name: "search_content", args: { query } },
+          { results: results.length, hits: yield* sourceHits(context.vaultId, results) },
+        );
         if (results.length === 0) {
           return { content: `No results found for: ${query}`, source } satisfies ToolResult;
         }
@@ -884,10 +952,11 @@ export const QueryServiceLive = Layer.effect(
           context.vaultId,
           yield* searchRows(context, query, path),
         );
-        const source = yield* sourceEvent(context, {
-          name: "search_in_document",
-          args: { path, query },
-        });
+        const source = yield* sourceEvent(
+          context,
+          { name: "search_in_document", args: { path, query } },
+          { results: results.length, hits: yield* sourceHits(context.vaultId, results) },
+        );
         if (results.length === 0) {
           return {
             content: `No passages in ${path} match '${query}'. Check the path (from list_articles or a search_content hit), or use search_content to search the whole knowledge base.`,
@@ -913,12 +982,7 @@ export const QueryServiceLive = Layer.effect(
       rawEnd: number,
     ) =>
       Effect.gen(function* () {
-        let start = rawStart;
-        let end = rawEnd;
-        if (end < start) {
-          [start, end] = [end, start];
-        }
-        end = Math.min(end, start + maxRangeChunks - 1);
+        const { start, end } = fetchRange(rawStart, rawEnd);
         const chunks = yield* withFootnoteNotes(
           storage,
           context.vaultId,
@@ -935,7 +999,7 @@ export const QueryServiceLive = Layer.effect(
                 and(
                   eq(searchIndex.vaultId, context.vaultId),
                   eq(searchIndex.path, path),
-                  gte(searchIndex.chunkIndex, Math.max(0, start)),
+                  gte(searchIndex.chunkIndex, start),
                   lte(searchIndex.chunkIndex, end),
                 ),
               )
@@ -955,10 +1019,18 @@ export const QueryServiceLive = Layer.effect(
           content:
             `# ${path} [${context.vaultLabel}] (chunks ${chunks[0].chunkIndex}–${chunks[chunks.length - 1].chunkIndex})\n\n` +
             sections.join("\n\n"),
-          source: yield* sourceEvent(context, {
-            name: "expand_context",
-            args: { path, start: rawStart, end: rawEnd },
-          }),
+          source: yield* sourceEvent(
+            context,
+            {
+              name: "expand_context",
+              args: {
+                path,
+                start: chunks[0].chunkIndex,
+                end: chunks[chunks.length - 1].chunkIndex,
+              },
+            },
+            { chunks: yield* documentChunks(context.vaultId, path) },
+          ),
         } satisfies ToolResult;
       });
 
@@ -1022,7 +1094,11 @@ export const QueryServiceLive = Layer.effect(
             `# Links for ${path} [${context.vaultLabel}]\n\n` +
             `Outgoing (this article cites):\n${formatLinks(outgoing)}\n\n` +
             `Incoming (articles that cite this):\n${formatLinks(incoming)}`,
-          source: yield* sourceEvent(context, { name: "linked_articles", args: { path } }),
+          source: yield* sourceEvent(
+            context,
+            { name: "linked_articles", args: { path } },
+            { results: new Set([...outgoing, ...incoming].map((row) => row.filePath)).size },
+          ),
         } satisfies ToolResult;
       });
 
@@ -1043,7 +1119,11 @@ export const QueryServiceLive = Layer.effect(
           { ...args, limit, offset },
           20,
         ).pipe(Effect.mapError((error) => new ToolMiss({ message: error.detail })));
-        const source = yield* sourceEvent(context, { name: "query_documents", args });
+        const source = yield* sourceEvent(
+          context,
+          { name: "query_documents", args },
+          { results: page.total },
+        );
         if (page.rows.length === 0) {
           const filters = Object.fromEntries(
             truthyEntries({ ...args, limit, offset: offset === 0 ? undefined : offset }),
@@ -1130,7 +1210,11 @@ export const QueryServiceLive = Layer.effect(
                 : query.orderBy(desc(inboundCount), asc(sql`lower(${wikiArticles.title})`));
           return ordered.limit(articlesPerPage).offset(offset);
         });
-        const source = yield* sourceEvent(context, { name: "list_articles", args });
+        const source = yield* sourceEvent(
+          context,
+          { name: "list_articles", args },
+          { results: total },
+        );
         if (rows.length === 0) {
           return {
             content: contains
@@ -1263,14 +1347,18 @@ export const QueryServiceLive = Layer.effect(
         const source = yield* sourceEvent(context, { name: "web_search", args: { query } });
         return yield* Effect.gen(function* () {
           const results = yield* parallel.search({ question: context.question, query });
+          const found = source?.type === "search" ? { ...source, results: results.length } : source;
           if (results.length === 0) {
-            return { content: `No web results for '${query}'.`, source } satisfies ToolResult;
+            return {
+              content: `No web results for '${query}'.`,
+              source: found,
+            } satisfies ToolResult;
           }
           const facts = yield* extractWebFacts(context, query, results);
           if (facts === undefined) {
             return {
               content: `Web results for '${query}' could not be distilled to facts this call; rely on the knowledge base.`,
-              source,
+              source: found,
             } satisfies ToolResult;
           }
           const blocks = results.map((result, index) => {
@@ -1285,7 +1373,7 @@ export const QueryServiceLive = Layer.effect(
             content:
               `Web FACTS for '${query}' — EXTERNAL, not from the knowledge base. These are facts only; the analysis is yours, from the knowledge base. Cite a fact's source as [title](url):\n\n` +
               blocks.join("\n\n"),
-            source,
+            source: found,
           } satisfies ToolResult;
         }).pipe(
           Effect.catchCause((cause) =>

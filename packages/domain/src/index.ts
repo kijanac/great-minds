@@ -928,6 +928,13 @@ export type ChunkRange = typeof ChunkRange.Type;
 export const SearchScope = Schema.Literals(["kb", "web"] as const);
 export type SearchScope = typeof SearchScope.Type;
 
+export const SourceHit = Schema.Struct({
+  path: Schema.String,
+  title: Schema.NullOr(Schema.String),
+  chunks: Schema.Array(Schema.Int),
+});
+export type SourceHit = typeof SourceHit.Type;
+
 export const ThinkingSource = Schema.Struct({
   label: Schema.String,
   type: Schema.Literals(["article", "raw", "search", "query", "links"] as const),
@@ -938,6 +945,11 @@ export const ThinkingSource = Schema.Struct({
   thinking: Schema.NullOr(Schema.String),
   ranges: Schema.optionalKey(Schema.Array(ChunkRange)),
   full: Schema.optionalKey(Schema.Boolean),
+  outline: Schema.optionalKey(Schema.Boolean),
+  chunks: Schema.optionalKey(Schema.Int),
+  results: Schema.optionalKey(Schema.Int),
+  hits: Schema.optionalKey(Schema.Array(SourceHit)),
+  round: Schema.optionalKey(Schema.Int),
 });
 export type ThinkingSource = typeof ThinkingSource.Type;
 
@@ -1383,6 +1395,9 @@ export const QuerySourceArticle = Schema.Struct({
   title: Schema.NullOr(Schema.String),
   start: Schema.optionalKey(Schema.Number),
   end: Schema.optionalKey(Schema.Number),
+  full: Schema.optionalKey(Schema.Boolean),
+  outline: Schema.optionalKey(Schema.Boolean),
+  chunks: Schema.optionalKey(Schema.Int),
 });
 export type QuerySourceArticle = typeof QuerySourceArticle.Type;
 
@@ -1393,12 +1408,15 @@ export const QuerySourceSearch = Schema.Struct({
   // Set when the search was scoped to a single document.
   path: Schema.optionalKey(Schema.String),
   title: Schema.NullOr(Schema.String),
+  results: Schema.optionalKey(Schema.Int),
+  hits: Schema.optionalKey(Schema.Array(SourceHit)),
 });
 export type QuerySourceSearch = typeof QuerySourceSearch.Type;
 
 export const QuerySourceQuery = Schema.Struct({
   type: Schema.Literal("query"),
   filters: Schema.Record(Schema.String, Schema.Unknown),
+  results: Schema.optionalKey(Schema.Int),
 });
 export type QuerySourceQuery = typeof QuerySourceQuery.Type;
 
@@ -1406,6 +1424,7 @@ export const QuerySourceLinks = Schema.Struct({
   type: Schema.Literal("links"),
   path: Schema.String,
   title: Schema.NullOr(Schema.String),
+  results: Schema.optionalKey(Schema.Int),
 });
 export type QuerySourceLinks = typeof QuerySourceLinks.Type;
 

@@ -161,7 +161,12 @@ const queryRequest = (
     : { extra_instructions: input.extra_instructions }),
 });
 
-const sourceRef = (data: QuerySourceData, thinking: string, pending = false): ReplySource => {
+const sourceRef = (
+  data: QuerySourceData,
+  thinking: string,
+  round: number,
+  pending = false,
+): ReplySource => {
   const source: ReplySource = {
     label:
       data.type === "search"
@@ -177,17 +182,30 @@ const sourceRef = (data: QuerySourceData, thinking: string, pending = false): Re
     scope: data.type === "search" ? data.scope : null,
     path: data.type === "search" ? (data.path ?? null) : null,
     thinking: thinking.length === 0 ? null : thinking,
+    round,
     ...(pending ? { pending: true } : {}),
   };
-  if (data.type === "article" || data.type === "raw") {
-    const isExpand = data.start !== undefined && data.end !== undefined;
-    return {
-      ...source,
-      ranges: isExpand ? [{ start: data.start, end: data.end }] : [],
-      full: !isExpand,
-    };
+  switch (data.type) {
+    case "article":
+    case "raw": {
+      const isExpand = data.start !== undefined && data.end !== undefined;
+      return {
+        ...source,
+        ranges: isExpand ? [{ start: data.start, end: data.end }] : [],
+        full: data.full === true,
+        ...(data.outline === true ? { outline: true } : {}),
+        ...(data.chunks === undefined ? {} : { chunks: data.chunks }),
+      };
+    }
+    case "search":
+      return {
+        ...source,
+        ...(data.results === undefined ? {} : { results: data.results }),
+        ...(data.hits === undefined ? {} : { hits: data.hits }),
+      };
+    default:
+      return data.results === undefined ? source : { ...source, results: data.results };
   }
-  return source;
 };
 
 const requestError = (error: ReplyAdmissionError): ReplyRequestError => {
@@ -380,26 +398,18 @@ export const RepliesServiceLive = Layer.effect(
       accumulator: ReplyAccumulator,
       callId: string,
       data: QuerySourceData,
+      round: number,
     ) => {
-      if (
-        (data.type === "article" || data.type === "raw") &&
-        accumulator.sources.some(
-          (source) =>
-            source.label === data.path && (source.type === "article" || source.type === "raw"),
-        )
-      ) {
-        accumulator.pendingCalls.set(callId, null);
-      } else {
-        accumulator.pendingCalls.set(callId, accumulator.sources.length);
-        accumulator.sources.push(sourceRef(data, accumulator.answer, true));
-        accumulator.clearOnNextToken = true;
-      }
+      accumulator.pendingCalls.set(callId, accumulator.sources.length);
+      accumulator.sources.push(sourceRef(data, accumulator.answer, round, true));
+      accumulator.clearOnNextToken = true;
     };
 
     const addResolvedSource = (
       accumulator: ReplyAccumulator,
       data: QuerySourceData,
       pendingIndex: number | null,
+      round: number,
     ) => {
       if (data.type === "article" || data.type === "raw") {
         if (pendingIndex !== null) removeSource(accumulator, pendingIndex);
@@ -407,16 +417,21 @@ export const RepliesServiceLive = Layer.effect(
         const range = isExpand ? { start: data.start, end: data.end } : null;
         const index = accumulator.sources.findIndex(
           (source) =>
-            source.label === data.path && (source.type === "article" || source.type === "raw"),
+            source.pending !== true &&
+            source.label === data.path &&
+            (source.type === "article" || source.type === "raw"),
         );
         if (index >= 0) {
           const previous = accumulator.sources[index];
+          const chunks = data.chunks ?? previous.chunks;
           accumulator.sources[index] = {
             ...previous,
             ranges: range ? [...(previous.ranges ?? []), range] : previous.ranges,
-            full: previous.full || !isExpand,
+            full: previous.full === true || data.full === true,
+            ...(previous.outline === true || data.outline === true ? { outline: true } : {}),
+            ...(chunks === undefined ? {} : { chunks }),
           };
-        } else accumulator.sources.push(sourceRef(data, accumulator.answer));
+        } else accumulator.sources.push(sourceRef(data, accumulator.answer, round));
         accumulator.clearOnNextToken = true;
         return;
       }
@@ -430,7 +445,7 @@ export const RepliesServiceLive = Layer.effect(
           return;
         }
       }
-      const resolved = sourceRef(data, accumulator.answer);
+      const resolved = sourceRef(data, accumulator.answer, round);
       if (pendingIndex === null) accumulator.sources.push(resolved);
       else accumulator.sources.splice(pendingIndex, 1, resolved);
       accumulator.clearOnNextToken = true;
@@ -717,7 +732,12 @@ export const RepliesServiceLive = Layer.effect(
         if (outcome.kind === "tool_calls") {
           for (const toolCall of outcome.toolCalls) {
             if (toolCall.pendingSource !== undefined)
-              addPendingSource(accumulator, toolCall.id, toolCall.pendingSource);
+              addPendingSource(
+                accumulator,
+                toolCall.id,
+                toolCall.pendingSource,
+                outcome.state.trace.llmRounds,
+              );
           }
           pendingTools = outcome.toolCalls;
           control = { cursor: expectedCursor + 1, outcome: "tool_calls", error: null };
@@ -785,7 +805,12 @@ export const RepliesServiceLive = Layer.effect(
         const pendingIndex = accumulator.pendingCalls.get(toolCall.id) ?? null;
         accumulator.pendingCalls.delete(toolCall.id);
         if (result.source !== undefined)
-          addResolvedSource(accumulator, result.source, pendingIndex);
+          addResolvedSource(
+            accumulator,
+            result.source,
+            pendingIndex,
+            checkpoint.query.trace.llmRounds,
+          );
         else if (pendingIndex !== null) removeSource(accumulator, pendingIndex);
         yield* flushAccumulator(replyId, accumulator);
         const nextToolIndex = checkpoint.nextToolIndex + 1;
