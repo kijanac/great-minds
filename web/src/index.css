@@ -530,6 +530,9 @@ mark.btw-anchor-hot {
     [data-panel-open] {
       --lean: calc(max(0px, min(var(--panel), 100vw - var(--panel) - 740px - 2rem)) / 2);
     }
+    [data-panel-open] ~ [data-panel-spacer] {
+      width: var(--panel);
+    }
   }
   [data-lean] {
     position: relative;
