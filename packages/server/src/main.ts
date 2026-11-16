@@ -3,18 +3,22 @@ import { readFileSync } from "node:fs";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  Database,
   DatabaseLive,
   layerPgClient,
   logMigrationResult,
   migrateDatabase,
+  vaultMemberships,
+  vaults,
 } from "@great-minds/database";
-import { Email, Uuid } from "@great-minds/domain";
+import { type ApiKey, Email, Uuid } from "@great-minds/domain";
+import { and, eq, isNull } from "drizzle-orm";
 import { Cause, Config, Console, Data, Effect, Exit, Layer, Option, type Redacted } from "effect";
 import { Argument, CliError, Command, Flag } from "effect/cli";
 
 import { makeAppLayers } from "./app-layer.ts";
 import { AuthService, AuthServiceLive } from "./auth.ts";
-import { ClockLive } from "./clock.ts";
+import { ClockLive, ClockService } from "./clock.ts";
 import { AppConfig, AppConfigLive } from "./config.ts";
 import { PgClientLive } from "./db.ts";
 import { errorDetails } from "./error-details.ts";
@@ -27,6 +31,12 @@ import { TokenServiceLive } from "./tokens.ts";
 class UserNotFound extends Data.TaggedError("UserNotFound")<{ readonly email: string }> {
   override get message() {
     return `no active user with email ${this.email}`;
+  }
+}
+
+class KeyScopeInvalid extends Data.TaggedError("KeyScopeInvalid")<{ readonly detail: string }> {
+  override get message() {
+    return this.detail;
   }
 }
 
@@ -69,7 +79,9 @@ const AdminBase = Layer.mergeAll(
 ).pipe(Layer.provideMerge(AppConfigLive));
 
 const AdminLive = AuthServiceLive.pipe(
-  Layer.provide(Layer.mergeAll(MailerLive, TokenServiceLive).pipe(Layer.provideMerge(AdminBase))),
+  Layer.provideMerge(
+    Layer.mergeAll(MailerLive, TokenServiceLive).pipe(Layer.provideMerge(AdminBase)),
+  ),
 );
 
 const existingUser = (email: Email) =>
@@ -96,6 +108,68 @@ const sponsoredFlag = Flag.Boolean("sponsored").pipe(
   Flag.withDescription("Let the account use this server's models"),
   Flag.withDefault(false),
 );
+
+const jsonFlag = Flag.Boolean("json").pipe(
+  Flag.withDescription("Print JSON instead of text"),
+  Flag.withDefault(false),
+);
+
+const printJson = (value: unknown) => Console.log(JSON.stringify(value, null, 2));
+
+const day = (date: Date) => date.toISOString().slice(0, 10);
+
+const normalized = (value: string) => value.trim().toLowerCase();
+
+const userVaults = (userId: Uuid) =>
+  Effect.flatMap(Database, (db) =>
+    db.query((d) =>
+      d
+        .select({ id: vaults.id, name: vaults.name })
+        .from(vaultMemberships)
+        .innerJoin(vaults, eq(vaults.id, vaultMemberships.vaultId))
+        .where(and(eq(vaultMemberships.userId, userId), isNull(vaults.deletedAt))),
+    ),
+  );
+
+const chooseVault = (
+  reachable: ReadonlyArray<{ readonly id: Uuid; readonly name: string }>,
+  wanted: string,
+) => {
+  const matches = reachable.filter(
+    (vault) => vault.id === normalized(wanted) || normalized(vault.name) === normalized(wanted),
+  );
+  const [match, ...others] = matches;
+  if (match !== undefined && others.length === 0) return Effect.succeed(match.id);
+  return Effect.fail(
+    new KeyScopeInvalid({
+      detail:
+        match === undefined
+          ? `the user has no vault named "${wanted}"`
+          : `${matches.length} vaults are named "${wanted}"; use its id`,
+    }),
+  );
+};
+
+const scopeText = (key: ApiKey, names: ReadonlyMap<string, string>, now: Date) => {
+  const reach =
+    key.vault_ids === null
+      ? "all vaults"
+      : key.vault_ids.map((id) => names.get(id) ?? id).join(", ");
+  const can =
+    key.can_ask && key.can_change
+      ? "ask, change"
+      : key.can_ask
+        ? "ask"
+        : key.can_change
+          ? "change"
+          : "read only";
+  const expiry =
+    key.expires_at === null
+      ? "never expires"
+      : `${key.expires_at <= now ? "expired" : "expires"} ${day(key.expires_at)}`;
+  const used = key.last_used_at === null ? "never used" : `used ${day(key.last_used_at)}`;
+  return [reach, can, expiry, used].join(" · ");
+};
 
 const usersCreateCommand = Command.make(
   "create",
@@ -128,12 +202,21 @@ const sponsorCommand = (sponsored: boolean) =>
     ),
   );
 
-const usersListCommand = Command.make("list", {}, () =>
+const usersListCommand = Command.make("list", { json: jsonFlag }, ({ json }) =>
   Effect.gen(function* () {
     const auth = yield* AuthService;
-    for (const user of yield* auth.listUsers())
+    const users = yield* auth.listUsers();
+    if (json)
+      return yield* printJson(
+        users.map((user) => ({
+          email: user.email,
+          sponsored: user.sponsored,
+          created_at: user.createdAt,
+        })),
+      );
+    for (const user of users)
       yield* Console.log(
-        `${user.sponsored ? "sponsored  " : "-          "}${user.createdAt.toISOString().slice(0, 10)}  ${user.email}`,
+        `${user.sponsored ? "sponsored  " : "-          "}${day(user.createdAt)}  ${user.email}`,
       );
   }).pipe(Effect.provide(AdminLive)),
 ).pipe(Command.withDescription("List users and whether each is sponsored"));
@@ -161,30 +244,83 @@ const keysCreateCommand = Command.make(
       Flag.withDefault("created on the server"),
     ),
     sponsored: sponsoredFlag,
+    vault: Flag.String("vault").pipe(
+      Flag.atLeast(0),
+      Flag.withDescription(
+        "Limit the key to this vault, by name or id; repeat for more (default: all the user's vaults)",
+      ),
+    ),
+    ask: Flag.Boolean("ask").pipe(
+      Flag.withDescription("Let the key ask questions, which uses models (--no-ask forbids it)"),
+      Flag.withDefault(true),
+    ),
+    change: Flag.Boolean("change").pipe(
+      Flag.withDescription("Let the key add documents and make changes (--no-change forbids it)"),
+      Flag.withDefault(true),
+    ),
+    expires: Flag.Date("expires").pipe(
+      Flag.withDescription(
+        "Stop accepting the key from this date or time, e.g. 2027-01-31 (default: never)",
+      ),
+      Flag.optional,
+    ),
+    json: jsonFlag,
   },
-  ({ email, label, sponsored }) =>
+  ({ email, label, sponsored, vault, ask, change, expires, json }) =>
     Effect.gen(function* () {
       const auth = yield* AuthService;
+      const now = yield* (yield* ClockService).now;
+      const expiresAt = Option.getOrNull(expires);
+      if (expiresAt !== null && expiresAt <= now)
+        return yield* new KeyScopeInvalid({ detail: "--expires must be in the future" });
       const userId = yield* auth.ensureUser(email);
+      const reachable = yield* userVaults(userId);
+      const vaultIds =
+        vault.length === 0
+          ? null
+          : [...new Set(yield* Effect.forEach(vault, (wanted) => chooseVault(reachable, wanted)))];
       if (sponsored) yield* auth.setSponsored(userId, true);
-      const key = yield* auth.createApiKey(userId, label);
-      yield* Console.log(key.raw_key);
-      yield* Console.error(`API key "${key.label}" for ${email} (${key.id}). Shown only once.`);
+      const key = yield* auth.createApiKey(userId, label, {
+        vaultIds,
+        canAsk: ask,
+        canChange: change,
+        expiresAt,
+      });
+      yield* json ? printJson(key) : Console.log(key.raw_key);
+      const names = new Map(reachable.map((vault) => [vault.id, vault.name]));
+      yield* Console.error(
+        `API key "${key.label}" for ${email} (${key.id}): ${scopeText(key, names, now)}. Shown only once.`,
+      );
     }).pipe(Effect.provide(AdminLive)),
 ).pipe(
-  Command.withDescription("Create an API key for a user, creating the user if new; prints the key"),
+  Command.withDescription(
+    "Create an API key for a user, creating the user if new; prints the key (or the key record with --json)",
+  ),
 );
 
-const keysListCommand = Command.make("list", { email: emailFlag }, ({ email }) =>
-  Effect.gen(function* () {
-    const auth = yield* AuthService;
-    const keys = yield* auth.listApiKeys(yield* existingUser(email));
-    for (const key of keys)
-      yield* Console.log(
-        `${key.id}  ${key.revoked ? "revoked" : "active "}  ${key.created_at.toISOString().slice(0, 10)}  ${key.label}`,
-      );
-  }).pipe(Effect.provide(AdminLive)),
-).pipe(Command.withDescription("List a user's API keys"));
+const keysListCommand = Command.make(
+  "list",
+  { email: emailFlag, json: jsonFlag },
+  ({ email, json }) =>
+    Effect.gen(function* () {
+      const auth = yield* AuthService;
+      const userId = yield* existingUser(email);
+      const keys = yield* auth.listApiKeys(userId);
+      if (json) return yield* printJson(keys);
+      const now = yield* (yield* ClockService).now;
+      const names = new Map((yield* userVaults(userId)).map((vault) => [vault.id, vault.name]));
+      for (const key of keys) {
+        yield* Console.log(
+          `${key.id}  ${key.revoked ? "revoked" : "active "}  ${day(key.created_at)}  ${key.label}`,
+        );
+        yield* Console.log(`    ${scopeText(key, names, now)}`);
+      }
+    }).pipe(Effect.provide(AdminLive)),
+).pipe(
+  Command.withDescription(
+    "List a user's API keys: vaults, permissions, expiry and last use (--json for scripts)",
+  ),
+);
 
 const keysRevokeCommand = Command.make(
   "revoke",
