@@ -51,7 +51,7 @@
   } = $props();
 </script>
 
-<article class="mx-auto max-w-[740px] px-4 pt-6 pb-20 select-text md:px-10">
+<article data-lean class="mx-auto max-w-[740px] px-4 pt-6 pb-20 select-text md:px-10">
   <AnswerBlock
     text={body}
     documentTitle={document.kind === "reference" ? null : document.title}

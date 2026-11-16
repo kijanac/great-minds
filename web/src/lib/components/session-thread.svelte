@@ -253,7 +253,7 @@
   onclick={onLinkClick}
   role={onLinkClick ? "presentation" : undefined}
 >
-  <div bind:this={content} class="relative mx-auto max-w-[740px] px-4 pt-9 pb-8 md:px-10">
+  <div bind:this={content} data-lean class="relative mx-auto max-w-[740px] px-4 pt-9 pb-8 md:px-10">
     {#if outline.length >= 3 && !origin?.anchor && !panelDocked}
       <aside
         class="absolute top-0 right-[calc(100%+1rem)] hidden h-full w-[190px] min-[1200px]:block"
@@ -425,7 +425,7 @@
     role="status"
     class="shrink-0 px-4 py-3 font-mono text-[length:var(--text-chrome)] text-warm-faint md:px-10"
   >
-    <div class="mx-auto flex max-w-[740px] flex-wrap items-baseline gap-3">
+    <div data-lean class="mx-auto flex max-w-[740px] flex-wrap items-baseline gap-3">
       {#if session.connectionError}
         <span>{session.connectionError}</span>
         <Button
@@ -461,6 +461,7 @@
   />
   {#if !me.canUseModels}
     <p
+      data-lean
       class="mx-auto w-full max-w-[720px] px-4 pb-4 font-mono text-[length:var(--text-chrome)] leading-[1.7] tracking-[0.04em] text-warm-faint"
     >
       {unsponsoredNotice}

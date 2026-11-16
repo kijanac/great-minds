@@ -524,3 +524,15 @@ mark.btw-anchor-mark {
 mark.btw-anchor-hot {
   background-color: color-mix(in oklab, var(--btw) 34%, transparent);
 }
+
+@layer base {
+  @media (min-width: 1200px) {
+    [data-panel-open] {
+      --lean: calc(max(0px, min(var(--panel), 100vw - var(--panel) - 740px - 2rem)) / 2);
+    }
+  }
+  [data-lean] {
+    position: relative;
+    left: var(--lean, 0px);
+  }
+}

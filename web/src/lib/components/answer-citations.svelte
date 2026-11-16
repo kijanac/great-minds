@@ -119,7 +119,7 @@
       if (!element || !citation) return;
       event.preventDefault();
       event.stopPropagation();
-      if (margin) {
+      if (wide) {
         clearTimeout(leaving);
         peek = null;
         mark(null);

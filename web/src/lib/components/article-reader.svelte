@@ -229,7 +229,7 @@
     {/snippet}
 
     {#if documentQuery.isLoading}
-      <div class="mx-auto max-w-[740px] space-y-4 px-4 pt-10 md:px-10">
+      <div data-lean class="mx-auto max-w-[740px] space-y-4 px-4 pt-10 md:px-10">
         <Skeleton class="h-8 w-2/3 bg-ink-raised" />
         <Skeleton class="h-4 w-1/2 bg-ink-raised" />
         <Skeleton class="mt-10 h-4 w-full bg-ink-raised" />
@@ -259,7 +259,7 @@
         onBtwDismiss={docThreads.dismissEmpty}
       />
     {:else}
-      <div class="mx-auto max-w-[740px] px-4 pt-6 md:px-10 md:pt-10">
+      <div data-lean class="mx-auto max-w-[740px] px-4 pt-6 md:px-10 md:pt-10">
         <p class="text-[length:var(--text-body)] text-warm-faint">Document not found.</p>
       </div>
     {/if}
