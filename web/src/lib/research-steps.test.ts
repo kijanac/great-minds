@@ -1,7 +1,13 @@
-import { Uuid } from "@great-minds/domain";
+import { citationsOf, Uuid } from "@great-minds/domain";
 import { expect, it } from "vitest";
 
-import { answerText, readLabel, researchRounds, type ReadStep } from "#lib/research-steps.ts";
+import {
+  answerText,
+  readLabel,
+  readingTrail,
+  researchRounds,
+  type ReadStep,
+} from "#lib/research-steps.ts";
 import type { Exchange, SourceRef } from "#lib/types.ts";
 
 const source = (fields: Partial<SourceRef> & Pick<SourceRef, "type" | "label">): SourceRef => ({
@@ -44,17 +50,10 @@ const sources = [
     ranges: [{ start: 9, end: 13 }],
   }),
 ];
-const citations = [
-  {
-    n: 1,
-    label: "Against Boycott",
-    href: "raw/against.md#^p10",
-    path: "raw/against.md",
-    kind: "source" as const,
-  },
-];
+const answer = "He argued [it](raw/against.md#^p10), as [the article](wiki/tactics.md) says.";
+const citations = citationsOf(answer);
 const read = (list: readonly SourceRef[], label: string) =>
-  researchRounds(list, citations)
+  researchRounds(list, answer)
     .flatMap((round) => round.steps)
     .find((step): step is ReadStep => step.kind === "read" && step.source.label === label);
 
@@ -66,7 +65,7 @@ it("groups each round, merges a repeat read into its document and marks what was
     pending: true,
     ranges: [{ start: 20, end: 21 }],
   });
-  const rounds = researchRounds([...sources, pendingRepeat], citations);
+  const rounds = researchRounds([...sources, pendingRepeat], answer);
   expect(rounds.map((round) => [round.note, round.steps.map((step) => step.kind)])).toEqual([
     [note, ["search", "read"]],
     [null, ["read"]],
@@ -82,17 +81,25 @@ it("groups each round, merges a repeat read into its document and marks what was
   expect(readLabel(read(sources, "raw/against.md")!)).toBe("outline · §10–14 of 31");
 });
 
+const exchange = (answer: string, status: Exchange["status"]): Exchange => ({
+  id: Uuid.make("00000000-0000-4000-8000-000000000001"),
+  query: "Why?",
+  thinking: [{ sources }],
+  answer,
+  citations,
+  btws: [],
+  status,
+  version: 1,
+});
+
+it("traces how a document was found, searched inside and cited", () => {
+  const trail = readingTrail(exchange(answer, "completed"), "raw/against.md", 9);
+  expect(trail).toMatchObject({ found: null, within: [sources[0]], focus: 9 });
+  expect([...(trail?.cited ?? [])]).toEqual([[10, 1]]);
+  expect(readingTrail(exchange(answer, "completed"), "raw/missing.md")).toBeNull();
+});
+
 it("treats text written before a tool call as the round's note, not the answer", () => {
-  const exchange = (answer: string, status: Exchange["status"]): Exchange => ({
-    id: Uuid.make("00000000-0000-4000-8000-000000000001"),
-    query: "Why?",
-    thinking: [{ sources }],
-    answer,
-    citations: [],
-    btws: [],
-    status,
-    version: 1,
-  });
   expect(answerText(exchange(` ${note}`, "running"))).toBe("");
   expect(answerText(exchange("The answer.", "running"))).toBe("The answer.");
   expect(answerText(exchange(note, "completed"))).toBe(note);

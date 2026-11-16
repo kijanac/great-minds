@@ -23,7 +23,8 @@
   import type { Conversation } from "#lib/conversation.svelte.ts";
   import { sessionOriginHref } from "#lib/session-origin.ts";
   import { passageMark, revealPassage } from "#lib/passage-navigation.ts";
-  import { answerText } from "#lib/research-steps.ts";
+  import { answerText, type ReadingTrail } from "#lib/research-steps.ts";
+  import { provideSourceOpener } from "#lib/source-opener.ts";
   import type { Exchange, SelectionInfo, SourceRef } from "#lib/types.ts";
   import { docDisplayName } from "#lib/utils.ts";
 
@@ -33,6 +34,7 @@
     vaultRole = null,
     panelDocked = false,
     onCardClick,
+    onOpenTrail,
     onOpenPath,
     onLinkClick,
     receive,
@@ -42,6 +44,7 @@
     vaultRole?: MemberRole | null;
     panelDocked?: boolean;
     onCardClick: (source: SourceRef) => void;
+    onOpenTrail: (trail: ReadingTrail) => void;
     onOpenPath: (path: string, chunk: number | null) => void;
     onLinkClick?: (event: MouseEvent) => void;
     receive?: ReturnType<typeof crossfade>[1];
@@ -49,11 +52,11 @@
 
   const me = useMe();
 
-  const openCitation = (href: string, path: string) => {
-    const fragment = href.split("#", 2)[1] ?? "";
-    const match = /^\^p(\d+)$/.exec(decodeURIComponent(fragment));
-    onOpenPath(path, match ? Number(match[1]) : null);
-  };
+  const opener = provideSourceOpener({
+    openTrail: (trail) => onOpenTrail(trail),
+    toggle: (source) => onCardClick(source),
+    openPath: (path, chunk) => onOpenPath(path, chunk),
+  });
 
   const readMore = (exchange: Exchange) => {
     const seen = new Set<string>();
@@ -250,7 +253,7 @@
   onclick={onLinkClick}
   role={onLinkClick ? "presentation" : undefined}
 >
-  <div bind:this={content} class="relative mx-auto max-w-[740px] px-4 pt-9 pb-8 md:px-10">
+  <div bind:this={content} data-lean class="relative mx-auto max-w-[740px] px-4 pt-9 pb-8 md:px-10">
     {#if outline.length >= 3 && !origin?.anchor && !panelDocked}
       <aside
         class="absolute top-0 right-[calc(100%+1rem)] hidden h-full w-[190px] min-[1200px]:block"
@@ -331,7 +334,7 @@
             />
           {/if}
 
-          <ResearchTrace {exchange} onOpen={onCardClick} />
+          <ResearchTrace {exchange} onOpen={(source) => opener.openSource(exchange, source)} />
 
           {#if answerText(exchange)}
             <div data-answer>
@@ -344,7 +347,11 @@
                 {panelDocked}
                 onSelection={(info) => (popover = info)}
                 onBtwDismiss={session.dismissBtw}
-                onCitation={(citation) => openCitation(citation.href, citation.path)}
+                onCitation={(citation) => opener.openCitation(exchange, citation.href)}
+                sourceTitle={(path) =>
+                  exchange.thinking
+                    .flatMap((block) => block.sources)
+                    .find((source) => source.label === path)?.title ?? null}
               />
             </div>
           {/if}
@@ -383,7 +390,7 @@
                           class="mx-1.5 text-ink-border">·</span
                         >{/if}<button
                         type="button"
-                        onclick={() => onCardClick(source)}
+                        onclick={() => opener.openSource(exchange, source)}
                         class={`underline decoration-gold-dim underline-offset-[3px] hover:text-gold ${activeCard === source.label ? "text-gold" : "text-gold-muted"}`}
                         >{source.title ?? source.label}</button
                       >{/each}
@@ -418,7 +425,7 @@
     role="status"
     class="shrink-0 px-4 py-3 font-mono text-[length:var(--text-chrome)] text-warm-faint md:px-10"
   >
-    <div class="mx-auto flex max-w-[740px] flex-wrap items-baseline gap-3">
+    <div data-lean class="mx-auto flex max-w-[740px] flex-wrap items-baseline gap-3">
       {#if session.connectionError}
         <span>{session.connectionError}</span>
         <Button
@@ -454,6 +461,7 @@
   />
   {#if !me.canUseModels}
     <p
+      data-lean
       class="mx-auto w-full max-w-[720px] px-4 pb-4 font-mono text-[length:var(--text-chrome)] leading-[1.7] tracking-[0.04em] text-warm-faint"
     >
       {unsponsoredNotice}

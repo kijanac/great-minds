@@ -27,7 +27,7 @@
   const rounds = $derived(
     researchRounds(
       exchange.thinking.flatMap((block) => block.sources),
-      exchange.citations,
+      exchange.answer,
     ),
   );
   const steps = $derived(rounds.flatMap((round) => round.steps));

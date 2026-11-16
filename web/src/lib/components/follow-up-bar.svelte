@@ -54,6 +54,7 @@
   class="shrink-0 animate-[slide-up_0.28s_cubic-bezier(0.4,0,0.2,1)] border-t border-ink-subtle pt-3 pr-4 pl-[var(--shell-utility-inset)] md:pr-[var(--shell-utility-inset)] pb-[max(0.875rem,env(safe-area-inset-bottom))] motion-reduce:animate-none"
 >
   <form
+    data-lean
     class="mx-auto flex w-full max-w-[740px] flex-col gap-2 md:px-10"
     onsubmit={(event) => {
       event.preventDefault();

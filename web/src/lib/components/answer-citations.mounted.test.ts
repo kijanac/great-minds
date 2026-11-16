@@ -6,7 +6,13 @@ import { citationsOf } from "@great-minds/domain";
 import type { Citation } from "#lib/citations.ts";
 import AnswerBlock from "./answer-block.svelte";
 
-it("on a phone, a citation number opens a source card and each answer lists its sources", () => {
+vi.mock("#lib/api/doc.ts", () => ({
+  fetchChunks: async (path: string, start: number) => [
+    { path, chunk_index: start, heading: "", body: "The cited passage.", content_hash: "h" },
+  ],
+}));
+
+it("on a phone, a citation opens a card with the cited passage and each answer lists its sources", async () => {
   vi.stubGlobal("matchMedia", (media: string) => ({
     matches: false,
     media,
@@ -47,10 +53,16 @@ it("on a phone, a citation number opens a source card and each answer lists its 
     "2 sources",
   );
 
+  refs[0]?.click();
+  await vi.waitFor(() =>
+    expect(
+      target.querySelector("[data-citation-card]")?.textContent?.replace(/\s+/g, " ").trim(),
+    ).toBe("1docs/a The cited passage. source · §5 open"),
+  );
   refs[1]?.click();
   flushSync();
   const card = target.querySelector("[data-citation-card]");
-  expect(card?.textContent?.replace(/\s+/g, " ").trim()).toBe("2the article article open");
+  expect(card?.textContent?.replace(/\s+/g, " ").trim()).toBe("2Rsdlp article open");
   card?.querySelector("button")?.click();
   flushSync();
   expect(opened.map((citation) => citation.path)).toEqual(["wiki/rsdlp.md"]);

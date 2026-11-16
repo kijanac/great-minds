@@ -30,6 +30,7 @@
   import { usePanelCard } from "#lib/hooks/use-panel-card.svelte.ts";
   import { usePanelContent } from "#lib/hooks/use-panel-content.svelte.ts";
   import type { SelectionInfo } from "#lib/types.ts";
+  import { provideSourceOpener } from "#lib/source-opener.ts";
   import { displayTitle } from "#lib/utils.ts";
 
   let {
@@ -48,6 +49,7 @@
   const initialSourceId = untrack(() => sourceId);
   const readerScope = untrack(() => scope);
   const card = usePanelCard(readerScope);
+  provideSourceOpener(card);
   let btwPath: string | null = initialPath;
   let docThreads = $state<DocThreads | null>(
     initialPath === null ? null : new DocThreads(initialPath, readerScope),
@@ -191,6 +193,7 @@
     {#if card.selectedCard}
       <ArticlePanel
         card={card.selectedCard}
+        trail={card.trail}
         content={panelQuery.data ?? null}
         loading={panelQuery.isLoading}
         context="citation"
@@ -226,7 +229,7 @@
     {/snippet}
 
     {#if documentQuery.isLoading}
-      <div class="mx-auto max-w-[740px] space-y-4 px-4 pt-10 md:px-10">
+      <div data-lean class="mx-auto max-w-[740px] space-y-4 px-4 pt-10 md:px-10">
         <Skeleton class="h-8 w-2/3 bg-ink-raised" />
         <Skeleton class="h-4 w-1/2 bg-ink-raised" />
         <Skeleton class="mt-10 h-4 w-full bg-ink-raised" />
@@ -256,7 +259,7 @@
         onBtwDismiss={docThreads.dismissEmpty}
       />
     {:else}
-      <div class="mx-auto max-w-[740px] px-4 pt-6 md:px-10 md:pt-10">
+      <div data-lean class="mx-auto max-w-[740px] px-4 pt-6 md:px-10 md:pt-10">
         <p class="text-[length:var(--text-body)] text-warm-faint">Document not found.</p>
       </div>
     {/if}

@@ -5,10 +5,12 @@
     step,
     reading = false,
     width = 132,
+    onPick,
   }: {
     step: ReadStep;
     reading?: boolean;
     width?: number;
+    onPick?: (section: number) => void;
   } = $props();
 
   const chunks = $derived(step.source.chunks ?? 0);
@@ -46,20 +48,28 @@
     class="strip"
     class:outline={step.source.outline === true}
     class:glow={reading && step.source.outline === true && arrivedCells.length === 0}
-    style:width={`${Math.min(width, Math.max(28, cellCount * 6))}px`}
+    class:pickable={onPick !== undefined}
+    style:width={`${Math.min(width, Math.max(28, cellCount * (onPick ? 8 : 6)))}px`}
     style:--each={`${each}ms`}
-    aria-hidden="true"
+    role={onPick ? "group" : undefined}
+    aria-label={onPick ? "Sections" : undefined}
+    aria-hidden={onPick ? undefined : "true"}
   >
     {#each cells as sections, cell (cell)}
       {@const fresh = arrivedCells.indexOf(cell)}
-      <i
+      <svelte:element
+        this={onPick ? "button" : "i"}
+        type={onPick ? "button" : undefined}
+        role={onPick ? "button" : undefined}
+        aria-label={onPick ? `§${sections[0]! + 1}` : undefined}
+        onclick={onPick ? () => onPick(sections[0]!) : undefined}
         class:read={any(sections, step.read)}
         class:fetching={any(sections, step.fetching) && !any(sections, step.read)}
         class:cited={any(sections, step.cited)}
         class:hit={any(sections, step.hits)}
         class:glow={reading && fresh >= 0}
         style:--k={fresh >= 0 ? fresh : null}
-      ></i>
+      ></svelte:element>
     {/each}
   </span>
 {/if}
@@ -73,7 +83,7 @@
     height: 9px;
     vertical-align: middle;
   }
-  .strip i {
+  .strip > * {
     position: relative;
     flex: 1;
     min-width: 1px;
@@ -85,16 +95,16 @@
       transform 220ms cubic-bezier(0.25, 1, 0.5, 1);
     transition-delay: calc(var(--k, 0) * var(--each, 0ms));
   }
-  .strip i.read {
+  .strip > .read {
     background: color-mix(in oklab, var(--gold) 58%, var(--strip-empty));
   }
-  .strip i.cited {
+  .strip > .cited {
     background: var(--gold);
   }
-  .strip i.fetching {
+  .strip > .fetching {
     animation: fetching 1s ease-in-out infinite;
   }
-  .strip i.hit::after {
+  .strip > .hit::after {
     content: "";
     position: absolute;
     top: -5px;
@@ -105,9 +115,18 @@
     border-radius: 50%;
     background: var(--gold-muted);
   }
-  .strip i.glow {
+  .strip > .glow {
     animation: glow 1.5s ease-in-out infinite;
     animation-delay: calc(var(--k, 0) * 85ms);
+  }
+  .strip.pickable {
+    height: 14px;
+  }
+  .strip.pickable > * {
+    cursor: pointer;
+  }
+  .strip.pickable > *:hover {
+    transform: scaleY(1.3);
   }
   .strip.outline {
     box-shadow: 0 -3px 0 -2px color-mix(in oklab, var(--gold-muted) 70%, transparent);
@@ -168,9 +187,9 @@
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    .strip i,
-    .strip i.glow,
-    .strip i.fetching,
+    .strip > *,
+    .strip > .glow,
+    .strip > .fetching,
     .strip.outline.glow,
     .strip.unknown::after {
       animation: none;

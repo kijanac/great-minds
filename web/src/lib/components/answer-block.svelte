@@ -37,6 +37,7 @@
     expandedThreads = null,
     onToggleThread,
     onCitation,
+    sourceTitle,
     citations = [],
   }: {
     text: string;
@@ -60,6 +61,7 @@
     expandedThreads?: Set<string> | null;
     onToggleThread?: (btwId: string) => void;
     onCitation?: (citation: Citation) => void;
+    sourceTitle?: (path: string) => string | null;
   } = $props();
 
   let root: HTMLDivElement | null = $state(null);
@@ -391,9 +393,8 @@
       footnoteMode,
       footnoteDefinitions,
       activeFootnote,
-      pinnedFootnotes,
       onFootnoteHover,
-      onFootnoteToggle,
+      onFootnoteOpen,
     })}
       {#snippet blockNode(node: HastNode)}
         <HastNodeView
@@ -406,9 +407,8 @@
           {footnoteMode}
           {footnoteDefinitions}
           {activeFootnote}
-          {pinnedFootnotes}
           {onFootnoteHover}
-          {onFootnoteToggle}
+          {onFootnoteOpen}
         />
       {/snippet}
       {#if !leadingTitle}{@render header?.(true)}{/if}
@@ -447,6 +447,6 @@
     {/snippet}
   </FootnoteNotes>
   {#if onCitation && !streaming}
-    <AnswerCitations {root} {citations} {panelDocked} onOpen={onCitation} />
+    <AnswerCitations {root} {citations} {panelDocked} {sourceTitle} onOpen={onCitation} />
   {/if}
 </div>
