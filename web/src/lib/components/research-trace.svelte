@@ -98,6 +98,7 @@
   const result = (step: ResearchStep) => {
     const count = step.source.results;
     if (step.pending || count === undefined) return null;
+    if (count === 0) return "none";
     if (step.kind === "links") return plural(count, "linked article");
     if (step.kind === "query")
       return plural(count, topic(step.source.label) === null ? "source" : "article");
@@ -190,8 +191,10 @@
         </span>
       {:else if result(step)}
         <span
-          class="animate-[pop-in_0.36s_ease_both] whitespace-nowrap text-gold-muted tabular-nums"
-          >→ {result(step)}</span
+          class={[
+            "animate-[pop-in_0.36s_ease_both] whitespace-nowrap tabular-nums",
+            step.source.results === 0 ? "text-warm-ghost" : "text-gold-muted",
+          ]}>→ {result(step)}</span
         >
       {/if}
       {#if step.kind === "search" && step.source.path !== null && step.source.hits?.[0]}
@@ -206,7 +209,9 @@
     {#if step.kind === "read"}
       <div class="mt-[3px] mb-0.5 flex items-center gap-2.5">
         <SourceStrip {step} reading={glowing(step)} />
-        <span class="whitespace-nowrap tabular-nums">{readLabel(step)}</span>
+        {#if !(step.source.full === true && step.source.chunks)}
+          <span class="whitespace-nowrap tabular-nums">{readLabel(step)}</span>
+        {/if}
       </div>
     {:else if step.kind === "search" && step.source.path === null && step.source.hits?.length}
       {@const shown = step.source.hits.slice(0, 3)}

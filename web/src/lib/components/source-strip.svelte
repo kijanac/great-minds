@@ -66,7 +66,6 @@
         class:read={any(sections, step.read)}
         class:fetching={any(sections, step.fetching) && !any(sections, step.read)}
         class:cited={any(sections, step.cited)}
-        class:hit={any(sections, step.hits)}
         class:glow={reading && fresh >= 0}
         style:--k={fresh >= 0 ? fresh : null}
       ></svelte:element>
@@ -84,7 +83,6 @@
     vertical-align: middle;
   }
   .strip > * {
-    position: relative;
     flex: 1;
     min-width: 1px;
     border-radius: 0.5px;
@@ -103,17 +101,6 @@
   }
   .strip > .fetching {
     animation: fetching 1s ease-in-out infinite;
-  }
-  .strip > .hit::after {
-    content: "";
-    position: absolute;
-    top: -5px;
-    left: 50%;
-    width: 3px;
-    height: 3px;
-    margin-left: -1.5px;
-    border-radius: 50%;
-    background: var(--gold-muted);
   }
   .strip > .glow {
     animation: glow 1.5s ease-in-out infinite;

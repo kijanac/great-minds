@@ -57,7 +57,7 @@ const read = (list: readonly SourceRef[], label: string) =>
     .flatMap((round) => round.steps)
     .find((step): step is ReadStep => step.kind === "read" && step.source.label === label);
 
-it("groups each round, merges a repeat read into its document and marks what was found and cited", () => {
+it("groups each round, merges a repeat read into its document and marks what was cited", () => {
   const pendingRepeat = source({
     type: "raw",
     label: "raw/against.md",
@@ -73,12 +73,11 @@ it("groups each round, merges a repeat read into its document and marks what was
   const against = read([...sources, pendingRepeat], "raw/against.md");
   expect([...(against?.read ?? [])]).toEqual([9, 10, 11, 12, 13]);
   expect([...(against?.fetching ?? [])]).toEqual([20, 21]);
-  expect([...(against?.hits ?? [])]).toEqual([9, 11]);
   expect([...(against?.cited ?? [])]).toEqual([10]);
   expect(against && readLabel(against)).toBe("fetching §21–22…");
   expect([...(read(sources, "wiki/tactics.md")?.read ?? [])]).toEqual([0, 1, 2, 3, 4, 5]);
   expect(readLabel(read(sources, "wiki/tactics.md")!)).toBe("read in full");
-  expect(readLabel(read(sources, "raw/against.md")!)).toBe("outline · §10–14 of 31");
+  expect(readLabel(read(sources, "raw/against.md")!)).toBe("§10–14 of 31");
 });
 
 const exchange = (answer: string, status: Exchange["status"]): Exchange => ({
