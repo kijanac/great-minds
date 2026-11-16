@@ -2,10 +2,10 @@
   import { page } from "$app/state";
   import type { MemberRole } from "@great-minds/domain";
   import { tick } from "svelte";
-  import ArrowLeft from "@lucide/svelte/icons/arrow-left";
   import type { crossfade } from "svelte/transition";
 
   import AnswerBlock from "#lib/components/answer-block.svelte";
+  import ConversationAbout from "#lib/components/conversation-about.svelte";
   import { outlineOf } from "#lib/citations.ts";
   import FollowUpBar from "#lib/components/follow-up-bar.svelte";
   import OnboardingHint, {
@@ -16,8 +16,6 @@
   import ResearchTrace from "#lib/components/research-trace.svelte";
   import ReplyInterrupted from "#lib/components/reply-interrupted.svelte";
   import SelectionPopover from "#lib/components/selection-popover.svelte";
-  import SessionPassage from "#lib/components/session-passage.svelte";
-  import ThreadSurface from "#lib/components/thread-surface.svelte";
   import { Button } from "#lib/components/ui/button/index.ts";
   import { unsponsoredNotice, useMe } from "#lib/hooks/use-me.svelte.ts";
   import type { Conversation } from "#lib/conversation.svelte.ts";
@@ -26,7 +24,6 @@
   import { answerText, type ReadingTrail } from "#lib/research-steps.ts";
   import { provideSourceOpener } from "#lib/source-opener.ts";
   import type { Exchange, SelectionInfo, SourceRef } from "#lib/types.ts";
-  import { docDisplayName } from "#lib/utils.ts";
 
   let {
     session,
@@ -206,7 +203,6 @@
       following = false;
     });
   });
-  const originDocPath = $derived(origin?.kind === "document" ? origin.doc_path : null);
   const originHref = $derived(
     origin && session.sessionId ? sessionOriginHref(origin, session.sessionId) : null,
   );
@@ -254,7 +250,7 @@
   role={onLinkClick ? "presentation" : undefined}
 >
   <div bind:this={content} data-lean class="relative mx-auto max-w-[740px] px-4 pt-9 pb-8 md:px-10">
-    {#if outline.length >= 3 && !origin?.anchor && !panelDocked}
+    {#if outline.length >= 3 && !panelDocked}
       <aside
         class="absolute top-0 right-[calc(100%+1rem)] hidden h-full w-[190px] min-[1200px]:block"
       >
@@ -275,141 +271,111 @@
         </nav>
       </aside>
     {/if}
-    {#if originHref && !origin?.anchor}
-      <div class="mb-6">
-        <a
-          href={originHref}
-          class="inline-flex items-baseline gap-2 font-mono text-[length:var(--text-chrome)] leading-relaxed text-gold underline-offset-4 hover:underline [overflow-wrap:anywhere]"
-        >
-          <ArrowLeft size={12} class="shrink-0 self-center" />
-          <span
-            >{origin?.anchor ? "Return to passage" : "Return to source"} · {session.originTitle ??
-              (origin?.kind === "answer"
-                ? "parent session"
-                : docDisplayName(originDocPath ?? ""))}</span
-          >
-        </a>
-      </div>
+    {#if origin}
+      <ConversationAbout {origin} title={session.originTitle} href={originHref} />
     {/if}
 
-    {#if origin?.anchor}
-      <ThreadSurface>{@render conversation()}</ThreadSurface>
-    {:else}
-      {@render conversation()}
-    {/if}
-
-    {#snippet conversation()}
-      {#each session.exchanges as exchange, index (exchange.id)}
-        {@const streaming = exchange.status === "running" && session.phase !== "finalizing"}
-        <section id={`exchange-${exchange.id}`} class="scroll-mt-6">
-          {#if index === 0}
-            {#if receive}
-              <h1
-                in:receive={{ key: "search-bar" }}
-                class="mb-3 font-serif text-[length:var(--text-title)] leading-[1.3] text-warm whitespace-pre-wrap [overflow-wrap:anywhere]"
-              >
-                {title(exchange.query)}
-              </h1>
-            {:else}
-              <h1
-                class="mb-3 font-serif text-[length:var(--text-title)] leading-[1.3] text-warm whitespace-pre-wrap [overflow-wrap:anywhere]"
-              >
-                {title(exchange.query)}
-              </h1>
-            {/if}
-          {:else}
-            <h2
-              class="mt-14 mb-3 border-t border-ink-subtle pt-7 font-serif text-[length:var(--text-heading)] leading-[1.4] text-warm italic whitespace-pre-wrap [overflow-wrap:anywhere]"
+    {#each session.exchanges as exchange, index (exchange.id)}
+      {@const streaming = exchange.status === "running" && session.phase !== "finalizing"}
+      <section id={`exchange-${exchange.id}`} class="scroll-mt-6">
+        {#if index === 0}
+          {#if receive}
+            <h1
+              in:receive={{ key: "search-bar" }}
+              class="mb-3 font-serif text-[length:var(--text-title)] leading-[1.3] text-warm whitespace-pre-wrap [overflow-wrap:anywhere]"
             >
-              {exchange.query}
-            </h2>
+              {title(exchange.query)}
+            </h1>
+          {:else}
+            <h1
+              class="mb-3 font-serif text-[length:var(--text-title)] leading-[1.3] text-warm whitespace-pre-wrap [overflow-wrap:anywhere]"
+            >
+              {title(exchange.query)}
+            </h1>
           {/if}
+        {:else}
+          <h2
+            class="mt-14 mb-3 border-t border-ink-subtle pt-7 font-serif text-[length:var(--text-heading)] leading-[1.4] text-warm italic whitespace-pre-wrap [overflow-wrap:anywhere]"
+          >
+            {exchange.query}
+          </h2>
+        {/if}
 
-          {#if index === 0 && origin?.anchor}
-            <SessionPassage
-              quote={origin.anchor}
-              context={origin.paragraph}
-              href={originHref}
-              sourceTitle={session.originTitle ?? undefined}
+        <ResearchTrace {exchange} onOpen={(source) => opener.openSource(exchange, source)} />
+
+        {#if answerText(exchange)}
+          <div data-answer>
+            <AnswerBlock
+              text={answerText(exchange)}
+              citations={exchange.citations}
+              exchangeId={exchange.id}
+              btws={exchange.btws}
+              {streaming}
+              {panelDocked}
+              onSelection={(info) => (popover = info)}
+              onBtwDismiss={session.dismissBtw}
+              onCitation={(citation) => opener.openCitation(exchange, citation.href)}
+              sourceTitle={(path) =>
+                exchange.thinking
+                  .flatMap((block) => block.sources)
+                  .find((source) => source.label === path)?.title ?? null}
             />
-          {/if}
+          </div>
+        {/if}
 
-          <ResearchTrace {exchange} onOpen={(source) => opener.openSource(exchange, source)} />
+        {#if exchange.status === "stopped" || exchange.status === "failed"}
+          <ReplyInterrupted
+            partial={exchange.answer.length > 0}
+            stopped={exchange.status === "stopped"}
+            onRetry={exchange.status === "failed" &&
+            session.phase === "done" &&
+            index === session.exchanges.length - 1 &&
+            exchange.replyId
+              ? () => session.retry(exchange.id)
+              : undefined}
+          />
+        {:else if exchange.status === "completed" && !exchange.answer}
+          <p class="text-[length:var(--text-small)] text-warm-faint">
+            The response completed without an answer.
+          </p>
+        {/if}
 
-          {#if answerText(exchange)}
-            <div data-answer>
-              <AnswerBlock
-                text={answerText(exchange)}
-                citations={exchange.citations}
-                exchangeId={exchange.id}
-                btws={exchange.btws}
-                {streaming}
-                {panelDocked}
-                onSelection={(info) => (popover = info)}
-                onBtwDismiss={session.dismissBtw}
-                onCitation={(citation) => opener.openCitation(exchange, citation.href)}
-                sourceTitle={(path) =>
-                  exchange.thinking
-                    .flatMap((block) => block.sources)
-                    .find((source) => source.label === path)?.title ?? null}
-              />
+        {#if exchange.answer && !streaming && (exchange.status === "completed" || exchange.status === "stopped")}
+          {@const more = readMore(exchange)}
+          {@const canPromote =
+            !!session.sessionId && (vaultRole === "owner" || vaultRole === "editor")}
+          {#if more.length > 0 || canPromote}
+            <div
+              class="mt-5 flex flex-wrap items-baseline justify-between gap-x-5 gap-y-2 border-t border-dashed border-ink-subtle pt-3"
+            >
+              {#if more.length > 0}
+                <div class="font-serif text-[length:var(--text-small)] leading-[1.7]">
+                  <span
+                    class="mr-2 font-mono text-[10px] tracking-[0.14em] text-gold-muted uppercase"
+                    >Read more</span
+                  >{#each more as source, position (source.label)}{#if position > 0}<span
+                        class="mx-1.5 text-ink-border">·</span
+                      >{/if}<button
+                      type="button"
+                      onclick={() => opener.openSource(exchange, source)}
+                      class={`underline decoration-gold-dim underline-offset-[3px] hover:text-gold ${activeCard === source.label ? "text-gold" : "text-gold-muted"}`}
+                      >{source.title ?? source.label}</button
+                    >{/each}
+                </div>
+              {/if}
+              {#if canPromote && session.sessionId && (vaultRole === "owner" || vaultRole === "editor")}
+                <PromoteButton
+                  sessionId={session.sessionId}
+                  exchangeId={exchange.id}
+                  role={vaultRole}
+                  locked={!me.canUseModels}
+                />
+              {/if}
             </div>
           {/if}
-
-          {#if exchange.status === "stopped" || exchange.status === "failed"}
-            <ReplyInterrupted
-              partial={exchange.answer.length > 0}
-              stopped={exchange.status === "stopped"}
-              onRetry={exchange.status === "failed" &&
-              session.phase === "done" &&
-              index === session.exchanges.length - 1 &&
-              exchange.replyId
-                ? () => session.retry(exchange.id)
-                : undefined}
-            />
-          {:else if exchange.status === "completed" && !exchange.answer}
-            <p class="text-[length:var(--text-small)] text-warm-faint">
-              The response completed without an answer.
-            </p>
-          {/if}
-
-          {#if exchange.answer && !streaming && (exchange.status === "completed" || exchange.status === "stopped")}
-            {@const more = readMore(exchange)}
-            {@const canPromote =
-              !!session.sessionId && (vaultRole === "owner" || vaultRole === "editor")}
-            {#if more.length > 0 || canPromote}
-              <div
-                class="mt-5 flex flex-wrap items-baseline justify-between gap-x-5 gap-y-2 border-t border-dashed border-ink-subtle pt-3"
-              >
-                {#if more.length > 0}
-                  <div class="font-serif text-[length:var(--text-small)] leading-[1.7]">
-                    <span
-                      class="mr-2 font-mono text-[10px] tracking-[0.14em] text-gold-muted uppercase"
-                      >Read more</span
-                    >{#each more as source, position (source.label)}{#if position > 0}<span
-                          class="mx-1.5 text-ink-border">·</span
-                        >{/if}<button
-                        type="button"
-                        onclick={() => opener.openSource(exchange, source)}
-                        class={`underline decoration-gold-dim underline-offset-[3px] hover:text-gold ${activeCard === source.label ? "text-gold" : "text-gold-muted"}`}
-                        >{source.title ?? source.label}</button
-                      >{/each}
-                  </div>
-                {/if}
-                {#if canPromote && session.sessionId && (vaultRole === "owner" || vaultRole === "editor")}
-                  <PromoteButton
-                    sessionId={session.sessionId}
-                    exchangeId={exchange.id}
-                    role={vaultRole}
-                    locked={!me.canUseModels}
-                  />
-                {/if}
-              </div>
-            {/if}
-          {/if}
-        </section>
-      {/each}
-    {/snippet}
+        {/if}
+      </section>
+    {/each}
   </div>
 </div>
 

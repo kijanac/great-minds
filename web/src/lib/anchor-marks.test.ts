@@ -3,7 +3,7 @@ import { render } from "svelte/server";
 
 import { uniqueQuoteSpan } from "#lib/anchor.ts";
 import { wrapAnchors } from "#lib/anchor-marks.ts";
-import SessionPassage from "#lib/components/session-passage.svelte";
+import ConversationAbout from "#lib/components/conversation-about.svelte";
 import { parseMarkdown } from "#lib/markdown.ts";
 import type { HastNode } from "#lib/markdown-plugins.ts";
 
@@ -41,33 +41,29 @@ describe("saved passage anchors", () => {
   });
 
   it.each([
-    {
-      name: "unique quote",
-      quote: "clear claim",
-      context: "A clear claim needs evidence.",
-    },
-    {
-      name: "list selection",
-      quote: "First item\nSecond item",
-      context: "First itemSecond item",
-    },
-    {
-      name: "repeated quote",
-      quote: "The claim",
-      context: "The claim matters. The claim needs evidence.",
-    },
-    { name: "quote without context", quote: "clear claim", context: null },
-  ])("shows the saved selection with optional surrounding context: $name", ({ quote, context }) => {
-    const { body } = render(SessionPassage, {
-      props: { quote, context, href: null },
+    { name: "with surrounding passage", paragraph: "A clear claim needs evidence.", toggle: true },
+    { name: "passage is the quote", paragraph: "clear claim", toggle: false },
+    { name: "no passage", paragraph: null, toggle: false },
+  ])("says what an anchored conversation is about: $name", ({ paragraph, toggle }) => {
+    const { body } = render(ConversationAbout, {
+      props: {
+        origin: {
+          kind: "document",
+          doc_path: "raw/a.md",
+          origin_scope: "vault",
+          anchor: "clear claim",
+          paragraph,
+          paragraph_index: null,
+        },
+        title: "A source",
+        href: null,
+      },
     });
-    expect(body.match(/<mark\b[^>]*>([\s\S]*?)<\/mark>/)?.[1]).toBe(quote);
-    expect(body.split(quote)).toHaveLength(2);
-    if (context) {
-      expect(body).toContain("Show surrounding passage");
-      expect(body).toContain('aria-expanded="false"');
-      expect(body.replace(/<[^>]*>/g, "")).not.toContain(context);
-    } else expect(body).not.toContain("Show surrounding passage");
+    const text = body.replace(/<[^>]*>/g, "");
+    expect(text).toContain("A source");
+    expect(text.split("clear claim")).toHaveLength(2);
+    expect(text.includes("show passage")).toBe(toggle);
+    expect(text).not.toContain("needs evidence");
   });
 
   it("exposes one keyboard trigger across formatting while preserving linked text", () => {
