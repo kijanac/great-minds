@@ -16,6 +16,7 @@
     onboardingHintSeen,
   } from "#lib/components/onboarding-hint.svelte";
   import PanelHost from "#lib/components/panel-host.svelte";
+  import { arriveAt } from "#lib/passage-navigation.ts";
   import SelectionPopover from "#lib/components/selection-popover.svelte";
   import SuggestionForm, { type SuggestionPayload } from "#lib/components/suggestion-form.svelte";
   import { Skeleton } from "#lib/components/ui/skeleton/index.ts";
@@ -181,10 +182,7 @@
     const currentPath = resolvedPath;
     if (!hash || renderedBody === null || !currentPath) return;
 
-    void tick().then(() => {
-      const target = window.document.getElementById(decodeURIComponent(hash.slice(1)));
-      target?.scrollIntoView({ block: "start" });
-    });
+    void tick().then(() => arriveAt(hash));
   });
 </script>
 

@@ -21,3 +21,12 @@ export function revealPassage(element: HTMLElement): void {
     { duration: 1800, easing: "ease-out" },
   );
 }
+
+export function arriveAt(hash: string): void {
+  document.querySelector("[data-arrived]")?.removeAttribute("data-arrived");
+  const target = document.getElementById(decodeURIComponent(hash.slice(1)));
+  const block = target?.matches("span:empty") ? target.parentElement : target;
+  if (!block) return;
+  block.scrollIntoView({ block: "start" });
+  block.setAttribute("data-arrived", "");
+}
