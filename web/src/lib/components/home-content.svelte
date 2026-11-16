@@ -4,6 +4,7 @@
   import Download from "@lucide/svelte/icons/download";
   import Home from "@lucide/svelte/icons/home";
   import Share2 from "@lucide/svelte/icons/share-2";
+  import TableOfContents from "@lucide/svelte/icons/table-of-contents";
   import { onDestroy, tick, untrack } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { crossfade, fade } from "svelte/transition";
@@ -18,6 +19,7 @@
   import SessionThread from "#lib/components/session-thread.svelte";
   import SessionExport from "#lib/components/session-export.svelte";
   import ShareDialog from "#lib/components/share-dialog.svelte";
+  import { conversationOutline } from "#lib/citations.ts";
   import { Button } from "#lib/components/ui/button/index.ts";
   import { useActiveJob } from "#lib/hooks/use-active-job.svelte.ts";
   import { unsponsoredNotice, useMe } from "#lib/hooks/use-me.svelte.ts";
@@ -69,6 +71,7 @@
   onDestroy(session.destroy);
   const publication = new ExportController(() => session.sessionId);
   let exportButton = $state<HTMLButtonElement | HTMLAnchorElement | null>(null);
+  let contentsOpen = $state(false);
   async function closeExport() {
     publication.close();
     await tick();
@@ -140,6 +143,18 @@
           >
             {currentVault ? `${currentVault.name} · conversation` : "conversation"}
           </span>
+          {#if conversationOutline(session.exchanges).length > 0}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="In this conversation"
+              title="In this conversation"
+              onclick={() => (contentsOpen = true)}
+              class={`shrink-0 text-warm-ghost hover:bg-ink-raised hover:text-gold ${card.selectedCard ? "" : "min-[1200px]:hidden"}`}
+            >
+              <TableOfContents size={15} />
+            </Button>
+          {/if}
           {#if session.sessionId}
             <ShareDialog subjectKind="session" subjectId={session.sessionId}>
               {#snippet trigger({ props })}
@@ -247,6 +262,7 @@
           {:else}
             <div class="flex h-full min-h-0 flex-col" in:fade={{ duration: 200, delay: 100 }}>
               <SessionThread
+                bind:contentsOpen
                 {session}
                 activeCard={card.selectedCard?.label ?? null}
                 vaultRole={vaultDetail.data?.role ?? null}

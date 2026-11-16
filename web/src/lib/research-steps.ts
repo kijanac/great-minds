@@ -8,7 +8,6 @@ export interface ReadStep {
   readonly pending: boolean;
   readonly read: ReadonlySet<number>;
   readonly fetching: ReadonlySet<number>;
-  readonly hits: ReadonlySet<number>;
   readonly cited: ReadonlySet<number>;
 }
 
@@ -64,15 +63,6 @@ export const researchRounds = (sources: readonly SourceRef[], answer = ""): Rese
   const resolved = new Map(
     sources.filter((source) => isRead(source) && !source.pending).map((s) => [s.label, s]),
   );
-  const hits = new Map<string, Set<number>>();
-  for (const source of sources) {
-    if (source.path === null) continue;
-    for (const hit of source.hits ?? []) {
-      const chunks = hits.get(hit.path) ?? new Set<number>();
-      for (const chunk of hit.chunks) if (chunk >= 0) chunks.add(chunk);
-      hits.set(hit.path, chunks);
-    }
-  }
   const cited = citedSections(answer);
   const reads = new Map<string, ReadStep & { fetching: Set<number> }>();
   const steps: ResearchStep[] = [];
@@ -99,7 +89,6 @@ export const researchRounds = (sources: readonly SourceRef[], answer = ""): Rese
             : sections(doc.ranges),
       ),
       fetching: new Set(source.pending && source !== doc ? sections(source.ranges) : []),
-      hits: hits.get(source.label) ?? new Set<number>(),
       cited: cited.get(source.label) ?? new Set<number>(),
     };
     reads.set(source.label, step);
@@ -142,7 +131,7 @@ export const readLabel = (step: ReadStep) => {
   if (step.source.outline === true)
     return read === ""
       ? `outline${chunks === undefined ? "" : ` · ${chunks} sections`}`
-      : `outline · ${read}${chunks === undefined ? "" : ` of ${chunks}`}`;
+      : `${read}${chunks === undefined ? "" : ` of ${chunks}`}`;
   return read === "" ? "" : `${read}${chunks === undefined ? "" : ` of ${chunks}`}`;
 };
 

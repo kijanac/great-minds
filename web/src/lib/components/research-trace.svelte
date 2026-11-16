@@ -82,7 +82,7 @@
     const source = step.source;
     if (step.kind === "read")
       return `${now ? "reading" : "read"} ${source.type === "article" ? "article" : "source"}`;
-    if (step.kind === "links") return `${now ? "following" : "followed"} links from`;
+    if (step.kind === "links") return `${now ? "looking" : "looked"} for articles linked to`;
     if (step.kind === "query")
       return topic(source.label) === null
         ? `${now ? "filtering" : "filtered"} sources by`
@@ -98,7 +98,8 @@
   const result = (step: ResearchStep) => {
     const count = step.source.results;
     if (step.pending || count === undefined) return null;
-    if (step.kind === "links") return plural(count, "linked article");
+    if (step.kind === "links") return `found ${count}`;
+    if (count === 0) return "none";
     if (step.kind === "query")
       return plural(count, topic(step.source.label) === null ? "source" : "article");
     if (step.source.scope === "web") return plural(count, "result");
@@ -148,12 +149,6 @@
     return `Answered from ${parts.join(" and ")}`;
   });
   const serif = "font-serif text-[length:var(--text-caption)] italic tracking-normal text-warm-dim";
-  const fill = (step: ReadStep) =>
-    step.source.full === true
-      ? 1
-      : step.source.chunks
-        ? Math.max(0.12, step.read.size / step.source.chunks)
-        : 0.3;
 </script>
 
 {#snippet object(step: ResearchStep)}
@@ -196,8 +191,10 @@
         </span>
       {:else if result(step)}
         <span
-          class="animate-[pop-in_0.36s_ease_both] whitespace-nowrap text-gold-muted tabular-nums"
-          >→ {result(step)}</span
+          class={[
+            "animate-[pop-in_0.36s_ease_both] whitespace-nowrap tabular-nums",
+            step.source.results === 0 ? "text-warm-ghost" : "text-gold-muted",
+          ]}>→ {result(step)}</span
         >
       {/if}
       {#if step.kind === "search" && step.source.path !== null && step.source.hits?.[0]}
@@ -212,7 +209,9 @@
     {#if step.kind === "read"}
       <div class="mt-[3px] mb-0.5 flex items-center gap-2.5">
         <SourceStrip {step} reading={glowing(step)} />
-        <span class="whitespace-nowrap tabular-nums">{readLabel(step)}</span>
+        {#if !(step.source.full === true && step.source.chunks)}
+          <span class="whitespace-nowrap tabular-nums">{readLabel(step)}</span>
+        {/if}
       </div>
     {:else if step.kind === "search" && step.source.path === null && step.source.hits?.length}
       {@const shown = step.source.hits.slice(0, 3)}
@@ -266,7 +265,7 @@
         {#if clock}<span class="tabular-nums">{clock}</span>{/if}
       </div>
     {:else if steps.length > 0}
-      <div class="flex min-h-[30px] flex-wrap items-center gap-x-[18px] gap-y-2">
+      <div class="flex min-h-[30px] items-center">
         <button
           type="button"
           class="inline-flex flex-wrap items-center gap-1.5 text-left hover:text-warm-faint"
@@ -280,28 +279,6 @@
             class={`text-gold-muted transition-transform duration-300 ${folded ? "" : "rotate-90"}`}
           />
         </button>
-        {#if reads.length > 0}
-          <span
-            class="inline-flex h-6 items-end gap-1 border-b border-ink-border pb-0.5"
-            role="group"
-            aria-label="Sources read"
-          >
-            {#each reads as step, index (step.source.label)}
-              <svelte:element
-                this={onOpen ? "button" : "span"}
-                type={onOpen ? "button" : undefined}
-                class="spine"
-                data-kind={step.source.type}
-                data-tip={`${title(step.source)} · ${readLabel(step)}`}
-                aria-label={`${title(step.source)}, ${readLabel(step)}`}
-                role={onOpen ? undefined : "img"}
-                style:--fill={`${Math.round(fill(step) * 100)}%`}
-                style:animation-delay={`${120 + index * 60}ms`}
-                onclick={onOpen ? () => onOpen?.(step.source) : undefined}
-              ></svelte:element>
-            {/each}
-          </span>
-        {/if}
       </div>
     {/if}
 
@@ -392,48 +369,6 @@
     border-radius: 1px;
     transform: rotate(45deg);
   }
-  .spine {
-    position: relative;
-    width: 7px;
-    height: 20px;
-    border: 1px solid var(--ink-border);
-    border-radius: 1px 1px 0 0;
-    background: linear-gradient(
-      to top,
-      color-mix(in oklab, var(--gold) 70%, transparent) var(--fill),
-      transparent var(--fill)
-    );
-    transform-origin: bottom;
-    animation: shelve 520ms cubic-bezier(0.25, 1, 0.5, 1) both;
-    transition:
-      transform 200ms cubic-bezier(0.25, 1, 0.5, 1),
-      border-color 200ms;
-  }
-  .spine[data-kind="article"] {
-    width: 9px;
-    height: 16px;
-    border-color: var(--gold-muted);
-  }
-  .spine:hover,
-  .spine:focus-visible {
-    transform: translateY(-3px);
-    border-color: var(--gold);
-  }
-  .spine:hover::after,
-  .spine:focus-visible::after {
-    content: attr(data-tip);
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: -10px;
-    z-index: 10;
-    width: max-content;
-    max-width: 260px;
-    padding: 5px 8px;
-    border-radius: 2px;
-    background: var(--foreground);
-    color: var(--background);
-    pointer-events: none;
-  }
   @keyframes ring {
     from {
       transform: scale(0.4);
@@ -442,12 +377,6 @@
     to {
       transform: scale(1.7);
       opacity: 0;
-    }
-  }
-  @keyframes shelve {
-    from {
-      opacity: 0;
-      transform: scaleY(0.2);
     }
   }
   @media (prefers-reduced-motion: reduce) {
