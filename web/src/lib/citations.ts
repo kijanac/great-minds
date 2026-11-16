@@ -30,3 +30,27 @@ export function outlineOf(markdown: string): string[] {
       .trim(),
   );
 }
+
+export interface OutlineEntry {
+  readonly id: string;
+  readonly label: string;
+  readonly question: boolean;
+  readonly heading: number;
+}
+
+export function conversationOutline(
+  exchanges: readonly { readonly id: string; readonly query: string; readonly answer: string }[],
+): OutlineEntry[] {
+  const entries = exchanges.flatMap((exchange, index) => [
+    ...(index === 0
+      ? []
+      : [{ id: `exchange-${exchange.id}`, label: exchange.query, question: true, heading: -1 }]),
+    ...outlineOf(exchange.answer).map((label, heading) => ({
+      id: `exchange-${exchange.id}`,
+      label,
+      question: false,
+      heading,
+    })),
+  ]);
+  return entries.length >= 3 ? entries : [];
+}

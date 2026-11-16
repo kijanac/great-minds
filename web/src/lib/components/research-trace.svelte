@@ -409,9 +409,7 @@
       transform 200ms cubic-bezier(0.25, 1, 0.5, 1),
       border-color 200ms;
   }
-  .spine[data-kind="article"] {
-    width: 9px;
-    height: 16px;
+  .spine[data-kind="raw"] {
     border-color: var(--gold-muted);
   }
   .spine:hover,

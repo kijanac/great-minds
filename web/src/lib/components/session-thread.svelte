@@ -1,12 +1,14 @@
 <script lang="ts">
   import { page } from "$app/state";
+  import { Dialog } from "bits-ui";
   import type { MemberRole } from "@great-minds/domain";
   import { tick } from "svelte";
   import type { crossfade } from "svelte/transition";
 
   import AnswerBlock from "#lib/components/answer-block.svelte";
   import ConversationAbout from "#lib/components/conversation-about.svelte";
-  import { outlineOf } from "#lib/citations.ts";
+  import ConversationOutline from "#lib/components/conversation-outline.svelte";
+  import { conversationOutline } from "#lib/citations.ts";
   import FollowUpBar from "#lib/components/follow-up-bar.svelte";
   import OnboardingHint, {
     dismissOnboardingHint,
@@ -35,6 +37,7 @@
     onOpenPath,
     onLinkClick,
     receive,
+    contentsOpen = $bindable(false),
   }: {
     session: Conversation;
     activeCard: string | null;
@@ -45,6 +48,7 @@
     onOpenPath: (path: string, chunk: number | null) => void;
     onLinkClick?: (event: MouseEvent) => void;
     receive?: ReturnType<typeof crossfade>[1];
+    contentsOpen?: boolean;
   } = $props();
 
   const me = useMe();
@@ -67,26 +71,7 @@
       .slice(0, 3);
   };
 
-  const outline = $derived(
-    session.exchanges.flatMap((exchange, index) => [
-      ...(index === 0
-        ? []
-        : [
-            {
-              id: `exchange-${exchange.id}`,
-              label: exchange.query,
-              question: true,
-              heading: -1,
-            },
-          ]),
-      ...outlineOf(exchange.answer).map((label, heading) => ({
-        id: `exchange-${exchange.id}`,
-        label,
-        question: false,
-        heading,
-      })),
-    ]),
-  );
+  const outline = $derived(conversationOutline(session.exchanges));
 
   const outlineTarget = (id: string, heading: number) => {
     const section = document.getElementById(id);
@@ -250,7 +235,7 @@
   role={onLinkClick ? "presentation" : undefined}
 >
   <div bind:this={content} data-lean class="relative mx-auto max-w-[740px] px-4 pt-9 pb-8 md:px-10">
-    {#if outline.length >= 3 && !panelDocked}
+    {#if outline.length > 0 && !panelDocked}
       <aside
         class="absolute top-0 right-[calc(100%+1rem)] hidden h-full w-[190px] min-[1200px]:block"
       >
@@ -259,15 +244,11 @@
           class="sticky top-9 font-mono text-[length:var(--text-chrome)] leading-[1.5]"
         >
           <div class="mb-2.5 tracking-[0.14em] text-gold-muted uppercase">In this conversation</div>
-          {#each outline as entry, index (`${entry.id}:${entry.heading}:${index}`)}
-            <button
-              type="button"
-              onclick={() => jump(entry.id, entry.heading)}
-              aria-current={index === activeOutline ? "location" : undefined}
-              class={`block w-full border-l py-1 pl-2.5 text-left transition-colors hover:border-gold hover:text-warm [overflow-wrap:anywhere] ${entry.question ? "mt-3 italic" : ""} ${index === activeOutline ? "border-gold text-warm" : entry.question ? "border-ink-border text-warm-faint" : "border-ink-subtle text-warm-ghost"}`}
-              >{entry.label}</button
-            >
-          {/each}
+          <ConversationOutline
+            entries={outline}
+            active={activeOutline}
+            onJump={(entry) => jump(entry.id, entry.heading)}
+          />
         </nav>
       </aside>
     {/if}
@@ -434,6 +415,31 @@
     </p>
   {/if}
 {/if}
+
+<Dialog.Root bind:open={contentsOpen}>
+  <Dialog.Portal>
+    <Dialog.Overlay
+      class="fixed inset-0 z-[180] bg-black/20 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0"
+    />
+    <Dialog.Content
+      class="fixed inset-x-0 bottom-0 z-[200] mx-auto max-h-[70dvh] w-full max-w-[560px] overflow-y-auto rounded-t-md border border-b-0 border-ink-border bg-ink-panel px-5 pt-2.5 pb-[max(1.25rem,env(safe-area-inset-bottom))] font-mono text-[length:var(--text-chrome)] leading-[1.5] shadow-[0_-10px_30px_rgba(40,30,10,0.18)] duration-300 outline-none data-[state=closed]:animate-out data-[state=closed]:slide-out-to-bottom data-[state=open]:animate-in data-[state=open]:slide-in-from-bottom"
+    >
+      <div aria-hidden="true" class="mx-auto mb-3 h-1 w-9 rounded-full bg-ink-border"></div>
+      <Dialog.Title class="mb-1 tracking-[0.14em] text-gold-muted uppercase"
+        >In this conversation</Dialog.Title
+      >
+      <ConversationOutline
+        entries={outline}
+        active={activeOutline}
+        touch
+        onJump={(entry) => {
+          contentsOpen = false;
+          requestAnimationFrame(() => jump(entry.id, entry.heading));
+        }}
+      />
+    </Dialog.Content>
+  </Dialog.Portal>
+</Dialog.Root>
 
 {#if popover}
   {@const selection = popover}

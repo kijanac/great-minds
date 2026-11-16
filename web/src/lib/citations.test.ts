@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { citationsOf } from "@great-minds/domain";
 
-import { numberCitations, outlineOf } from "./citations";
+import { conversationOutline, numberCitations, outlineOf } from "./citations";
 import { parseMarkdown } from "./markdown";
 import type { HastNode } from "./markdown-plugins";
 
@@ -51,7 +51,18 @@ describe("answer citations", () => {
     ]);
   });
 
-  it("lists the answer's section headings without markup", () => {
+  it("outlines a conversation's follow-ups and headings once there are three entries", () => {
     expect(outlineOf(answer)).toEqual(["I. Origins", "Later years"]);
+    const first = { id: "a", query: "Why?", answer };
+    expect(conversationOutline([first])).toEqual([]);
+    expect(
+      conversationOutline([first, { id: "b", query: "And then?", answer: "No headings." }]).map(
+        (entry) => [entry.label, entry.question, entry.id],
+      ),
+    ).toEqual([
+      ["I. Origins", false, "exchange-a"],
+      ["Later years", false, "exchange-a"],
+      ["And then?", true, "exchange-b"],
+    ]);
   });
 });
