@@ -14,7 +14,6 @@ describe("saved passage anchors", () => {
     context: "",
     section: null,
     occurrence: null,
-    offset: null,
     ...fields,
   });
   const source = (text: string) => {
@@ -25,12 +24,12 @@ describe("saved passage anchors", () => {
   const blockAt = (tree: HastNode, index: number) =>
     tree.children?.filter((child) => child.type === "element")[index]?.position?.start?.offset;
 
-  it("keeps an older conversation by its paragraph without highlighting a repeated phrase", () => {
+  it("does not guess between repeats of a quote it has no occurrence for", () => {
     const tree = parseMarkdown("The claim matters. The claim needs evidence.");
-    const result = placeAnchors(tree, [
-      { threadId: "old", anchor: anchor({ quote: "The claim", offset: 0 }), mark: true },
+    const placed = placeAnchors(tree, [
+      { threadId: "t", anchor: anchor({ quote: "The claim" }), mark: true },
     ]);
-    expect([...result.unplaced]).toEqual([["old", 0]]);
+    expect(placed.size).toBe(0);
     expect(JSON.stringify(tree)).not.toContain('"tagName":"mark"');
   });
 
@@ -39,7 +38,7 @@ describe("saved passage anchors", () => {
     const result = placeAnchors(tree, [
       { threadId: "saved", anchor: anchor({ quote: "clear claim", occurrence: 1 }), mark: true },
     ]);
-    expect(result.placed.get("saved")).toEqual({ offset: 0, start: 2, end: 13 });
+    expect(result.get("saved")).toEqual({ offset: 0, start: 2, end: 13 });
     expect(JSON.stringify(tree)).toContain('"dataThreadId":"saved"');
     expect(JSON.stringify(tree)).toContain('"tagName":"strong"');
   });
@@ -51,7 +50,7 @@ describe("saved passage anchors", () => {
     const place = (fields: Partial<TextAnchor>) =>
       placeAnchors(tree, [
         { threadId: "t", anchor: anchor({ quote: "The claim", ...fields }), mark: false },
-      ]).placed.get("t");
+      ]).get("t");
     expect(place({ section: 1, occurrence: 1 })).toMatchObject({
       offset: blockAt(tree, 1),
       start: 0,
@@ -64,7 +63,7 @@ describe("saved passage anchors", () => {
           anchor: anchor({ quote: "the claim", section: 1, occurrence: 1 }),
           mark: false,
         },
-      ]).placed.get("t"),
+      ]).get("t"),
     ).toMatchObject({ start: 17 });
     expect(
       placeAnchors(tree, [
@@ -73,12 +72,7 @@ describe("saved passage anchors", () => {
           anchor: anchor({ quote: "Nothing else", section: 7, occurrence: 1 }),
           mark: false,
         },
-      ]).placed.get("t"),
-    ).toMatchObject({ offset: blockAt(tree, 2) });
-    expect(
-      placeAnchors(tree, [
-        { threadId: "t", anchor: anchor({ quote: "Nothing else", offset: 999 }), mark: false },
-      ]).placed.get("t"),
+      ]).get("t"),
     ).toMatchObject({ offset: blockAt(tree, 2) });
   });
 
@@ -103,7 +97,8 @@ describe("saved passage anchors", () => {
           origin_scope: "vault",
           anchor: "clear claim",
           paragraph,
-          paragraph_index: null,
+          section: null,
+          occurrence: 1,
         },
         title: "A source",
         href: null,

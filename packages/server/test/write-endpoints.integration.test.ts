@@ -2691,7 +2691,8 @@ describe("M3.1 write endpoint integration", () => {
                       "Origin title first paragraph with enough detail for article extraction.",
                     paragraph:
                       "Origin title first paragraph with enough detail for article extraction.",
-                    paragraph_index: 0,
+                    section: null,
+                    occurrence: 1,
                   },
                   createdAt: new Date("2026-07-11T09:00:00.000Z"),
                   updatedAt: new Date("2026-07-11T09:05:00.000Z"),
@@ -3233,7 +3234,8 @@ describe("M3.1 write endpoint integration", () => {
         origin_scope: "vault",
         anchor: "anchor quote",
         paragraph: "Full paragraph",
-        paragraph_index: 4,
+        section: null,
+        occurrence: 1,
       },
     );
     currentState().clock.set(new Date("2026-07-10T12:01:00.000Z"));
@@ -3264,7 +3266,7 @@ describe("M3.1 write endpoint integration", () => {
       parseFrontmatter(promotedMarkdown).frontmatter.source_incarnation,
     );
     expect(promotedMarkdown).toBe(
-      `---\nsource_id: ${ownerSourceId}\nsource_type: session\norigin: session-exchange\nsession_id: 019f4be6-1e00-7607-8809-0a0b0c0d0e0f\nexchange_id: ${EX_PROMOTE}\nsession_query: What should be promoted?\nsource_doc_path: raw/books/capital.md\nsource_anchor: anchor quote\nsource_paragraph_index: 4\nsource_incarnation: ${incarnationId}\n---\nPromoted answer body. ^p0\n`,
+      `---\nsource_id: ${ownerSourceId}\nsource_type: session\norigin: session-exchange\nsession_id: 019f4be6-1e00-7607-8809-0a0b0c0d0e0f\nexchange_id: ${EX_PROMOTE}\nsession_query: What should be promoted?\nsource_doc_path: raw/books/capital.md\nsource_anchor: anchor quote\nsource_incarnation: ${incarnationId}\n---\nPromoted answer body. ^p0\n`,
     );
     const promotedRows = await runDb(
       Effect.gen(function* () {
@@ -3291,7 +3293,6 @@ describe("M3.1 write endpoint integration", () => {
       provenanceSessionQuery: "What should be promoted?",
       provenanceSourceDocPath: "raw/books/capital.md",
       provenanceSourceAnchor: "anchor quote",
-      provenanceSourceParagraphIndex: 4,
     });
     expect(await countTable(compileIntents)).toBe(1);
 

@@ -44,7 +44,6 @@ export interface TextAnchor {
   context: string;
   section: number | null;
   occurrence: number | null;
-  offset: number | null;
 }
 
 export interface ThreadLike {

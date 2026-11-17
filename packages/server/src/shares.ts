@@ -123,9 +123,8 @@ export const SharesServiceLive = Layer.effect(
             anchor: {
               quote: origin.anchor ?? "",
               context: origin.paragraph,
-              block_offset: origin.paragraph_index ?? null,
-              section: origin.section ?? null,
-              occurrence: origin.occurrence ?? null,
+              section: origin.section,
+              occurrence: origin.occurrence,
             },
             exchanges: events.success.map((event) => ({
               query: event.query,

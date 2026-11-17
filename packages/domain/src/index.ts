@@ -881,17 +881,13 @@ export const OriginScope = Schema.Literals(["vault", "personal"] as const);
 export type OriginScope = typeof OriginScope.Type;
 
 const PassageLocation = {
-  section: Schema.optionalKey(
-    Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))).annotate({
-      description: "The document section (its ^pN index) holding the quote; null when it has none",
-    }),
-  ),
-  occurrence: Schema.optionalKey(
-    Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).annotate({
-      description:
-        "Which match of the quote is meant, counted within the section or the whole text",
-    }),
-  ),
+  section: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))).annotate({
+    description: "The document section (its ^pN index) holding the quote; null when it has none",
+  }),
+  occurrence: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))).annotate({
+    description:
+      "Which match of the quote is meant, counted within the section or the whole text; null without a quote",
+  }),
 };
 
 export const DocumentSessionOrigin = Schema.Struct({
@@ -902,7 +898,6 @@ export const DocumentSessionOrigin = Schema.Struct({
   ),
   anchor: Schema.NullOr(Schema.String),
   paragraph: Schema.NullOr(Schema.String),
-  paragraph_index: Schema.optionalKey(Schema.NullOr(Schema.Number)),
   ...PassageLocation,
 });
 export const AnswerSessionOrigin = Schema.Struct({
@@ -911,7 +906,6 @@ export const AnswerSessionOrigin = Schema.Struct({
   exchange_id: Uuid,
   anchor: Schema.String,
   paragraph: Schema.String,
-  paragraph_index: Schema.optionalKey(Schema.Number),
   ...PassageLocation,
 });
 export const SessionOrigin = Schema.Union([DocumentSessionOrigin, AnswerSessionOrigin]);
@@ -1172,7 +1166,6 @@ export const SourceDocument = Schema.Struct({
   provenance_session_query: Schema.NullOr(Schema.String),
   provenance_source_doc_path: Schema.NullOr(Schema.String),
   provenance_source_anchor: Schema.NullOr(Schema.String),
-  provenance_source_paragraph_index: Schema.NullOr(Schema.Number),
   provenance_anchored_to: Schema.NullOr(Schema.String),
   provenance_anchored_section: Schema.NullOr(Schema.String),
   provenance_intent: Schema.NullOr(Schema.String),
@@ -1275,7 +1268,6 @@ export type SharedSessionDetail = typeof SharedSessionDetail.Type;
 export const SharedAnnotationAnchor = Schema.Struct({
   quote: Schema.String,
   context: Schema.NullOr(Schema.String),
-  block_offset: Schema.NullOr(Schema.Number),
   section: Schema.NullOr(Schema.Int),
   occurrence: Schema.NullOr(Schema.Int),
 });

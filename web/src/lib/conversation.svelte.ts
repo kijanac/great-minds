@@ -71,7 +71,6 @@ export class Conversation implements ThreadLike {
       context: this.origin?.paragraph ?? "",
       section: this.origin?.section ?? null,
       occurrence: this.origin?.occurrence ?? null,
-      offset: this.origin?.paragraph_index ?? null,
     };
     this.#onCreated = options.onCreated;
     const content = saved ?? (detail?.availability === "available" ? detail : null);
@@ -352,7 +351,7 @@ export class Conversation implements ThreadLike {
           anchor: info.quote,
           paragraph: info.context,
           section: info.section,
-          occurrence: info.occurrence ?? 1,
+          occurrence: info.occurrence,
         },
       }),
     );

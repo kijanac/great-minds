@@ -46,9 +46,8 @@ export class DocThreads {
   };
 
   /** Re-check which anchors resolve to a rendered mark (or, for in-flight
-   * drafts, a rendered block) in the document. Persisted threads whose quote
-   * could not be located render a pure gutter dot instead and lose the jump
-   * affordance. */
+   * drafts, a rendered thread) in the document. Threads whose quote could
+   * not be located lose the jump affordance. */
   refreshJumpable = (): void => {
     const next = new Set<string>();
     for (const thread of this.threads) {
@@ -71,7 +70,7 @@ export class DocThreads {
         anchor: info.quote,
         paragraph: info.context,
         section: info.section,
-        occurrence: info.occurrence ?? 1,
+        occurrence: info.occurrence,
       },
     });
     this.threads = [...this.threads, thread];

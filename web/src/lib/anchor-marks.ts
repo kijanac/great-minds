@@ -1,4 +1,4 @@
-import { quoteMatches, sectionOf, uniqueQuoteSpan } from "#lib/anchor.ts";
+import { quoteMatches, sectionOf } from "#lib/anchor.ts";
 import type { HastNode } from "#lib/markdown-plugins.ts";
 import type { TextAnchor } from "#lib/types.ts";
 
@@ -12,11 +12,6 @@ export interface Placement {
   offset: number;
   start: number;
   end: number;
-}
-
-export interface Placements {
-  placed: Map<string, Placement>;
-  unplaced: Map<string, number>;
 }
 
 const MARK_CLASS = "btw-anchor-mark";
@@ -41,20 +36,18 @@ function blockSection(block: HastNode): number | null {
   return first?.tagName === "span" ? sectionOf(first.properties?.id) : null;
 }
 
-type Resolved = { block: HastNode; start: number; end: number } | { block: HastNode | null };
-
-export function resolvePassage(blocks: readonly HastNode[], anchor: TextAnchor): Resolved {
+export function resolvePassage(
+  blocks: readonly HastNode[],
+  anchor: TextAnchor,
+): (Placement & { block: HastNode }) | null {
   const { quote } = anchor;
-  if (!quote) return { block: null };
-  const unique = () => {
-    let found: { block: HastNode; start: number; end: number } | null = null;
-    for (const block of blocks)
-      for (const start of quoteMatches(collectText(block), quote)) {
-        if (found) return null;
-        found = { block, start, end: start + quote.length };
-      }
-    return found;
-  };
+  if (!quote) return null;
+  const at = (block: HastNode, start: number) => ({
+    block,
+    offset: block.position?.start?.offset ?? -1,
+    start,
+    end: start + quote.length,
+  });
   if (anchor.occurrence !== null) {
     let scope = blocks;
     if (anchor.section !== null) {
@@ -65,16 +58,15 @@ export function resolvePassage(blocks: readonly HastNode[], anchor: TextAnchor):
     let seen = 0;
     for (const block of scope)
       for (const start of quoteMatches(collectText(block), quote))
-        if (++seen === anchor.occurrence) return { block, start, end: start + quote.length };
-    return unique() ?? { block: null };
+        if (++seen === anchor.occurrence) return at(block, start);
   }
-  const block =
-    anchor.offset === null
-      ? undefined
-      : blocks.find((candidate) => candidate.position?.start?.offset === anchor.offset);
-  const span = block ? uniqueQuoteSpan(collectText(block), quote) : null;
-  if (block && span) return { block, ...span };
-  return unique() ?? { block: block ?? null };
+  let found: (Placement & { block: HastNode }) | null = null;
+  for (const block of blocks)
+    for (const start of quoteMatches(collectText(block), quote)) {
+      if (found) return null;
+      found = at(block, start);
+    }
+  return found;
 }
 
 /** SPLIT each text node intersected by [start, end) and wrap each segment in
@@ -148,20 +140,17 @@ function applyWrap(
   block.children = out;
 }
 
-export function placeAnchors(tree: HastNode, anchors: readonly ThreadAnchor[]): Placements {
+export function placeAnchors(
+  tree: HastNode,
+  anchors: readonly ThreadAnchor[],
+): Map<string, Placement> {
   const blocks = (tree.children ?? []).filter((child) => child.type === "element");
   const placed = new Map<string, Placement>();
-  const unplaced = new Map<string, number>();
   for (const { threadId, anchor, mark } of anchors) {
     const found = resolvePassage(blocks, anchor);
-    const offset = found.block?.position?.start?.offset;
-    if (offset === undefined || found.block === null) continue;
-    if (!("start" in found)) {
-      unplaced.set(threadId, offset);
-      continue;
-    }
-    placed.set(threadId, { offset, start: found.start, end: found.end });
+    if (found === null || found.offset < 0) continue;
+    placed.set(threadId, { offset: found.offset, start: found.start, end: found.end });
     if (mark) applyWrap(found.block, threadId, anchor.quote, found.start, found.end);
   }
-  return { placed, unplaced };
+  return placed;
 }

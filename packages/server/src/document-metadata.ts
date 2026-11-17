@@ -34,7 +34,6 @@ const SourceDocumentFromRow = Schema.Struct({
     provenance_session_query: "provenanceSessionQuery",
     provenance_source_doc_path: "provenanceSourceDocPath",
     provenance_source_anchor: "provenanceSourceAnchor",
-    provenance_source_paragraph_index: "provenanceSourceParagraphIndex",
     provenance_anchored_to: "provenanceAnchoredTo",
     provenance_anchored_section: "provenanceAnchoredSection",
     provenance_intent: "provenanceIntent",

@@ -97,8 +97,7 @@ const reduceRecords = (
   if (
     (header.origin?.kind !== "answer" && header.anchor_reply_id !== null) ||
     (header.origin?.kind === "answer" && header.origin.session_id === sessionId) ||
-    header.context?.session_id === sessionId ||
-    (header.origin?.paragraph_index != null && !Number.isSafeInteger(header.origin.paragraph_index))
+    header.context?.session_id === sessionId
   )
     return invalid("origin", 1);
 

@@ -24,7 +24,7 @@
     variant: Variant;
     onLinkClick?: (event: MouseEvent) => void;
     blockOffset?: number;
-    onBlockMouseUp?: (event: MouseEvent, offset: number) => void;
+    onBlockMouseUp?: (event: MouseEvent) => void;
     topLevel?: boolean;
     footnoteMode?: "margin" | "popover";
     activeFootnote?: string | null;
@@ -252,7 +252,7 @@
     data-footnote-block={topLevel ? "" : undefined}
     class={className || undefined}
     onmouseup={(event) => {
-      if (blockOffset != null) onBlockMouseUp?.(event, blockOffset);
+      if (blockOffset != null) onBlockMouseUp?.(event);
     }}
   >
     {@render childNodes()}

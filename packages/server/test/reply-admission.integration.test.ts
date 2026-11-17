@@ -51,7 +51,8 @@ const answerThread = (sessionId: SessionId, exchangeId: Uuid) =>
         exchange_id: exchangeId,
         anchor: "Answer",
         paragraph: "Answer",
-        paragraph_index: 0,
+        section: null,
+        occurrence: 1,
       },
     },
   });

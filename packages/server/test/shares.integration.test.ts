@@ -610,7 +610,6 @@ describe("share links", () => {
             anchor: {
               quote: "Annotated first paragraph with enough words to extract.",
               context: "Annotated first paragraph with enough words to extract.",
-              block_offset: null,
               section: 0,
               occurrence: 1,
             },
