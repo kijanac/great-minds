@@ -880,6 +880,20 @@ export type SourceQuery = typeof SourceQuery.Type;
 export const OriginScope = Schema.Literals(["vault", "personal"] as const);
 export type OriginScope = typeof OriginScope.Type;
 
+const PassageLocation = {
+  section: Schema.optionalKey(
+    Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))).annotate({
+      description: "The document section (its ^pN index) holding the quote; null when it has none",
+    }),
+  ),
+  occurrence: Schema.optionalKey(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).annotate({
+      description:
+        "Which match of the quote is meant, counted within the section or the whole text",
+    }),
+  ),
+};
+
 export const DocumentSessionOrigin = Schema.Struct({
   kind: Schema.Literal("document"),
   doc_path: Schema.String,
@@ -888,7 +902,8 @@ export const DocumentSessionOrigin = Schema.Struct({
   ),
   anchor: Schema.NullOr(Schema.String),
   paragraph: Schema.NullOr(Schema.String),
-  paragraph_index: Schema.NullOr(Schema.Number),
+  paragraph_index: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  ...PassageLocation,
 });
 export const AnswerSessionOrigin = Schema.Struct({
   kind: Schema.Literal("answer"),
@@ -896,7 +911,8 @@ export const AnswerSessionOrigin = Schema.Struct({
   exchange_id: Uuid,
   anchor: Schema.String,
   paragraph: Schema.String,
-  paragraph_index: Schema.Number,
+  paragraph_index: Schema.optionalKey(Schema.Number),
+  ...PassageLocation,
 });
 export const SessionOrigin = Schema.Union([DocumentSessionOrigin, AnswerSessionOrigin]);
 export type SessionOrigin = typeof SessionOrigin.Type;
@@ -1260,6 +1276,8 @@ export const SharedAnnotationAnchor = Schema.Struct({
   quote: Schema.String,
   context: Schema.NullOr(Schema.String),
   block_offset: Schema.NullOr(Schema.Number),
+  section: Schema.NullOr(Schema.Int),
+  occurrence: Schema.NullOr(Schema.Int),
 });
 export type SharedAnnotationAnchor = typeof SharedAnnotationAnchor.Type;
 

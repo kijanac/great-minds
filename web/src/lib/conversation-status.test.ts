@@ -11,7 +11,7 @@ const replyId = Uuid.make("00000000-0000-4000-8000-000000000002");
 const thread = (overrides: Partial<ThreadLike> = {}): ThreadLike => ({
   id: "saved-note",
   sessionId,
-  anchor: { blockOffset: 0, quote: "Passage", context: "Passage" },
+  anchor: { quote: "Passage", context: "Passage", section: null, occurrence: 1, offset: null },
   draft: false,
   createdAt: null,
   exchanges: [
