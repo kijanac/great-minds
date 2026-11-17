@@ -1834,6 +1834,18 @@ describe("query stream", () => {
     const systemPromptHash = promptContentHash(systemMessage.content);
     const replyId = snapshots.at(-1)?.reply_id;
     if (replyId === undefined) throw new Error("reply id missing");
+    await expect
+      .poll(() =>
+        runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            return yield* db
+              .query((d) => d.select({ id: llmCostEvents.id }).from(llmCostEvents))
+              .pipe(Effect.orDie);
+          }),
+        ),
+      )
+      .toHaveLength(1);
     const recorded = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
