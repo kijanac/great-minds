@@ -519,7 +519,7 @@ const seedSessionSpecs = (owner, content) => {
       btws: [
         {
           quote: "record only what the running product actually shows",
-          blockOffset: 0,
+          occurrence: 1,
           context:
             "Use it as a disposable workspace: inspect evidence, interrupt work, change scope, and record only what the running product actually shows.",
           exchangeId: "ex-verification-main",
@@ -557,7 +557,8 @@ const seedSessionSpecs = (owner, content) => {
         origin_scope: "personal",
         anchor: "silver kingfisher phrase",
         paragraph: null,
-        paragraph_index: 0,
+        section: null,
+        occurrence: 1,
       },
     },
     {
@@ -574,7 +575,8 @@ const seedSessionSpecs = (owner, content) => {
         origin_scope: "vault",
         anchor: "what a person can see and recover from",
         paragraph: null,
-        paragraph_index: 0,
+        section: null,
+        occurrence: 1,
       },
     },
   ];

@@ -1,0 +1,1 @@
+ALTER TABLE "source_documents" DROP COLUMN "provenance_source_paragraph_index";

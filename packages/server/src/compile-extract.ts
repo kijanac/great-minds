@@ -620,7 +620,6 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
                 session_query: document.provenanceSessionQuery,
                 source_doc_path: document.provenanceSourceDocPath,
                 source_anchor: document.provenanceSourceAnchor,
-                source_paragraph_index: document.provenanceSourceParagraphIndex,
                 anchored_to: document.provenanceAnchoredTo,
                 anchored_section: document.provenanceAnchoredSection,
                 intent: document.provenanceIntent,

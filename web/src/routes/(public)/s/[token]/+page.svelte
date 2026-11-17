@@ -42,7 +42,6 @@
             context: annotation.anchor.context ?? "",
             section: annotation.anchor.section,
             occurrence: annotation.anchor.occurrence,
-            offset: annotation.anchor.block_offset,
           },
           exchanges: annotation.exchanges.map((exchange) => ({
             id: shareExchangeId,

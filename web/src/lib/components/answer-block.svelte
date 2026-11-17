@@ -3,12 +3,12 @@
   import { tick, type Snippet } from "svelte";
 
   import { capturePassage, rangeFromOffsets } from "#lib/anchor.ts";
-  import { placeAnchors, type Placements, type ThreadAnchor } from "#lib/anchor-marks.ts";
+  import { placeAnchors, type Placement, type ThreadAnchor } from "#lib/anchor-marks.ts";
   import { assignBlockRefIds, stripBlockRefMarkers } from "#lib/block-refs.ts";
   import AnswerCitations from "#lib/components/answer-citations.svelte";
   import BtwThread from "#lib/components/btw-thread.svelte";
   import { numberCitations, type Citation } from "#lib/citations.ts";
-  import FootnoteNotes, { type MarginDot } from "#lib/components/footnote-notes.svelte";
+  import FootnoteNotes from "#lib/components/footnote-notes.svelte";
   import HastNodeView from "#lib/components/hast-node.svelte";
   import { clearAnchorHighlights, setAnchorHighlights } from "#lib/highlight.ts";
   import { parseMarkdown } from "#lib/markdown.ts";
@@ -74,19 +74,22 @@
   const threadAnchors = $derived.by<ThreadAnchor[]>(() =>
     bodyThreads.map((btw) => ({ threadId: btw.id, anchor: btw.anchor, mark: !btw.draft })),
   );
-  const unplaced = (): Placements => ({ placed: new Map(), unplaced: new Map() });
   // `stableTree` only depends on the stable prefix string. During token
   // streaming Svelte does not invalidate it until a complete block lands.
   // Settled trees carry marks; the streaming tail tree is never marked.
   const stableParsed = $derived.by(() =>
-    stableSource ? parseSettled(stableSource) : { tree: emptyRoot(), ...unplaced() },
+    stableSource
+      ? parseSettled(stableSource)
+      : { tree: emptyRoot(), placed: new Map<string, Placement>() },
   );
   const stableTree = $derived(stableParsed.tree);
   const tailTree = $derived.by(() =>
     streaming && tailSource ? parseAnswer(tailSource) : emptyRoot(),
   );
   const fullParsed = $derived.by(() =>
-    streaming ? { tree: emptyRoot(), ...unplaced() } : parseSettled(displayText),
+    streaming
+      ? { tree: emptyRoot(), placed: new Map<string, Placement>() }
+      : parseSettled(displayText),
   );
   const fullTree = $derived(fullParsed.tree);
   const leadingTitle = $derived.by(() => {
@@ -97,22 +100,10 @@
       nodeText(first).replace(/\s+/g, " ").trim() === documentTitle.replace(/\s+/g, " ").trim()
     );
   });
-  const placements = $derived(streaming ? stableParsed : fullParsed);
+  const placed = $derived(streaming ? stableParsed.placed : fullParsed.placed);
   // Only anchored threads (quote present) render in the body; doc-initiated
   // conversations surface through the doc-header chip instead.
   const bodyThreads = $derived(btws.filter((btw) => btw.anchor.quote.length > 0));
-  // Gutter dots render only for threads whose block resolves in the body but
-  // whose quote cannot be located in it — pure indicators, no interaction.
-  // Threads with marks get no dot; threads with no block stay header-panel-only.
-  const marginDots = $derived.by<MarginDot[]>(() => {
-    const dots = new Map<number, MarginDot>();
-    for (const btw of bodyThreads) {
-      const offset = placements.unplaced.get(btw.id);
-      if (offset === undefined || dots.has(offset)) continue;
-      dots.set(offset, { id: `dot:${offset}`, blockOffset: offset, quote: btw.anchor.quote });
-    }
-    return [...dots.values()];
-  });
   const footnoteRoots = $derived(streaming ? [stableTree, tailTree] : [fullTree]);
 
   const isOpen = (btwId: string): boolean =>
@@ -160,7 +151,7 @@
   $effect(() => {
     const currentRoot = root;
     const currentBtws = btws.filter((btw) => btw.draft && btw.anchor.quote);
-    const placed = placements.placed;
+    const currentPlaced = placed;
     if (!currentRoot) return;
 
     let cancelled = false;
@@ -170,7 +161,7 @@
       for (const btw of currentBtws) {
         // The painted path is transient decoration for in-flight drafts only;
         // persisted anchors are real <mark> elements in the settled tree.
-        const place = placed.get(btw.id);
+        const place = currentPlaced.get(btw.id);
         if (!place) continue;
         const block = currentRoot.querySelector<HTMLElement>(
           `[data-block-offset="${place.offset}"]`,
@@ -203,11 +194,9 @@
     });
   });
 
-  // Settled trees carry real marks for persisted anchors; the miss report
-  // feeds the fallback gutter dots via the active parse's derived value.
-  function parseSettled(source: string): Placements & { tree: HastNode } {
+  function parseSettled(source: string): { tree: HastNode; placed: Map<string, Placement> } {
     const tree = parseAnswer(source);
-    return { tree, ...placeAnchors(tree, threadAnchors) };
+    return { tree, placed: placeAnchors(tree, threadAnchors) };
   }
 
   // Delegated click on the rendered body: a <mark data-thread-id> toggles its
@@ -328,7 +317,6 @@
     onSelection({
       ...captured,
       context: blockText(element),
-      offset: null,
       passage: selectionPassage(range),
       rect: range.getBoundingClientRect(),
       exchangeId,
@@ -347,7 +335,6 @@
     {panelDocked}
     resetKey={`${streaming}:${displayText}`}
     {onLinkClick}
-    {marginDots}
     class={leadingTitle
       ? "select-text [&>h1:first-child]:mb-3 [&>h1:first-child]:text-[length:var(--text-title)]"
       : "select-text"}
@@ -388,7 +375,7 @@
           {@render blockNode(node)}
           {#if index === 0 && leadingTitle}{@render header?.(false)}{/if}
           {#if offset != null}
-            {#each bodyThreads.filter((btw) => (placements.placed.get(btw.id)?.offset ?? placements.unplaced.get(btw.id)) === offset) as btw (btw.id)}
+            {#each bodyThreads.filter((btw) => placed.get(btw.id)?.offset === offset) as btw (btw.id)}
               <BtwThread
                 {btw}
                 open={isOpen(btw.id)}

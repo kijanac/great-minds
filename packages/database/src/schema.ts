@@ -640,7 +640,6 @@ export const sourceDocuments = pgTable(
     provenanceSessionQuery: text("provenance_session_query"),
     provenanceSourceDocPath: text("provenance_source_doc_path"),
     provenanceSourceAnchor: text("provenance_source_anchor"),
-    provenanceSourceParagraphIndex: integer("provenance_source_paragraph_index"),
     provenanceAnchoredTo: text("provenance_anchored_to"),
     provenanceAnchoredSection: text("provenance_anchored_section"),
     provenanceIntent: text("provenance_intent"),

@@ -96,17 +96,6 @@ const stringField = (frontmatter: Record<string, unknown>, key: string) => {
 const documentTitle = (body: string) =>
   /^#\s+(.+?)(?:\s+\^p\d+)?\s*$/m.exec(body)?.[1]?.trim() ?? null;
 
-const numberField = (frontmatter: Record<string, unknown>, key: string) => {
-  const value = frontmatter[key];
-  if (typeof value === "number") {
-    return value;
-  }
-  if (typeof value === "string" && value.length > 0) {
-    return Number.parseInt(value, 10);
-  }
-  return null;
-};
-
 const sourceFromMarkdown = (
   vaultId: Uuid,
   filePath: string,
@@ -136,7 +125,6 @@ const sourceFromMarkdown = (
     provenanceSessionQuery: stringField(parsed.frontmatter, "session_query"),
     provenanceSourceDocPath: stringField(parsed.frontmatter, "source_doc_path"),
     provenanceSourceAnchor: stringField(parsed.frontmatter, "source_anchor"),
-    provenanceSourceParagraphIndex: numberField(parsed.frontmatter, "source_paragraph_index"),
     provenanceAnchoredTo: stringField(parsed.frontmatter, "anchored_to"),
     provenanceAnchoredSection: stringField(parsed.frontmatter, "anchored_section"),
     provenanceIntent: stringField(parsed.frontmatter, "intent"),
@@ -313,7 +301,6 @@ const ingestSet = {
   provenanceSessionQuery: sql`excluded.provenance_session_query`,
   provenanceSourceDocPath: sql`excluded.provenance_source_doc_path`,
   provenanceSourceAnchor: sql`excluded.provenance_source_anchor`,
-  provenanceSourceParagraphIndex: sql`excluded.provenance_source_paragraph_index`,
   provenanceAnchoredTo: sql`excluded.provenance_anchored_to`,
   provenanceAnchoredSection: sql`excluded.provenance_anchored_section`,
   provenanceIntent: sql`excluded.provenance_intent`,

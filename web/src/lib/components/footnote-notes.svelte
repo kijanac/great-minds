@@ -16,12 +16,6 @@
     onFootnoteOpen: (id: string) => void;
   }
 
-  export interface MarginDot {
-    id: string;
-    blockOffset: number;
-    quote: string;
-  }
-
   let {
     roots,
     idPrefix,
@@ -29,7 +23,6 @@
     panelDocked = false,
     resetKey,
     onLinkClick,
-    marginDots = [],
     class: className,
     root = $bindable(null),
     children,
@@ -40,7 +33,6 @@
     panelDocked?: boolean;
     resetKey: string;
     onLinkClick?: (event: MouseEvent) => void;
-    marginDots?: MarginDot[];
     class?: string;
     root?: HTMLDivElement | null;
     children: Snippet<[FootnoteRenderContext]>;
@@ -51,7 +43,6 @@
   let hoveredFootnote = $state<string | null>(null);
   let leaving = 0;
   let notePositions = $state<Record<string, number>>({});
-  let dotPositions = $state<Record<string, number>>({});
 
   const presentation = $derived(buildFootnotePresentation(roots, idPrefix));
   const visibleNotes = $derived(presentation.notes.filter((note) => note.id === hoveredFootnote));
@@ -94,31 +85,6 @@
       window.removeEventListener("resize", measure);
     };
   }
-
-  $effect(() => {
-    const currentRoot = root;
-    const currentDots = marginDots;
-    if (!currentRoot || currentDots.length === 0) {
-      dotPositions = {};
-      return;
-    }
-
-    return measureAfterLayout(currentRoot, (rootRect) => {
-      const next: Record<string, number> = {};
-      for (const dot of currentDots) {
-        const block = currentRoot.querySelector<HTMLElement>(
-          `[data-block-offset="${CSS.escape(String(dot.blockOffset))}"]`,
-        );
-        const dotElement = currentRoot.querySelector<HTMLElement>(
-          `[data-margin-dot="${CSS.escape(dot.id)}"]`,
-        );
-        if (!block || !dotElement) continue;
-        const rect = block.getBoundingClientRect();
-        next[dot.id] = rect.top - rootRect.top + rect.height / 2;
-      }
-      dotPositions = next;
-    });
-  });
 
   $effect(() => {
     const currentRoot = root;
@@ -208,25 +174,6 @@
             footnoteDefinitions={presentation.definitions}
           />
         </aside>
-      {/each}
-    </div>
-  {/if}
-
-  {#if marginDots.length > 0}
-    <div data-margin-dots class="pointer-events-none absolute inset-0 print:hidden">
-      {#each marginDots as dot (dot.id)}
-        {@const dotLabel = `annotation thread: "${dot.quote.slice(0, 40)}"`}
-        <!-- Pure indicator for a thread whose quote could not be located in
-             its block: no click handler, no button role. -->
-        <span
-          data-margin-dot={dot.id}
-          title={dotLabel}
-          aria-hidden="true"
-          class={`pointer-events-auto absolute left-full -translate-y-1/2 rounded-full p-1 text-[11px] leading-none text-btw md:left-[calc(100%+0.85rem)] ${dot.id in dotPositions ? "opacity-100" : "opacity-0"}`}
-          style:top={`${dotPositions[dot.id] ?? 0}px`}
-        >
-          ●
-        </span>
       {/each}
     </div>
   {/if}

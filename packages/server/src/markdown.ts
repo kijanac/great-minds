@@ -16,7 +16,6 @@ type BuildDocumentInput = {
   readonly sessionQuery?: string | null;
   readonly sourceDocPath?: string | null;
   readonly sourceAnchor?: string | null;
-  readonly sourceParagraphIndex?: number | null;
   readonly anchoredTo?: string | null;
   readonly anchoredSection?: string | null;
 };
@@ -192,7 +191,6 @@ export const buildDocument = (content: string, input: BuildDocumentInput = {}) =
     session_query: input.sessionQuery,
     source_doc_path: input.sourceDocPath,
     source_anchor: input.sourceAnchor,
-    source_paragraph_index: input.sourceParagraphIndex,
     anchored_to: input.anchoredTo,
     anchored_section: input.anchoredSection,
   };
@@ -219,7 +217,6 @@ export const sessionExchangeDocumentInput = (
     sessionOrigin.anchor.length > 0
       ? sessionOrigin.anchor
       : null,
-  sourceParagraphIndex: sessionOrigin?.paragraph_index ?? null,
 });
 
 export const buildSessionExchangeDocument = (

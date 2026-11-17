@@ -47,7 +47,8 @@ const origin = {
   exchange_id: uuid(1),
   anchor: "SELECTED_PASSAGE",
   paragraph: "RECORDED_PARAGRAPH",
-  paragraph_index: 0,
+  section: null,
+  occurrence: 1,
 } as const;
 const note = (): Extract<OriginSessionDetail, { availability: "available" }> => ({
   availability: "available",

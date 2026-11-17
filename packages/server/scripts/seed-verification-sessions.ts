@@ -33,7 +33,8 @@ const SeedBtwTurn = Schema.Struct({
 });
 const SeedBtw = Schema.Struct({
   quote: Schema.String,
-  blockOffset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  section: Schema.NullOr(Schema.Int).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(null))),
+  occurrence: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   context: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
   exchangeId: Uuid,
   exchanges: Schema.Array(SeedBtwTurn),
@@ -111,9 +112,9 @@ try {
         }
         const latestBtws = new Map<string, typeof SeedBtw.Type>();
         for (const btw of item.btws ?? [])
-          latestBtws.set(`${btw.exchangeId}\0${btw.blockOffset}\0${btw.quote}`, btw);
+          latestBtws.set(`${btw.exchangeId}\0${btw.section}\0${btw.occurrence}\0${btw.quote}`, btw);
         for (const btw of latestBtws.values()) {
-          const key = `${item.idempotency_key}:btw:${btw.exchangeId}:${btw.blockOffset}:${btw.quote}`;
+          const key = `${item.idempotency_key}:btw:${btw.exchangeId}:${btw.section}:${btw.occurrence}:${btw.quote}`;
           let child: SessionId | null = null;
           for (const [index, turn] of btw.exchanges.entries()) {
             const response: CreateReplyResponse = yield* seed(
@@ -131,7 +132,8 @@ try {
                       session_id: root.session_id,
                       exchange_id: btw.exchangeId,
                       anchor: btw.quote,
-                      paragraph_index: btw.blockOffset,
+                      section: btw.section,
+                      occurrence: btw.occurrence,
                       paragraph: btw.context,
                     },
                   }

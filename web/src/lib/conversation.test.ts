@@ -35,7 +35,8 @@ const now = new Date("2026-09-17T12:00:00Z");
 const passage = {
   anchor: "quote",
   paragraph: "A quote in context.",
-  paragraph_index: 10,
+  section: null,
+  occurrence: 1,
 };
 const origins: SessionOrigin[] = [
   {
@@ -284,7 +285,8 @@ it.each([undefined, "wiki/test.md"])(
             origin_scope: "vault",
             anchor: null,
             paragraph: null,
-            paragraph_index: null,
+            section: null,
+            occurrence: null,
           } as const);
     const session = make({
       origin,
