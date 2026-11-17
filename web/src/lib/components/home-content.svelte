@@ -63,7 +63,6 @@
           origin_scope: "vault",
           anchor: null,
           paragraph: null,
-          paragraph_index: null,
         }
       : null,
     onCreated: handleSessionCreated,

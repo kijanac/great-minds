@@ -1,42 +1,25 @@
-import { uniqueQuoteSpan } from "#lib/anchor.ts";
+import { quoteMatches, sectionOf, uniqueQuoteSpan } from "#lib/anchor.ts";
 import type { HastNode } from "#lib/markdown-plugins.ts";
+import type { TextAnchor } from "#lib/types.ts";
 
-export interface AnchorMark {
+export interface ThreadAnchor {
   threadId: string;
-  blockOffset: number;
-  quote: string;
+  anchor: TextAnchor;
+  mark: boolean;
 }
 
-export type AnchorMissReason = "no-block" | "quote-unresolved";
-
-export interface AnchorMiss {
-  threadId: string;
-  blockOffset: number;
-  quote: string;
-  reason: AnchorMissReason;
+export interface Placement {
+  offset: number;
+  start: number;
+  end: number;
 }
 
-export interface WrapAnchorsResult {
-  tree: HastNode;
-  misses: AnchorMiss[];
+export interface Placements {
+  placed: Map<string, Placement>;
+  unplaced: Map<string, number>;
 }
 
 const MARK_CLASS = "btw-anchor-mark";
-
-/** Find the top-level block carrying the given source offset.
- *
- * Block identity is the block's source start offset (the same value that
- * `answer-block.svelte` forwards as the `data-block-offset` render prop and
- * that anchors carry from the server as `paragraph_index`).
- */
-function findBlock(tree: HastNode, blockOffset: number): HastNode | null {
-  for (const child of tree.children ?? []) {
-    if (child.type === "element" && child.position?.start?.offset === blockOffset) {
-      return child;
-    }
-  }
-  return null;
-}
 
 function collectText(block: HastNode): string {
   let out = "";
@@ -51,11 +34,60 @@ function collectText(block: HastNode): string {
   return out;
 }
 
+function blockSection(block: HastNode): number | null {
+  const own = sectionOf(block.properties?.id);
+  if (own !== null) return own;
+  const first = block.children?.find((child) => child.type === "element");
+  return first?.tagName === "span" ? sectionOf(first.properties?.id) : null;
+}
+
+type Resolved = { block: HastNode; start: number; end: number } | { block: HastNode | null };
+
+export function resolvePassage(blocks: readonly HastNode[], anchor: TextAnchor): Resolved {
+  const { quote } = anchor;
+  if (!quote) return { block: null };
+  const unique = () => {
+    let found: { block: HastNode; start: number; end: number } | null = null;
+    for (const block of blocks)
+      for (const start of quoteMatches(collectText(block), quote)) {
+        if (found) return null;
+        found = { block, start, end: start + quote.length };
+      }
+    return found;
+  };
+  if (anchor.occurrence !== null) {
+    let scope = blocks;
+    if (anchor.section !== null) {
+      const from = blocks.findIndex((block) => blockSection(block) === anchor.section);
+      const to = blocks.findIndex((block, index) => index > from && blockSection(block) !== null);
+      scope = from < 0 ? [] : blocks.slice(from, to < 0 ? undefined : to);
+    }
+    let seen = 0;
+    for (const block of scope)
+      for (const start of quoteMatches(collectText(block), quote))
+        if (++seen === anchor.occurrence) return { block, start, end: start + quote.length };
+    return unique() ?? { block: null };
+  }
+  const block =
+    anchor.offset === null
+      ? undefined
+      : blocks.find((candidate) => candidate.position?.start?.offset === anchor.offset);
+  const span = block ? uniqueQuoteSpan(collectText(block), quote) : null;
+  if (block && span) return { block, ...span };
+  return unique() ?? { block: block ?? null };
+}
+
 /** SPLIT each text node intersected by [start, end) and wrap each segment in
  * its own <mark> sharing `data-thread-id`. Works in one pass with a running
  * cursor; text content is unchanged, so sequential quote searches still
  * resolve against the same offsets (overlapping quotes nest marks). */
-function applyWrap(block: HastNode, anchor: AnchorMark, start: number, end: number): void {
+function applyWrap(
+  block: HastNode,
+  threadId: string,
+  quote: string,
+  start: number,
+  end: number,
+): void {
   let hasTrigger = false;
   const mark = (value: string, inLink: boolean): HastNode => {
     const trigger = !inLink && !hasTrigger;
@@ -65,8 +97,8 @@ function applyWrap(block: HastNode, anchor: AnchorMark, start: number, end: numb
       tagName: "mark",
       properties: {
         className: [MARK_CLASS],
-        dataThreadId: anchor.threadId,
-        ...(trigger ? { tabIndex: 0, role: "button", ariaLabel: `BTW: ${anchor.quote}` } : {}),
+        dataThreadId: threadId,
+        ...(trigger ? { tabIndex: 0, role: "button", ariaLabel: `BTW: ${quote}` } : {}),
       },
       children: [{ type: "text", value }],
     };
@@ -116,38 +148,20 @@ function applyWrap(block: HastNode, anchor: AnchorMark, start: number, end: numb
   block.children = out;
 }
 
-/** Wrap every locatable anchor in the settled tree as <mark> elements.
- *
- * Mutates `tree` in place. Anchors whose block is absent from the tree or
- * whose quote cannot be located in it are reported in `misses` so the caller
- * can render the fallback gutter dot. Apply threads sequentially: wrapping
- * never changes text content, so later quotes still resolve; overlaps
- * produce nested marks (the tint uses alpha so nesting darkens).
- */
-export function wrapAnchors(tree: HastNode, anchors: AnchorMark[]): WrapAnchorsResult {
-  const misses: AnchorMiss[] = [];
-  for (const anchor of anchors) {
-    const block = findBlock(tree, anchor.blockOffset);
-    if (!block) {
-      misses.push({
-        threadId: anchor.threadId,
-        blockOffset: anchor.blockOffset,
-        quote: anchor.quote,
-        reason: "no-block",
-      });
+export function placeAnchors(tree: HastNode, anchors: readonly ThreadAnchor[]): Placements {
+  const blocks = (tree.children ?? []).filter((child) => child.type === "element");
+  const placed = new Map<string, Placement>();
+  const unplaced = new Map<string, number>();
+  for (const { threadId, anchor, mark } of anchors) {
+    const found = resolvePassage(blocks, anchor);
+    const offset = found.block?.position?.start?.offset;
+    if (offset === undefined || found.block === null) continue;
+    if (!("start" in found)) {
+      unplaced.set(threadId, offset);
       continue;
     }
-    const span = uniqueQuoteSpan(collectText(block), anchor.quote);
-    if (!span) {
-      misses.push({
-        threadId: anchor.threadId,
-        blockOffset: anchor.blockOffset,
-        quote: anchor.quote,
-        reason: "quote-unresolved",
-      });
-      continue;
-    }
-    applyWrap(block, anchor, span.start, span.end);
+    placed.set(threadId, { offset, start: found.start, end: found.end });
+    if (mark) applyWrap(found.block, threadId, anchor.quote, found.start, found.end);
   }
-  return { tree, misses };
+  return { placed, unplaced };
 }

@@ -4,6 +4,9 @@ import { passageMark, revealPassage } from "#lib/passage-navigation.ts";
 import type { SelectionInfo } from "#lib/types.ts";
 import { isAbortError } from "#lib/utils.ts";
 
+const threadCard = (threadId: string) =>
+  window.document.querySelector<HTMLElement>(`[data-btw-id="${CSS.escape(threadId)}"]`);
+
 export class DocThreads {
   threads = $state<Conversation[]>([]);
   loading = $state(true);
@@ -49,17 +52,9 @@ export class DocThreads {
   refreshJumpable = (): void => {
     const next = new Set<string>();
     for (const thread of this.threads) {
-      if (thread.anchor.blockOffset < 0) continue;
-      const mark = passageMark(thread.id);
-      if (mark !== null) {
+      if (!thread.anchor.quote) continue;
+      if (passageMark(thread.id) !== null || (thread.draft && threadCard(thread.id) !== null))
         next.add(thread.id);
-        continue;
-      }
-      if (!thread.draft) continue;
-      const block = window.document.querySelector<HTMLElement>(
-        `[data-block-offset="${CSS.escape(String(thread.anchor.blockOffset))}"]`,
-      );
-      if (block !== null) next.add(thread.id);
     }
     this.jumpable = next;
   };
@@ -75,7 +70,8 @@ export class DocThreads {
         origin_scope: this.originScope,
         anchor: info.quote,
         paragraph: info.context,
-        paragraph_index: info.blockOffset,
+        section: info.section,
+        occurrence: info.occurrence ?? 1,
       },
     });
     this.threads = [...this.threads, thread];
@@ -108,15 +104,8 @@ export class DocThreads {
     if (!target) return;
     this.expanded = new Set([...this.expanded, threadId]);
     requestAnimationFrame(() => {
-      const mark = passageMark(threadId);
-      if (mark) {
-        revealPassage(mark);
-        return;
-      }
-      const block = window.document.querySelector<HTMLElement>(
-        `[data-block-offset="${target.anchor.blockOffset}"]`,
-      );
-      if (block) revealPassage(block);
+      const element = passageMark(threadId) ?? threadCard(threadId);
+      if (element) revealPassage(element);
     });
   };
 }

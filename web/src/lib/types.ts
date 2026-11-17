@@ -39,14 +39,12 @@ export interface Exchange {
   startedAt?: Date;
 }
 
-// Where a BTW is anchored: the source offset of its block (exact, stable,
-// render-independent identity) plus the quoted span within that block.
-// `context` is the full text of the block, carried for the LLM prompt only —
-// never used for placement or resolution.
 export interface TextAnchor {
-  blockOffset: number;
   quote: string;
   context: string;
+  section: number | null;
+  occurrence: number | null;
+  offset: number | null;
 }
 
 export interface ThreadLike {

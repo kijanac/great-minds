@@ -2,34 +2,84 @@ import { describe, expect, it } from "vitest";
 import { render } from "svelte/server";
 
 import { uniqueQuoteSpan } from "#lib/anchor.ts";
-import { wrapAnchors } from "#lib/anchor-marks.ts";
+import { placeAnchors } from "#lib/anchor-marks.ts";
+import { assignBlockRefIds, stripBlockRefMarkers } from "#lib/block-refs.ts";
 import ConversationAbout from "#lib/components/conversation-about.svelte";
 import { parseMarkdown } from "#lib/markdown.ts";
 import type { HastNode } from "#lib/markdown-plugins.ts";
+import type { TextAnchor } from "#lib/types.ts";
 
 describe("saved passage anchors", () => {
-  it("preserves a paragraph association without highlighting either repeated phrase", () => {
-    const result = wrapAnchors(parseMarkdown("The claim matters. The claim needs evidence."), [
-      { threadId: "recovered", blockOffset: 0, quote: "The claim" },
+  const anchor = (fields: Partial<TextAnchor> & Pick<TextAnchor, "quote">): TextAnchor => ({
+    context: "",
+    section: null,
+    occurrence: null,
+    offset: null,
+    ...fields,
+  });
+  const source = (text: string) => {
+    const tree = parseMarkdown(stripBlockRefMarkers(text));
+    assignBlockRefIds(tree, text);
+    return tree;
+  };
+  const blockAt = (tree: HastNode, index: number) =>
+    tree.children?.filter((child) => child.type === "element")[index]?.position?.start?.offset;
+
+  it("keeps an older conversation by its paragraph without highlighting a repeated phrase", () => {
+    const tree = parseMarkdown("The claim matters. The claim needs evidence.");
+    const result = placeAnchors(tree, [
+      { threadId: "old", anchor: anchor({ quote: "The claim", offset: 0 }), mark: true },
     ]);
-    expect(result.misses).toEqual([
-      {
-        threadId: "recovered",
-        blockOffset: 0,
-        quote: "The claim",
-        reason: "quote-unresolved",
-      },
-    ]);
-    expect(JSON.stringify(result.tree)).not.toContain('"tagName":"mark"');
+    expect([...result.unplaced]).toEqual([["old", 0]]);
+    expect(JSON.stringify(tree)).not.toContain('"tagName":"mark"');
   });
 
   it("highlights a unique quote across formatting and keeps the original text", () => {
-    const result = wrapAnchors(parseMarkdown("A **clear** claim."), [
-      { threadId: "saved", blockOffset: 0, quote: "clear claim" },
+    const tree = parseMarkdown("A **clear** claim.");
+    const result = placeAnchors(tree, [
+      { threadId: "saved", anchor: anchor({ quote: "clear claim", occurrence: 1 }), mark: true },
     ]);
-    expect(result.misses).toEqual([]);
-    expect(JSON.stringify(result.tree)).toContain('"dataThreadId":"saved"');
-    expect(JSON.stringify(result.tree)).toContain('"tagName":"strong"');
+    expect(result.placed.get("saved")).toEqual({ offset: 0, start: 2, end: 13 });
+    expect(JSON.stringify(tree)).toContain('"dataThreadId":"saved"');
+    expect(JSON.stringify(tree)).toContain('"tagName":"strong"');
+  });
+
+  it("finds a repeated quote by its section and occurrence, and by the quote when sections move", () => {
+    const tree = source(
+      "The claim matters. ^p0\n\nThe claim holds, the claim stands. ^p1\n\nNothing else. ^p2",
+    );
+    const place = (fields: Partial<TextAnchor>) =>
+      placeAnchors(tree, [
+        { threadId: "t", anchor: anchor({ quote: "The claim", ...fields }), mark: false },
+      ]).placed.get("t");
+    expect(place({ section: 1, occurrence: 1 })).toMatchObject({
+      offset: blockAt(tree, 1),
+      start: 0,
+    });
+    expect(place({ section: null, occurrence: 1 })).toMatchObject({ offset: blockAt(tree, 0) });
+    expect(
+      placeAnchors(tree, [
+        {
+          threadId: "t",
+          anchor: anchor({ quote: "the claim", section: 1, occurrence: 1 }),
+          mark: false,
+        },
+      ]).placed.get("t"),
+    ).toMatchObject({ start: 17 });
+    expect(
+      placeAnchors(tree, [
+        {
+          threadId: "t",
+          anchor: anchor({ quote: "Nothing else", section: 7, occurrence: 1 }),
+          mark: false,
+        },
+      ]).placed.get("t"),
+    ).toMatchObject({ offset: blockAt(tree, 2) });
+    expect(
+      placeAnchors(tree, [
+        { threadId: "t", anchor: anchor({ quote: "Nothing else", offset: 999 }), mark: false },
+      ]).placed.get("t"),
+    ).toMatchObject({ offset: blockAt(tree, 2) });
   });
 
   it("does not treat overlapping occurrences as a unique selection", () => {
@@ -67,10 +117,10 @@ describe("saved passage anchors", () => {
 
   it("exposes one keyboard trigger across formatting while preserving linked text", () => {
     const quote = "linked text and a clear claim";
-    const { tree } = wrapAnchors(
-      parseMarkdown("Read [linked text](wiki/evidence.md) and a **clear claim**."),
-      [{ threadId: "saved", blockOffset: 0, quote }],
-    );
+    const tree = parseMarkdown("Read [linked text](wiki/evidence.md) and a **clear claim**.");
+    placeAnchors(tree, [
+      { threadId: "saved", anchor: anchor({ quote, occurrence: 1 }), mark: true },
+    ]);
     const nodes: HastNode[] = [];
     const visit = (node: HastNode): void => {
       nodes.push(node);

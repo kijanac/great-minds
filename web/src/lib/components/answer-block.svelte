@@ -2,8 +2,8 @@
   import type { Uuid } from "@great-minds/domain";
   import { tick, type Snippet } from "svelte";
 
-  import { findQuoteRange } from "#lib/anchor.ts";
-  import { wrapAnchors, type AnchorMark, type AnchorMiss } from "#lib/anchor-marks.ts";
+  import { capturePassage, rangeFromOffsets } from "#lib/anchor.ts";
+  import { placeAnchors, type Placements, type ThreadAnchor } from "#lib/anchor-marks.ts";
   import { assignBlockRefIds, stripBlockRefMarkers } from "#lib/block-refs.ts";
   import AnswerCitations from "#lib/components/answer-citations.svelte";
   import BtwThread from "#lib/components/btw-thread.svelte";
@@ -71,29 +71,22 @@
   const stableSource = $derived(split?.stable ?? "");
   const tailSource = $derived(split?.tail ?? "");
 
-  // Only persisted threads become real <mark> elements; in-flight drafts
-  // (thread not yet persisted) keep the transient painted highlight.
-  const markAnchors = $derived.by<AnchorMark[]>(() =>
-    bodyThreads
-      .filter((btw) => !btw.draft)
-      .map((btw) => ({
-        threadId: btw.id,
-        blockOffset: btw.anchor.blockOffset,
-        quote: btw.anchor.quote,
-      })),
+  const threadAnchors = $derived.by<ThreadAnchor[]>(() =>
+    bodyThreads.map((btw) => ({ threadId: btw.id, anchor: btw.anchor, mark: !btw.draft })),
   );
+  const unplaced = (): Placements => ({ placed: new Map(), unplaced: new Map() });
   // `stableTree` only depends on the stable prefix string. During token
   // streaming Svelte does not invalidate it until a complete block lands.
   // Settled trees carry marks; the streaming tail tree is never marked.
   const stableParsed = $derived.by(() =>
-    stableSource ? parseSettled(stableSource) : { tree: emptyRoot(), misses: [] },
+    stableSource ? parseSettled(stableSource) : { tree: emptyRoot(), ...unplaced() },
   );
   const stableTree = $derived(stableParsed.tree);
   const tailTree = $derived.by(() =>
     streaming && tailSource ? parseAnswer(tailSource) : emptyRoot(),
   );
   const fullParsed = $derived.by(() =>
-    streaming ? { tree: emptyRoot(), misses: [] } : parseSettled(displayText),
+    streaming ? { tree: emptyRoot(), ...unplaced() } : parseSettled(displayText),
   );
   const fullTree = $derived(fullParsed.tree);
   const leadingTitle = $derived.by(() => {
@@ -104,21 +97,7 @@
       nodeText(first).replace(/\s+/g, " ").trim() === documentTitle.replace(/\s+/g, " ").trim()
     );
   });
-  const anchorMisses = $derived(streaming ? stableParsed.misses : fullParsed.misses);
-  // Offsets of top-level blocks currently rendered in the body (streaming
-  // uses the stable/tail trees, otherwise the full tree). Threads whose
-  // anchor offset is not among these are unresolvable: they render nowhere
-  // in the body (no inline thread, no gutter dot) but stay reachable from
-  // the header panel's notes list.
-  const renderedOffsets = $derived.by(() => {
-    const tree = streaming ? [stableTree, tailTree] : [fullTree];
-    return new Set(
-      tree
-        .flatMap((t) => t.children ?? [])
-        .map((node) => node.position?.start?.offset)
-        .filter((offset): offset is number => offset != null),
-    );
-  });
+  const placements = $derived(streaming ? stableParsed : fullParsed);
   // Only anchored threads (quote present) render in the body; doc-initiated
   // conversations surface through the doc-header chip instead.
   const bodyThreads = $derived(btws.filter((btw) => btw.anchor.quote.length > 0));
@@ -126,25 +105,13 @@
   // whose quote cannot be located in it — pure indicators, no interaction.
   // Threads with marks get no dot; threads with no block stay header-panel-only.
   const marginDots = $derived.by<MarginDot[]>(() => {
-    const missedBlocks = new Set(
-      anchorMisses
-        .filter((miss) => miss.reason === "quote-unresolved")
-        .map((miss) => miss.blockOffset),
-    );
-    const seen = new Set<number>();
-    const dots: MarginDot[] = [];
+    const dots = new Map<number, MarginDot>();
     for (const btw of bodyThreads) {
-      if (btw.anchor.blockOffset < 0 || seen.has(btw.anchor.blockOffset)) continue;
-      if (!renderedOffsets.has(btw.anchor.blockOffset)) continue;
-      if (!missedBlocks.has(btw.anchor.blockOffset)) continue;
-      seen.add(btw.anchor.blockOffset);
-      dots.push({
-        id: `dot:${btw.anchor.blockOffset}`,
-        blockOffset: btw.anchor.blockOffset,
-        quote: btw.anchor.quote,
-      });
+      const offset = placements.unplaced.get(btw.id);
+      if (offset === undefined || dots.has(offset)) continue;
+      dots.set(offset, { id: `dot:${offset}`, blockOffset: offset, quote: btw.anchor.quote });
     }
-    return dots;
+    return [...dots.values()];
   });
   const footnoteRoots = $derived(streaming ? [stableTree, tailTree] : [fullTree]);
 
@@ -193,10 +160,9 @@
   $effect(() => {
     const currentRoot = root;
     const currentBtws = btws.filter((btw) => btw.draft && btw.anchor.quote);
-    const currentText = text;
+    const placed = placements.placed;
     if (!currentRoot) return;
 
-    void currentText;
     let cancelled = false;
     void tick().then(() => {
       if (cancelled) return;
@@ -204,11 +170,12 @@
       for (const btw of currentBtws) {
         // The painted path is transient decoration for in-flight drafts only;
         // persisted anchors are real <mark> elements in the settled tree.
+        const place = placed.get(btw.id);
+        if (!place) continue;
         const block = currentRoot.querySelector<HTMLElement>(
-          `[data-block-offset="${btw.anchor.blockOffset}"]`,
+          `[data-block-offset="${place.offset}"]`,
         );
-        if (!block) continue;
-        const range = findQuoteRange(block, btw.anchor.quote);
+        const range = block ? rangeFromOffsets(block, place.start, place.end) : null;
         if (range) ranges.push(range);
       }
       setAnchorHighlights(exchangeId, ranges);
@@ -238,13 +205,9 @@
 
   // Settled trees carry real marks for persisted anchors; the miss report
   // feeds the fallback gutter dots via the active parse's derived value.
-  function parseSettled(source: string): {
-    tree: HastNode;
-    misses: AnchorMiss[];
-  } {
+  function parseSettled(source: string): Placements & { tree: HastNode } {
     const tree = parseAnswer(source);
-    const { misses } = wrapAnchors(tree, markAnchors);
-    return { tree, misses };
+    return { tree, ...placeAnchors(tree, threadAnchors) };
   }
 
   // Delegated click on the rendered body: a <mark data-thread-id> toggles its
@@ -339,9 +302,9 @@
     return onCitation ? numberCitations(tree, citations) : tree;
   }
 
-  function handleSelect(event: MouseEvent, offset: number): void {
+  function handleSelect(event: MouseEvent): void {
     event.stopPropagation();
-    showSelection(event.currentTarget as HTMLElement, offset);
+    showSelection(event.currentTarget as HTMLElement);
   }
 
   function handleKeyboardSelection(event: KeyboardEvent): void {
@@ -351,21 +314,21 @@
     const element = node instanceof Element ? node : node?.parentElement;
     const block = element?.closest<HTMLElement>("[data-block-offset]");
     if (!block || !root?.contains(block)) return;
-    showSelection(block, Number(block.dataset.blockOffset));
+    showSelection(block);
   }
 
-  function showSelection(element: HTMLElement, offset: number): void {
+  function showSelection(element: HTMLElement): void {
     if (streaming || !onSelection) return;
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
-    const quote = selection.toString().trim();
-    if (!quote) return;
     const range = selection.getRangeAt(0);
     if (!element.contains(range.commonAncestorContainer)) return;
+    const captured = capturePassage(range, element);
+    if (!captured.quote) return;
     onSelection({
-      blockOffset: offset,
-      quote,
+      ...captured,
       context: blockText(element),
+      offset: null,
       passage: selectionPassage(range),
       rect: range.getBoundingClientRect(),
       exchangeId,
@@ -425,7 +388,7 @@
           {@render blockNode(node)}
           {#if index === 0 && leadingTitle}{@render header?.(false)}{/if}
           {#if offset != null}
-            {#each bodyThreads.filter((btw) => btw.anchor.blockOffset === offset) as btw (btw.id)}
+            {#each bodyThreads.filter((btw) => (placements.placed.get(btw.id)?.offset ?? placements.unplaced.get(btw.id)) === offset) as btw (btw.id)}
               <BtwThread
                 {btw}
                 open={isOpen(btw.id)}
