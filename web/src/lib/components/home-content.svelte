@@ -115,6 +115,8 @@
         context="agent"
         onClose={card.close}
         onFullScreen={card.maximize}
+        focus={card.focus}
+        passageHref={card.passageHref}
         onOpenPath={(path) => void goto(`/doc/${path}`)}
         onLinkClick={card.onLinkClick}
       />

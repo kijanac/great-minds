@@ -27,6 +27,12 @@ export function arriveAt(hash: string): void {
   const target = document.getElementById(decodeURIComponent(hash.slice(1)));
   const block = target?.matches("span:empty") ? target.parentElement : target;
   if (!block) return;
-  block.scrollIntoView({ block: "start" });
+  const { top, bottom } = block.getBoundingClientRect();
+  if (top < Number.parseFloat(getComputedStyle(block).scrollMarginTop) || bottom > innerHeight)
+    block.scrollIntoView({ block: "start" });
   block.setAttribute("data-arrived", "");
+}
+
+export async function copyPassageLink(href: string): Promise<void> {
+  await navigator.clipboard.writeText(new URL(href, location.href).href);
 }

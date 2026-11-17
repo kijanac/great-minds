@@ -197,6 +197,8 @@
         context="citation"
         onClose={card.close}
         onFullScreen={card.maximize}
+        focus={card.focus}
+        passageHref={card.passageHref}
         onOpenPath={card.openPath}
         onLinkClick={card.onLinkClick}
       />

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Check from "@lucide/svelte/icons/check";
+  import Link from "@lucide/svelte/icons/link";
   import Maximize2 from "@lucide/svelte/icons/maximize-2";
   import X from "@lucide/svelte/icons/x";
 
@@ -7,6 +9,7 @@
   import MarkdownView from "#lib/components/markdown-view.svelte";
   import SourceStrip from "#lib/components/source-strip.svelte";
   import type { PanelContent } from "#lib/panel-content.ts";
+  import { copyPassageLink } from "#lib/passage-navigation.ts";
   import { readLabel, type ReadingTrail } from "#lib/research-steps.ts";
   import type { SourceRef } from "#lib/types.ts";
   import { displayTitle } from "#lib/utils.ts";
@@ -19,6 +22,8 @@
     context = "agent",
     onClose,
     onFullScreen,
+    focus = null,
+    passageHref,
     onOpenPath,
     onLinkClick,
   }: {
@@ -31,6 +36,8 @@
     context?: "agent" | "citation";
     onClose: () => void;
     onFullScreen: () => void;
+    focus?: number | null;
+    passageHref?: (chunk: number) => string | null;
     onOpenPath: (path: string) => void;
     onLinkClick: (event: MouseEvent) => void;
   } = $props();
@@ -97,6 +104,15 @@
     if (focus === null || focus === undefined || passages.length === 0) return;
     requestAnimationFrame(() => jump(focus, "instant"));
   });
+
+  let copied = $state<number | null>(null);
+  let copiedTimer = 0;
+  const copy = (href: string, chunk: number) =>
+    copyPassageLink(href).then(() => {
+      copied = chunk;
+      clearTimeout(copiedTimer);
+      copiedTimer = window.setTimeout(() => (copied = null), 1500);
+    });
 </script>
 
 <div class="flex h-full flex-col">
@@ -108,12 +124,15 @@
       <div class="flex shrink-0 items-center gap-1">
         <Button
           variant="ghost"
-          size="icon-xs"
+          size={focus === null ? "icon-xs" : "xs"}
           onclick={onFullScreen}
           class="shrink-0 text-muted-foreground hover:bg-transparent hover:text-gold"
-          title="Open full screen"
-          aria-label="open full screen"
+          title={focus === null ? "Open full page" : `Open full page at §${focus + 1}`}
+          aria-label={focus === null ? "open full page" : `open full page at §${focus + 1}`}
         >
+          {#if focus !== null}<span class="font-mono text-[length:var(--text-chrome)]"
+              >§{focus + 1}</span
+            >{/if}
           <Maximize2 size={12} />
         </Button>
         <Button
@@ -203,17 +222,33 @@
                 </div>
               {:else}
                 {@const cited = trail?.cited.get(item.chunk.chunk_index)}
+                {@const link = passageHref?.(item.chunk.chunk_index) ?? null}
                 <section
                   id={`panel-passage-${item.chunk.chunk_index}`}
-                  class={`-mx-2.5 animate-[pop-in_0.5s_cubic-bezier(0.25,1,0.5,1)_both] rounded-sm px-2.5 py-2 ${trail ? (cited ? "bg-[color-mix(in_oklab,var(--gold)_14%,transparent)]" : "bg-[color-mix(in_oklab,var(--gold)_6%,transparent)]") : ""}`}
+                  class={`group -mx-2.5 animate-[pop-in_0.5s_cubic-bezier(0.25,1,0.5,1)_both] rounded-sm px-2.5 py-2 ${trail ? (cited ? "bg-[color-mix(in_oklab,var(--gold)_14%,transparent)]" : "bg-[color-mix(in_oklab,var(--gold)_6%,transparent)]") : ""}`}
                   style:animation-delay={`${Math.min(index, 8) * 90}ms`}
                 >
                   <div
-                    class="mb-1 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold-muted"
+                    class="mb-1 flex items-baseline justify-between gap-2 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold-muted"
                   >
-                    {sections(item.chunk.chunk_index)}{item.chunk.heading
-                      ? ` · ${item.chunk.heading}`
-                      : ""}{cited ? ` · cited as [${cited}]` : ""}
+                    <span
+                      >{sections(item.chunk.chunk_index)}{item.chunk.heading
+                        ? ` · ${item.chunk.heading}`
+                        : ""}{cited ? ` · cited as [${cited}]` : ""}</span
+                    >
+                    {#if link}
+                      <button
+                        type="button"
+                        title="Copy link"
+                        aria-label={`Copy link to ${sections(item.chunk.chunk_index)}`}
+                        onclick={() => copy(link, item.chunk.chunk_index)}
+                        class="cursor-pointer self-center text-warm-ghost opacity-0 transition-opacity group-hover:opacity-100 hover:text-gold focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
+                      >
+                        {#if copied === item.chunk.chunk_index}<Check size={11} />{:else}<Link
+                            size={11}
+                          />{/if}
+                      </button>
+                    {/if}
                   </div>
                   <MarkdownView
                     source={item.chunk.body}

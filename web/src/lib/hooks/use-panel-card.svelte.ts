@@ -76,18 +76,25 @@ export function usePanelCard(scope: DocumentScope = "vault") {
     else select({ ...next.step.source }, next);
   }
 
-  function maximize() {
+  const focus = $derived.by(() => {
+    const range = selectedCard?.ranges?.length === 1 ? selectedCard.ranges[0] : null;
+    return trail?.focus ?? (range && range.start === range.end ? range.start : null);
+  });
+
+  function href(chunk: number | null) {
     const card = selectedCard;
-    if (!card) return;
-    const range = card.ranges?.length === 1 ? card.ranges[0] : null;
-    const focus = trail?.focus ?? (range && range.start === range.end ? range.start : null);
-    const hash = focus === null ? "" : `#^p${focus}`;
+    if (!card) return null;
+    const hash = chunk === null ? "" : `#^p${chunk}`;
+    return scope === "vault" && card.type === "raw" && card.document_id
+      ? `/source/${card.document_id}${hash}`
+      : `${scope === "personal" ? "/refs/" : "/doc/"}${card.label}${hash}`;
+  }
+
+  function maximize() {
+    const target = href(focus);
+    if (target === null) return;
     select(null);
-    void goto(
-      scope === "vault" && card.type === "raw" && card.document_id
-        ? `/source/${card.document_id}${hash}`
-        : `${scope === "personal" ? "/refs/" : "/doc/"}${card.label}${hash}`,
-    );
+    void goto(target);
   }
 
   return {
@@ -97,6 +104,10 @@ export function usePanelCard(scope: DocumentScope = "vault") {
     get trail() {
       return trail;
     },
+    get focus() {
+      return focus;
+    },
+    passageHref: (chunk: number) => href(chunk),
     close() {
       select(null);
     },
