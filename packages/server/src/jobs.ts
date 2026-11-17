@@ -256,7 +256,11 @@ export const JobsServiceLive = Layer.effect(
             (row) => {
               const snapshot = progressSnapshot(row);
               const data = encodeProgressSnapshot(snapshot);
-              return { version: data, data, terminal: terminalStatuses.has(snapshot.job_status) };
+              return {
+                version: data,
+                data: () => data,
+                terminal: terminalStatuses.has(snapshot.job_status),
+              };
             },
             pollIntervalMs,
           );

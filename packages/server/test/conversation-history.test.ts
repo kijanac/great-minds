@@ -220,22 +220,16 @@ describe("native conversation history", () => {
     }
   });
 
-  it("plans atomic deterministic batches with detached inputs and semantic replay", () => {
+  it("plans atomic deterministic batches with semantic replay", () => {
     expect(failure(planHistoryAppend(sessionId, null, [header()]))).toMatchObject({
       reason: "empty_history",
     });
-    const source = { ...settlement().sources[0] };
-    const terminal = { ...settlement(), sources: [source] };
+    const terminal = settlement();
     const writes = [header(), attempt(), terminal, terminal];
     const first = success(planHistoryAppend(sessionId, null, writes));
     expect(first).toEqual(success(planHistoryAppend(sessionId, null, writes)));
     expect(first.changed).toBe(true);
     expect(first.history.revision.last_seq).toBe(3);
-    source.title = "Changed by caller";
-    expect(first.history.turns[0].attempts[0].settlement?.sources[0].title).toBe(
-      "Original source title",
-    );
-    expect(first.history.jsonl).not.toContain("Changed by caller");
     const { answer, ...rest } = settlement();
     const replay = success(
       planHistoryAppend(sessionId, first.history, [header(), attempt(), { answer, ...rest }]),

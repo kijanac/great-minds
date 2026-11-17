@@ -1,6 +1,7 @@
 import { Database, replies, vaults } from "@great-minds/database";
 import {
   BadRequest,
+  citationsOf,
   type CreateReplyRequest,
   type CreateReplyResponse,
   Conflict,
@@ -15,10 +16,11 @@ import {
   type ReplySnapshot,
   type ReplySseEvent,
   ServiceUnavailable,
+  SessionActivity,
   Uuid,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
-import { Cause, Context, Effect, Layer, Option, Schema, SchemaGetter, Stream } from "effect";
+import { Cause, Context, Data, Effect, Layer, Option, Schema, SchemaGetter, Stream } from "effect";
 import * as Activity from "effect/workflow/Activity";
 import * as Workflow from "effect/workflow/Workflow";
 import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
@@ -30,10 +32,10 @@ import {
   ReplyAdmission,
   type ReplyAdmissionError,
 } from "./conversation-history/admission.ts";
-import { replySnapshot } from "./conversation-history/presentation.ts";
 import type { GenerationMetadata } from "./conversation-history/schema.ts";
 import { ReplySettlement, type ReplySettlementResult } from "./conversation-history/settlement.ts";
 import type { LlmMessage } from "./llm.ts";
+import { errorDetails } from "./error-details.ts";
 import { StructuredLogger } from "./logging.ts";
 import { pollingSse } from "./polling-sse.ts";
 import {
@@ -54,6 +56,19 @@ const flushIntervalMs = 125;
 const encodeReplySnapshot = Schema.encodeSync(Schema.fromJsonString(ReplySnapshotSchema));
 
 type ReplyRow = typeof replies.$inferSelect;
+
+const replySnapshot = (row: ReplyRow): ReplySnapshot => ({
+  reply_id: row.id,
+  session_id: row.sessionId,
+  status: row.status,
+  answer: row.answer,
+  citations: citationsOf(row.answer),
+  sources: row.sources,
+  error: row.error,
+  version: row.version,
+  created_at: row.createdAt,
+  updated_at: row.updatedAt,
+});
 type ReplyRequestError = BadRequest | Conflict | Forbidden | NotFound | ServiceUnavailable;
 
 const ReplyStepControl = Schema.Struct({
@@ -93,38 +108,35 @@ const ReplyCheckpoint = Schema.Struct({
 });
 type ReplyCheckpoint = typeof ReplyCheckpoint.Type;
 
-const decodeReplyCheckpoint = Schema.decodeUnknownSync(Schema.fromJsonString(ReplyCheckpoint));
+const decodeReplyCheckpoint = Schema.decodeUnknownEffect(Schema.fromJsonString(ReplyCheckpoint));
 const encodeReplyCheckpoint = Schema.encodeSync(Schema.fromJsonString(ReplyCheckpoint));
 const checkpointPath = (replyId: Uuid) => `operations/replies/${replyId}.json`;
-const isInterruption = (cause: Cause.Cause<unknown>) =>
-  cause.reasons.length > 0 && cause.reasons.every(Cause.isInterruptReason);
 const terminalControl = (
   control: ReplyStepControl,
 ): control is ReplyStepControl & { readonly outcome: "done" | "failed" | "stopped" } =>
   control.outcome === "done" || control.outcome === "failed" || control.outcome === "stopped";
-const replyFailureTag = (cause: Cause.Cause<unknown>) => {
-  for (const reason of cause.reasons) {
-    if (Cause.isInterruptReason(reason)) continue;
-    const error = Cause.isFailReason(reason) ? reason.error : reason.defect;
-    if (typeof error !== "object" || error === null || !("_tag" in error)) continue;
-    switch (error._tag) {
-      case "HistoryInvalid":
-      case "HistoryConflict":
-      case "ReplyAdmissionInvalid":
-      case "ReplySettlementInvalid":
-      case "ObjectVersionConflict":
-      case "StorageBackendError":
-      case "SqlError":
-      case "EffectDrizzleError":
-      case "EffectDrizzleQueryError":
-      case "EffectTransactionRollbackError":
-      case "ModelProviderError":
-      case "Forbidden":
-        return error._tag;
-    }
-  }
-  return "UnexpectedFailure";
+const failureFields = (cause: Cause.Cause<unknown>) => {
+  const reason = cause.reasons.find((reason) => !Cause.isInterruptReason(reason));
+  const error =
+    reason === undefined ? cause : Cause.isFailReason(reason) ? reason.error : reason.defect;
+  const details = errorDetails(error);
+  return {
+    error_tag:
+      typeof error === "object" &&
+      error !== null &&
+      "_tag" in error &&
+      typeof error._tag === "string"
+        ? error._tag
+        : details.errorType,
+    error_message: details.message,
+  };
 };
+class ReplyInvariantBroken extends Data.TaggedError("ReplyInvariantBroken")<{
+  readonly reply_id: Uuid;
+  readonly message: string;
+}> {}
+const invariantBroken = (replyId: Uuid, message: string) =>
+  Effect.die(new ReplyInvariantBroken({ reply_id: replyId, message }));
 const readyControl = (cursor: number): ReplyStepControl => ({
   cursor,
   outcome: "ready",
@@ -318,6 +330,7 @@ export const RepliesServiceLive = Layer.effect(
     const settlement = yield* ReplySettlement;
     const storage = yield* ContentStorage;
     const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
+    const withEngine = Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine);
     const pollIntervalMs = 100;
 
     const readReply = (vaultId: Uuid, replyId: Uuid) =>
@@ -335,7 +348,7 @@ export const RepliesServiceLive = Layer.effect(
         .query((d) => d.select().from(replies).where(eq(replies.id, replyId)).limit(1))
         .pipe(Effect.map((rows) => rows[0]));
 
-    const readGenerationReply = (replyId: Uuid) =>
+    const readRestoredReply = (replyId: Uuid) =>
       Effect.gen(function* () {
         yield* settlement.restoreRecorded(replyId).pipe(Effect.orDie);
         return yield* readReplyById(replyId);
@@ -366,8 +379,12 @@ export const RepliesServiceLive = Layer.effect(
 
     const readCheckpoint = (row: ReplyRow) =>
       storage.readText(vaultOwner(row.vaultId), checkpointPath(row.id)).pipe(
-        Effect.map(decodeReplyCheckpoint),
         Effect.catchTag("StorageFileMissing", () => Effect.succeed(undefined)),
+        Effect.flatMap((text) =>
+          text === undefined
+            ? Effect.succeed(undefined)
+            : Effect.orDie(decodeReplyCheckpoint(text)),
+        ),
       );
     const writeCheckpoint = (row: ReplyRow, checkpoint: ReplyCheckpoint) =>
       storage.writeText(
@@ -378,7 +395,7 @@ export const RepliesServiceLive = Layer.effect(
     const recoverCheckpoint = (row: ReplyRow) =>
       readCheckpoint(row).pipe(
         Effect.catchCause((cause) =>
-          isInterruption(cause)
+          Cause.hasInterruptsOnly(cause)
             ? Effect.interrupt
             : logger
                 .warn("reply_checkpoint_unavailable", { reply_id: row.id })
@@ -497,9 +514,7 @@ export const RepliesServiceLive = Layer.effect(
           };
         } else {
           if (checkpoint === undefined || generation === null || messages === null) {
-            return yield* Effect.die(
-              new Error(`Reply ${row.id} finished without its generation result`),
-            );
+            return yield* invariantBroken(row.id, "finished without its generation result");
           }
           result = {
             status: "completed",
@@ -522,13 +537,13 @@ export const RepliesServiceLive = Layer.effect(
 
     const stepFailure = (replyId: Uuid, cursor: number, cause: Cause.Cause<unknown>) =>
       Effect.gen(function* () {
-        if (isInterruption(cause)) return yield* Effect.interrupt;
+        if (Cause.hasInterruptsOnly(cause)) return yield* Effect.interrupt;
         yield* logger.error("reply_generation_step_failed", {
           reply_id: replyId,
           generation_cursor: cursor,
-          error_tag: replyFailureTag(cause),
+          ...failureFields(cause),
         });
-        const row = yield* readGenerationReply(replyId);
+        const row = yield* readReplyById(replyId);
         if (row === undefined || row.status !== "running") return doneControl(cursor);
         const checkpoint = yield* recoverCheckpoint(row);
         const control = checkpoint?.lastControl;
@@ -574,8 +589,9 @@ export const RepliesServiceLive = Layer.effect(
         const recovered = yield* recoverCompletedStep(row, checkpoint, expectedCursor);
         if (recovered !== undefined) return recovered;
         if (checkpoint.cursor !== expectedCursor || row.generationCursor !== expectedCursor) {
-          throw new Error(
-            `Reply ${row.id} cursor mismatch: workflow=${expectedCursor}, database=${row.generationCursor}, checkpoint=${checkpoint.cursor}`,
+          return yield* invariantBroken(
+            row.id,
+            `cursor mismatch: workflow=${expectedCursor}, database=${row.generationCursor}, checkpoint=${checkpoint.cursor}`,
           );
         }
         if (row.activeGenerationStep !== null)
@@ -605,7 +621,7 @@ export const RepliesServiceLive = Layer.effect(
           if (current === undefined || current.status !== "running")
             return doneControl(expectedCursor);
           if (current.stopRequested) return stoppedControl(expectedCursor);
-          throw new Error(`Reply ${row.id} generation step ${expectedCursor} was not claimable`);
+          return yield* invariantBroken(row.id, `step ${expectedCursor} was not claimable`);
         }
         return undefined;
       });
@@ -635,9 +651,27 @@ export const RepliesServiceLive = Layer.effect(
         return control;
       });
 
+    const resumeStep = (
+      replyId: Uuid,
+      expectedCursor: number,
+      run: (row: ReplyRow, checkpoint: ReplyCheckpoint) => Effect.Effect<ReplyStepControl, unknown>,
+    ) =>
+      Effect.gen(function* () {
+        const row = yield* readReplyById(replyId);
+        if (row === undefined) return doneControl(expectedCursor);
+        if (row.status !== "running") return doneControl(row.generationCursor);
+        if (row.stopRequested) return yield* freezeStopped(row);
+        const checkpoint = yield* readCheckpoint(row);
+        if (checkpoint === undefined)
+          return yield* invariantBroken(replyId, "no generation checkpoint");
+        if (terminalControl(checkpoint.lastControl))
+          return yield* freezeControl(row, checkpoint, checkpoint.lastControl);
+        return yield* run(row, checkpoint);
+      }).pipe(Effect.catchCause((cause) => stepFailure(replyId, expectedCursor, cause)));
+
     const prepareStep = (replyId: Uuid) =>
       Effect.gen(function* () {
-        const row = yield* readGenerationReply(replyId);
+        const row = yield* readRestoredReply(replyId);
         if (row === undefined) return doneControl(0);
         if (row.status !== "running") return doneControl(row.generationCursor);
         if (row.stopRequested) return yield* freezeStopped(row);
@@ -655,7 +689,7 @@ export const RepliesServiceLive = Layer.effect(
           d.select({ name: vaults.name }).from(vaults).where(eq(vaults.id, row.vaultId)).limit(1),
         );
         const vault = vaultRows[0];
-        if (vault === undefined) throw new Error(`Reply ${row.id} has no vault`);
+        if (vault === undefined) return yield* invariantBroken(row.id, "no vault");
         const prechecked: QueryPrecheckedContext = { vaultLabel: vault.name };
         const queryState = yield* query.prepareExecution(
           row.userId,
@@ -685,157 +719,146 @@ export const RepliesServiceLive = Layer.effect(
       }).pipe(Effect.catchCause((cause) => stepFailure(replyId, 0, cause)));
 
     const modelStep = (replyId: Uuid, expectedCursor: number) =>
-      Effect.gen(function* () {
-        const row = yield* readGenerationReply(replyId);
-        if (row === undefined) return doneControl(expectedCursor);
-        if (row.status !== "running") return doneControl(row.generationCursor);
-        if (row.stopRequested) return yield* freezeStopped(row);
-        const checkpoint = yield* readCheckpoint(row);
-        if (checkpoint === undefined)
-          throw new Error(`Reply ${replyId} has no generation checkpoint`);
-        if (terminalControl(checkpoint.lastControl))
-          return yield* freezeControl(row, checkpoint, checkpoint.lastControl);
-        const claimed = yield* claimExternalStep(
-          row,
-          checkpoint,
-          expectedCursor,
-          "model",
-          `${checkpoint.query.modelIndex}:${checkpoint.query.trace.llmRounds + 1}`,
-        );
-        if (claimed !== undefined) return yield* freezeControl(row, checkpoint, claimed);
-        const accumulator = checkpoint.accumulator;
-        let lastFlushAt = 0;
-        const attempt = yield* untilStopped(
-          replyId,
-          query.modelAttempt(checkpoint.query, (text) =>
-            Effect.gen(function* () {
-              if (accumulator.clearOnNextToken) {
-                accumulator.answer = "";
-                accumulator.clearOnNextToken = false;
-              }
-              accumulator.answer += text;
-              if (Date.now() - lastFlushAt >= flushIntervalMs) {
-                yield* flushAccumulator(replyId, accumulator);
-                lastFlushAt = Date.now();
-              }
-            }),
-          ),
-        );
-        if (Option.isNone(attempt)) {
-          yield* flushAccumulator(replyId, accumulator);
-          yield* freezeOutcome(row, checkpoint, "stopped", null);
-          return stoppedControl(expectedCursor);
-        }
-        const outcome = attempt.value;
-        let control: ReplyStepControl;
-        let pendingTools: readonly QueryPreparedToolCallType[] = [];
-        if (outcome.kind === "tool_calls") {
-          for (const toolCall of outcome.toolCalls) {
-            if (toolCall.pendingSource !== undefined)
-              addPendingSource(
-                accumulator,
-                toolCall.id,
-                toolCall.pendingSource,
-                outcome.state.trace.llmRounds,
-              );
-          }
-          pendingTools = outcome.toolCalls;
-          control = { cursor: expectedCursor + 1, outcome: "tool_calls", error: null };
-        } else if (outcome.kind === "retryable") {
-          accumulator.clearOnNextToken = true;
-          control = { cursor: expectedCursor + 1, outcome: "retryable", error: null };
-        } else if (outcome.kind === "done") control = doneControl(expectedCursor + 1);
-        else control = failedControl(expectedCursor + 1, outcome.error);
-        yield* flushAccumulator(replyId, accumulator);
-        const nextCheckpoint: ReplyCheckpoint = {
-          version: 1,
-          cursor: expectedCursor + 1,
-          query: outcome.state,
-          accumulator,
-          pendingTools,
-          nextToolIndex: 0,
-          lastControl: control,
-        };
-        if (control.outcome === "done" || control.outcome === "failed") {
-          yield* freezeOutcome(row, nextCheckpoint, control.outcome, control.error);
-          const saved = yield* writeCheckpoint(row, nextCheckpoint).pipe(
-            Effect.as(true),
-            Effect.catchCause((cause) =>
-              isInterruption(cause)
-                ? Effect.interrupt
-                : logger
-                    .warn("reply_terminal_checkpoint_unavailable", { reply_id: row.id })
-                    .pipe(Effect.as(false)),
+      resumeStep(replyId, expectedCursor, (row, checkpoint) =>
+        Effect.gen(function* () {
+          const claimed = yield* claimExternalStep(
+            row,
+            checkpoint,
+            expectedCursor,
+            "model",
+            `${checkpoint.query.modelIndex}:${checkpoint.query.trace.llmRounds + 1}`,
+          );
+          if (claimed !== undefined) return yield* freezeControl(row, checkpoint, claimed);
+          const accumulator = checkpoint.accumulator;
+          let lastFlushAt = 0;
+          const attempt = yield* untilStopped(
+            replyId,
+            query.modelAttempt(checkpoint.query, (text) =>
+              Effect.gen(function* () {
+                if (accumulator.clearOnNextToken) {
+                  accumulator.answer = "";
+                  accumulator.clearOnNextToken = false;
+                }
+                accumulator.answer += text;
+                if (Date.now() - lastFlushAt >= flushIntervalMs) {
+                  yield* flushAccumulator(replyId, accumulator);
+                  lastFlushAt = Date.now();
+                }
+              }),
             ),
           );
-          if (!saved) yield* query.finalizeExecution(nextCheckpoint.query);
-        } else yield* commitExternalStep(row, nextCheckpoint);
-        return control;
-      }).pipe(Effect.catchCause((cause) => stepFailure(replyId, expectedCursor, cause)));
+          if (Option.isNone(attempt)) {
+            yield* flushAccumulator(replyId, accumulator);
+            yield* freezeOutcome(row, checkpoint, "stopped", null);
+            return stoppedControl(expectedCursor);
+          }
+          const outcome = attempt.value;
+          let control: ReplyStepControl;
+          let pendingTools: readonly QueryPreparedToolCallType[] = [];
+          if (outcome.kind === "tool_calls") {
+            for (const toolCall of outcome.toolCalls) {
+              if (toolCall.pendingSource !== undefined)
+                addPendingSource(
+                  accumulator,
+                  toolCall.id,
+                  toolCall.pendingSource,
+                  outcome.state.trace.llmRounds,
+                );
+            }
+            pendingTools = outcome.toolCalls;
+            control = { cursor: expectedCursor + 1, outcome: "tool_calls", error: null };
+          } else if (outcome.kind === "retryable") {
+            accumulator.clearOnNextToken = true;
+            control = { cursor: expectedCursor + 1, outcome: "retryable", error: null };
+          } else if (outcome.kind === "done") control = doneControl(expectedCursor + 1);
+          else control = failedControl(expectedCursor + 1, outcome.error);
+          yield* flushAccumulator(replyId, accumulator);
+          const nextCheckpoint: ReplyCheckpoint = {
+            version: 1,
+            cursor: expectedCursor + 1,
+            query: outcome.state,
+            accumulator,
+            pendingTools,
+            nextToolIndex: 0,
+            lastControl: control,
+          };
+          if (control.outcome === "done" || control.outcome === "failed") {
+            yield* freezeOutcome(row, nextCheckpoint, control.outcome, control.error);
+            const saved = yield* writeCheckpoint(row, nextCheckpoint).pipe(
+              Effect.as(true),
+              Effect.catchCause((cause) =>
+                Cause.hasInterruptsOnly(cause)
+                  ? Effect.interrupt
+                  : logger
+                      .warn("reply_terminal_checkpoint_unavailable", { reply_id: row.id })
+                      .pipe(Effect.as(false)),
+              ),
+            );
+            if (!saved) yield* query.finalizeExecution(nextCheckpoint.query);
+          } else yield* commitExternalStep(row, nextCheckpoint);
+          return control;
+        }),
+      );
 
     const toolStep = (replyId: Uuid, expectedCursor: number) =>
-      Effect.gen(function* () {
-        const row = yield* readGenerationReply(replyId);
-        if (row === undefined) return doneControl(expectedCursor);
-        if (row.status !== "running") return doneControl(row.generationCursor);
-        if (row.stopRequested) return yield* freezeStopped(row);
-        const checkpoint = yield* readCheckpoint(row);
-        if (checkpoint === undefined)
-          throw new Error(`Reply ${replyId} has no generation checkpoint`);
-        if (terminalControl(checkpoint.lastControl))
-          return yield* freezeControl(row, checkpoint, checkpoint.lastControl);
-        const toolCall = checkpoint.pendingTools[checkpoint.nextToolIndex];
-        if (toolCall === undefined)
-          throw new Error(`Reply ${replyId} has no pending tool at ${checkpoint.nextToolIndex}`);
-        const claimed = yield* claimExternalStep(
-          row,
-          checkpoint,
-          expectedCursor,
-          "tool",
-          toolCall.id,
-        );
-        if (claimed !== undefined) return yield* freezeControl(row, checkpoint, claimed);
-        const accumulator = checkpoint.accumulator;
-        const attempt = yield* untilStopped(replyId, query.runTool(checkpoint.query, toolCall));
-        if (Option.isNone(attempt)) {
-          yield* freezeOutcome(row, checkpoint, "stopped", null);
-          return stoppedControl(expectedCursor);
-        }
-        const result = attempt.value;
-        const pendingIndex = accumulator.pendingCalls.get(toolCall.id) ?? null;
-        accumulator.pendingCalls.delete(toolCall.id);
-        if (result.source !== undefined)
-          addResolvedSource(
-            accumulator,
-            result.source,
-            pendingIndex,
-            checkpoint.query.trace.llmRounds,
+      resumeStep(replyId, expectedCursor, (row, checkpoint) =>
+        Effect.gen(function* () {
+          const toolCall = checkpoint.pendingTools[checkpoint.nextToolIndex];
+          if (toolCall === undefined)
+            return yield* invariantBroken(
+              replyId,
+              `no pending tool at ${checkpoint.nextToolIndex}`,
+            );
+          const claimed = yield* claimExternalStep(
+            row,
+            checkpoint,
+            expectedCursor,
+            "tool",
+            toolCall.id,
           );
-        else if (pendingIndex !== null) removeSource(accumulator, pendingIndex);
-        yield* flushAccumulator(replyId, accumulator);
-        const nextToolIndex = checkpoint.nextToolIndex + 1;
-        const remaining = checkpoint.pendingTools.length - nextToolIndex;
-        const control: ReplyStepControl =
-          remaining > 0
-            ? { cursor: expectedCursor + 1, outcome: "tool_calls", error: null }
-            : readyControl(expectedCursor + 1);
-        const nextCheckpoint: ReplyCheckpoint = {
-          version: 1,
-          cursor: expectedCursor + 1,
-          query: result.state,
-          accumulator,
-          pendingTools: remaining > 0 ? checkpoint.pendingTools : [],
-          nextToolIndex: remaining > 0 ? nextToolIndex : 0,
-          lastControl: control,
-        };
-        yield* commitExternalStep(row, nextCheckpoint);
-        return control;
-      }).pipe(Effect.catchCause((cause) => stepFailure(replyId, expectedCursor, cause)));
+          if (claimed !== undefined) return yield* freezeControl(row, checkpoint, claimed);
+          const accumulator = checkpoint.accumulator;
+          const attempt = yield* untilStopped(replyId, query.runTool(checkpoint.query, toolCall));
+          if (Option.isNone(attempt)) {
+            yield* freezeOutcome(row, checkpoint, "stopped", null);
+            return stoppedControl(expectedCursor);
+          }
+          const result = attempt.value;
+          const pendingIndex = accumulator.pendingCalls.get(toolCall.id) ?? null;
+          accumulator.pendingCalls.delete(toolCall.id);
+          if (result.source !== undefined)
+            addResolvedSource(
+              accumulator,
+              result.source,
+              pendingIndex,
+              checkpoint.query.trace.llmRounds,
+            );
+          else if (pendingIndex !== null) removeSource(accumulator, pendingIndex);
+          yield* flushAccumulator(replyId, accumulator);
+          const nextToolIndex = checkpoint.nextToolIndex + 1;
+          const remaining = checkpoint.pendingTools.length - nextToolIndex;
+          const control: ReplyStepControl =
+            remaining > 0
+              ? { cursor: expectedCursor + 1, outcome: "tool_calls", error: null }
+              : readyControl(expectedCursor + 1);
+          const nextCheckpoint: ReplyCheckpoint = {
+            version: 1,
+            cursor: expectedCursor + 1,
+            query: result.state,
+            accumulator,
+            pendingTools: remaining > 0 ? checkpoint.pendingTools : [],
+            nextToolIndex: remaining > 0 ? nextToolIndex : 0,
+            lastControl: control,
+          };
+          yield* commitExternalStep(row, nextCheckpoint);
+          return control;
+        }),
+      );
 
     const deferFailure = (event: string, replyId: Uuid) => (cause: Cause.Cause<unknown>) =>
-      isInterruption(cause)
+      Cause.hasInterruptsOnly(cause)
         ? Effect.interrupt
-        : logger.warn(event, { reply_id: replyId, error_tag: replyFailureTag(cause) });
+        : logger.warn(event, { reply_id: replyId, ...failureFields(cause) });
 
     const publishBestEffort = (replyId: Uuid) =>
       settlement
@@ -848,12 +871,11 @@ export const RepliesServiceLive = Layer.effect(
       error: string | null,
     ) =>
       Effect.gen(function* () {
-        const row = yield* readGenerationReply(replyId);
+        const row = yield* readReplyById(replyId);
         if (row === undefined || row.status === "admitting") return;
-        if (row.status === "running")
-          yield* freezeOutcome(row, yield* recoverCheckpoint(row), outcome, error);
-        yield* publishBestEffort(replyId);
         const checkpoint = yield* recoverCheckpoint(row);
+        if (row.status === "running") yield* freezeOutcome(row, checkpoint, outcome, error);
+        yield* publishBestEffort(replyId);
         if (checkpoint !== undefined) yield* query.finalizeExecution(checkpoint.query);
       }).pipe(Effect.catchCause(deferFailure("reply_finalization_deferred", replyId)));
 
@@ -871,7 +893,7 @@ export const RepliesServiceLive = Layer.effect(
 
     const reconcileReply = (initial: ReplyRow) =>
       Effect.gen(function* () {
-        const row = yield* readGenerationReply(initial.id);
+        const row = yield* readRestoredReply(initial.id);
         if (row === undefined || !isReplyPending(row.status)) return;
         if (row.status === "admitting") {
           yield* admission.admit(row.id);
@@ -882,15 +904,11 @@ export const RepliesServiceLive = Layer.effect(
           yield* dispatchBestEffort(row.id);
         } else {
           const executionId = yield* ReplyWorkflow.executionId({ replyId: row.id });
-          const state = yield* ReplyWorkflow.poll(executionId).pipe(
-            Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine),
-          );
+          const state = yield* ReplyWorkflow.poll(executionId).pipe(withEngine);
           if (Option.isNone(state)) {
             yield* dispatchBestEffort(row.id);
           } else if (state.value._tag === "Suspended") {
-            yield* ReplyWorkflow.resume(executionId).pipe(
-              Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine),
-            );
+            yield* ReplyWorkflow.resume(executionId).pipe(withEngine);
           } else {
             const checkpoint = yield* recoverCheckpoint(row);
             const control = checkpoint?.lastControl;
@@ -949,14 +967,11 @@ export const RepliesServiceLive = Layer.effect(
           return pollingSse(
             replyId,
             visibleReply,
-            (row) => {
-              const current = replySnapshot(row);
-              return {
-                version: row.version,
-                data: encodeReplySnapshot(current),
-                terminal: !isReplyPending(current.status),
-              };
-            },
+            (row) => ({
+              version: row.version,
+              data: () => encodeReplySnapshot(replySnapshot(row)),
+              terminal: !isReplyPending(row.status),
+            }),
             pollIntervalMs,
           );
         }),
@@ -978,7 +993,7 @@ export const RepliesServiceLive = Layer.effect(
       finalizeStep,
       reconcileOnce: () =>
         Effect.gen(function* () {
-          const pending = inArray(replies.status, ["admitting", "running", "settling"]);
+          const pending = inArray(replies.status, SessionActivity.fields.status.literals);
           let scan = reconciliationScan;
           if (scan === null) {
             const [through] = yield* db.query((d) =>

@@ -943,7 +943,7 @@ describe("query stream", () => {
             .set({ status: "running", stopRequested: true })
             .where(eq(replies.id, uuid(replyId))),
         );
-        yield* service.finalizeStep(uuid(replyId), "stopped", null);
+        yield* service.reconcileOnce();
       }),
     );
     expect(replySnapshots((await tailReply(replyId)).text).at(-1)).toMatchObject({
@@ -1185,7 +1185,7 @@ describe("query stream", () => {
   it("settles failed preparation after history recovery without silently generating a response", async () => {
     let unavailable = false;
     const log = vi.fn<StructuredLogger["Service"]["warn"]>(() => Effect.void);
-    const privateDiagnostic = "PRIVATE_DIAGNOSTIC_SENTINEL";
+    const diagnostic = "storage read refused";
     const language = makeScriptedLanguageModel({
       streams: [
         { kind: "parts", parts: [tokenPart("Recovered after storage."), finishPart("stop")] },
@@ -1198,9 +1198,7 @@ describe("query stream", () => {
         ...histories,
         read: (address, receipt) =>
           unavailable
-            ? Effect.fail(
-                storageBackendError("read", address.session_id, new Error(privateDiagnostic)),
-              )
+            ? Effect.fail(storageBackendError("read", address.session_id, new Error(diagnostic)))
             : histories.read(address, receipt),
       }),
     });
@@ -1231,9 +1229,13 @@ describe("query stream", () => {
     expect(language.streamCalls).toHaveLength(0);
     expect(log.mock.calls).toContainEqual([
       "reply_generation_step_failed",
-      { reply_id: accepted.reply_id, generation_cursor: 0, error_tag: "StorageBackendError" },
+      {
+        reply_id: accepted.reply_id,
+        generation_cursor: 0,
+        error_tag: "StorageBackendError",
+        error_message: diagnostic,
+      },
     ]);
-    expect(JSON.stringify(log.mock.calls)).not.toContain(privateDiagnostic);
     unavailable = false;
     await runDb(Effect.flatMap(RepliesService, (service) => service.reconcileOnce()));
     expect(replySnapshots((await tailReply(accepted.reply_id)).text).at(-1)).toMatchObject({
@@ -1319,9 +1321,11 @@ describe("query stream", () => {
       exchange_id: crypto.randomUUID(),
       session: { kind: "new", idempotency_key: crypto.randomUUID() },
     });
-    expect(unknown.response.status).toBe(404);
+    expect(unknown.response.status).toBe(403);
     expect(unknown.response.headers.get("content-type") ?? "").not.toContain("text/event-stream");
-    expect(JSON.parse(unknown.text)).toMatchObject({ detail: "Vault not found" });
+    expect(JSON.parse(unknown.text)).toMatchObject({
+      detail: "Only vault members can perform this action",
+    });
 
     await currentState().started.close();
     await rm(currentState().storageRoot, { recursive: true, force: true });

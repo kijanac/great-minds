@@ -1,10 +1,4 @@
-import type { replies } from "@great-minds/database";
-import {
-  citationsOf,
-  type ReplySnapshot,
-  type SessionEvent,
-  type SessionExchangeEvent,
-} from "@great-minds/domain";
+import { citationsOf, type SessionEvent, type SessionExchangeEvent } from "@great-minds/domain";
 import type { ConversationHistory } from "./history.ts";
 
 export const projectSession = (history: ConversationHistory): readonly SessionEvent[] => [
@@ -17,9 +11,7 @@ export const projectSession = (history: ConversationHistory): readonly SessionEv
     origin: history.header.origin,
   },
   ...history.turns.flatMap((turn): SessionExchangeEvent[] => {
-    const attempt = turn.attempts.at(-1);
-    if (attempt === undefined) return [];
-    const { accepted, settlement } = attempt;
+    const { accepted, settlement } = turn.latest;
     const timestamp = settlement === null ? accepted.accepted_at : settlement.settled_at;
     const sources = settlement?.sources ?? [];
     return [
@@ -39,19 +31,6 @@ export const projectSession = (history: ConversationHistory): readonly SessionEv
     ];
   }),
 ];
-
-export const replySnapshot = (row: typeof replies.$inferSelect): ReplySnapshot => ({
-  reply_id: row.id,
-  session_id: row.sessionId,
-  status: row.status,
-  answer: row.answer,
-  citations: citationsOf(row.answer),
-  sources: row.sources,
-  error: row.error,
-  version: row.version,
-  created_at: row.createdAt,
-  updated_at: row.updatedAt,
-});
 
 export type PublishedExchange = SessionExchangeEvent & {
   readonly status: "completed" | "stopped";

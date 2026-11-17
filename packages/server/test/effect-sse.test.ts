@@ -31,7 +31,7 @@ describe("snapshot polling", () => {
       Effect.sync(() => rows.shift()),
       (version) => ({
         version,
-        data: String(version),
+        data: () => String(version),
         terminal: version === 2,
       }),
       1,
@@ -57,7 +57,7 @@ describe("snapshot polling", () => {
         read,
         (version) => ({
           version,
-          data: String(version),
+          data: () => String(version),
           terminal: version === 2,
         }),
         1,
@@ -94,7 +94,7 @@ describe("snapshot polling", () => {
     const events = pollingSse(
       "reply",
       read,
-      () => ({ version: 1, data: "", terminal: false }),
+      () => ({ version: 1, data: () => "", terminal: false }),
       100,
     );
     const completed = Effect.runPromiseExit(Stream.runCollect(events), {

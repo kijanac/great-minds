@@ -535,7 +535,7 @@ describe("job progress SSE", () => {
       Effect.succeed("one"),
       (data) => ({
         version: 1,
-        data,
+        data: () => data,
         terminal: true,
       }),
       100,
@@ -563,7 +563,7 @@ describe("job progress SSE", () => {
       Effect.die(defect),
       () => ({
         version: 1,
-        data: "",
+        data: () => "",
         terminal: false,
       }),
       100,

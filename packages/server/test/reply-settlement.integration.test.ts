@@ -17,7 +17,7 @@ import {
   timestamp,
   uuid,
 } from "./fixtures/conversation-history.ts";
-import { expectFailure, failure } from "./fixtures/history-storage.ts";
+import { expectFailure, failure, storedHistory } from "./fixtures/history-storage.ts";
 import { withSettlement } from "./fixtures/reply-settlement.ts";
 import { failTransactions } from "./fixtures/transaction-failure.ts";
 
@@ -74,7 +74,7 @@ describe("durable settlement", () => {
               context_messages: null,
               generation: null,
             });
-          expect((yield* f.histories.read(f.address))!.history.revision.last_seq).toBe(2);
+          expect((yield* storedHistory(f.objects, f.address))!.history.revision.last_seq).toBe(2);
           expect((yield* f.session()).historySeq).toBe(2);
           f.setTime(new Date("2026-10-11T12:00:00.000Z"));
           const restarted = makeReplySettlement(f.db, f.histories, f.clock);
@@ -83,7 +83,7 @@ describe("durable settlement", () => {
           yield* f.updateReply({ answer: "Late progress", sources: [], stopRequested: true });
           expect(yield* restarted.publish(f.replyId)).toBe(true);
           const terminal = yield* f.reply();
-          const history = (yield* f.histories.read(f.address))!.history;
+          const history = (yield* storedHistory(f.objects, f.address))!.history;
           expect(history.records[2]).toEqual({ ...payload, seq: 3 });
           expect(terminal).toMatchObject({
             status: result.status,
@@ -129,7 +129,7 @@ describe("durable settlement", () => {
           payload.outcome.status === "completed" ? completion().answer : f.progress.answer,
         );
         yield* f.finalizer.publish(f.replyId);
-        expect((yield* f.histories.read(f.address))!.history.records[2]).toEqual({
+        expect((yield* storedHistory(f.objects, f.address))!.history.records[2]).toEqual({
           ...payload,
           seq: 3,
         });
@@ -165,7 +165,7 @@ describe("durable settlement", () => {
             error: null,
             answer: f.progress.answer,
           });
-          expect((yield* f.histories.read(f.address))!.history.records[2]).toMatchObject({
+          expect((yield* storedHistory(f.objects, f.address))!.history.records[2]).toMatchObject({
             outcome: { status: "stopped" },
             answer: f.progress.answer,
             context_messages: [
@@ -216,7 +216,7 @@ describe("durable settlement", () => {
           expect(calls).toBe(1);
           expect(yield* f.reply()).toEqual(frozen);
           expect((yield* f.session()).historySeq).toBe(2);
-          expect((yield* f.histories.read(f.address))!.history.revision.last_seq).toBe(
+          expect((yield* storedHistory(f.objects, f.address))!.history.revision.last_seq).toBe(
             fault === "lost-ack" ? 3 : 2,
           );
           const saved = yield* f.objects.getVersioned(f.key);
@@ -225,7 +225,7 @@ describe("durable settlement", () => {
           yield* makeReplySettlement(f.db, histories, f.clock).publish(f.replyId);
           expect(writes).toBe(1);
           if (fault === "lost-ack") expect(yield* f.objects.getVersioned(f.key)).toEqual(saved);
-          expect((yield* f.histories.read(f.address))!.history.records[2]).toEqual({
+          expect((yield* storedHistory(f.objects, f.address))!.history.records[2]).toEqual({
             ...decodePayload(frozen.settlement),
             seq: 3,
           });
@@ -267,7 +267,8 @@ describe("durable settlement", () => {
           );
           const saved = yield* f.objects.getVersioned(f.key);
           if (step === "freeze") expect(saved).toEqual(bytes);
-          else expect((yield* f.histories.read(f.address))!.history.revision.last_seq).toBe(3);
+          else
+            expect((yield* storedHistory(f.objects, f.address))!.history.revision.last_seq).toBe(3);
           if (step === "freeze") {
             yield* f.finalizer.begin(f.replyId, completion());
             if (phase === "lost-ack") expect(yield* f.reply()).toEqual(after);
@@ -290,7 +291,7 @@ describe("durable settlement", () => {
         yield* f.updateSession({ historySeq: null, historySha256: null });
         expect(
           failure(yield* Effect.exit(f.finalizer.begin(f.replyId, completion()))),
-        ).toMatchObject({ _tag: "ReplySettlementInvalid", reason: "history_receipt" });
+        ).toMatchObject({ _tag: "HistoryInvalid", reason: "history_receipt" });
         expect(yield* f.reply()).toEqual(before);
         yield* f.updateSession({
           historySeq: 2,
@@ -343,7 +344,7 @@ describe("durable settlement", () => {
             ),
           ).toMatchObject({ _tag: "HistoryInvalid", reason: "history_receipt" });
           expect((yield* f.reply()).status).toBe("settling");
-          expect((yield* f.histories.read(f.address))!.history.revision.last_seq).toBe(
+          expect((yield* storedHistory(f.objects, f.address))!.history.revision.last_seq).toBe(
             race === "advanced" ? 4 : 3,
           );
           if (race === "changed-hash")

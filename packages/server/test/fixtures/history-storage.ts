@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { Cause, Effect, Exit, Result } from "effect";
 import { expect } from "vitest";
 
+import { parseHistory } from "../../src/conversation-history/history.ts";
+import type { HistoryAddress } from "../../src/conversation-history/store.ts";
 import { openLocalConditionalObjectStore } from "../../src/storage/local-conditional-object-store.ts";
 import type { ConditionalObjectStore } from "../../src/storage/object-store.ts";
 import { makeObjectStore } from "../../src/storage/r2-object-store.ts";
@@ -38,6 +40,15 @@ export const withObjects = <Value, Error>(
         return yield* use(makeObjectStore(bucket.client, "bucket"));
       }),
     ),
+  );
+
+export const storedHistory = (objects: ConditionalObjectStore, address: HistoryAddress) =>
+  objects.getVersioned(`vaults/${address.vault_id}/sessions/${address.session_id}.jsonl`).pipe(
+    Effect.map((object) => ({
+      history: Result.getOrThrow(parseHistory(address.session_id, object.bytes)),
+      version: object.version,
+    })),
+    Effect.catchTag("ObjectMissing", () => Effect.succeed(null)),
   );
 
 export const expectFailure = <Value, Error, Services>(

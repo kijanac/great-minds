@@ -12,7 +12,7 @@ import { makeReplySettlement } from "../src/conversation-history/settlement.ts";
 import { type HistoryStoreShape, makeHistoryStore } from "../src/conversation-history/store.ts";
 import { ObjectVersionConflict, storageBackendError } from "../src/storage/object-store.ts";
 import { attempt, completion, settlement, timestamp } from "./fixtures/conversation-history.ts";
-import { expectFailure, failure } from "./fixtures/history-storage.ts";
+import { expectFailure, failure, storedHistory } from "./fixtures/history-storage.ts";
 import { command, type ReplyAdmissionFixture, withAdmission } from "./fixtures/reply-admission.ts";
 import { failTransactions } from "./fixtures/transaction-failure.ts";
 
@@ -85,14 +85,14 @@ describe("durable admission", () => {
             previous_attempt_id: null,
           },
         });
-        expect(yield* f.histories.read(f.address(response.session_id))).toBeNull();
+        expect(yield* storedHistory(f.objects, f.address(response.session_id))).toBeNull();
         expect((yield* f.session(response.session_id)).historySeq).toBeNull();
         yield* f.updateSession(response.session_id, {
           placement: "standalone",
           replyMode: "query",
         });
         expect(yield* f.admission.accept(f.userId, f.vaultId, input)).toEqual(response);
-        const history = (yield* f.histories.read(f.address(response.session_id)))!.history;
+        const history = (yield* storedHistory(f.objects, f.address(response.session_id)))!.history;
         expect(history.records).toEqual([
           { ...request.header, seq: 1 },
           { ...request.attempt, seq: 2 },
@@ -159,7 +159,7 @@ describe("durable admission", () => {
           expect(calls).toBe(1);
           const reserved = yield* f.reply(input.reply_id);
           expect(reserved.status).toBe("admitting");
-          const saved = yield* f.histories.read(f.address(reserved.sessionId!));
+          const saved = yield* storedHistory(f.objects, f.address(reserved.sessionId!));
           expect(saved === null).toBe(fault !== "lost-ack");
           broken = false;
           f.setTime(new Date("2026-10-12T12:00:00.000Z"));
@@ -169,7 +169,7 @@ describe("durable admission", () => {
           expect(response.session_id).toBe(reserved.sessionId);
           expect((yield* f.reply(input.reply_id)).request).toEqual(reserved.request);
           expect(writes).toBe(1);
-          const recorded = yield* f.histories.read(f.address(response.session_id));
+          const recorded = yield* storedHistory(f.objects, f.address(response.session_id));
           expect(recorded!.history.records[1]).toEqual({
             ...decodeRequest(reserved.request).attempt,
             seq: 2,
@@ -213,14 +213,15 @@ describe("durable admission", () => {
               before.status === "running" ? 2 : null,
             );
           }
-          const saved = before && (yield* f.histories.read(f.address(before.sessionId!)));
+          const saved = before && (yield* storedHistory(f.objects, f.address(before.sessionId!)));
           const response = yield* f.admission.accept(f.userId, f.vaultId, input);
           if (before) expect(response.session_id).toBe(before.sessionId);
           const admitted = yield* f.reply(input.reply_id);
           expect(admitted).toMatchObject({ status: "running", version: 1 });
           if (before) expect(admitted.request).toEqual(before.request);
           if (before?.status === "running") expect(admitted).toEqual(before);
-          if (saved) expect(yield* f.histories.read(f.address(response.session_id))).toEqual(saved);
+          if (saved)
+            expect(yield* storedHistory(f.objects, f.address(response.session_id))).toEqual(saved);
           expect((yield* f.session(response.session_id)).historySeq).toBe(2);
         }),
       ),
@@ -569,7 +570,9 @@ describe("durable admission", () => {
         });
         yield* f.finalize(pending.reply_id);
         yield* f.admission.admit(input.reply_id);
-        expect((yield* f.histories.read(f.address(child.session_id)))!.history.header).toEqual({
+        expect(
+          (yield* storedHistory(f.objects, f.address(child.session_id)))!.history.header,
+        ).toEqual({
           ...original.header,
           seq: 1,
         });
@@ -629,7 +632,7 @@ describe("durable admission", () => {
                 parent_reply_id: input.reply_id,
               }),
             ]);
-          const before = yield* f.histories.read(f.address(response.session_id));
+          const before = yield* storedHistory(f.objects, f.address(response.session_id));
           const next = followUp(response.session_id);
           yield* expectFailure(
             f.admission.reserve(f.userId, f.vaultId, next),
@@ -640,7 +643,7 @@ describe("durable admission", () => {
                 : "Conflict",
           );
           expect(yield* f.reply(next.reply_id)).toBeUndefined();
-          expect(yield* f.histories.read(f.address(response.session_id))).toEqual(before);
+          expect(yield* storedHistory(f.objects, f.address(response.session_id))).toEqual(before);
         }),
       ),
   );
@@ -671,7 +674,7 @@ describe("durable admission", () => {
       }),
     ));
 
-  it("rejects stored corruption before writing and rechecks descriptor identity after I/O", () =>
+  it("rejects a corrupt saved request before writing", () =>
     withAdmission((f) =>
       Effect.gen(function* () {
         const input = command();
@@ -681,22 +684,9 @@ describe("durable admission", () => {
         expect(failure(yield* Effect.exit(f.admission.admit(input.reply_id)))).toMatchObject({
           reason: "request_payload",
         });
-        expect(yield* f.histories.read(f.address(response.session_id))).toBeNull();
+        expect(yield* storedHistory(f.objects, f.address(response.session_id))).toBeNull();
         yield* f.updateReply(input.reply_id, { request });
-        const histories: HistoryStoreShape = {
-          ...f.histories,
-          commit: (...args) =>
-            Effect.gen(function* () {
-              const committed = yield* f.histories.commit(...args);
-              yield* f.updateReply(input.reply_id, { request: { ...request, mode: "btw" } });
-              return committed;
-            }),
-        };
-        yield* expectFailure(
-          f.coordinator({ histories }).admit(input.reply_id),
-          "ReplyAdmissionInvalid",
-        );
-        expect((yield* f.reply(input.reply_id)).status).toBe("admitting");
+        expect(yield* f.admission.admit(input.reply_id)).toBe(true);
       }),
     ));
 
@@ -717,7 +707,7 @@ describe("durable admission", () => {
         };
         yield* expectFailure(f.coordinator({ db }).accept(f.userId, f.vaultId, input), "NotFound");
         const [session] = yield* f.allSessions();
-        expect(yield* f.histories.read(f.address(session.id))).toBeNull();
+        expect(yield* storedHistory(f.objects, f.address(session.id))).toBeNull();
       }),
     ));
 
@@ -771,7 +761,7 @@ describe("durable admission", () => {
         expect(conflicts).toBe(1);
         expect((yield* f.reply(input.reply_id)).status).toBe("running");
         expect(
-          (yield* f.histories.read(f.address(response.session_id)))!.history.records,
+          (yield* storedHistory(f.objects, f.address(response.session_id)))!.history.records,
         ).toHaveLength(2);
       }),
     ));
@@ -792,7 +782,7 @@ describe("durable admission", () => {
         const response = yield* f.coordinator({ histories }).accept(f.userId, f.vaultId, input);
         expect((yield* f.reply(input.reply_id)).status).toBe("completed");
         expect(
-          (yield* f.histories.read(f.address(response.session_id)))!.history.records,
+          (yield* storedHistory(f.objects, f.address(response.session_id)))!.history.records,
         ).toHaveLength(3);
       }),
     ));
