@@ -14,7 +14,7 @@
   import { parseMarkdown } from "#lib/markdown.ts";
   import type { HastNode } from "#lib/markdown-plugins.ts";
   import { passageMark } from "#lib/passage-navigation.ts";
-  import { selectionPassage } from "#lib/selection-passage.ts";
+  import { blockText, selectionPassage } from "#lib/selection-passage.ts";
   import { splitStreamingMarkdown } from "#lib/streaming-markdown.ts";
   import type { SelectionInfo, ThreadLike } from "#lib/types.ts";
 
@@ -365,7 +365,7 @@
     onSelection({
       blockOffset: offset,
       quote,
-      context: element.textContent ?? "",
+      context: blockText(element),
       passage: selectionPassage(range),
       rect: range.getBoundingClientRect(),
       exchangeId,

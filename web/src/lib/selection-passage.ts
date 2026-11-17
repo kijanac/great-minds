@@ -16,7 +16,15 @@ export function selectionPassage(range: Range): string {
     while (offset < text.length && !isSpace(text.charAt(offset))) offset += 1;
     passage.setEnd(end, offset);
   }
-  const fragment = passage.cloneContents();
-  for (const marker of fragment.querySelectorAll("sup")) marker.remove();
-  return (fragment.textContent ?? "").replace(/\s+/g, " ").trim();
+  return withoutMarkers(passage.cloneContents()).replace(/\s+/g, " ").trim();
+}
+
+export function blockText(block: Element): string {
+  const copy = block.cloneNode(true);
+  return copy instanceof Element ? withoutMarkers(copy) : "";
+}
+
+function withoutMarkers(root: Element | DocumentFragment): string {
+  for (const marker of root.querySelectorAll("sup")) marker.remove();
+  return root.textContent ?? "";
 }

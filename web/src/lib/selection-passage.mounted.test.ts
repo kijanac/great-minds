@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { selectionPassage } from "./selection-passage";
+import { blockText, selectionPassage } from "./selection-passage";
 
 const paragraph = (html: string) => {
   document.body.innerHTML = `<p>${html}</p>`;
@@ -32,5 +32,13 @@ describe("selectionPassage", () => {
     range.setEnd(block.lastChild!, " at once.".length);
 
     expect(selectionPassage(range)).toBe("Discipline must be tightened at once.");
+  });
+
+  it("reads a whole paragraph without its citation numbers", () => {
+    const block = paragraph(
+      'taking part would <a href="raw/a.md#^p1">lend legitimacy</a><sup data-citation-ref="1">1</sup> to a body',
+    );
+    expect(blockText(block)).toBe("taking part would lend legitimacy to a body");
+    expect(block.textContent).toContain("legitimacy1");
   });
 });
