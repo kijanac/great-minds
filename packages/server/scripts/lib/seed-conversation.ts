@@ -45,7 +45,8 @@ export const seedConversationReply = (
     const row = rows[0];
     if (row === undefined) throw new Error("Seeded reply disappeared");
     const accepted = yield* acceptedRequestFor(row);
-    const origin = accepted.header?.origin;
+    const origin =
+      accepted.command.session.kind === "new" ? accepted.command.session.origin : undefined;
     const question =
       origin?.anchor === undefined || origin.anchor === null
         ? command.question

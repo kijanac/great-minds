@@ -12,7 +12,7 @@ import {
   ServiceUnavailable,
   SessionActivity,
   SessionId,
-  type Uuid,
+  Uuid,
 } from "@great-minds/domain";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { Context, Data, Effect, Layer, Result, Schema } from "effect";
@@ -38,18 +38,26 @@ import {
 import { HistoryAttemptWrite, HistoryHeaderWrite, HistoryTimestamp } from "./schema.ts";
 import { type HistoryCommitError, HistoryStore, type HistoryStoreShape } from "./store.ts";
 
+const NewConversation = Schema.Struct({
+  created_at: HistoryTimestamp,
+  anchor_reply_id: HistoryHeaderWrite.fields.anchor_reply_id,
+  context: HistoryHeaderWrite.fields.context,
+});
+type NewConversation = typeof NewConversation.Type;
+
 export const AcceptedReplyRequest = Schema.Struct({
-  version: Schema.Literal(1),
   command: Schema.toType(CreateReplyRequest),
   mode: QueryMode,
-  header: Schema.NullOr(HistoryHeaderWrite),
-  attempt: Schema.Struct({ ...HistoryAttemptWrite.fields, accepted_at: HistoryTimestamp }),
+  accepted_at: HistoryTimestamp,
+  previous_attempt_id: Schema.NullOr(Uuid),
+  parent_reply_id: Schema.NullOr(Uuid),
+  conversation: Schema.NullOr(NewConversation),
 });
 export type AcceptedReplyRequest = typeof AcceptedReplyRequest.Type;
 
 export class ReplyAdmissionInvalid extends Data.TaggedError("ReplyAdmissionInvalid")<{
   readonly reply_id: Uuid;
-  readonly reason: "request_payload" | "request_identity" | "settled_attempt";
+  readonly reason: "request_payload" | "settled_attempt";
 }> {}
 
 export type ReplyAdmissionError =
@@ -102,12 +110,9 @@ export const ReplyAdmissionLive = Layer.effect(
   }),
 );
 
+type NewSession = Extract<CreateReplyRequest["session"], { kind: "new" }>;
 type Target =
-  | {
-      readonly kind: "new";
-      readonly session: Extract<CreateReplyRequest["session"], { kind: "new" }>;
-      readonly header: HistoryHeaderWrite;
-    }
+  | { readonly kind: "new"; readonly session: NewSession; readonly conversation: NewConversation }
   | { readonly kind: "existing"; readonly row: SessionRow; readonly history: ConversationHistory };
 
 const liveStatuses = SessionActivity.fields.status.literals;
@@ -116,34 +121,43 @@ const decodeRequest = Schema.decodeUnknownEffect(AcceptedReplyRequest, {
 });
 const encodeRequest = Schema.encodeSync(AcceptedReplyRequest, { onExcessProperty: "error" });
 
-export const acceptedRequestFor = (
-  row: Pick<ReplyRow, "id" | "userId" | "sessionId" | "request">,
-) =>
-  Effect.gen(function* () {
-    const request = yield* decodeRequest(row.request).pipe(
-      Effect.mapError(
-        () => new ReplyAdmissionInvalid({ reply_id: row.id, reason: "request_payload" }),
-      ),
-    );
-    if (
-      request.command.reply_id !== row.id ||
-      request.attempt.reply_id !== row.id ||
-      request.command.exchange_id !== request.attempt.exchange_id ||
-      request.command.question !== request.attempt.question ||
-      (request.command.session.kind === "existing" &&
-        request.command.session.id !== row.sessionId) ||
-      (request.header !== null &&
-        (request.header.session_id !== row.sessionId ||
-          request.header.author_id !== row.userId ||
-          request.command.session.kind !== "new" ||
-          !isDeepStrictEqual(request.header.origin, request.command.session.origin ?? null) ||
-          request.attempt.parent_reply_id !== null ||
-          request.attempt.previous_attempt_id !== null))
-    ) {
-      return yield* new ReplyAdmissionInvalid({ reply_id: row.id, reason: "request_identity" });
-    }
-    return request;
-  });
+export const acceptedRequestFor = (row: Pick<ReplyRow, "id" | "request">) =>
+  decodeRequest(row.request).pipe(
+    Effect.mapError(
+      () => new ReplyAdmissionInvalid({ reply_id: row.id, reason: "request_payload" }),
+    ),
+  );
+
+export const acceptedWrites = (
+  row: Pick<ReplyRow, "id" | "userId" | "sessionId">,
+  request: AcceptedReplyRequest,
+): readonly [HistoryAttemptWrite] | readonly [HistoryHeaderWrite, HistoryAttemptWrite] => {
+  const { command, conversation } = request;
+  const attempt: HistoryAttemptWrite = {
+    type: "attempt",
+    reply_id: row.id,
+    exchange_id: command.exchange_id,
+    previous_attempt_id: request.previous_attempt_id,
+    parent_reply_id: request.parent_reply_id,
+    question: command.question,
+    accepted_at: request.accepted_at,
+  };
+  if (conversation === null) return [attempt];
+  return [
+    {
+      type: "conversation",
+      format: "great-minds/conversation",
+      version: 1,
+      session_id: row.sessionId,
+      created_at: conversation.created_at,
+      author_id: row.userId,
+      origin: command.session.kind === "new" ? (command.session.origin ?? null) : null,
+      anchor_reply_id: conversation.anchor_reply_id,
+      context: conversation.context,
+    },
+    attempt,
+  ];
+};
 
 const responseFor = (row: ReplyRow): CreateReplyResponse => ({
   reply_id: row.id,
@@ -189,7 +203,7 @@ export const makeReplyAdmission = (
       const saved = yield* acceptedRequestFor(row);
       if (
         !isDeepStrictEqual(saved.command, input) ||
-        (previousReplyId !== null && saved.attempt.previous_attempt_id !== previousReplyId)
+        (previousReplyId !== null && saved.previous_attempt_id !== previousReplyId)
       ) {
         return yield* new Conflict({ detail: "Reply id already belongs to another request" });
       }
@@ -206,17 +220,13 @@ export const makeReplyAdmission = (
       return stored.history;
     });
 
-  const newHeader = (
-    userId: Uuid,
-    vaultId: Uuid,
-    session: Extract<CreateReplyRequest["session"], { kind: "new" }>,
-  ) =>
+  const newConversation = (userId: Uuid, vaultId: Uuid, session: NewSession) =>
     Effect.gen(function* () {
       const origin = session.origin ?? null;
       if (session.conversation_kind === "btw" && !origin?.anchor) {
         return yield* new BadRequest({ detail: "A BTW needs a selected passage" });
       }
-      let context: HistoryHeaderWrite["context"] = null;
+      let context: NewConversation["context"] = null;
       let anchorReplyId: Uuid | null = null;
       if (origin?.kind === "answer") {
         const [parent] = yield* db.query((client) =>
@@ -240,20 +250,11 @@ export const makeReplyAdmission = (
         const parentReplyId = yield* contextParentFor(history);
         if (parentReplyId !== null) context = { session_id: parent.id, reply_id: parentReplyId };
       }
-      const now = yield* clock.now;
-      const bytes = yield* random.bytes(16);
-      const id = SessionId.make(formatUuid7(now.getTime(), bytes), { disableChecks: true });
       return {
-        type: "conversation",
-        format: "great-minds/conversation",
-        version: 1,
-        session_id: id,
-        created_at: HistoryTimestamp.make(now.toISOString()),
-        author_id: userId,
-        origin,
+        created_at: HistoryTimestamp.make((yield* clock.now).toISOString()),
         anchor_reply_id: anchorReplyId,
         context,
-      } satisfies HistoryHeaderWrite;
+      } satisfies NewConversation;
     });
 
   const reserve = (
@@ -289,8 +290,8 @@ export const makeReplyAdmission = (
       if (existingSession === undefined) {
         if (destination.kind === "existing")
           return yield* new NotFound({ detail: "Session not found" });
-        const header = yield* newHeader(userId, vaultId, destination);
-        target = { kind: "new", session: destination, header };
+        const conversation = yield* newConversation(userId, vaultId, destination);
+        target = { kind: "new", session: destination, conversation };
       } else {
         if (existingSession.userId !== userId)
           return yield* new NotFound({ detail: "Session not found" });
@@ -320,18 +321,21 @@ export const makeReplyAdmission = (
         Effect.gen(function* () {
           let sessionId: SessionId;
           if (target.kind === "new") {
+            const createdAt = new Date(target.conversation.created_at);
             const [created] = yield* tx
               .insert(sessions)
               .values({
-                id: target.header.session_id,
+                id: SessionId.make(formatUuid7(createdAt.getTime(), yield* random.bytes(16)), {
+                  disableChecks: true,
+                }),
                 vaultId,
                 userId,
                 query: command.question,
-                origin: target.header.origin,
+                origin: target.session.origin ?? null,
                 placement: target.session.conversation_kind === "btw" ? "inline" : "standalone",
                 replyMode: target.session.conversation_kind === "btw" ? "btw" : "query",
-                createdAt: new Date(target.header.created_at),
-                updatedAt: new Date(target.header.created_at),
+                createdAt,
+                updatedAt: createdAt,
                 idempotencyKey: target.session.idempotency_key,
               })
               .onConflictDoNothing()
@@ -414,25 +418,18 @@ export const makeReplyAdmission = (
           }
           const now = yield* clock.now;
           const request = {
-            version: 1,
             command,
             mode:
               command.inline === undefined ? session.replyMode : command.inline ? "btw" : "query",
-            header: target.kind === "new" ? target.header : null,
-            attempt: {
-              type: "attempt",
-              reply_id: command.reply_id,
-              exchange_id: command.exchange_id,
-              previous_attempt_id: previousReplyId,
-              parent_reply_id: parentReplyId,
-              question: command.question,
-              accepted_at: HistoryTimestamp.make(now.toISOString()),
-            },
+            accepted_at: HistoryTimestamp.make(now.toISOString()),
+            previous_attempt_id: previousReplyId,
+            parent_reply_id: parentReplyId,
+            conversation: target.kind === "new" ? target.conversation : null,
           } satisfies AcceptedReplyRequest;
           const planned = planHistoryAppend(
             session.id,
             history,
-            request.header === null ? [request.attempt] : [request.header, request.attempt],
+            acceptedWrites({ id: command.reply_id, userId, sessionId: session.id }, request),
           );
           if (Result.isFailure(planned)) return yield* planned.failure;
           const [inserted] = yield* tx
@@ -469,8 +466,8 @@ export const makeReplyAdmission = (
       const request = yield* acceptedRequestFor(initial.reply);
       const committed = yield* histories.commit(
         { vault_id: initial.reply.vaultId, session_id: initial.reply.sessionId },
-        request.header === null ? [request.attempt] : [request.header, request.attempt],
-        request.header === null
+        acceptedWrites(initial.reply, request),
+        request.conversation === null
           ? yield* acknowledgedReceipt(initial.session)
           : sessionReceipt(initial.session),
       );
@@ -500,7 +497,7 @@ export const makeReplyAdmission = (
             .set({
               historySeq: committed.history.revision.last_seq,
               historySha256: committed.history.revision.sha256,
-              updatedAt: sql`greatest(${sessions.updatedAt}, ${new Date(request.attempt.accepted_at)})`,
+              updatedAt: sql`greatest(${sessions.updatedAt}, ${new Date(request.accepted_at)})`,
             })
             .where(and(eq(sessions.id, session.id), eq(sessions.vaultId, session.vaultId)));
           yield* tx

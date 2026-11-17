@@ -539,11 +539,8 @@ export const replies = pgTable(
     request: jsonb("request").notNull(),
     settlement: jsonb("settlement"),
     dispatchedAt: timestamptz("dispatched_at"),
-    dispatchedTaskId: uuidColumn("dispatched_task_id"),
     generationCursor: integer("generation_cursor").default(0).notNull(),
     activeGenerationStep: integer("active_generation_step"),
-    activeGenerationKind: text("active_generation_kind"),
-    activeGenerationKey: text("active_generation_key"),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
   },
@@ -577,10 +574,6 @@ export const replies = pgTable(
     check(
       "replies_settlement_check",
       sql`(${table.status} = 'settling') = (${table.settlement} IS NOT NULL)`,
-    ),
-    check(
-      "replies_active_generation_check",
-      sql`(${table.activeGenerationStep} IS NULL AND ${table.activeGenerationKind} IS NULL AND ${table.activeGenerationKey} IS NULL) OR (${table.activeGenerationStep} IS NOT NULL AND ${table.activeGenerationKind} IN ('model', 'tool') AND ${table.activeGenerationKey} IS NOT NULL)`,
     ),
   ],
 );

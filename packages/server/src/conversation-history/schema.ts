@@ -1,5 +1,6 @@
 import {
   FileFingerprint,
+  QueryMode,
   SessionId,
   SessionOrigin,
   ThinkingSource,
@@ -28,7 +29,7 @@ const Sequence = Schema.Number.pipe(
 );
 
 export const GenerationMetadata = Schema.Struct({
-  mode: Schema.Literals(["btw", "query"]),
+  mode: QueryMode,
   system_prompt_hash: Schema.Struct({
     scheme: Schema.Literal("gm-prompt-v1"),
     value: FileFingerprint,
@@ -38,18 +39,16 @@ export const GenerationMetadata = Schema.Struct({
 });
 export type GenerationMetadata = typeof GenerationMetadata.Type;
 
+export const ReplyFailure = Schema.Struct({
+  code: Schema.Literals(["generation_failed", "external_outcome_unknown"]),
+  message: Schema.String,
+});
+export type ReplyFailure = typeof ReplyFailure.Type;
+
 const Outcome = Schema.Union([
   Schema.Struct({ status: Schema.Literal("completed") }),
   Schema.Struct({ status: Schema.Literal("stopped") }),
-  Schema.Struct({
-    status: Schema.Literal("failed"),
-    code: Schema.Literals([
-      "generation_failed",
-      "external_outcome_unknown",
-      "recovery_interrupted",
-    ]),
-    message: Schema.String,
-  }),
+  Schema.Struct({ status: Schema.Literal("failed"), ...ReplyFailure.fields }),
 ]);
 
 const headerFields = {

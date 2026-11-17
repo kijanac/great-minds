@@ -20,8 +20,6 @@ const setup = (f: ReplyAdmissionFixture) =>
     yield* f.updateReply(replyId, {
       ...progress,
       activeGenerationStep: 1,
-      activeGenerationKind: "model",
-      activeGenerationKey: "model-attempt-1",
     });
     return {
       ...f,

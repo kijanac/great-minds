@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   acceptedRequestFor,
   type AcceptedReplyRequest,
+  acceptedWrites,
 } from "../src/conversation-history/admission.ts";
 import {
   parseHistory,
@@ -160,7 +161,7 @@ describe("native conversation history", () => {
         attempt(),
         settlement({ sources: [{ ...settlement().sources[0], ranges: [{ start: 5, end: 2 }] }] }),
       ],
-      "source_range",
+      "invalid_record",
     ],
     [
       [
@@ -252,15 +253,20 @@ describe("native conversation history", () => {
     expect(history.turns[0].attempts[0].settlement?.answer).toBe(settlement().answer);
   });
 
-  it("parses accepted descriptors and rejects malformed or mismatched frozen identity without database setup", async () => {
+  it("derives the history records from a saved request and rejects a malformed one", async () => {
     const request = {
-      version: 1,
       mode: "query",
-      header: header(),
-      attempt: { ...attempt(), accepted_at: timestamp },
+      accepted_at: timestamp,
+      previous_attempt_id: null,
+      parent_reply_id: null,
+      conversation: {
+        created_at: header().created_at,
+        anchor_reply_id: null,
+        context: null,
+      },
       command: {
         reply_id: replyId,
-        exchange_id: uuid(201),
+        exchange_id: attempt().exchange_id,
         question: attempt().question,
         origin_scope: "vault",
         session: {
@@ -271,43 +277,23 @@ describe("native conversation history", () => {
         },
       },
     } satisfies AcceptedReplyRequest;
-    const row = { id: replyId, userId: request.header.author_id, sessionId, request };
+    const row = { id: replyId, userId: header().author_id, sessionId, request };
     expect(await Effect.runPromise(acceptedRequestFor(row))).toEqual(request);
+    expect(acceptedWrites(row, request)).toEqual([
+      { ...header(), origin: null },
+      { ...attempt(), accepted_at: timestamp },
+    ]);
+    expect(acceptedWrites(row, { ...request, conversation: null })).toHaveLength(1);
     for (const invalid of [
-      { ...request, version: 2 },
       { ...request, extra: true },
       { ...request, mode: null },
-      { ...request, attempt: { ...request.attempt, accepted_at: null } },
+      { ...request, accepted_at: null },
+      { ...request, command: { ...request.command, model: "any/model" } },
     ])
       expect(
         failure(
           await Effect.runPromise(Effect.result(acceptedRequestFor({ ...row, request: invalid }))),
         ),
       ).toMatchObject({ reason: "request_payload" });
-    for (const invalid of [
-      { ...request, header: { ...request.header, author_id: uuid(99) } },
-      {
-        ...request,
-        header: {
-          ...request.header,
-          origin: {
-            kind: "document",
-            doc_path: "wiki/other.md",
-            origin_scope: "vault",
-            anchor: "changed",
-            paragraph: "changed",
-            section: null,
-            occurrence: 1,
-          },
-        },
-      },
-      { ...request, attempt: { ...request.attempt, parent_reply_id: uuid(99) } },
-      { ...request, attempt: { ...request.attempt, previous_attempt_id: uuid(99) } },
-    ])
-      expect(
-        failure(
-          await Effect.runPromise(Effect.result(acceptedRequestFor({ ...row, request: invalid }))),
-        ),
-      ).toMatchObject({ reason: "request_identity" });
   });
 });

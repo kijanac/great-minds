@@ -131,7 +131,6 @@ const program = Effect.gen(function* () {
     const row = yield* pollReply(
       (candidate) =>
         candidate.dispatchedAt !== null &&
-        candidate.activeGenerationKind === "model" &&
         candidate.activeGenerationStep === 0 &&
         candidate.answer === "partial",
     );

@@ -16,7 +16,7 @@ import {
   type SearchHit,
   SourceQuery,
   type OriginScope,
-  type QueryRequest,
+  type QueryMode,
   type QuerySourceArticle,
   type QuerySourceData,
   type QuerySourceSearch,
@@ -54,8 +54,7 @@ type QueryServiceShape = {
   readonly prepareExecution: (
     userId: Uuid,
     vaultId: Uuid,
-    input: QueryRequest,
-    prechecked: QueryPrecheckedContext,
+    input: QueryInput,
     prior: readonly LlmMessage[],
   ) => Effect.Effect<QueryExecutionState, unknown>;
   readonly modelAttempt: (
@@ -230,8 +229,12 @@ type ModelRoundState = {
   readonly toolCalls: Map<number, ToolCallState>;
 };
 
-export type QueryPrecheckedContext = {
+export type QueryInput = {
+  readonly question: string;
+  readonly mode: QueryMode;
   readonly vaultLabel: string;
+  readonly originPath: string | undefined;
+  readonly originScope: OriginScope;
 };
 
 type ToolResult = {
@@ -253,7 +256,7 @@ class MalformedToolArgs extends Data.TaggedError("MalformedToolArgs")<{
   readonly issue: Schema.SchemaError["issue"];
 }> {}
 
-const sanitizedStreamError = "Something went wrong while answering. Try again in a minute.";
+export const sanitizedStreamError = "Something went wrong while answering. Try again in a minute.";
 const readWholeLimit = 20_000;
 const maxRangeChunks = 40;
 const articlesPerPage = 25;
@@ -264,7 +267,7 @@ const searchArmMultiplier = 2;
 
 const fetchRange = (rawStart: number, rawEnd: number) => {
   const start = Math.max(0, Math.min(rawStart, rawEnd));
-  return { start, end: Math.min(Math.max(rawStart, rawEnd), start + maxRangeChunks - 1) };
+  return { start, end: Math.min(Math.max(rawStart, rawEnd, start), start + maxRangeChunks - 1) };
 };
 
 const first = <A>(values: readonly A[]) => values[0];
@@ -540,7 +543,7 @@ export const QueryServiceLive = Layer.effect(
       vaultId: Uuid,
       label: string,
       vaultConfig: VaultConfigFile,
-      input: QueryRequest,
+      mode: QueryMode,
       webSearchEnabled: boolean,
     ) =>
       Effect.gen(function* () {
@@ -548,7 +551,7 @@ export const QueryServiceLive = Layer.effect(
           [
             buildIdentity(vaultId, label, vaultConfig),
             loadPrompt(storage, vaultId, "query"),
-            input.mode === "btw" ? loadPrompt(storage, vaultId, "query_btw") : Effect.succeed(null),
+            mode === "btw" ? loadPrompt(storage, vaultId, "query_btw") : Effect.succeed(null),
           ],
           { concurrency: "unbounded" },
         );
@@ -561,9 +564,6 @@ export const QueryServiceLive = Layer.effect(
         }
         if (btwPrompt !== null) {
           prompt += "\n\n" + btwPrompt;
-        }
-        if (input.extra_instructions !== undefined) {
-          prompt += "\n\n" + input.extra_instructions;
         }
         return prompt;
       });
@@ -1663,14 +1663,13 @@ export const QueryServiceLive = Layer.effect(
     const setupContext = (
       userId: Uuid,
       vaultId: Uuid,
-      input: QueryRequest,
+      input: QueryInput,
       correlationId: string,
       startedAt: number,
-      prechecked: QueryPrecheckedContext,
       prior: readonly LlmMessage[],
     ) =>
       Effect.gen(function* () {
-        const vaultLabel = prechecked.vaultLabel;
+        const vaultLabel = input.vaultLabel;
         const [vaultConfig, tags] = yield* Effect.all(
           [
             readVaultConfig(storage, vaultId).pipe(
@@ -1690,12 +1689,11 @@ export const QueryServiceLive = Layer.effect(
           vaultId,
           vaultLabel,
           vaultConfig,
-          input,
+          input.mode,
           webSearchEnabled,
         );
         const systemPromptHash = promptContentHash(systemPrompt);
         yield* recordPrompt(db, systemPromptHash, systemPrompt);
-        const requestedModel = input.model || appConfig.queryModel;
         const context: QueryExecutionState = {
           userId,
           vaultId,
@@ -1718,17 +1716,17 @@ export const QueryServiceLive = Layer.effect(
           costUsd: 0,
           selectedModel: null,
           models: [
-            requestedModel,
-            ...appConfig.queryFallbackModels.filter((model) => model !== requestedModel),
+            appConfig.queryModel,
+            ...appConfig.queryFallbackModels.filter((model) => model !== appConfig.queryModel),
           ],
           modelIndex: 0,
           startedAt,
           messages: [{ role: "system", content: systemPrompt }],
         };
         const messages = context.messages;
-        if (prior.length === 0 && input.origin_path !== undefined && input.origin_path.length > 0) {
+        if (prior.length === 0 && input.originPath !== undefined && input.originPath.length > 0) {
           messages.push(
-            ...(yield* buildOriginMessages(context, input.origin_path, input.origin_scope)),
+            ...(yield* buildOriginMessages(context, input.originPath, input.originScope)),
           );
         }
         messages.push(...prior);
@@ -1785,10 +1783,9 @@ export const QueryServiceLive = Layer.effect(
     const prepareExecution = (
       userId: Uuid,
       vaultId: Uuid,
-      input: QueryRequest,
-      prechecked: QueryPrecheckedContext,
+      input: QueryInput,
       prior: readonly LlmMessage[],
-    ): Effect.Effect<QueryExecutionState, unknown> =>
+    ) =>
       Effect.gen(function* () {
         const startedAt = Date.now();
         const correlationId = `q-${randomUUID()}`;
@@ -1799,7 +1796,6 @@ export const QueryServiceLive = Layer.effect(
             input,
             correlationId,
             startedAt,
-            prechecked,
             prior,
           );
           yield* logger.info("query.stream_start", {

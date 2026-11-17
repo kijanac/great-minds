@@ -929,10 +929,10 @@ export const composeAnchoredQuestion = (
   return parts.join("\n\n");
 };
 
-export const ChunkRange = Schema.Struct({
-  start: Schema.Number,
-  end: Schema.Number,
-});
+const ChunkIndex = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+export const ChunkRange = Schema.Struct({ start: ChunkIndex, end: ChunkIndex }).pipe(
+  Schema.check(Schema.makeFilter((range) => range.end >= range.start)),
+);
 export type ChunkRange = typeof ChunkRange.Type;
 
 export const SearchScope = Schema.Literals(["kb", "web"] as const);
@@ -1386,18 +1386,6 @@ export type LinkedArticles = typeof LinkedArticles.Type;
 export const QueryMode = Schema.Literals(["query", "btw"] as const);
 export type QueryMode = typeof QueryMode.Type;
 
-export const QueryRequest = Schema.Struct({
-  question: Schema.String,
-  model: Schema.optionalKey(Schema.String),
-  mode: QueryMode.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed("query" as const))),
-  origin_path: Schema.optionalKey(Schema.String),
-  origin_scope: OriginScope.pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed("vault" as const)),
-  ),
-  extra_instructions: Schema.optionalKey(Schema.String),
-});
-export type QueryRequest = typeof QueryRequest.Type;
-
 export const QuerySourceArticle = Schema.Struct({
   type: Schema.Literals(["article", "raw"] as const),
   document_id: Schema.NullOr(Uuid),
@@ -1465,11 +1453,11 @@ const CreateReplySession = Schema.Struct({
 });
 
 export const CreateReplyRequest = Schema.Struct({
-  question: QueryRequest.fields.question,
-  model: QueryRequest.fields.model,
-  origin_path: QueryRequest.fields.origin_path,
-  origin_scope: QueryRequest.fields.origin_scope,
-  extra_instructions: QueryRequest.fields.extra_instructions,
+  question: Schema.String,
+  origin_path: Schema.optionalKey(Schema.String),
+  origin_scope: OriginScope.pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed("vault" as const)),
+  ),
   reply_id: Uuid,
   exchange_id: Uuid,
   inline: Schema.optionalKey(Schema.Boolean),

@@ -8,7 +8,6 @@ import {
   Forbidden,
   NotFound,
   isReplyPending,
-  type QueryRequest,
   type QuerySourceData,
   ReplySnapshot as ReplySnapshotSchema,
   type ReplySource,
@@ -32,7 +31,7 @@ import {
   ReplyAdmission,
   type ReplyAdmissionError,
 } from "./conversation-history/admission.ts";
-import type { GenerationMetadata } from "./conversation-history/schema.ts";
+import { type GenerationMetadata, ReplyFailure } from "./conversation-history/schema.ts";
 import { ReplySettlement, type ReplySettlementResult } from "./conversation-history/settlement.ts";
 import type { LlmMessage } from "./llm.ts";
 import { errorDetails } from "./error-details.ts";
@@ -40,18 +39,26 @@ import { StructuredLogger } from "./logging.ts";
 import { pollingSse } from "./polling-sse.ts";
 import {
   QueryExecutionState,
-  type QueryPrecheckedContext,
   type QueryPreparedToolCall as QueryPreparedToolCallType,
   QueryPreparedToolCall,
   QueryService,
+  sanitizedStreamError,
 } from "./query.ts";
 import { SessionsService } from "./sessions.ts";
 import { ContentStorage, vaultOwner } from "./storage.ts";
 import { VaultAccessService } from "./vaults.ts";
 
-const sanitizedReplyError = "Something went wrong while answering. Try again in a minute.";
-const ambiguousReplyError =
-  "Reply interrupted before an external response could be saved. It was not retried automatically.";
+const generationFailed = (message: string = sanitizedStreamError): ReplyFailure => ({
+  code: "generation_failed",
+  message,
+});
+const outcomeUnknown: ReplyFailure = {
+  code: "external_outcome_unknown",
+  message:
+    "Reply interrupted before an external response could be saved. It was not retried automatically.",
+};
+const interruptedFailure = (row: ReplyRow) =>
+  row.activeGenerationStep === null ? generationFailed() : outcomeUnknown;
 const flushIntervalMs = 125;
 const encodeReplySnapshot = Schema.encodeSync(Schema.fromJsonString(ReplySnapshotSchema));
 
@@ -71,11 +78,17 @@ const replySnapshot = (row: ReplyRow): ReplySnapshot => ({
 });
 type ReplyRequestError = BadRequest | Conflict | Forbidden | NotFound | ServiceUnavailable;
 
-const ReplyStepControl = Schema.Struct({
-  cursor: Schema.Number,
-  outcome: Schema.Literals(["ready", "retryable", "tool_calls", "done", "failed", "stopped"]),
-  error: Schema.NullOr(Schema.String),
-});
+const ReplyEnd = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("done") }),
+  Schema.Struct({ outcome: Schema.Literal("stopped") }),
+  Schema.Struct({ outcome: Schema.Literal("failed"), failure: ReplyFailure }),
+]);
+type ReplyEnd = typeof ReplyEnd.Type;
+
+const ReplyStepControl = Schema.Union([
+  Schema.Struct({ cursor: Schema.Number, outcome: Schema.Literals(["ready", "tool_calls"]) }),
+  ...ReplyEnd.members.map((member) => Schema.Struct({ cursor: Schema.Number, ...member.fields })),
+]);
 type ReplyStepControl = typeof ReplyStepControl.Type;
 
 const ReplyAccumulator = Schema.Struct({
@@ -111,10 +124,8 @@ type ReplyCheckpoint = typeof ReplyCheckpoint.Type;
 const decodeReplyCheckpoint = Schema.decodeUnknownEffect(Schema.fromJsonString(ReplyCheckpoint));
 const encodeReplyCheckpoint = Schema.encodeSync(Schema.fromJsonString(ReplyCheckpoint));
 const checkpointPath = (replyId: Uuid) => `operations/replies/${replyId}.json`;
-const terminalControl = (
-  control: ReplyStepControl,
-): control is ReplyStepControl & { readonly outcome: "done" | "failed" | "stopped" } =>
-  control.outcome === "done" || control.outcome === "failed" || control.outcome === "stopped";
+const terminalControl = (control: ReplyStepControl): control is ReplyStepControl & ReplyEnd =>
+  control.outcome !== "ready" && control.outcome !== "tool_calls";
 const failureFields = (cause: Cause.Cause<unknown>) => {
   const reason = cause.reasons.find((reason) => !Cause.isInterruptReason(reason));
   const error =
@@ -137,41 +148,11 @@ class ReplyInvariantBroken extends Data.TaggedError("ReplyInvariantBroken")<{
 }> {}
 const invariantBroken = (replyId: Uuid, message: string) =>
   Effect.die(new ReplyInvariantBroken({ reply_id: replyId, message }));
-const readyControl = (cursor: number): ReplyStepControl => ({
-  cursor,
-  outcome: "ready",
-  error: null,
-});
-const failedControl = (cursor: number, error: string): ReplyStepControl => ({
-  cursor,
-  outcome: "failed",
-  error,
-});
-const doneControl = (cursor: number): ReplyStepControl => ({
-  cursor,
-  outcome: "done",
-  error: null,
-});
-const stoppedControl = (cursor: number): ReplyStepControl => ({
-  cursor,
-  outcome: "stopped",
-  error: null,
-});
-
-const queryRequest = (
-  input: CreateReplyRequest,
-  question: string,
-  mode: QueryRequest["mode"],
-): QueryRequest => ({
-  question,
-  mode,
-  ...(input.model === undefined ? {} : { model: input.model }),
-  ...(input.origin_path === undefined ? {} : { origin_path: input.origin_path }),
-  origin_scope: input.origin_scope,
-  ...(input.extra_instructions === undefined
-    ? {}
-    : { extra_instructions: input.extra_instructions }),
-});
+const readyControl = (cursor: number) => ({ cursor, outcome: "ready" }) as const;
+const failedControl = (cursor: number, failure: ReplyFailure) =>
+  ({ cursor, outcome: "failed", failure }) as const;
+const doneControl = (cursor: number) => ({ cursor, outcome: "done" }) as const;
+const stoppedControl = (cursor: number) => ({ cursor, outcome: "stopped" }) as const;
 
 const sourceRef = (
   data: QuerySourceData,
@@ -266,7 +247,6 @@ const dispatchReply = (
         .update(replies)
         .set({
           dispatchedAt: sql`coalesce(${replies.dispatchedAt}, now())`,
-          dispatchedTaskId: replyId,
           updatedAt: sql`now()`,
         })
         .where(
@@ -305,11 +285,7 @@ type RepliesServiceShape = {
   readonly prepareStep: (replyId: Uuid) => Effect.Effect<ReplyStepControl>;
   readonly modelStep: (replyId: Uuid, cursor: number) => Effect.Effect<ReplyStepControl>;
   readonly toolStep: (replyId: Uuid, cursor: number) => Effect.Effect<ReplyStepControl>;
-  readonly finalizeStep: (
-    replyId: Uuid,
-    outcome: "done" | "failed" | "stopped",
-    error: string | null,
-  ) => Effect.Effect<void>;
+  readonly finalizeStep: (replyId: Uuid, end: ReplyEnd) => Effect.Effect<void>;
   readonly reconcileOnce: () => Effect.Effect<number>;
 };
 
@@ -471,12 +447,7 @@ export const RepliesServiceLive = Layer.effect(
     const flushAccumulator = (replyId: Uuid, accumulator: ReplyAccumulator) =>
       updateSnapshot(replyId, accumulator.answer, accumulator.sources);
 
-    const freezeOutcome = (
-      row: ReplyRow,
-      checkpoint: ReplyCheckpoint | undefined,
-      outcome: "done" | "failed" | "stopped",
-      error: string | null,
-    ) =>
+    const freezeOutcome = (row: ReplyRow, checkpoint: ReplyCheckpoint | undefined, end: ReplyEnd) =>
       Effect.gen(function* () {
         const generation: GenerationMetadata | null =
           checkpoint === undefined
@@ -502,16 +473,10 @@ export const RepliesServiceLive = Layer.effect(
                 )
             : checkpoint.query.messages.slice(checkpoint.query.turnStart);
         let result: ReplySettlementResult;
-        if (row.stopRequested || outcome === "stopped") {
+        if (end.outcome === "stopped") {
           result = { status: "stopped", context_messages: messages, generation };
-        } else if (outcome === "failed") {
-          result = {
-            status: "failed",
-            code: error === ambiguousReplyError ? "external_outcome_unknown" : "generation_failed",
-            message: error ?? sanitizedReplyError,
-            context_messages: messages,
-            generation,
-          };
+        } else if (end.outcome === "failed") {
+          result = { status: "failed", ...end.failure, context_messages: messages, generation };
         } else {
           if (checkpoint === undefined || generation === null || messages === null) {
             return yield* invariantBroken(row.id, "finished without its generation result");
@@ -531,7 +496,7 @@ export const RepliesServiceLive = Layer.effect(
 
     const freezeStopped = (row: ReplyRow) =>
       Effect.gen(function* () {
-        yield* freezeOutcome(row, yield* recoverCheckpoint(row), "stopped", null);
+        yield* freezeOutcome(row, yield* recoverCheckpoint(row), { outcome: "stopped" });
         return stoppedControl(row.generationCursor);
       });
 
@@ -548,12 +513,12 @@ export const RepliesServiceLive = Layer.effect(
         const checkpoint = yield* recoverCheckpoint(row);
         const control = checkpoint?.lastControl;
         if (control !== undefined && terminalControl(control)) {
-          yield* freezeOutcome(row, checkpoint, control.outcome, control.error);
+          yield* freezeOutcome(row, checkpoint, control);
           return control;
         }
-        const error = row.activeGenerationStep === null ? sanitizedReplyError : ambiguousReplyError;
-        yield* freezeOutcome(row, checkpoint, "failed", error);
-        return failedControl(cursor, error);
+        const failed = failedControl(cursor, interruptedFailure(row));
+        yield* freezeOutcome(row, checkpoint, failed);
+        return failed;
       });
 
     const recoverCompletedStep = (
@@ -569,8 +534,6 @@ export const RepliesServiceLive = Layer.effect(
             .set({
               generationCursor: checkpoint.cursor,
               activeGenerationStep: null,
-              activeGenerationKind: null,
-              activeGenerationKey: null,
               updatedAt: sql`now()`,
             })
             .where(and(eq(replies.id, row.id), eq(replies.status, "running"))),
@@ -582,8 +545,6 @@ export const RepliesServiceLive = Layer.effect(
       row: ReplyRow,
       checkpoint: ReplyCheckpoint,
       expectedCursor: number,
-      kind: "model" | "tool",
-      key: string,
     ) =>
       Effect.gen(function* () {
         const recovered = yield* recoverCompletedStep(row, checkpoint, expectedCursor);
@@ -594,15 +555,12 @@ export const RepliesServiceLive = Layer.effect(
             `cursor mismatch: workflow=${expectedCursor}, database=${row.generationCursor}, checkpoint=${checkpoint.cursor}`,
           );
         }
-        if (row.activeGenerationStep !== null)
-          return failedControl(expectedCursor, ambiguousReplyError);
+        if (row.activeGenerationStep !== null) return failedControl(expectedCursor, outcomeUnknown);
         const claimed = yield* db.query((d) =>
           d
             .update(replies)
             .set({
               activeGenerationStep: expectedCursor,
-              activeGenerationKind: kind,
-              activeGenerationKey: key,
               updatedAt: sql`now()`,
             })
             .where(
@@ -635,8 +593,6 @@ export const RepliesServiceLive = Layer.effect(
             .set({
               generationCursor: checkpoint.cursor,
               activeGenerationStep: null,
-              activeGenerationKind: null,
-              activeGenerationKey: null,
               updatedAt: sql`now()`,
             })
             .where(and(eq(replies.id, row.id), eq(replies.status, "running"))),
@@ -645,9 +601,7 @@ export const RepliesServiceLive = Layer.effect(
 
     const freezeControl = (row: ReplyRow, checkpoint: ReplyCheckpoint, control: ReplyStepControl) =>
       Effect.gen(function* () {
-        if (terminalControl(control)) {
-          yield* freezeOutcome(row, checkpoint, control.outcome, control.error);
-        }
+        if (terminalControl(control)) yield* freezeOutcome(row, checkpoint, control);
         return control;
       });
 
@@ -690,12 +644,16 @@ export const RepliesServiceLive = Layer.effect(
         );
         const vault = vaultRows[0];
         if (vault === undefined) return yield* invariantBroken(row.id, "no vault");
-        const prechecked: QueryPrecheckedContext = { vaultLabel: vault.name };
         const queryState = yield* query.prepareExecution(
           row.userId,
           row.vaultId,
-          queryRequest(accepted.command, transcript.question, accepted.mode),
-          prechecked,
+          {
+            question: transcript.question,
+            mode: accepted.mode,
+            vaultLabel: vault.name,
+            originPath: accepted.command.origin_path,
+            originScope: accepted.command.origin_scope,
+          },
           transcript.prior,
         );
         const control = readyControl(row.generationCursor);
@@ -721,13 +679,7 @@ export const RepliesServiceLive = Layer.effect(
     const modelStep = (replyId: Uuid, expectedCursor: number) =>
       resumeStep(replyId, expectedCursor, (row, checkpoint) =>
         Effect.gen(function* () {
-          const claimed = yield* claimExternalStep(
-            row,
-            checkpoint,
-            expectedCursor,
-            "model",
-            `${checkpoint.query.modelIndex}:${checkpoint.query.trace.llmRounds + 1}`,
-          );
+          const claimed = yield* claimExternalStep(row, checkpoint, expectedCursor);
           if (claimed !== undefined) return yield* freezeControl(row, checkpoint, claimed);
           const accumulator = checkpoint.accumulator;
           let lastFlushAt = 0;
@@ -749,7 +701,7 @@ export const RepliesServiceLive = Layer.effect(
           );
           if (Option.isNone(attempt)) {
             yield* flushAccumulator(replyId, accumulator);
-            yield* freezeOutcome(row, checkpoint, "stopped", null);
+            yield* freezeOutcome(row, checkpoint, { outcome: "stopped" });
             return stoppedControl(expectedCursor);
           }
           const outcome = attempt.value;
@@ -766,12 +718,12 @@ export const RepliesServiceLive = Layer.effect(
                 );
             }
             pendingTools = outcome.toolCalls;
-            control = { cursor: expectedCursor + 1, outcome: "tool_calls", error: null };
+            control = { cursor: expectedCursor + 1, outcome: "tool_calls" };
           } else if (outcome.kind === "retryable") {
             accumulator.clearOnNextToken = true;
-            control = { cursor: expectedCursor + 1, outcome: "retryable", error: null };
+            control = readyControl(expectedCursor + 1);
           } else if (outcome.kind === "done") control = doneControl(expectedCursor + 1);
-          else control = failedControl(expectedCursor + 1, outcome.error);
+          else control = failedControl(expectedCursor + 1, generationFailed(outcome.error));
           yield* flushAccumulator(replyId, accumulator);
           const nextCheckpoint: ReplyCheckpoint = {
             version: 1,
@@ -782,8 +734,8 @@ export const RepliesServiceLive = Layer.effect(
             nextToolIndex: 0,
             lastControl: control,
           };
-          if (control.outcome === "done" || control.outcome === "failed") {
-            yield* freezeOutcome(row, nextCheckpoint, control.outcome, control.error);
+          if (terminalControl(control)) {
+            yield* freezeOutcome(row, nextCheckpoint, control);
             const saved = yield* writeCheckpoint(row, nextCheckpoint).pipe(
               Effect.as(true),
               Effect.catchCause((cause) =>
@@ -809,18 +761,12 @@ export const RepliesServiceLive = Layer.effect(
               replyId,
               `no pending tool at ${checkpoint.nextToolIndex}`,
             );
-          const claimed = yield* claimExternalStep(
-            row,
-            checkpoint,
-            expectedCursor,
-            "tool",
-            toolCall.id,
-          );
+          const claimed = yield* claimExternalStep(row, checkpoint, expectedCursor);
           if (claimed !== undefined) return yield* freezeControl(row, checkpoint, claimed);
           const accumulator = checkpoint.accumulator;
           const attempt = yield* untilStopped(replyId, query.runTool(checkpoint.query, toolCall));
           if (Option.isNone(attempt)) {
-            yield* freezeOutcome(row, checkpoint, "stopped", null);
+            yield* freezeOutcome(row, checkpoint, { outcome: "stopped" });
             return stoppedControl(expectedCursor);
           }
           const result = attempt.value;
@@ -839,7 +785,7 @@ export const RepliesServiceLive = Layer.effect(
           const remaining = checkpoint.pendingTools.length - nextToolIndex;
           const control: ReplyStepControl =
             remaining > 0
-              ? { cursor: expectedCursor + 1, outcome: "tool_calls", error: null }
+              ? { cursor: expectedCursor + 1, outcome: "tool_calls" }
               : readyControl(expectedCursor + 1);
           const nextCheckpoint: ReplyCheckpoint = {
             version: 1,
@@ -865,18 +811,18 @@ export const RepliesServiceLive = Layer.effect(
         .publish(replyId)
         .pipe(Effect.asVoid, Effect.catchCause(deferFailure("reply_settlement_deferred", replyId)));
 
-    const finalizeStep = (
-      replyId: Uuid,
-      outcome: "done" | "failed" | "stopped",
-      error: string | null,
-    ) =>
+    const finalizeStep = (replyId: Uuid, end: ReplyEnd) =>
       Effect.gen(function* () {
         const row = yield* readReplyById(replyId);
         if (row === undefined || row.status === "admitting") return;
         const checkpoint = yield* recoverCheckpoint(row);
-        if (row.status === "running") yield* freezeOutcome(row, checkpoint, outcome, error);
+        if (row.status === "running") yield* freezeOutcome(row, checkpoint, end);
         yield* publishBestEffort(replyId);
-        if (checkpoint !== undefined) yield* query.finalizeExecution(checkpoint.query);
+        if (checkpoint === undefined) return;
+        yield* query.finalizeExecution(checkpoint.query);
+        const settled = yield* readReplyById(replyId);
+        if (settled !== undefined && !isReplyPending(settled.status))
+          yield* storage.deletePath(vaultOwner(row.vaultId), checkpointPath(replyId));
       }).pipe(Effect.catchCause(deferFailure("reply_finalization_deferred", replyId)));
 
     const dispatchBestEffort = (replyId: Uuid) =>
@@ -912,16 +858,13 @@ export const RepliesServiceLive = Layer.effect(
           } else {
             const checkpoint = yield* recoverCheckpoint(row);
             const control = checkpoint?.lastControl;
-            if (control !== undefined && terminalControl(control)) {
-              yield* freezeOutcome(row, checkpoint, control.outcome, control.error);
-            } else {
-              yield* freezeOutcome(
-                row,
-                checkpoint,
-                "failed",
-                row.activeGenerationStep === null ? sanitizedReplyError : ambiguousReplyError,
-              );
-            }
+            yield* freezeOutcome(
+              row,
+              checkpoint,
+              control !== undefined && terminalControl(control)
+                ? control
+                : { outcome: "failed", failure: interruptedFailure(row) },
+            );
             yield* publishBestEffort(row.id);
           }
         }
@@ -1064,7 +1007,7 @@ export const ReplyWorkflowLive = ReplyWorkflow.toLayer((payload) =>
     yield* Activity.make({
       name: "reply-finalize",
       success: Schema.Void,
-      execute: service.finalizeStep(payload.replyId, control.outcome, control.error),
+      execute: service.finalizeStep(payload.replyId, control),
     });
   }),
 );
