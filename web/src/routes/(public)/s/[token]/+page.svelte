@@ -38,9 +38,11 @@
           sessionId: null,
           draft: false,
           anchor: {
-            blockOffset: annotation.anchor.block_offset ?? -1,
             quote: annotation.anchor.quote,
             context: annotation.anchor.context ?? "",
+            section: annotation.anchor.section,
+            occurrence: annotation.anchor.occurrence,
+            offset: annotation.anchor.block_offset,
           },
           exchanges: annotation.exchanges.map((exchange) => ({
             id: shareExchangeId,

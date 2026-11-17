@@ -558,7 +558,8 @@ describe("share links", () => {
                     origin_scope: "personal",
                     anchor: "Annotated first paragraph with enough words to extract.",
                     paragraph: "Annotated first paragraph with enough words to extract.",
-                    paragraph_index: 0,
+                    section: 0,
+                    occurrence: 1,
                   },
                   createdAt: new Date("2026-07-11T09:00:00.000Z"),
                   updatedAt: new Date("2026-07-11T09:05:00.000Z"),
@@ -609,7 +610,9 @@ describe("share links", () => {
             anchor: {
               quote: "Annotated first paragraph with enough words to extract.",
               context: "Annotated first paragraph with enough words to extract.",
-              block_offset: 0,
+              block_offset: null,
+              section: 0,
+              occurrence: 1,
             },
             exchanges: [
               {

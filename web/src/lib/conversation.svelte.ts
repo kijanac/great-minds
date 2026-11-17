@@ -67,9 +67,11 @@ export class Conversation implements ThreadLike {
     this.createdAt = detail?.session.created_at ?? null;
     this.unavailable = detail?.availability === "unavailable" ? detail.detail : null;
     this.anchor = {
-      blockOffset: this.origin?.paragraph_index ?? -1,
       quote: this.origin?.anchor ?? "",
       context: this.origin?.paragraph ?? "",
+      section: this.origin?.section ?? null,
+      occurrence: this.origin?.occurrence ?? null,
+      offset: this.origin?.paragraph_index ?? null,
     };
     this.#onCreated = options.onCreated;
     const content = saved ?? (detail?.availability === "available" ? detail : null);
@@ -348,8 +350,9 @@ export class Conversation implements ThreadLike {
           session_id: this.sessionId,
           exchange_id: info.exchangeId,
           anchor: info.quote,
-          paragraph_index: info.blockOffset,
           paragraph: info.context,
+          section: info.section,
+          occurrence: info.occurrence ?? 1,
         },
       }),
     );

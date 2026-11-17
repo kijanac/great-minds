@@ -31,7 +31,8 @@ const btwCommand = () =>
         origin_scope: "vault",
         anchor: "Passage",
         paragraph: "Passage in context",
-        paragraph_index: 0,
+        section: null,
+        occurrence: 2,
       },
     },
   });
