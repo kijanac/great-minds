@@ -5,13 +5,13 @@
 | Fact | Authority |
 | --- | --- |
 | Accepted questions, attempts, saved answers, sources, follow-up context, origin/cutoff | Versioned JSONL in `vaults/<vault_id>/sessions/<session_id>.jsonl` |
-| Access, placement, future reply mode, operation status/progress, acknowledged history receipt | PostgreSQL |
+| Access, operation status/progress, acknowledged history receipt | PostgreSQL |
 | Unfinished generation | Effect workflow journal and `vaults/<vault_id>/operations/replies/<reply_id>.json` |
 | Markdown and PDF | Derived publications, never a second transcript authority |
 
 The runtime accepts only native version-1 history. Parsing requires valid UTF-8, complete newline-terminated records, valid identities and ancestry, and consecutive sequence numbers. Corrupt files are rejected rather than salvaged as apparently complete conversations. A session's sequence/SHA-256 receipt verifies the acknowledged byte prefix; missing or shortened acknowledged history is an error, not permission to recreate it.
 
-Admission reserves the exact command, reply identity, context and effective mode before writing history. It confirms the history receipt before making generation runnable. Only one admitting/running/settling reply may exist per conversation. Repeating the same accepted command retains its identity; incompatible reuse conflicts. Continue changes placement and the default for future replies, not accepted requests or recorded provenance.
+Admission reserves the exact command, reply identity, context and effective mode before writing history. It confirms the history receipt before making generation runnable. Only one admitting/running/settling reply may exist per conversation. Repeating the same accepted command retains its identity; incompatible reuse conflicts.
 
 Settlement freezes one exact result in the reply row, conditionally publishes it to history, then commits the terminal projection and receipt. Reconciliation finishes unfinished admission/publication without depending on workflow liveness. A result already recorded in history takes precedence over stale progress or a later Stop; generation checks for one when it starts and at each reconciliation, not before every step. Storage I/O never occurs inside these DB transactions; shared transitions lock the session before its reply.
 
@@ -25,7 +25,7 @@ Saved context uses the recorded parent/cutoff, not whichever answer is latest no
 
 ## Publication
 
-The authenticated export reads the complete saved root and its direct attached notes, including closed and continued notes. Saved stopped/failed prose is included without execution badges. Active or unreadable required content blocks publication. Unsent drafts, system/model/tool messages, inherited follow-up context, recursive relatives and linked-document bodies are excluded.
+The authenticated export reads the complete saved root and its direct attached notes, including closed notes. Saved stopped/failed prose is included without execution badges. Active or unreadable required content blocks publication. Unsent drafts, system/model/tool messages, inherited follow-up context, recursive relatives and linked-document bodies are excluded.
 
 One normalized Markdown tree produces paired Markdown and PDF. PDF preview and download use the same bytes. If PDF preparation fails, the user may independently prepare complete Markdown with fresh authorization and the same selection policy; it is a new observation, not a partial remainder of the failed preparation. The conversation stays mounted, and account/vault/session changes or closure cancel requests and revoke Blob URLs.
 
@@ -49,13 +49,13 @@ gm export "$session" --format markdown --output conversation.md
 gm export "$session" --messages "$messages" --output selected.pdf
 ```
 
-`--messages` takes the JSON array described above. Get exchange IDs from `exId` in `gm session --json`, including the appropriate attached-note session ID. The default is PDF on A4. `--output` is required; files are created with owner-only permissions and existing files are never overwritten. Markdown is written as UTF-8, PDF as decoded bytes. `--json` prints a `{ path, format }` receipt instead of a human confirmation. API failures leave no output file, and Markdown never invokes the PDF renderer. `gm session "$session"` remains the whole-conversation Markdown-to-stdout command.
+`--messages` takes the JSON array described above. Get exchange IDs from `exchange_id` in `gm session --json`, including the appropriate attached-note session ID. The default is PDF on A4. `--output` is required; files are created with owner-only permissions and existing files are never overwritten. Markdown is written as UTF-8, PDF as decoded bytes. `--json` prints a `{ path, format }` receipt instead of a human confirmation. API failures leave no output file, and Markdown never invokes the PDF renderer. `gm session "$session"` remains the whole-conversation Markdown-to-stdout command.
 
 MCP exposes one `read_session` tool at `/v1/mcp`, taking `vault_id`, `session_id` and an optional `format`. Its result is `{ data: ... }`, containing the following representation:
 
 | Format | Options | Result |
 | --- | --- | --- |
-| `json` (default) | None | The API's structured `SessionResponse`, with root events and attached-note identities |
+| `json` (default) | None | The API's structured `SessionResponse`, with the root's exchanges and its attached notes |
 | `markdown` | Optional `messages` | `{ markdown }`, without PDF rendering |
 | `pdf` | Optional `messages`; `paper` defaults to `a4` | The API's `SessionExport`: title, preparation time, paper, Markdown and base64 PDF |
 

@@ -8,23 +8,31 @@ import { activeVault } from "./use-vault.svelte";
 
 const uuid = (value: number) =>
   Uuid.make(`00000000-0000-4000-8000-${String(value).padStart(12, "0")}`);
-const root = SessionId.make("root");
+const root = SessionId.make("00000000-0000-4000-8000-000000000900");
 const literal = "# A complete conversation\n\n💡 धर्म\n\nAttached note";
 const savedSession = {
-  id: root,
-  kind: "session",
+  availability: "available",
+  session: {
+    id: root,
+    query: "Question 1",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    user_id: uuid(100),
+    origin: null,
+    origin_title: null,
+  },
   activity: null,
-  origin_title: null,
   threads: [],
-  events: [1, 2, 3].map((index) => ({
-    type: "exchange",
-    exId: uuid(index),
+  exchanges: [1, 2, 3].map((index) => ({
+    exchange_id: uuid(index),
     reply_id: uuid(index + 10),
     version: 1,
     status: "completed",
     error: null,
     query: `Question ${index}`,
     answer: `Answer ${index}`,
+    sources: [],
+    citations: [],
     ts: "2026-01-01T00:00:00Z",
   })),
 };
@@ -211,7 +219,7 @@ describe("mounted publication ownership", () => {
     expect(target.textContent).toContain("Preparing PDF…");
     expect(checkboxes().every((input) => input.disabled)).toBe(true);
     expect(target.querySelector("ol")?.closest("[hidden]")).toBeNull();
-    component.navigate(SessionId.make("another"));
+    component.navigate(SessionId.make("00000000-0000-4000-8000-000000000901"));
     flushSync();
     await vi.waitFor(() => expect(waiting[0]!.request.signal.aborted).toBe(true));
     waiting[0]!.resolve(pdf());

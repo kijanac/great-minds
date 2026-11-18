@@ -10,7 +10,8 @@ import {
   NotFound,
   type RawSource,
   type ReferencePromote,
-  type SessionExchangeEvent,
+  type SessionExchange,
+  type SessionId,
   type SessionOrigin,
   type UserSuggestion,
   type UserSuggestionResult,
@@ -64,8 +65,8 @@ type IngestServiceShape = {
   ) => Effect.Effect<IngestedDocument, BadRequest | Conflict>;
   readonly ingestSessionExchange: (
     source: SourceAdmission,
-    sessionId: string,
-    exchange: SessionExchangeEvent,
+    sessionId: SessionId,
+    exchange: SessionExchange,
     sessionOrigin: SessionOrigin | null,
   ) => Effect.Effect<IngestedDocument, Conflict>;
 };

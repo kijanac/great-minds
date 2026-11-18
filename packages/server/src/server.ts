@@ -673,11 +673,6 @@ const DocumentsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "docume
 
 const SessionsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "sessions", (handlers) =>
   handlers
-    .handle("continueAsSession", ({ params }) =>
-      asUser(SessionsService, (sessions, userId) =>
-        sessions.continueAsSession(userId, params.vault_id, params.session_id),
-      ),
-    )
     .handle("promoteSessionExchange", ({ params }) =>
       asUser(SessionsService, (sessions, userId) =>
         sessions.promoteExchange(userId, params.vault_id, params.session_id, params.exchange_id),

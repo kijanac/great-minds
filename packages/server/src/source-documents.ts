@@ -74,6 +74,10 @@ type SourceDocumentsServiceShape = {
     vaultId: Uuid,
     filePath: string,
   ) => Effect.Effect<SourceDocumentRow | undefined>;
+  readonly titlesByPath: (
+    vaultId: Uuid,
+    filePaths: readonly string[],
+  ) => Effect.Effect<ReadonlyMap<string, string | null>>;
   readonly deleteSource: (
     vaultId: Uuid,
     sourceId: Uuid,
@@ -925,6 +929,32 @@ const makeSourceDocuments = Effect.gen(function* () {
           .map((hash) => hash as FileFingerprint);
       }),
     getById,
+    titlesByPath: (vaultId, filePaths) =>
+      filePaths.length === 0
+        ? Effect.succeed(new Map())
+        : db
+            .query((tx) =>
+              tx
+                .select({ path: sourceDocuments.filePath, title: sourceDocuments.title })
+                .from(sourceDocuments)
+                .where(
+                  and(
+                    eq(sourceDocuments.vaultId, vaultId),
+                    inArray(
+                      sourceDocuments.filePath,
+                      filePaths.map((path) => posix.normalize(path)),
+                    ),
+                  ),
+                ),
+            )
+            .pipe(
+              Effect.map((rows) => {
+                const titles = new Map(rows.map((row) => [row.path, row.title]));
+                return new Map(
+                  filePaths.map((path) => [path, titles.get(posix.normalize(path)) ?? null]),
+                );
+              }),
+            ),
     getByPath: (vaultId, filePath) =>
       db
         .query((tx) =>

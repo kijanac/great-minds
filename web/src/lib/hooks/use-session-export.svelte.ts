@@ -102,24 +102,22 @@ export class SessionExport {
     this.runTask(
       Effect.gen({ self: this }, function* () {
         const session = yield* readSession(vaultId, id);
-        const sections = [{ id: session.id, events: session.events, note: false }];
+        const sections = [{ id: session.session.id, exchanges: session.exchanges, note: false }];
         for (const thread of session.threads) {
           if (thread.availability === "unavailable")
             return yield* new ServiceUnavailable({
               detail: "An attached note could not be loaded. Try again before choosing messages.",
             });
-          sections.push({ id: thread.session.id, events: thread.events, note: true });
+          sections.push({ id: thread.session.id, exchanges: thread.exchanges, note: true });
         }
         this.messages = sections.flatMap((section) =>
-          section.events.flatMap((event) =>
-            event.type !== "exchange"
-              ? []
-              : (["user", "assistant"] as const).map((role) => ({
-                  message: { session_id: section.id, exchange_id: event.exId, role },
-                  text: role === "user" ? event.query : event.answer,
-                  note: section.note,
-                  selected: true,
-                })),
+          section.exchanges.flatMap((exchange) =>
+            (["user", "assistant"] as const).map((role) => ({
+              message: { session_id: section.id, exchange_id: exchange.exchange_id, role },
+              text: role === "user" ? exchange.query : exchange.answer,
+              note: section.note,
+              selected: true,
+            })),
           ),
         );
         this.pending = false;

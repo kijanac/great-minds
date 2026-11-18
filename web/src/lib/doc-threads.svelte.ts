@@ -33,7 +33,7 @@ export class DocThreads {
       const details = await listSessionsByOrigin(this.originPath, this.#controller.signal);
       if (this.#controller.signal.aborted) return;
       this.threads = details.flatMap((detail) =>
-        detail.session.origin?.kind === "document" ? [new Conversation({ detail })] : [],
+        detail.session.origin?.kind === "document" ? [new Conversation({ saved: detail })] : [],
       );
       this.refreshJumpable();
     } catch (error) {

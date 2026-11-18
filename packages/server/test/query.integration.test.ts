@@ -727,9 +727,7 @@ describe("query stream", () => {
       expect(nodes.at(-1)).toMatchObject({ outcome: { status: "stopped" }, answer });
       const reloaded = await getWithToken(`/vaults/${id.vault}/sessions/${ids.session_id}`);
       expect(await reloaded.json()).toMatchObject({
-        events: expect.arrayContaining([
-          expect.objectContaining({ type: "exchange", answer, status: "stopped" }),
-        ]),
+        exchanges: expect.arrayContaining([expect.objectContaining({ answer, status: "stopped" })]),
       });
       const followUp = await runReply({
         question: "Continue from there",
@@ -1037,7 +1035,7 @@ describe("query stream", () => {
     expect(language.streamCalls).toHaveLength(0);
   });
 
-  it("keeps an accepted BTW's frozen mode after continuation and lets each question ask inline", async () => {
+  it("freezes an accepted inline question's mode and lets each later question choose", async () => {
     const language = makeScriptedLanguageModel({
       streams: [
         { kind: "parts", parts: [tokenPart("Brief answer."), finishPart("stop")] },
@@ -1050,10 +1048,10 @@ describe("query stream", () => {
       reply_id: crypto.randomUUID(),
       exchange_id: crypto.randomUUID(),
       question: "Why this passage?",
+      inline: true,
       session: {
         kind: "new",
-        conversation_kind: "btw",
-        idempotency_key: "continue-before-prepare",
+        idempotency_key: "inline-before-prepare",
         origin: {
           kind: "document",
           doc_path: "wiki/alpha.md",
@@ -1069,10 +1067,6 @@ describe("query stream", () => {
       Effect.flatMap(ReplyAdmission, (service) => service.accept(id.alice, id.vault, input)),
     );
     expect(language.streamCalls).toHaveLength(0);
-    expect(
-      (await api(`/vaults/${id.vault}/sessions/${accepted.session_id}/continue`, {})).response
-        .status,
-    ).toBe(200);
     expect((await api(repliesPath, input)).response.status).toBe(202);
     expect(replySnapshots((await tailReply(accepted.reply_id)).text).at(-1)?.status).toBe(
       "completed",
@@ -1362,7 +1356,6 @@ describe("query stream", () => {
         session: {
           kind: "new",
           idempotency_key: "bad-exchange",
-          conversation_kind: "btw",
           origin: {
             kind: "answer",
             session_id: "schema-only",
@@ -1378,7 +1371,6 @@ describe("query stream", () => {
         session: {
           kind: "new",
           idempotency_key: "incomplete-anchor",
-          conversation_kind: "btw",
           origin: { kind: "answer", anchor: "incomplete anchor" },
         },
       },
@@ -1652,7 +1644,7 @@ describe("query stream", () => {
     ]);
   });
 
-  it("retries the original document question without later context, using the current future mode", async () => {
+  it("retries the original document question without later context", async () => {
     const language = makeScriptedLanguageModel({
       streams: [
         {
@@ -1672,7 +1664,6 @@ describe("query stream", () => {
         session: {
           kind: "new",
           idempotency_key: "retry-session",
-          conversation_kind: "btw",
           origin: {
             kind: "document",
             doc_path: "raw/texts/source.md",
@@ -1690,9 +1681,6 @@ describe("query stream", () => {
       question: "A later question",
       session: { kind: "existing", id: first.session_id },
     });
-    expect(
-      (await api(`/vaults/${id.vault}/sessions/${first.session_id}/continue`, {})).response.status,
-    ).toBe(200);
     const retryId = crypto.randomUUID();
     const mcp = await openMcp(currentState().started.url, currentState().token);
     const retried = await mcp.call("retry_reply", {
@@ -1906,7 +1894,7 @@ describe("query stream", () => {
     expect(costs.lookups).toEqual([]);
   });
 
-  it("keeps branch context fixed, projects its saved notes, and changes only future mode on Continue", async () => {
+  it("keeps branch context fixed, projects its saved notes, and answers each question in the mode it asked for", async () => {
     const language = makeScriptedLanguageModel({
       streams: [
         { kind: "parts", parts: [tokenPart("Parent answer."), finishPart("stop")] },
@@ -1931,9 +1919,9 @@ describe("query stream", () => {
       {
         exchange_id: EX_BRANCH_BTW_1,
         question: "First BTW",
+        inline: true,
         session: {
           kind: "new",
-          conversation_kind: "btw",
           idempotency_key: "branch",
           origin: {
             kind: "answer",
@@ -1968,6 +1956,7 @@ describe("query stream", () => {
     const second = await finishReply({
       exchange_id: EX_BRANCH_BTW_2,
       question: "Second BTW",
+      inline: true,
       session: { kind: "existing", id: child.session_id },
     });
     expect(child.reply_id).not.toBe(second.reply_id);
@@ -1998,9 +1987,11 @@ describe("query stream", () => {
     const saved = Schema.decodeUnknownSync(SessionResponse)(
       await (await getWithToken(path)).json(),
     );
-    expect(
-      saved.events.filter((event) => event.type === "exchange").map((event) => event.answer),
-    ).toEqual(["Parent answer.", "Before answer.", "Main answer."]);
+    expect(saved.exchanges.map((exchange) => exchange.answer)).toEqual([
+      "Parent answer.",
+      "Before answer.",
+      "Main answer.",
+    ]);
     expect(saved.threads).toHaveLength(1);
     const note = saved.threads[0];
     expect(note.session).toMatchObject({
@@ -2008,9 +1999,9 @@ describe("query stream", () => {
       origin: { exchange_id: EX_BRANCH_PARENT },
     });
     assert(note.availability === "available");
-    expect(note.events.filter((event) => event.type === "exchange")).toMatchObject([
-      { exId: EX_BRANCH_BTW_1, reply_id: child.reply_id, answer: "First BTW answer." },
-      { exId: EX_BRANCH_BTW_2, reply_id: second.reply_id, answer: "Second BTW answer." },
+    expect(note.exchanges).toMatchObject([
+      { exchange_id: EX_BRANCH_BTW_1, reply_id: child.reply_id, answer: "First BTW answer." },
+      { exchange_id: EX_BRANCH_BTW_2, reply_id: second.reply_id, answer: "Second BTW answer." },
     ]);
     const markdown = await (await getWithToken(`${path}/markdown`)).text();
     for (const text of [
@@ -2021,11 +2012,6 @@ describe("query stream", () => {
       "Second BTW answer.",
     ])
       expect(markdown).toContain(text);
-    const before = await readSessionEvents(child.session_id);
-    expect(
-      (await api(`/vaults/${id.vault}/sessions/${child.session_id}/continue`, {})).response.status,
-    ).toBe(200);
-    expect(await readSessionEvents(child.session_id)).toEqual(before);
     await finishReply({
       question: "Continue the thought",
       session: { kind: "existing", id: child.session_id },
@@ -2068,9 +2054,7 @@ describe("query stream", () => {
       await (await getWithToken(`/vaults/${id.vault}/sessions/${root.session_id}`)).json(),
     );
     expect(
-      saved.events
-        .filter((event) => event.type === "exchange")
-        .map((event) => [event.query, event.answer, event.status]),
+      saved.exchanges.map((exchange) => [exchange.query, exchange.answer, exchange.status]),
     ).toEqual([
       ["First question", "A.", "completed"],
       ["Second question", "", "failed"],

@@ -2,9 +2,9 @@ import {
   CreateReplyRequest,
   SessionId,
   Uuid,
-  type OriginSessionDetail,
+  type SessionDetail,
+  type SessionExchange,
   type SessionOrigin,
-  type SessionExchangeEvent,
   type SessionResponse,
 } from "@great-minds/domain";
 import { Schema } from "effect";
@@ -58,17 +58,16 @@ const origins: SessionOrigin[] = [
     ...passage,
   },
 ];
-type Available = Extract<OriginSessionDetail, { availability: "available" }>;
+type Available = Extract<SessionDetail, { availability: "available" }>;
 const saved = (
   origin: SessionOrigin,
-  status: SessionExchangeEvent["status"] = "running",
+  status: SessionExchange["status"] = "running",
   answer = "",
 ): Available => ({
   availability: "available",
   activity: status === "running" ? { reply_id: replyId, status } : null,
   session: {
     id: sessionId,
-    kind: "btw",
     query: "Canonical question",
     created_at: now,
     updated_at: now,
@@ -76,16 +75,15 @@ const saved = (
     origin,
     origin_title: null,
   },
-  events: [
+  exchanges: [
     {
-      type: "exchange",
-      exId: exchangeId,
+      exchange_id: exchangeId,
       reply_id: replyId,
       version: status === "running" ? 0 : null,
       query: "Replayed question",
       status,
       error: status === "failed" ? "Saved failure" : null,
-      thinking: [],
+      sources: [],
       answer,
       citations: [],
       ts: now,
@@ -95,15 +93,7 @@ const saved = (
 const sessionData = (
   detail: Available,
   overrides: Partial<SessionResponse> = {},
-): SessionResponse => ({
-  id: detail.session.id,
-  kind: "session",
-  origin_title: null,
-  threads: [],
-  activity: detail.activity,
-  events: detail.events,
-  ...overrides,
-});
+): SessionResponse => ({ ...detail, threads: [], ...overrides });
 let nextVersion = 0;
 const snapshot = (
   answer: string,
@@ -159,7 +149,7 @@ it.each(origins)(
     const first = vi.mocked(createReply).mock.calls[0][0];
     expect(first).toMatchObject({
       inline: true,
-      session: { kind: "new", conversation_kind: "btw", origin },
+      session: { kind: "new", origin },
     });
     expect(first.origin_scope).toBe(origin.kind === "document" ? origin.origin_scope : "vault");
     expect(await btw.ask("First question", true)).toBe(true);
@@ -183,7 +173,7 @@ it("reconnects observation before allowing a confirmed failure to create a new g
     yield snapshot("Partial answer", "running");
     throw new Error("connection lost");
   });
-  const btw = make({ detail: saved(origins[0]) });
+  const btw = make({ saved: saved(origins[0]) });
   await vi.waitFor(() => expect(btw.connectionError).toBeTruthy());
   expect(await btw.ask("Do not replace")).toBe(false);
   btw.retry(exchangeId);
@@ -224,8 +214,8 @@ it("aborts only the disposed conversation and leaves another streaming", async (
     await finish.promise;
     yield snapshot("Finished");
   });
-  const first = make({ detail: saved(origins[0]) });
-  const second = make({ detail: saved(origins[2]) });
+  const first = make({ saved: saved(origins[0]) });
+  const second = make({ saved: saved(origins[2]) });
   await vi.waitFor(() => expect(streamReply).toHaveBeenCalledTimes(2));
   first.destroy();
   expect(vi.mocked(streamReply).mock.calls[0][1]?.aborted).toBe(true);
@@ -236,29 +226,19 @@ it("aborts only the disposed conversation and leaves another streaming", async (
 
 it("hydrates saved origin and attached BTW without resubmitting either conversation", async () => {
   const detail = saved(origins[2]);
-  const childId = SessionId.make("saved-child");
+  const childId = SessionId.make("00000000-0000-4000-8000-000000000009");
   vi.mocked(streamReply).mockImplementationOnce(async function* (id) {
     yield {
       ...snapshot("Completed answer", "completed", id),
       session_id: childId,
     };
   });
+  const parent = saved(origins[0], "completed", "Parent answer");
   const session = make({
-    saved: sessionData(saved(origins[0], "completed", "Parent answer"), {
-      origin_title: "Original document",
-      threads: [{ ...detail, session: { ...detail.session, id: childId } }],
-      events: [
-        {
-          type: "meta",
-          id: sessionId,
-          query: "Parent question",
-          ts: now,
-          user_id: exchangeId,
-          origin: origins[0],
-        },
-        ...saved(origins[0], "completed", "Parent answer").events,
-      ],
-    }),
+    saved: sessionData(
+      { ...parent, session: { ...parent.session, origin_title: "Original document" } },
+      { threads: [{ ...detail, session: { ...detail.session, id: childId } }] },
+    ),
     initialQuery: "Do not resubmit",
     origin: origins[1],
   });
@@ -299,7 +279,7 @@ it.each([undefined, "wiki/test.md"])(
     expect(first).not.toHaveProperty("mode");
     expect(first).toMatchObject({
       inline: false,
-      session: { kind: "new", conversation_kind: "session" },
+      session: { kind: "new" },
     });
     if (originPath === undefined) expect(first).not.toHaveProperty("origin_path");
     else expect(first).toMatchObject({ origin_path: originPath, session: { origin } });
@@ -365,7 +345,7 @@ it.each([
   ["failed", "Private partial answer"],
 ] as const)("hydrates %s with %j without regenerating", async (status, answer) => {
   const detail = saved(origins[0], status, answer);
-  const views = [make({ detail }), make({ saved: sessionData(detail) })];
+  const views = [make({ saved: detail }), make({ saved: sessionData(detail) })];
   await new Promise((resolve) => setTimeout(resolve, 0));
   for (const view of views) {
     expect(view.exchanges[0]).toMatchObject({
@@ -390,12 +370,10 @@ it("keeps a reply finalizing and preserves recorded content until terminal confi
     yield snapshot("Stale terminal cache", "completed", id, 7);
   });
   const view = make({
-    detail: {
+    saved: {
       ...detail,
       activity: { reply_id: replyId, status: "settling" },
-      events: detail.events.map((event) =>
-        event.type === "exchange" ? { ...event, version: 5 } : event,
-      ),
+      exchanges: detail.exchanges.map((exchange) => ({ ...exchange, version: 5 })),
     },
   });
   await observed.promise;
@@ -416,8 +394,7 @@ it("keeps a reply finalizing and preserves recorded content until terminal confi
 
 it("rejects stale/wrong-identity snapshots and reconnects the earlier active turn without generating", async () => {
   const detail = saved(origins[0], "running", "Hydrated partial");
-  const event = detail.events[0];
-  if (event.type !== "exchange") throw new Error("Expected exchange");
+  const event = detail.exchanges[0];
   vi.mocked(streamReply).mockImplementationOnce(async function* (id) {
     yield snapshot("Older partial", "running", id, 4);
     yield snapshot("Wrong attempt", "running", nextReplyId, 999);
@@ -427,13 +404,13 @@ it("rejects stale/wrong-identity snapshots and reconnects the earlier active tur
     yield snapshot("Completed answer", "completed", id, 6);
   });
   const view = make({
-    detail: {
+    saved: {
       ...detail,
-      events: [
+      exchanges: [
         { ...event, version: 5 },
         {
           ...event,
-          exId: Uuid.make("00000000-0000-4000-8000-000000000005"),
+          exchange_id: Uuid.make("00000000-0000-4000-8000-000000000005"),
           reply_id: nextReplyId,
           status: "completed",
           answer: "Later exchange",
@@ -519,7 +496,7 @@ describe("retry acknowledgment", () => {
           error: outcome === "failed" ? "Saved failure" : null,
         };
       });
-      const view = make({ detail: saved(origins[0], "failed", "Original partial") });
+      const view = make({ saved: saved(origins[0], "failed", "Original partial") });
       const retry = () => view.retry(exchangeId);
       retry();
       await vi.waitFor(() => expect(view.exchanges[0].status).toBe("failed"));
@@ -552,7 +529,7 @@ describe("retry acknowledgment", () => {
 it("keeps an unavailable saved note noneditable, nondismissible and distinct from an empty draft", async () => {
   const parent = saved(origins[0], "completed", "Parent answer");
   const child = saved(origins[2], "completed");
-  const childId = SessionId.make("saved-child");
+  const childId = SessionId.make("00000000-0000-4000-8000-000000000009");
   const view = make({
     saved: sessionData(parent, {
       threads: [

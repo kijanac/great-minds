@@ -5,8 +5,10 @@ import { HistoryTimestamp, type HistoryWrite } from "../../src/conversation-hist
 import type { ReplySettlementResult } from "../../src/conversation-history/settlement.ts";
 import { promptContentHash } from "../../src/crypto.ts";
 
-export const sessionId = Schema.decodeUnknownSync(SessionId)("history-session");
-export const parentId = Schema.decodeUnknownSync(SessionId)("parent-session");
+export const sessionId = Schema.decodeUnknownSync(SessionId)(
+  "00000000-0000-4000-8000-00000000a001",
+);
+export const parentId = Schema.decodeUnknownSync(SessionId)("00000000-0000-4000-8000-00000000a002");
 export const uuid = (suffix: number) =>
   Schema.decodeUnknownSync(Uuid)(`00000000-0000-4000-8000-${String(suffix).padStart(12, "0")}`);
 export const vaultId = uuid(1);

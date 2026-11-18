@@ -36,7 +36,6 @@ import {
   readLinks,
   readDocument,
   readSession,
-  continueSession,
   promoteAnswer,
   stopReply,
   retryReply,
@@ -382,15 +381,6 @@ const gm = Command.make("gm").pipe(
     ),
     Command.make("session", { session: sessionArgument, ...vaultFlags }, readSession).pipe(
       Command.withDescription("Print a session as markdown"),
-    ),
-    Command.make(
-      "continue-session",
-      { session: sessionArgument, ...vaultFlags },
-      continueSession,
-    ).pipe(
-      Command.withDescription(
-        "Make a saved side note standalone for future replies; keeps its history",
-      ),
     ),
     Command.make(
       "promote-answer",

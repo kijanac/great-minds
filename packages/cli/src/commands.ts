@@ -364,7 +364,7 @@ export const ask = (
           originScope: "vault",
           conversation: Option.isSome(input.session)
             ? { kind: "existing", id: input.session.value }
-            : { kind: "new", conversationKind: "session", idempotencyKey: newUuid() },
+            : { kind: "new", idempotencyKey: newUuid() },
         }),
       }),
     );
@@ -398,19 +398,6 @@ export const retryReply = (
       }),
     );
     yield* followAnswer(connection, vaultId, created, input.json);
-  });
-
-export const continueSession = (input: ReadOptions & { readonly session: SessionId }) =>
-  Effect.gen(function* () {
-    const { connection, vaultId } = yield* vaultConnection(input.vault);
-    yield* connection.use(
-      connection.api.sessions.continueAsSession({
-        params: { vault_id: vaultId, session_id: input.session },
-      }),
-    );
-    yield* input.json
-      ? printJson({ session_id: input.session })
-      : Console.log(`Continue with: gm ask --vault ${vaultId} --session ${input.session} "…"`);
   });
 
 export const promoteAnswer = (

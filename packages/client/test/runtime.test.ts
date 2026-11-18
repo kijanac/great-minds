@@ -133,7 +133,10 @@ describe("makeApi", () => {
     });
     const owner = fork(
       api.sessions.prepareSessionExport({
-        params: { vault_id: vaultId, session_id: SessionId.make("saved") },
+        params: {
+          vault_id: vaultId,
+          session_id: SessionId.make("00000000-0000-4000-8000-00000000c003"),
+        },
         payload: { paper: "a4" },
       }),
     );

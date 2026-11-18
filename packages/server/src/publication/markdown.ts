@@ -3,8 +3,8 @@ import {
   ServiceUnavailable,
   type SessionContent,
   type SessionExportSelection,
-  type SessionId,
   type SessionOrigin,
+  type SessionOverview,
   type SessionResponse,
   type Uuid,
 } from "@great-minds/domain";
@@ -191,38 +191,35 @@ export const prepareSessionPublication = (
         JSON.stringify([message.session_id, message.exchange_id, message.role]),
       ),
     );
-    const section = (id: SessionId, content: SessionContent) =>
+    const section = (session: SessionOverview, content: SessionContent) =>
       Effect.gen(function* () {
         if (
           content.activity !== null ||
-          content.events.some((event) => event.type === "exchange" && event.status === "running")
+          content.exchanges.some((exchange) => exchange.status === "running")
         )
           return yield* new Conflict({
             detail:
               "Wait for the conversation and attached notes to finish saving before exporting.",
           });
         return {
-          origin: all
-            ? (content.events.find((event) => event.type === "meta")?.origin ?? null)
-            : null,
-          exchanges: content.events.flatMap((event) => {
-            if (event.type !== "exchange") return [];
+          origin: all ? session.origin : null,
+          exchanges: content.exchanges.flatMap((exchange) => {
             const include = (role: "user" | "assistant") =>
-              all || remaining.delete(JSON.stringify([id, event.exId, role]));
-            const query = include("user") ? event.query : null;
-            const answer = include("assistant") ? event.answer : null;
+              all || remaining.delete(JSON.stringify([session.id, exchange.exchange_id, role]));
+            const query = include("user") ? exchange.query : null;
+            const answer = include("assistant") ? exchange.answer : null;
             return query === null && answer === null ? [] : [{ query, answer }];
           }),
         };
       });
-    const sections = [yield* section(session.id, session)];
+    const sections = [yield* section(session.session, session)];
     for (const thread of session.threads) {
       if (thread.availability === "unavailable")
         return yield* new ServiceUnavailable({
           detail:
             "An attached note could not be loaded. Reload the conversation and try exporting again.",
         });
-      sections.push(yield* section(thread.session.id, thread));
+      sections.push(yield* section(thread.session, thread));
     }
     if (remaining.size > 0)
       return yield* new Conflict({

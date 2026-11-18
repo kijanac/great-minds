@@ -5,7 +5,7 @@ import {
   type CreateReplyResponse,
   type SessionId,
   SessionOrigin,
-  ThinkingBlock,
+  ThinkingSource,
   Uuid,
 } from "@great-minds/domain";
 import { Effect, Layer, ManagedRuntime, Schema } from "effect";
@@ -23,12 +23,12 @@ import { seedConversationReply } from "./lib/seed-conversation.ts";
 const SeedExchange = Schema.Struct({
   id: Uuid,
   query: Schema.String,
-  thinking: Schema.Array(ThinkingBlock).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
+  sources: Schema.Array(ThinkingSource).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
   answer: Schema.String,
 });
 const SeedBtwTurn = Schema.Struct({
   query: Schema.String,
-  thinking: Schema.Array(ThinkingBlock).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
+  sources: Schema.Array(ThinkingSource).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
   answer: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
 });
 const SeedBtw = Schema.Struct({
@@ -91,17 +91,14 @@ try {
             reply_id: sourceIdForKey(spec.vault_id, `verification:${key}:${exchangeId}`),
             exchange_id: exchangeId,
             question: turn.query,
-            model: "fixture/static",
             session,
           }),
-          { answer: turn.answer, sources: turn.thinking.flatMap((block) => block.sources) },
+          { answer: turn.answer, sources: turn.sources },
         );
       for (const item of spec.sessions) {
         const root = yield* seed(item.idempotency_key, item.exchange.id, item.exchange, {
           kind: "new",
           idempotency_key: item.idempotency_key,
-          conversation_kind: item.origin?.anchor ? "btw" : "session",
-          origin_scope: "vault",
           ...(item.origin === undefined ? {} : { origin: item.origin }),
         });
         for (const exchange of item.follow_ups ?? []) {
@@ -125,8 +122,6 @@ try {
                 ? {
                     kind: "new",
                     idempotency_key: key,
-                    conversation_kind: "btw",
-                    origin_scope: "vault",
                     origin: {
                       kind: "answer",
                       session_id: root.session_id,

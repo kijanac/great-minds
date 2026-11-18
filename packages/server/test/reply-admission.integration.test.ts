@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { type Database, replies, sessions } from "@great-minds/database";
+import { type Database, replies } from "@great-minds/database";
 import { type CreateReplyRequest, type SessionId, Uuid } from "@great-minds/domain";
-import { and, eq } from "drizzle-orm";
-import { Cause, Deferred, Effect, Exit, Fiber, Result, Schema } from "effect";
+import { eq } from "drizzle-orm";
+import { Cause, Effect, Exit, Result, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { AcceptedReplyRequest, acceptedWrites } from "../src/conversation-history/admission.ts";
@@ -20,11 +20,10 @@ const decodeRequest = Schema.decodeUnknownSync(AcceptedReplyRequest);
 const nextId = () => Uuid.make(randomUUID());
 const btwCommand = () =>
   command({
+    inline: true,
     session: {
       kind: "new",
       idempotency_key: randomUUID(),
-      conversation_kind: "btw",
-      origin_scope: "vault",
       origin: {
         kind: "document",
         doc_path: "wiki/meaning.md",
@@ -43,8 +42,6 @@ const answerThread = (sessionId: SessionId, exchangeId: Uuid) =>
     session: {
       kind: "new",
       idempotency_key: randomUUID(),
-      conversation_kind: "btw",
-      origin_scope: "vault",
       origin: {
         kind: "answer",
         session_id: sessionId,
@@ -83,10 +80,6 @@ describe("durable admission", () => {
         });
         expect(yield* storedHistory(f.objects, f.address(response.session_id))).toBeNull();
         expect((yield* f.session(response.session_id)).historySeq).toBeNull();
-        yield* f.updateSession(response.session_id, {
-          placement: "standalone",
-          replyMode: "query",
-        });
         expect(yield* f.admission.accept(f.userId, f.vaultId, input)).toEqual(response);
         const history = (yield* storedHistory(f.objects, f.address(response.session_id)))!.history;
         expect(history.records).toEqual(
@@ -333,50 +326,6 @@ describe("durable admission", () => {
           yield* expectFailure(coordinator.accept(user, f.vaultId, request), tag);
         expect(reads).toBe(0);
         expect(yield* f.allReplies()).toHaveLength(1);
-      }),
-    ));
-
-  it("reads future mode under the session lock during concurrent Continue", () =>
-    withAdmission((f) =>
-      Effect.gen(function* () {
-        const first = btwCommand();
-        const response = yield* f.admission.accept(f.userId, f.vaultId, first);
-        yield* f.finalize(first.reply_id);
-        const locked = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        const reserving = yield* Deferred.make<void>();
-        const where = and(eq(sessions.id, response.session_id), eq(sessions.vaultId, f.vaultId));
-        const continuation = yield* Effect.forkChild(
-          f.db.transaction((tx) =>
-            Effect.gen(function* () {
-              yield* tx.select().from(sessions).where(where).for("update");
-              yield* Deferred.succeed(locked, undefined);
-              yield* Deferred.await(release);
-              yield* tx
-                .update(sessions)
-                .set({ placement: "standalone", replyMode: "query" })
-                .where(where);
-            }),
-          ),
-        );
-        yield* Deferred.await(locked);
-        const db: Database["Service"] = {
-          ...f.db,
-          transaction: (run) =>
-            Effect.gen(function* () {
-              yield* Deferred.succeed(reserving, undefined);
-              return yield* f.db.transaction(run);
-            }),
-        };
-        const next = followUp(response.session_id);
-        const reservation = yield* Effect.forkChild(
-          f.coordinator({ db }).reserve(f.userId, f.vaultId, next),
-        );
-        yield* Deferred.await(reserving);
-        yield* Deferred.succeed(release, undefined);
-        yield* Fiber.join(continuation);
-        yield* Fiber.join(reservation);
-        expect(decodeRequest((yield* f.reply(next.reply_id)).request).mode).toBe("query");
       }),
     ));
 

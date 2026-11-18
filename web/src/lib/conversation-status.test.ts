@@ -1,4 +1,4 @@
-import { SessionId, Uuid, type OriginSessionDetail } from "@great-minds/domain";
+import { SessionId, Uuid, type SessionDetail } from "@great-minds/domain";
 import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
 import AnswerBlock from "#lib/components/answer-block.svelte";
@@ -6,7 +6,7 @@ import BtwThread from "#lib/components/btw-thread.svelte";
 import { Conversation } from "#lib/conversation.svelte.ts";
 import type { ThreadLike } from "#lib/types.ts";
 
-const sessionId = SessionId.make("saved-note");
+const sessionId = SessionId.make("00000000-0000-4000-8000-000000000008");
 const replyId = Uuid.make("00000000-0000-4000-8000-000000000002");
 const thread = (overrides: Partial<ThreadLike> = {}): ThreadLike => ({
   id: "saved-note",
@@ -21,7 +21,7 @@ const thread = (overrides: Partial<ThreadLike> = {}): ThreadLike => ({
       query: "Question",
       answer: "",
       citations: [],
-      thinking: [],
+      sources: [],
       btws: [],
       status: "completed",
       error: null,
@@ -32,7 +32,6 @@ const thread = (overrides: Partial<ThreadLike> = {}): ThreadLike => ({
 });
 const session = {
   id: sessionId,
-  kind: "btw",
   query: "Question",
   created_at: new Date("2026-09-17T12:00:00Z"),
   updated_at: new Date("2026-09-17T12:00:00Z"),
@@ -46,20 +45,19 @@ const live = (
 ) =>
   Object.assign(
     new Conversation({
-      detail: {
+      saved: {
         availability: "available",
         session,
         activity: null,
-        events: [
+        exchanges: [
           {
-            type: "exchange",
-            exId: Uuid.make("00000000-0000-4000-8000-000000000001"),
+            exchange_id: Uuid.make("00000000-0000-4000-8000-000000000001"),
             reply_id: replyId,
             version: 1,
             status,
             error: null,
             query: "Question",
-            thinking: [],
+            sources: [],
             answer: status === "running" ? "Partial" : "Recorded answer",
             citations: [],
             ts: null,
@@ -109,12 +107,12 @@ describe("conversation status markup", () => {
   });
 
   it("shows an unavailable note without offering an empty replacement form", () => {
-    const detail: OriginSessionDetail = {
+    const detail: SessionDetail = {
       availability: "unavailable",
       session,
       detail: "History is unavailable.",
     };
-    const html = markup(new Conversation({ detail }));
+    const html = markup(new Conversation({ saved: detail }));
     expect(html).toContain("History is unavailable.");
     expect(html).toContain("Try loading this note again");
     expect(html).not.toContain("<textarea");

@@ -13,14 +13,14 @@ const exchange = (overrides: Partial<Exchange> = {}): Exchange => ({
   query: "Question",
   answer: "Hydrated partial",
   citations: [],
-  thinking: [],
+  sources: [],
   btws: [],
   error: null,
   ...overrides,
 });
 const snapshot = (overrides: Partial<ReplySnapshot> = {}): ReplySnapshot => ({
   reply_id: replyId,
-  session_id: SessionId.make("snapshot-test"),
+  session_id: SessionId.make("00000000-0000-4000-8000-000000000007"),
   status: "running",
   version: 8,
   answer: "New partial",
