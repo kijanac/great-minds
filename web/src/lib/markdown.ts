@@ -1,3 +1,4 @@
+import { withoutHtmlBlocks } from "@great-minds/domain";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import { unified } from "unified";
@@ -7,6 +8,7 @@ import { rehypeFootnoteSeparators, remarkPlugins, type HastNode } from "#lib/mar
 const processor = unified()
   .use(remarkParse)
   .use(remarkPlugins)
+  .use(withoutHtmlBlocks)
   .use(remarkRehype)
   .use(rehypeFootnoteSeparators);
 

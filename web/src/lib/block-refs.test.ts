@@ -33,3 +33,11 @@ it("gives a code block or table the passage marker written under it", () => {
     ["table", "^p2"],
   ]);
 });
+
+it("renders the text after a stray tag instead of hiding it", () => {
+  const text = (node: HastNode): string => node.value ?? (node.children ?? []).map(text).join("");
+  expect(text(parseMarkdown("Before.\n\n<? stray\n\nSecond.\n\n| a |\n| - |\n| 1 |"))).toContain(
+    "Second.",
+  );
+  expect(JSON.stringify(parseMarkdown("| a |\n| - |\n| 1 |"))).toContain('"tagName":"table"');
+});

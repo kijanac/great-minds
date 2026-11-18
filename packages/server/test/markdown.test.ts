@@ -79,6 +79,17 @@ describe("article footnotes and openings", () => {
     ]);
   });
 
+  it("reads a stray tag as text, so it cannot swallow the paragraphs after it", () => {
+    const source = "Before.\n\n<? stray\n\nSecond.\n\nThird ?> tail.\n\n| a |\n| - |\n";
+    expect(markdownParagraphs(source).map((p) => p.body)).toEqual([
+      "Before.",
+      "<? stray",
+      "Second.",
+      "Third ?> tail.",
+      "| a |\n| - |",
+    ]);
+  });
+
   it("attaches the definitions a passage cites, once each, in the order it cites them", () => {
     const definitions = footnoteDefinitions(article);
     expect(footnoteNotes("Banditry spread behind the lines[^2][^3]. Again[^2].", definitions)).toBe(
