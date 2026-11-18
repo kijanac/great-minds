@@ -51,7 +51,7 @@ export class DocThreads {
   refreshJumpable = (): void => {
     const next = new Set<string>();
     for (const thread of this.threads) {
-      if (!thread.anchor.quote) continue;
+      if (thread.passage === null) continue;
       if (passageMark(thread.id) !== null || (thread.draft && threadCard(thread.id) !== null))
         next.add(thread.id);
     }
@@ -67,10 +67,7 @@ export class DocThreads {
         kind: "document",
         doc_path: this.originPath,
         origin_scope: this.originScope,
-        anchor: info.quote,
-        paragraph: info.context,
-        section: info.section,
-        occurrence: info.occurrence,
+        passage: info.passage,
       },
     });
     this.threads = [...this.threads, thread];

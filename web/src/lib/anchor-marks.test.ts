@@ -3,19 +3,18 @@ import { render } from "svelte/server";
 
 import { uniqueQuoteSpan } from "#lib/anchor.ts";
 import { placeAnchors } from "#lib/anchor-marks.ts";
-import { stripPassageMarkers } from "@great-minds/domain";
+import { stripPassageMarkers, type Passage } from "@great-minds/domain";
 
 import { assignBlockRefIds } from "#lib/block-refs.ts";
 import ConversationAbout from "#lib/components/conversation-about.svelte";
 import { parseMarkdown } from "#lib/markdown.ts";
 import type { HastNode } from "#lib/markdown-plugins.ts";
-import type { TextAnchor } from "#lib/types.ts";
 
 describe("saved passage anchors", () => {
-  const anchor = (fields: Partial<TextAnchor> & Pick<TextAnchor, "quote">): TextAnchor => ({
+  const passage = (fields: Partial<Passage> & Pick<Passage, "quote">): Passage => ({
     context: "",
     section: null,
-    occurrence: null,
+    occurrence: 1,
     ...fields,
   });
   const source = (text: string) => {
@@ -26,10 +25,10 @@ describe("saved passage anchors", () => {
   const blockAt = (tree: HastNode, index: number) =>
     tree.children?.filter((child) => child.type === "element")[index]?.position?.start?.offset;
 
-  it("does not guess between repeats of a quote it has no occurrence for", () => {
+  it("does not guess between repeats of a quote whose section is gone", () => {
     const tree = parseMarkdown("The claim matters. The claim needs evidence.");
     const placed = placeAnchors(tree, [
-      { threadId: "t", anchor: anchor({ quote: "The claim" }), mark: true },
+      { threadId: "t", passage: passage({ quote: "The claim", section: 7 }), mark: true },
     ]);
     expect(placed.size).toBe(0);
     expect(JSON.stringify(tree)).not.toContain('"tagName":"mark"');
@@ -38,7 +37,7 @@ describe("saved passage anchors", () => {
   it("highlights a unique quote across formatting and keeps the original text", () => {
     const tree = parseMarkdown("A **clear** claim.");
     const result = placeAnchors(tree, [
-      { threadId: "saved", anchor: anchor({ quote: "clear claim", occurrence: 1 }), mark: true },
+      { threadId: "saved", passage: passage({ quote: "clear claim" }), mark: true },
     ]);
     expect(result.get("saved")).toEqual({ offset: 0, start: 2, end: 13 });
     expect(JSON.stringify(tree)).toContain('"dataThreadId":"saved"');
@@ -49,9 +48,9 @@ describe("saved passage anchors", () => {
     const tree = source(
       "The claim matters. ^p0\n\nThe claim holds, the claim stands. ^p1\n\nNothing else. ^p2",
     );
-    const place = (fields: Partial<TextAnchor>) =>
+    const place = (fields: Partial<Passage>) =>
       placeAnchors(tree, [
-        { threadId: "t", anchor: anchor({ quote: "The claim", ...fields }), mark: false },
+        { threadId: "t", passage: passage({ quote: "The claim", ...fields }), mark: false },
       ]).get("t");
     expect(place({ section: 1, occurrence: 1 })).toMatchObject({
       offset: blockAt(tree, 1),
@@ -62,7 +61,7 @@ describe("saved passage anchors", () => {
       placeAnchors(tree, [
         {
           threadId: "t",
-          anchor: anchor({ quote: "the claim", section: 1, occurrence: 1 }),
+          passage: passage({ quote: "the claim", section: 1 }),
           mark: false,
         },
       ]).get("t"),
@@ -71,7 +70,7 @@ describe("saved passage anchors", () => {
       placeAnchors(tree, [
         {
           threadId: "t",
-          anchor: anchor({ quote: "Nothing else", section: 7, occurrence: 1 }),
+          passage: passage({ quote: "Nothing else", section: 7 }),
           mark: false,
         },
       ]).get("t"),
@@ -87,20 +86,17 @@ describe("saved passage anchors", () => {
   });
 
   it.each([
-    { name: "with surrounding passage", paragraph: "A clear claim needs evidence.", toggle: true },
-    { name: "passage is the quote", paragraph: "clear claim", toggle: false },
-    { name: "no passage", paragraph: null, toggle: false },
-  ])("says what an anchored conversation is about: $name", ({ paragraph, toggle }) => {
+    { name: "with surrounding passage", context: "A clear claim needs evidence.", toggle: true },
+    { name: "passage is the quote", context: "clear claim", toggle: false },
+    { name: "no passage", context: "", toggle: false },
+  ])("says what an anchored conversation is about: $name", ({ context, toggle }) => {
     const { body } = render(ConversationAbout, {
       props: {
         origin: {
           kind: "document",
           doc_path: "raw/a.md",
           origin_scope: "vault",
-          anchor: "clear claim",
-          paragraph,
-          section: null,
-          occurrence: 1,
+          passage: passage({ quote: "clear claim", context }),
         },
         title: "A source",
         href: null,
@@ -115,9 +111,7 @@ describe("saved passage anchors", () => {
   it("exposes one keyboard trigger across formatting while preserving linked text", () => {
     const quote = "linked text and a clear claim";
     const tree = parseMarkdown("Read [linked text](wiki/evidence.md) and a **clear claim**.");
-    placeAnchors(tree, [
-      { threadId: "saved", anchor: anchor({ quote, occurrence: 1 }), mark: true },
-    ]);
+    placeAnchors(tree, [{ threadId: "saved", passage: passage({ quote }), mark: true }]);
     const nodes: HastNode[] = [];
     const visit = (node: HastNode): void => {
       nodes.push(node);

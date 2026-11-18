@@ -1,12 +1,11 @@
-import { passageOf } from "@great-minds/domain";
+import { passageOf, type Passage } from "@great-minds/domain";
 
 import { quoteMatches } from "#lib/anchor.ts";
 import { hastText, type HastNode } from "#lib/markdown-plugins.ts";
-import type { TextAnchor } from "#lib/types.ts";
 
 export interface ThreadAnchor {
   threadId: string;
-  anchor: TextAnchor;
+  passage: Passage;
   mark: boolean;
 }
 
@@ -27,28 +26,24 @@ function blockSection(block: HastNode): number | null {
 
 export function resolvePassage(
   blocks: readonly HastNode[],
-  anchor: TextAnchor,
+  { quote, section, occurrence }: Passage,
 ): (Placement & { block: HastNode }) | null {
-  const { quote } = anchor;
-  if (!quote) return null;
   const at = (block: HastNode, start: number) => ({
     block,
     offset: block.position?.start?.offset ?? -1,
     start,
     end: start + quote.length,
   });
-  if (anchor.occurrence !== null) {
-    let scope = blocks;
-    if (anchor.section !== null) {
-      const from = blocks.findIndex((block) => blockSection(block) === anchor.section);
-      const to = blocks.findIndex((block, index) => index > from && blockSection(block) !== null);
-      scope = from < 0 ? [] : blocks.slice(from, to < 0 ? undefined : to);
-    }
-    let seen = 0;
-    for (const block of scope)
-      for (const start of quoteMatches(hastText(block), quote))
-        if (++seen === anchor.occurrence) return at(block, start);
+  let scope = blocks;
+  if (section !== null) {
+    const from = blocks.findIndex((block) => blockSection(block) === section);
+    const to = blocks.findIndex((block, index) => index > from && blockSection(block) !== null);
+    scope = from < 0 ? [] : blocks.slice(from, to < 0 ? undefined : to);
   }
+  let seen = 0;
+  for (const block of scope)
+    for (const start of quoteMatches(hastText(block), quote))
+      if (++seen === occurrence) return at(block, start);
   let found: (Placement & { block: HastNode }) | null = null;
   for (const block of blocks)
     for (const start of quoteMatches(hastText(block), quote)) {
@@ -135,11 +130,11 @@ export function placeAnchors(
 ): Map<string, Placement> {
   const blocks = (tree.children ?? []).filter((child) => child.type === "element");
   const placed = new Map<string, Placement>();
-  for (const { threadId, anchor, mark } of anchors) {
-    const found = resolvePassage(blocks, anchor);
+  for (const { threadId, passage, mark } of anchors) {
+    const found = resolvePassage(blocks, passage);
     if (found === null || found.offset < 0) continue;
     placed.set(threadId, { offset: found.offset, start: found.start, end: found.end });
-    if (mark) applyWrap(found.block, threadId, anchor.quote, found.start, found.end);
+    if (mark) applyWrap(found.block, threadId, passage.quote, found.start, found.end);
   }
   return placed;
 }

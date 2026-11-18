@@ -32,30 +32,25 @@ const replyId = Uuid.make("00000000-0000-4000-8000-000000000002");
 const nextReplyId = Uuid.make("00000000-0000-4000-8000-000000000003");
 const exchangeId = Uuid.make("00000000-0000-4000-8000-000000000004");
 const now = new Date("2026-09-17T12:00:00Z");
-const passage = {
-  anchor: "quote",
-  paragraph: "A quote in context.",
-  section: null,
-  occurrence: 1,
-};
+const passage = { quote: "quote", context: "A quote in context.", section: null, occurrence: 1 };
 const origins: SessionOrigin[] = [
   {
     kind: "document",
     doc_path: "wiki/test.md",
     origin_scope: "vault",
-    ...passage,
+    passage,
   },
   {
     kind: "document",
     doc_path: "raw/test.md",
     origin_scope: "personal",
-    ...passage,
+    passage,
   },
   {
     kind: "answer",
     session_id: sessionId,
     exchange_id: exchangeId,
-    ...passage,
+    passage,
   },
 ];
 type Available = Extract<SessionDetail, { availability: "available" }>;
@@ -163,7 +158,7 @@ it.each(origins)(
       inline: false,
       session: { kind: "existing", id: sessionId },
     });
-    expect(btw.anchor.quote).toBe(origin.anchor);
+    expect(btw.passage).toEqual(origin.passage);
     expect(btw.title).toBe("First question");
   },
 );
@@ -263,10 +258,7 @@ it.each([undefined, "wiki/test.md"])(
             kind: "document",
             doc_path: originPath,
             origin_scope: "vault",
-            anchor: null,
-            paragraph: null,
-            section: null,
-            occurrence: null,
+            passage: null,
           } as const);
     const session = make({
       origin,

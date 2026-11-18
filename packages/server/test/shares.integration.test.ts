@@ -556,10 +556,12 @@ describe("share links", () => {
                       asRecord(reference.body).file_path,
                     ),
                     origin_scope: "personal",
-                    anchor: "Annotated first paragraph with enough words to extract.",
-                    paragraph: "Annotated first paragraph with enough words to extract.",
-                    section: 0,
-                    occurrence: 1,
+                    passage: {
+                      quote: "Annotated first paragraph with enough words to extract.",
+                      context: "Annotated first paragraph with enough words to extract.",
+                      section: 0,
+                      occurrence: 1,
+                    },
                   },
                   createdAt: new Date("2026-07-11T09:00:00.000Z"),
                   updatedAt: new Date("2026-07-11T09:05:00.000Z"),
@@ -607,7 +609,7 @@ describe("share links", () => {
         expect(resolved.status).toBe(200);
         expect(asRecord(resolved.body).annotations).toEqual([
           {
-            anchor: {
+            passage: {
               quote: "Annotated first paragraph with enough words to extract.",
               context: "Annotated first paragraph with enough words to extract.",
               section: 0,

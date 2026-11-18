@@ -161,7 +161,7 @@
     const result = await postUserSuggestion({
       ...payload,
       anchoredTo: anchor,
-      anchoredSection: target.passage,
+      anchoredSection: target.excerpt,
     });
     return result.mode;
   }
@@ -215,7 +215,7 @@
       {#if suggestionTarget && suggestionMode}
         <SuggestionForm
           articleLabel={label}
-          anchoredSection={suggestionTarget.passage}
+          anchoredSection={suggestionTarget.excerpt}
           expectedMode={suggestionMode}
           onSubmit={submitSuggestion}
           onClose={() => (suggestionTarget = null)}

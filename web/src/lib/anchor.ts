@@ -1,4 +1,4 @@
-import { passageOf } from "@great-minds/domain";
+import { passageOf, type Passage } from "@great-minds/domain";
 
 export function uniqueQuoteSpan(
   text: string,
@@ -31,10 +31,7 @@ const domSection = (block: Element) =>
   passageOf(block.id) ??
   (block.firstElementChild?.tagName === "SPAN" ? passageOf(block.firstElementChild.id) : null);
 
-export function capturePassage(
-  range: Range,
-  block: HTMLElement,
-): { quote: string; section: number | null; occurrence: number } {
+export function capturePassage(range: Range, block: HTMLElement): Passage {
   const selected = passageText(range.cloneContents());
   const quote = selected.trim();
   const lead = document.createRange();
@@ -60,7 +57,7 @@ export function capturePassage(
     occurrence += [...quoteMatches(blockCopyText(element), quote)].length;
   for (const start of quoteMatches(blockCopyText(block), quote))
     if (start < quoteStart) occurrence += 1;
-  return { quote, section, occurrence };
+  return { quote, context: blockCopyText(block), section, occurrence };
 }
 
 export function rangeFromOffsets(container: Node, start: number, end: number): Range | null {

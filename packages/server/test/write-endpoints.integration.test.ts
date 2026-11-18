@@ -2686,12 +2686,14 @@ describe("M3.1 write endpoint integration", () => {
                     kind: "document",
                     doc_path: referencePath,
                     origin_scope: "personal",
-                    anchor:
-                      "Origin title first paragraph with enough detail for article extraction.",
-                    paragraph:
-                      "Origin title first paragraph with enough detail for article extraction.",
-                    section: null,
-                    occurrence: 1,
+                    passage: {
+                      quote:
+                        "Origin title first paragraph with enough detail for article extraction.",
+                      context:
+                        "Origin title first paragraph with enough detail for article extraction.",
+                      section: null,
+                      occurrence: 1,
+                    },
                   },
                   createdAt: new Date("2026-07-11T09:00:00.000Z"),
                   updatedAt: new Date("2026-07-11T09:05:00.000Z"),
@@ -3230,10 +3232,12 @@ describe("M3.1 write endpoint integration", () => {
         doc_path: "raw/books/capital.md",
         kind: "document",
         origin_scope: "vault",
-        anchor: "anchor quote",
-        paragraph: "Full paragraph",
-        section: null,
-        occurrence: 1,
+        passage: {
+          quote: "anchor quote",
+          context: "Full paragraph",
+          section: null,
+          occurrence: 1,
+        },
       },
     );
     currentState().clock.set(new Date("2026-07-10T12:01:00.000Z"));

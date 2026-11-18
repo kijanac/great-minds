@@ -21,12 +21,11 @@
     title ??
       (origin.kind === "answer" ? "an earlier conversation" : docDisplayName(origin.doc_path)),
   );
+  const passage = $derived(origin.passage);
   const context = $derived(
-    origin.anchor && origin.paragraph && origin.paragraph !== origin.anchor
-      ? origin.paragraph
-      : null,
+    passage && passage.context && passage.context !== passage.quote ? passage.context : null,
   );
-  const span = $derived(context && origin.anchor ? uniqueQuoteSpan(context, origin.anchor) : null);
+  const span = $derived(context && passage ? uniqueQuoteSpan(context, passage.quote) : null);
 </script>
 
 {#snippet quote(text: string)}
@@ -46,7 +45,7 @@
       {#if href}
         <a
           {href}
-          title={origin.anchor ? "Return to passage" : undefined}
+          title={passage ? "Return to passage" : undefined}
           class="text-gold-muted underline decoration-ink-border underline-offset-[3px] [overflow-wrap:anywhere] hover:text-gold"
           >{name}</a
         >
@@ -54,7 +53,7 @@
         <span class="[overflow-wrap:anywhere]">{name}</span>
       {/if}
       <span aria-hidden="true" class="text-ink-border">›</span>
-      {#if origin.anchor && context}
+      {#if passage && context}
         <Collapsible.Trigger>
           {#snippet child({ props })}
             <button
@@ -63,7 +62,7 @@
               title={open ? "Hide the surrounding passage" : "Show the surrounding passage"}
               class="group inline-flex cursor-pointer items-baseline gap-1.5 text-left"
             >
-              {@render quote(origin.anchor ?? "")}
+              {@render quote(passage.quote)}
               <span class="self-center text-gold-muted group-hover:text-gold">
                 <ChevronDown
                   size={12}
@@ -76,8 +75,8 @@
             </button>
           {/snippet}
         </Collapsible.Trigger>
-      {:else if origin.anchor}
-        {@render quote(origin.anchor)}
+      {:else if passage}
+        {@render quote(passage.quote)}
       {:else}
         <span>the whole document</span>
       {/if}
@@ -88,7 +87,7 @@
           class="mt-2.5 border-l border-ink-border pl-3.5 font-serif text-[length:var(--text-small)] leading-[1.85] whitespace-pre-wrap text-warm-dim [overflow-wrap:anywhere]"
         >
           {#if span}{context.slice(0, span.start)}<mark class="bg-btw/22 text-inherit"
-              >{origin.anchor}</mark
+              >{passage?.quote}</mark
             >{context.slice(span.end)}{:else}{context}{/if}
         </blockquote>
       </Collapsible.Content>

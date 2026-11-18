@@ -215,12 +215,7 @@ export const sessionExchangeDocumentInput = (
   exchangeId: exchange.exchange_id,
   sessionQuery: exchange.query,
   sourceDocPath: sessionOrigin?.kind === "document" ? sessionOrigin.doc_path : null,
-  sourceAnchor:
-    sessionOrigin?.anchor !== undefined &&
-    sessionOrigin.anchor !== null &&
-    sessionOrigin.anchor.length > 0
-      ? sessionOrigin.anchor
-      : null,
+  sourceAnchor: sessionOrigin?.passage?.quote ?? null,
 });
 
 export const buildSessionExchangeDocument = (

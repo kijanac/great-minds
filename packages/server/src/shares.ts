@@ -98,15 +98,15 @@ export const SharesServiceLive = Layer.effect(
                 eq(sessions.userId, userId),
                 sql`${sessions.origin}->>'doc_path' = ${filePath}`,
                 sql`${sessions.origin}->>'origin_scope' = 'personal'`,
-                sql`${sessions.origin}->>'anchor' IS NOT NULL`,
+                sql`${sessions.origin}->>'passage' IS NOT NULL`,
               ),
             )
             .orderBy(asc(sessions.createdAt)),
         );
         const annotations: SharedAnnotation[] = [];
         for (const row of rows) {
-          const origin = row.origin;
-          if (origin === null) continue;
+          const passage = row.origin?.passage ?? null;
+          if (passage === null) continue;
           const events = yield* Effect.result(
             sessionsService.readPublication(userId, row.vaultId, row.id),
           );
@@ -119,12 +119,7 @@ export const SharesServiceLive = Layer.effect(
             continue;
           }
           annotations.push({
-            anchor: {
-              quote: origin.anchor ?? "",
-              context: origin.paragraph,
-              section: origin.section,
-              occurrence: origin.occurrence,
-            },
+            passage,
             exchanges: events.success.map((event) => ({
               query: event.query,
               answer: event.answer,

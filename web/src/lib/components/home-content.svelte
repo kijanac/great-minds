@@ -61,10 +61,7 @@
           kind: "document",
           doc_path: initial.origin,
           origin_scope: "vault",
-          anchor: null,
-          paragraph: null,
-          section: null,
-          occurrence: null,
+          passage: null,
         }
       : null,
     onCreated: handleSessionCreated,

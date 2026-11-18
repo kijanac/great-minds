@@ -101,12 +101,12 @@ export const compilePublication = (
     for (const [index, exchange] of section.exchanges.entries()) {
       const depth = sectionIndex > 0 ? 3 : index === 0 ? 1 : 2;
       if (exchange.query !== null) pushHeading(depth, exchange.query);
-      if (index === 0 && section.origin !== null) {
-        const origin = section.origin;
-        if (origin.paragraph !== null)
-          tree.children.push({ type: "blockquote", children: [paragraph(origin.paragraph)] });
-        if (origin.anchor !== null && origin.anchor !== origin.paragraph)
-          tree.children.push(paragraph(`Selected passage: ${origin.anchor}`));
+      const passage = index === 0 ? (section.origin?.passage ?? null) : null;
+      if (passage !== null) {
+        if (passage.context.length > 0)
+          tree.children.push({ type: "blockquote", children: [paragraph(passage.context)] });
+        if (passage.quote !== passage.context)
+          tree.children.push(paragraph(`Selected passage: ${passage.quote}`));
       }
       if (exchange.answer === null) continue;
       const answer = markdown.parse(exchange.answer);

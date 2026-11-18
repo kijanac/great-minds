@@ -1,4 +1,11 @@
-import type { Citation, ReplySource, SessionExchange, SessionId, Uuid } from "@great-minds/domain";
+import type {
+  Citation,
+  Passage,
+  ReplySource,
+  SessionExchange,
+  SessionId,
+  Uuid,
+} from "@great-minds/domain";
 import type { UnmentionedLink } from "#lib/api/lint.ts";
 import type { SessionSummary } from "#lib/api/sessions.ts";
 import type { SourceDocumentSummary, SourceTypeFacet } from "#lib/api/sources.ts";
@@ -29,24 +36,18 @@ export interface Exchange {
   startedAt?: Date;
 }
 
-export interface TextAnchor {
-  quote: string;
-  context: string;
-  section: number | null;
-  occurrence: number | null;
-}
-
 export interface ThreadLike {
   id: string;
   sessionId: SessionId | null;
-  anchor: TextAnchor;
+  passage: Passage | null;
   exchanges: Exchange[];
   draft: boolean;
   createdAt: Date | null;
 }
 
-export interface SelectionInfo extends TextAnchor {
-  passage: string;
+export interface SelectionInfo {
+  passage: Passage;
+  excerpt: string;
   rect: DOMRect;
   exchangeId: Uuid;
 }

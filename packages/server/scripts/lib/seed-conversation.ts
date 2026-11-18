@@ -47,13 +47,9 @@ export const seedConversationReply = (
     const accepted = yield* acceptedRequestFor(row);
     const origin =
       accepted.command.session.kind === "new" ? accepted.command.session.origin : undefined;
+    const passage = origin?.passage ?? null;
     const question =
-      origin?.anchor === undefined || origin.anchor === null
-        ? command.question
-        : composeAnchoredQuestion(
-            { quote: origin.anchor, context: origin.paragraph },
-            command.question,
-          );
+      passage === null ? command.question : composeAnchoredQuestion(passage, command.question);
     yield* settlement.begin(response.reply_id, {
       status: "completed",
       answer: content.answer,

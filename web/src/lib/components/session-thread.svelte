@@ -208,7 +208,7 @@
   });
   const showHint = $derived(
     !onboardingHintSeen() &&
-      !origin?.anchor &&
+      !origin?.passage &&
       session.phase === "done" &&
       session.submission.status !== "failed" &&
       session.exchanges.length === 1 &&
@@ -445,7 +445,7 @@
     onDismiss={() => (popover = null)}
     onFollowUp={() => {
       session.clearSubmissionFailure();
-      chips = [...chips, selection.quote];
+      chips = [...chips, selection.passage.quote];
       clearSelection();
       dismissOnboardingHint();
     }}
