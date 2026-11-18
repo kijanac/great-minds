@@ -90,6 +90,7 @@ beforeEach(async () => {
   await runHistoryDatabase(
     Effect.gen(function* () {
       const db = yield* Database;
+      yield* db.query((d) => d.delete(llmCostEvents));
       yield* db.query((d) => d.delete(users));
       yield* db.query((d) => d.insert(users).values({ id: id.user, email: "asks@example.com" }));
       yield* db.transaction((tx) =>

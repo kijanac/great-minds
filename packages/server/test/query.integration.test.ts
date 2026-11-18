@@ -208,6 +208,7 @@ const resetDatabase = () =>
     Effect.gen(function* () {
       const db = yield* Database;
       yield* db.query((d) => d.delete(authCodes)).pipe(Effect.orDie);
+      yield* db.query((d) => d.delete(llmCostEvents)).pipe(Effect.orDie);
       yield* db.query((d) => d.delete(users)).pipe(Effect.orDie);
     }),
   );

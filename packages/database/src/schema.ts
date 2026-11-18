@@ -274,7 +274,7 @@ export const llmCostEvents = pgTable(
   },
   (table) => [
     references(table.userId, users.id, "llm_cost_events_user_id_fkey", "set null"),
-    references(table.vaultId, vaults.id, "llm_cost_events_vault_id_fkey", "cascade"),
+    // No vault constraint: spend outlives its vault, keeping the deleted vault's id.
     uniqueIndex("uq_llm_cost_events_query_correlation")
       .on(table.eventType, table.correlationId)
       .where(sql`${table.eventType} = 'query.stream' AND ${table.correlationId} IS NOT NULL`),
