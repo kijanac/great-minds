@@ -5,8 +5,10 @@ import {
   composeAnchoredQuestion,
   Conflict,
   Forbidden,
+  isReplyPending,
   NotFound,
   ServiceUnavailable,
+  SessionActivity,
   type OriginSessionDetail,
   type PageParams,
   type PromoteExchangeResponse,
@@ -27,9 +29,10 @@ import { ClockService } from "./clock.ts";
 import { acceptedRequestFor } from "./conversation-history/admission.ts";
 import {
   type ConversationHistory,
-  HistoryInvalid,
+  hasUsableAnswer,
   verifyHistoryReceipt,
 } from "./conversation-history/history.ts";
+import { acknowledgedReceipt, sessionReceipt } from "./conversation-history/rows.ts";
 import {
   projectSession,
   publicationExchanges,
@@ -149,6 +152,11 @@ const makeSessions = Effect.gen(function* () {
   const proposals = yield* ProposalsService;
   const ingest = yield* IngestService;
 
+  const unavailable = () =>
+    new ServiceUnavailable({
+      detail: "Conversation history is unavailable; no content has been discarded",
+    });
+
   const requireSessionOwner = (userId: Uuid, vaultId: Uuid, sessionId: SessionId) =>
     Effect.gen(function* () {
       const rows = yield* db.query((d) =>
@@ -171,26 +179,10 @@ const makeSessions = Effect.gen(function* () {
 
   const loadHistory = (row: SessionRow) =>
     Effect.gen(function* () {
-      if (row.historySeq === null || row.historySha256 === null) {
-        return yield* new HistoryInvalid({
-          session_id: row.id,
-          line: 1,
-          reason: "history_receipt",
-        });
-      }
       const file = yield* histories.read(
         { vault_id: row.vaultId, session_id: row.id },
-        {
-          last_seq: row.historySeq,
-          sha256: row.historySha256,
-        },
+        yield* acknowledgedReceipt(row),
       );
-      if (file === null)
-        return yield* new HistoryInvalid({
-          session_id: row.id,
-          line: 1,
-          reason: "history_receipt",
-        });
       return file.history;
     }).pipe(
       Effect.tapError((error) =>
@@ -198,20 +190,11 @@ const makeSessions = Effect.gen(function* () {
           session_id: row.id,
           vault_id: row.vaultId,
           error_tag: error._tag,
+          error_message: error.message,
         }),
       ),
-      Effect.mapError(
-        () =>
-          new ServiceUnavailable({
-            detail: "Conversation history is unavailable; no content has been discarded",
-          }),
-      ),
+      Effect.mapError(unavailable),
     );
-
-  const unavailable = () =>
-    new ServiceUnavailable({
-      detail: "Conversation history is unavailable; no content has been discarded",
-    });
 
   const confirmAccess = (userId: Uuid, vaultId: Uuid, ids: readonly SessionId[]) =>
     Effect.gen(function* () {
@@ -236,17 +219,13 @@ const makeSessions = Effect.gen(function* () {
 
   const confirmReceipt = (row: SessionRow, history: ConversationHistory) =>
     Effect.gen(function* () {
+      const receipt = sessionReceipt(row);
       if (
-        row.historySeq === null ||
-        row.historySha256 === null ||
-        history.header.author_id !== row.userId
+        receipt === undefined ||
+        history.header.author_id !== row.userId ||
+        Result.isFailure(verifyHistoryReceipt(history, receipt))
       )
         return yield* unavailable();
-      const verified = verifyHistoryReceipt(history, {
-        last_seq: row.historySeq,
-        sha256: row.historySha256,
-      });
-      if (Result.isFailure(verified)) return yield* unavailable();
     });
 
   const ownedHistory = (userId: Uuid, vaultId: Uuid, sessionId: SessionId) =>
@@ -284,17 +263,18 @@ const makeSessions = Effect.gen(function* () {
               and(
                 eq(replies.sessionId, row.id),
                 eq(replies.vaultId, row.vaultId),
-                inArray(replies.status, ["admitting", "running", "settling"]),
+                inArray(replies.status, SessionActivity.fields.status.literals),
               ),
             );
           return live[0];
         }),
       );
       let events = projectSession(history);
-      const unsettled = history.turns.flatMap((turn) =>
-        turn.attempts.filter((attempt) => attempt.settlement === null),
-      );
-      if (unsettled.some((attempt) => attempt.accepted.reply_id !== active?.id))
+      if (
+        history.turns.some(
+          (turn) => turn.latest.settlement === null && turn.latest.accepted.reply_id !== active?.id,
+        )
+      )
         return yield* unavailable();
       if (active === undefined) return { events, activity: null } satisfies SessionContent;
       if (active.userId !== row.userId) return yield* unavailable();
@@ -346,12 +326,7 @@ const makeSessions = Effect.gen(function* () {
             ? [...events, pending]
             : events.map((event) => (event === previous ? pending : event));
       }
-      if (
-        active.status !== "admitting" &&
-        active.status !== "running" &&
-        active.status !== "settling"
-      )
-        return yield* unavailable();
+      if (!isReplyPending(active.status)) return yield* unavailable();
       return {
         events,
         activity: { reply_id: active.id, status: active.status },
@@ -493,12 +468,7 @@ const makeSessions = Effect.gen(function* () {
             readSessions.add(parent.session_id);
           }
           const previous = attemptFor(history, parent.reply_id);
-          if (
-            previous === undefined ||
-            previous.settlement === null ||
-            previous.settlement.outcome.status === "failed" ||
-            previous.settlement.context_messages === null
-          ) {
+          if (!hasUsableAnswer(previous) || previous.settlement.context_messages === null) {
             return yield* new ServiceUnavailable({
               detail: "Recorded conversation context is unavailable",
             });

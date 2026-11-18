@@ -32,12 +32,20 @@ export class HistoryInvalid extends Data.TaggedError("HistoryInvalid")<{
     | "origin"
     | "source_range"
     | "history_receipt";
-}> {}
+}> {
+  override get message() {
+    return this.line === null ? this.reason : `${this.reason} at line ${this.line}`;
+  }
+}
 
 export class HistoryConflict extends Data.TaggedError("HistoryConflict")<{
   readonly session_id: SessionId;
   readonly record: string;
-}> {}
+}> {
+  override get message() {
+    return `${this.record} is already recorded with different content`;
+  }
+}
 
 export type HistoryRevision = {
   readonly last_seq: number;
@@ -52,7 +60,15 @@ export type SettledOrPendingAttempt = {
 export type HistoryTurn = {
   readonly exchange_id: Uuid;
   readonly attempts: readonly SettledOrPendingAttempt[];
+  readonly latest: SettledOrPendingAttempt;
 };
+
+export const hasUsableAnswer = (
+  attempt: SettledOrPendingAttempt | undefined,
+): attempt is SettledOrPendingAttempt & { readonly settlement: HistorySettlement } =>
+  attempt !== undefined &&
+  attempt.settlement !== null &&
+  attempt.settlement.outcome.status !== "failed";
 
 const parsedHistory: unique symbol = Symbol("ParsedConversationHistory");
 
@@ -106,7 +122,10 @@ const reduceRecords = (
     Uuid,
     { accepted: HistoryAttempt; settlement: HistorySettlement | null }
   >();
-  const turns = new Map<Uuid, { exchange_id: Uuid; attempts: SettledOrPendingAttempt[] }>();
+  const turns = new Map<
+    Uuid,
+    { exchange_id: Uuid; attempts: SettledOrPendingAttempt[]; latest: SettledOrPendingAttempt }
+  >();
   for (const [index, record] of records.entries()) {
     const line = index + 1;
     if (record.seq !== line) return invalid("sequence", line);
@@ -119,27 +138,25 @@ const reduceRecords = (
     }
     if (record.type === "attempt") {
       const turn = turns.get(record.exchange_id);
-      const previous = turn?.attempts.at(-1)?.accepted;
+      const previous = turn?.latest.accepted;
       if (
         record.previous_attempt_id !== (previous?.reply_id ?? null) ||
         (previous !== undefined && previous.parent_reply_id !== record.parent_reply_id)
       )
         return invalid("attempt_predecessor", line);
-      if (record.parent_reply_id !== null) {
-        const parent = attempts.get(record.parent_reply_id);
-        if (parent?.settlement == null || parent.settlement.outcome.status === "failed") {
-          return invalid("context_parent", line);
-        }
-      }
+      if (record.parent_reply_id !== null && !hasUsableAnswer(attempts.get(record.parent_reply_id)))
+        return invalid("context_parent", line);
       const attempt = { accepted: record, settlement: null };
       attempts.set(record.reply_id, attempt);
       if (turn === undefined) {
         turns.set(record.exchange_id, {
           exchange_id: record.exchange_id,
           attempts: [attempt],
+          latest: attempt,
         });
       } else {
         turn.attempts.push(attempt);
+        turn.latest = attempt;
       }
       continue;
     }
@@ -219,7 +236,7 @@ export const planHistoryAppend = (
   const records = [...(current?.records ?? [])];
   const identities = new Map(records.map((record) => [recordKey(record), withoutSequence(record)]));
   let jsonl = current?.jsonl ?? "";
-  for (const write of structuredClone(writes)) {
+  for (const write of writes) {
     const key = recordKey(write);
     const previous = identities.get(key);
     if (previous !== undefined) {

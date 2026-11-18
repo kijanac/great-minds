@@ -2,6 +2,7 @@ import { Effect, type Scope } from "effect";
 
 import { makeReplySettlement } from "../../src/conversation-history/settlement.ts";
 import { completion } from "./conversation-history.ts";
+import { storedHistory } from "./history-storage.ts";
 import { command, type ReplyAdmissionFixture, withAdmission } from "./reply-admission.ts";
 
 const setup = (f: ReplyAdmissionFixture) =>
@@ -27,7 +28,7 @@ const setup = (f: ReplyAdmissionFixture) =>
       replyId,
       address: f.address(session_id),
       key: f.key(session_id),
-      admission: (yield* f.histories.read(f.address(session_id)))!,
+      admission: (yield* storedHistory(f.objects, f.address(session_id)))!,
       progress,
       finalizer: makeReplySettlement(f.db, f.histories, f.clock),
       reply: () => f.reply(replyId),

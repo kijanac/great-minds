@@ -3,7 +3,7 @@ import type { EventEncoded } from "effect/encoding/Sse";
 
 type Snapshot = {
   readonly version: string | number;
-  readonly data: string;
+  readonly data: () => string;
   readonly terminal: boolean;
 };
 
@@ -28,7 +28,7 @@ export const pollingSse = <A>(
       const current = snapshot(row);
       if (current.version !== previousVersion) {
         previousVersion = current.version;
-        events.push({ event: "message", data: current.data });
+        events.push({ event: "message", data: current.data() });
         if (current.terminal) {
           events.push({ event: "done", data: identity });
           return events;

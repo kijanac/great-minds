@@ -15,7 +15,13 @@ import {
   vaultId,
 } from "./fixtures/conversation-history.ts";
 import { makeFakeBucket } from "./fixtures/fake-r2-bucket.ts";
-import { backends, expectFailure, failure, withObjects } from "./fixtures/history-storage.ts";
+import {
+  backends,
+  expectFailure,
+  failure,
+  storedHistory,
+  withObjects,
+} from "./fixtures/history-storage.ts";
 
 const address = { vault_id: vaultId, session_id: sessionId };
 const key = `vaults/${vaultId}/sessions/${sessionId}.jsonl`;
@@ -74,7 +80,7 @@ for (const backend of backends)
               expect(
                 results.filter((result) => Exit.isSuccess(result) && result.value.written),
               ).toHaveLength(1);
-              expect((yield* store.read(address))!.history.revision.last_seq).toBe(2);
+              expect((yield* storedHistory(objects, address))!.history.revision.last_seq).toBe(2);
             } else {
               expect(results.filter(Exit.isSuccess)).toHaveLength(1);
               const loser = results.findIndex(Exit.isFailure);
@@ -85,7 +91,7 @@ for (const backend of backends)
                 expect(yield* objects.getVersioned(key)).toEqual(saved);
               } else {
                 yield* store.commit(address, batches[loser]);
-                const history = (yield* store.read(address))!.history;
+                const history = (yield* storedHistory(objects, address))!.history;
                 expect(history.revision.last_seq).toBe(5);
                 expect(
                   history.turns.flatMap((turn) =>
@@ -125,7 +131,7 @@ for (const backend of backends)
                 reason: damage === "malformed" ? "invalid_json" : "history_receipt",
               });
             expect(yield* objects.getVersioned(key)).toEqual(before);
-            if (damage === "missing") expect(yield* store.read(target)).toBeNull();
+            if (damage === "missing") expect(yield* storedHistory(objects, target)).toBeNull();
           }),
         ),
     );

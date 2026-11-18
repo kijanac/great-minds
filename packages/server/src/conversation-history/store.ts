@@ -36,8 +36,8 @@ export type HistoryCommitError =
 export interface HistoryStoreShape {
   readonly read: (
     address: HistoryAddress,
-    receipt?: HistoryRevision,
-  ) => Effect.Effect<HistoryFile | null, HistoryInvalid | StorageBackendError>;
+    receipt: HistoryRevision,
+  ) => Effect.Effect<HistoryFile, HistoryInvalid | StorageBackendError>;
   readonly commit: (
     address: HistoryAddress,
     writes: readonly HistoryWrite[],
@@ -59,29 +59,34 @@ const objectKey = (address: HistoryAddress) =>
   `vaults/${address.vault_id}/sessions/${address.session_id}.jsonl`;
 
 export const makeHistoryStore = (objects: ConditionalObjectStore): HistoryStoreShape => {
-  const read = (address: HistoryAddress, receipt?: HistoryRevision) =>
+  const load = (address: HistoryAddress) =>
     Effect.gen(function* () {
       const object = yield* objects
         .getVersioned(objectKey(address))
         .pipe(Effect.catchTag("ObjectMissing", () => Effect.succeed(null)));
-      if (object === null) {
-        if (receipt !== undefined) {
-          return yield* new HistoryInvalid({
-            session_id: address.session_id,
-            line: null,
-            reason: "history_receipt",
-          });
-        }
-        return null;
-      }
+      if (object === null) return null;
       const parsed = parseHistory(address.session_id, object.bytes);
       if (Result.isFailure(parsed)) return yield* parsed.failure;
-      if (receipt !== undefined) {
-        const checked = verifyHistoryReceipt(parsed.success, receipt);
-        if (Result.isFailure(checked)) return yield* checked.failure;
-      }
       return { history: parsed.success, version: object.version };
     });
+
+  const read = (address: HistoryAddress, receipt: HistoryRevision) =>
+    Effect.gen(function* () {
+      const file = yield* load(address);
+      if (file === null) {
+        return yield* new HistoryInvalid({
+          session_id: address.session_id,
+          line: null,
+          reason: "history_receipt",
+        });
+      }
+      const checked = verifyHistoryReceipt(file.history, receipt);
+      if (Result.isFailure(checked)) return yield* checked.failure;
+      return file;
+    });
+
+  const observe = (address: HistoryAddress, receipt: HistoryRevision | undefined) =>
+    receipt === undefined ? load(address) : read(address, receipt);
 
   const commit = (
     address: HistoryAddress,
@@ -89,7 +94,7 @@ export const makeHistoryStore = (objects: ConditionalObjectStore): HistoryStoreS
     receipt?: HistoryRevision,
   ) =>
     Effect.gen(function* () {
-      const current = yield* read(address, receipt);
+      const current = yield* observe(address, receipt);
       const planned = planHistoryAppend(address.session_id, current?.history ?? null, writes);
       if (Result.isFailure(planned)) return yield* planned.failure;
       const { history, changed } = planned.success;
@@ -104,7 +109,7 @@ export const makeHistoryStore = (objects: ConditionalObjectStore): HistoryStoreS
           Effect.as({ history, written: true }),
           Effect.catchTag("ObjectVersionConflict", (conflict) =>
             Effect.gen(function* () {
-              const latest = yield* read(address, receipt);
+              const latest = yield* observe(address, receipt);
               if (latest !== null) {
                 const replay = planHistoryAppend(address.session_id, latest.history, writes);
                 if (Result.isSuccess(replay) && !replay.success.changed)
