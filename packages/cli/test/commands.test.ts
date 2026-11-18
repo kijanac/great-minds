@@ -359,7 +359,7 @@ describe("credentials", () => {
 describe("gm ask", () => {
   const reply = (status: string, answer: string, sources: readonly unknown[]) => ({
     reply_id: replyId,
-    session_id: "session-1",
+    session_id: "00000000-0000-4000-8000-00000000c001",
     status,
     answer,
     citations: citationsOf(answer),
@@ -389,10 +389,10 @@ describe("gm ask", () => {
     route = (request) => {
       if (request.path === `/v1/vaults/${vaultId}`) return vaultDetail();
       if (request.method === "POST" && request.path === `/v1/vaults/${vaultId}/replies`)
-        return json(202, { reply_id: replyId, session_id: "session-1" });
+        return json(202, { reply_id: replyId, session_id: "00000000-0000-4000-8000-00000000c001" });
       if (request.path === `/v1/vaults/${vaultId}/replies/${replyId}/stream`) {
         expect(stderr[0]).toContain(`gm reply stop ${replyId} --vault ${vaultId}`);
-        expect(stderr[1]).toContain("session session-1");
+        expect(stderr[1]).toContain("session 00000000-0000-4000-8000-00000000c001");
         return events([
           reply("running", "", [source("search", "liquidationism", null)]),
           reply("completed", "It was a tendency ([Liquidationism](wiki/liquidationism.md)).", [
@@ -415,7 +415,7 @@ describe("gm ask", () => {
     expect(requests.every((request) => request.auth === "Bearer gm_saved")).toBe(true);
     expect(JSON.parse(requests[1]?.body ?? "{}")).toMatchObject({
       question: "What was liquidationism?",
-      session: { kind: "new", conversation_kind: "session" },
+      session: { kind: "new" },
     });
     expect(stderr[2]).toBe('  searching for "liquidationism"');
     expect(stdout).toEqual([
@@ -601,7 +601,7 @@ describe("reading", () => {
   it.each(["pdf", "markdown"] as const)(
     "exports %s through the shared API without overwriting private files",
     async (format) => {
-      const session = SessionId.make("conversation");
+      const session = SessionId.make("00000000-0000-4000-8000-00000000c002");
       const pdf = Buffer.from([37, 80, 68, 70, 45, 0, 255]);
       const markdown = "# Conversation\n\nCafé — a cited answer.[^1]\n";
       const selection = Schema.decodeUnknownSync(SessionExportSelection)({

@@ -1,10 +1,4 @@
-import type {
-  Citation,
-  ReplySource,
-  SessionExchangeEvent,
-  SessionId,
-  Uuid,
-} from "@great-minds/domain";
+import type { Citation, ReplySource, SessionExchange, SessionId, Uuid } from "@great-minds/domain";
 import type { UnmentionedLink } from "#lib/api/lint.ts";
 import type { SessionSummary } from "#lib/api/sessions.ts";
 import type { SourceDocumentSummary, SourceTypeFacet } from "#lib/api/sources.ts";
@@ -21,20 +15,16 @@ export type {
   WikiArticleOverview,
 };
 
-export interface ThinkingBlock {
-  sources: readonly SourceRef[];
-}
-
 export interface Exchange {
   id: Uuid;
   query: string;
-  thinking: readonly ThinkingBlock[];
+  sources: readonly SourceRef[];
   answer: string;
   citations: readonly Citation[];
   btws: Conversation[];
   replyId?: Uuid;
   error?: string | null;
-  status: SessionExchangeEvent["status"];
+  status: SessionExchange["status"];
   version: number | null;
   startedAt?: Date;
 }

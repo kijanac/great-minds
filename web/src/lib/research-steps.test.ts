@@ -83,7 +83,7 @@ it("groups each round, merges a repeat read into its document and marks what was
 const exchange = (answer: string, status: Exchange["status"]): Exchange => ({
   id: Uuid.make("00000000-0000-4000-8000-000000000001"),
   query: "Why?",
-  thinking: [{ sources }],
+  sources,
   answer,
   citations,
   btws: [],

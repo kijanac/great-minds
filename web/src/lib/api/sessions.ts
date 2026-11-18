@@ -1,10 +1,9 @@
 import {
   type OriginScope,
-  type OriginSessionDetail,
   type PromoteExchangeResponse,
+  type SessionDetail,
   type SessionExportRequest,
   type SessionExportSelection,
-  type SessionEvent,
   type SessionOrigin,
   type SessionOverview,
   type SessionPage,
@@ -17,7 +16,7 @@ import { api, run } from "./app";
 import { selectedVault } from "./selected-vault";
 import { withApiErrors } from "@great-minds/client";
 
-export type { OriginScope, SessionEvent, SessionOrigin };
+export type { OriginScope, SessionOrigin };
 export type SessionSummary = SessionOverview;
 
 const firstPage = { limit: 50, offset: 0 } as const;
@@ -31,7 +30,7 @@ export function listSessions(
 export function listSessionsByOrigin(
   docPath: string,
   signal?: AbortSignal,
-): Promise<readonly OriginSessionDetail[]> {
+): Promise<readonly SessionDetail[]> {
   return run(
     api.sessions.listSessionsByOrigin({
       params: { vault_id: selectedVault() },

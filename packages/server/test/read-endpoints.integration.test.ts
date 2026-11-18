@@ -84,12 +84,12 @@ const id = {
   sourceOtherVault: uuid("00000000-0000-4000-8000-000000000504"),
   sourceEncoded: uuid("00000000-0000-4000-8000-000000000505"),
   apiKeyAlice: uuid("00000000-0000-4000-8000-000000000601"),
-  sessionAliceOlder: sessionId("s-1"),
-  sessionAliceMain: sessionId("s-2"),
-  sessionAliceBtw: sessionId("s-alice-btw"),
-  sessionBob: sessionId("s-bob"),
-  sessionNoMarkdown: sessionId("s-no-md"),
-  sessionMalformed: sessionId("s-malformed"),
+  sessionAliceOlder: sessionId("00000000-0000-4000-8000-00000000b001"),
+  sessionAliceMain: sessionId("00000000-0000-4000-8000-00000000b002"),
+  sessionAliceBtw: sessionId("00000000-0000-4000-8000-00000000b003"),
+  sessionBob: sessionId("00000000-0000-4000-8000-00000000b004"),
+  sessionNoMarkdown: sessionId("00000000-0000-4000-8000-00000000b005"),
+  sessionMalformed: sessionId("00000000-0000-4000-8000-00000000b006"),
 } as const;
 
 const EX_STALE = "00000000-0000-4000-8000-000000000801";
@@ -746,6 +746,7 @@ const seedFixtures = async (): Promise<Fixture> => {
               origin: {
                 kind: "document",
                 doc_path: "wiki/alpha-practice.md",
+                origin_scope: "vault",
                 anchor: "alpha-anchor",
                 paragraph: "Alpha paragraph",
                 section: null,
@@ -759,13 +760,11 @@ const seedFixtures = async (): Promise<Fixture> => {
               id: id.sessionAliceBtw,
               vaultId: id.vaultAlpha,
               userId: id.alice,
-              placement: "inline",
-              replyMode: "btw",
               query: "Why this passage?",
               origin: {
                 kind: "answer",
                 session_id: id.sessionAliceMain,
-                exchange_id: EX_1,
+                exchange_id: uuid(EX_1),
                 anchor: "concrete passage",
                 section: null,
                 occurrence: 1,
@@ -794,8 +793,6 @@ const seedFixtures = async (): Promise<Fixture> => {
             },
             {
               id: id.sessionNoMarkdown,
-              placement: "inline",
-              replyMode: "btw",
               vaultId: id.vaultAlpha,
               userId: id.alice,
               query: "Missing markdown sidecar",
@@ -814,8 +811,6 @@ const seedFixtures = async (): Promise<Fixture> => {
             },
             {
               id: id.sessionMalformed,
-              placement: "inline",
-              replyMode: "btw",
               vaultId: id.vaultAlpha,
               userId: id.alice,
               query: "Malformed event handling",
@@ -1776,7 +1771,6 @@ describe("read-only HTTP integration", () => {
       id.sessionAliceOlder,
     ]);
     expect(sessions[3]).toMatchObject({
-      kind: "btw",
       origin: { kind: "answer", session_id: id.sessionAliceMain, anchor: "concrete passage" },
       origin_title: "How should study circles use source material?",
     });
@@ -1845,9 +1839,7 @@ describe("read-only HTTP integration", () => {
           .query((d) =>
             d.insert(sessions).values([
               {
-                id: sessionId("s-origin-anchored"),
-                placement: "inline",
-                replyMode: "btw",
+                id: sessionId("00000000-0000-4000-8000-00000000b007"),
                 vaultId: id.vaultAlpha,
                 userId: id.alice,
                 query: "What does the anchored claim mean?",
@@ -1864,7 +1856,7 @@ describe("read-only HTTP integration", () => {
                 updatedAt: new Date("2026-07-10T08:10:00.000Z"),
               },
               {
-                id: sessionId("s-origin-plain"),
+                id: sessionId("00000000-0000-4000-8000-00000000b008"),
                 vaultId: id.vaultAlpha,
                 userId: id.alice,
                 query: "Doc-initiated conversation",
@@ -1881,9 +1873,7 @@ describe("read-only HTTP integration", () => {
                 updatedAt: new Date("2026-07-10T09:05:00.000Z"),
               },
               {
-                id: sessionId("s-origin-bob"),
-                placement: "inline",
-                replyMode: "btw",
+                id: sessionId("00000000-0000-4000-8000-00000000b009"),
                 vaultId: id.vaultAlpha,
                 userId: id.bob,
                 query: "Bob's anchored thread",
@@ -1904,40 +1894,52 @@ describe("read-only HTTP integration", () => {
           .pipe(Effect.orDie);
       }),
     );
-    await writeSessionFixture(id.vaultAlpha, "sessions/s-origin-anchored.jsonl", [
-      replyNode(
-        "00000000-0000-4000-8000-000000000301",
-        EX_ORIGIN_A,
-        "What does the anchored claim mean?",
-        "It anchors the discussion.",
-        "2026-07-10T08:10:00.000Z",
-      ),
-    ]);
-    await writeSessionFixture(id.vaultAlpha, "sessions/s-origin-plain.jsonl", [
-      replyNode(
-        "00000000-0000-4000-8000-000000000302",
-        EX_ORIGIN_P,
-        "Doc-initiated conversation",
-        "Plain conversation answer.",
-        "2026-07-10T09:05:00.000Z",
-      ),
-    ]);
-    await writeSessionFixture(id.vaultAlpha, "sessions/s-origin-bob.jsonl", [
-      replyNode(
-        "00000000-0000-4000-8000-000000000303",
-        "00000000-0000-4000-8000-000000000304",
-        "Bob's anchored thread",
-        "Private to Bob.",
-        "2026-07-10T10:05:00.000Z",
-      ),
-    ]);
+    await writeSessionFixture(
+      id.vaultAlpha,
+      "sessions/00000000-0000-4000-8000-00000000b007.jsonl",
+      [
+        replyNode(
+          "00000000-0000-4000-8000-000000000301",
+          EX_ORIGIN_A,
+          "What does the anchored claim mean?",
+          "It anchors the discussion.",
+          "2026-07-10T08:10:00.000Z",
+        ),
+      ],
+    );
+    await writeSessionFixture(
+      id.vaultAlpha,
+      "sessions/00000000-0000-4000-8000-00000000b008.jsonl",
+      [
+        replyNode(
+          "00000000-0000-4000-8000-000000000302",
+          EX_ORIGIN_P,
+          "Doc-initiated conversation",
+          "Plain conversation answer.",
+          "2026-07-10T09:05:00.000Z",
+        ),
+      ],
+    );
+    await writeSessionFixture(
+      id.vaultAlpha,
+      "sessions/00000000-0000-4000-8000-00000000b009.jsonl",
+      [
+        replyNode(
+          "00000000-0000-4000-8000-000000000303",
+          "00000000-0000-4000-8000-000000000304",
+          "Bob's anchored thread",
+          "Private to Bob.",
+          "2026-07-10T10:05:00.000Z",
+        ),
+      ],
+    );
 
     const listed = await api("GET", `/vaults/${id.vaultAlpha}/sessions`, aliceToken);
     expect(listed.status).toBe(200);
     const listedIds = itemRecords(asPage(listed.body)).map((session) => session.id);
-    expect(listedIds).toContain("s-origin-plain");
-    expect(listedIds).toContain("s-origin-anchored");
-    expect(listedIds).not.toContain("s-origin-bob");
+    expect(listedIds).toContain("00000000-0000-4000-8000-00000000b008");
+    expect(listedIds).toContain("00000000-0000-4000-8000-00000000b007");
+    expect(listedIds).not.toContain("00000000-0000-4000-8000-00000000b009");
 
     const byOrigin = await api(
       "GET",
@@ -1947,11 +1949,11 @@ describe("read-only HTTP integration", () => {
     expect(byOrigin.status).toBe(200);
     const details = asArray(byOrigin.body).map(asRecord);
     expect(details.map((detail) => asRecord(detail.session).id)).toEqual([
-      "s-origin-anchored",
-      "s-origin-plain",
+      "00000000-0000-4000-8000-00000000b007",
+      "00000000-0000-4000-8000-00000000b008",
     ]);
     expect(asRecord(details[0]?.session)).toMatchObject({
-      id: sessionId("s-origin-anchored"),
+      id: sessionId("00000000-0000-4000-8000-00000000b007"),
       user_id: id.alice,
       created_at: "2026-07-10T08:00:00.000Z",
       origin: {
@@ -1965,16 +1967,14 @@ describe("read-only HTTP integration", () => {
       },
     });
     expect(
-      asArray(details[0]?.events)
+      asArray(details[0]?.exchanges)
         .map(asRecord)
-        .map((event) => event.exId)
-        .filter(Boolean),
+        .map((exchange) => exchange.exchange_id),
     ).toEqual([EX_ORIGIN_A]);
     expect(
-      asArray(details[1]?.events)
+      asArray(details[1]?.exchanges)
         .map(asRecord)
-        .map((event) => event.exId)
-        .filter(Boolean),
+        .map((exchange) => exchange.exchange_id),
     ).toEqual([EX_ORIGIN_P]);
 
     const bobOrigin = await api(
@@ -1984,7 +1984,7 @@ describe("read-only HTTP integration", () => {
     );
     expect(bobOrigin.status).toBe(200);
     expect(asArray(bobOrigin.body).map((detail) => asRecord(asRecord(detail).session).id)).toEqual([
-      "s-origin-bob",
+      "00000000-0000-4000-8000-00000000b009",
     ]);
 
     const otherPath = await api(
@@ -2001,50 +2001,6 @@ describe("read-only HTTP integration", () => {
       malloryToken,
     );
     expect(nonMember.status).toBe(403);
-  });
-
-  it("only lets the owner continue a BTW as the same session", async () => {
-    const { aliceToken, bobToken, malloryToken } = currentFixture();
-    const path = `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceBtw}`;
-    const before = await api("GET", path, aliceToken);
-    expect(asRecord(before.body).kind).toBe("btw");
-    expect((await api("POST", `${path}/continue`, bobToken)).status).toBe(404);
-    expect((await api("POST", `${path}/continue`, malloryToken)).status).toBe(403);
-    expect((await api("POST", `${path}/continue`)).status).toBe(401);
-    const historyPath = join(
-      currentState().storageRoot,
-      "vaults",
-      id.vaultAlpha,
-      "sessions",
-      `${id.sessionAliceBtw}.jsonl`,
-    );
-    const historyBefore = await readFile(historyPath);
-    const mcp = await openMcp(currentState().started.url, aliceToken);
-    const continueNote = () =>
-      mcp.call("continue_session", {
-        vault_id: id.vaultAlpha,
-        session_id: id.sessionAliceBtw,
-      });
-    for (const response of await Promise.all([continueNote(), continueNote()]))
-      expect(response.result).toMatchObject({
-        structuredContent: { session_id: id.sessionAliceBtw },
-      });
-    expect(await readFile(historyPath)).toEqual(historyBefore);
-    const metadata = await runDb(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        return yield* db.query((d) =>
-          d.select().from(sessions).where(eq(sessions.id, id.sessionAliceBtw)),
-        );
-      }),
-    );
-    expect(metadata[0]).toMatchObject({ placement: "standalone", replyMode: "query", revision: 1 });
-    const after = await api("GET", path, aliceToken);
-    expect(after.body).toEqual({ ...asRecord(before.body), kind: "session" });
-    const listed = await api("GET", `/vaults/${id.vaultAlpha}/sessions`, aliceToken);
-    expect(asArray(asRecord(listed.body).items).map((item) => asRecord(item).id)).toContain(
-      id.sessionAliceBtw,
-    );
   });
 
   it("rejects markdown reads of another member's session", async () => {
@@ -2067,12 +2023,12 @@ describe("read-only HTTP integration", () => {
     );
     expect(replay.status).toBe(200);
     const body = asRecord(replay.body);
-    expect(body.id).toBe(id.sessionAliceMain);
-    const events = asArray(body.events).map(asRecord);
-    expect(events.map((event) => event.type)).toEqual(["meta", "exchange", "exchange"]);
-    expect(events.map((event) => event.exId).filter(Boolean)).not.toContain(EX_STALE);
-    expect(events[0]).toMatchObject({
-      type: "meta",
+    expect(body.availability).toBe("available");
+    const exchanges = asArray(body.exchanges).map(asRecord);
+    expect(exchanges).toHaveLength(2);
+    expect(exchanges.map((exchange) => exchange.exchange_id)).not.toContain(EX_STALE);
+    expect(body.session).toMatchObject({
+      id: id.sessionAliceMain,
       query: "How should study circles use source material?",
       user_id: id.alice,
       origin: {
@@ -2084,9 +2040,7 @@ describe("read-only HTTP integration", () => {
         occurrence: 1,
       },
     });
-    const firstExchange = events[1] ?? {};
-    const thinking = asArray(firstExchange.thinking).map(asRecord);
-    const sources = asArray(thinking[0]?.sources).map(asRecord);
+    const sources = asArray(exchanges[0]?.sources).map(asRecord);
     expect(sources.map((source) => source.type)).toEqual([
       "article",
       "raw",
@@ -2104,26 +2058,23 @@ describe("read-only HTTP integration", () => {
     expect(threads).toHaveLength(1);
     expect(threads[0]?.session).toMatchObject({
       id: id.sessionAliceBtw,
-      kind: "btw",
       origin: { kind: "answer", exchange_id: EX_1, anchor: "concrete passage" },
+      origin_title: "How should study circles use source material?",
     });
-    expect(
-      asArray(threads[0]?.events)
-        .map(asRecord)
-        .filter((event) => event.type === "exchange"),
-    ).toHaveLength(2);
+    expect(asArray(threads[0]?.exchanges)).toHaveLength(2);
 
     for (const [token, sessionId, status] of [
       [bobToken, id.sessionAliceMain, 404],
       [aliceToken, id.sessionBob, 404],
       [malloryToken, id.sessionAliceMain, 403],
-      [aliceToken, "s-missing", 404],
+      [aliceToken, "00000000-0000-4000-8000-00000000b0ff", 404],
       [aliceToken, encodeURIComponent("s-2\\.."), 422],
+      [aliceToken, "s-2", 422],
       [undefined, id.sessionAliceMain, 401],
     ] as const) {
       const denied = await api("GET", `/vaults/${id.vaultAlpha}/sessions/${sessionId}`, token);
       expect(denied.status).toBe(status);
-      expect(denied.body).not.toHaveProperty("events");
+      expect(denied.body).not.toHaveProperty("exchanges");
     }
   });
 
@@ -2139,13 +2090,13 @@ describe("read-only HTTP integration", () => {
       expect(response.status).toBe(200);
       const body = Schema.decodeUnknownSync(SessionResponse)(response.body);
       expect(body.activity).toEqual({ reply_id: accepted.reply_id, status: activity });
-      expect(body.events).toContainEqual(
+      expect(body.exchanges).toContainEqual(
         expect.objectContaining({ reply_id: accepted.reply_id, ...expected }),
       );
       expect(response.text).not.toMatch(/context_messages|system_prompt_hash|Stale DB answer/u);
     };
     await observe("admitting", {
-      exId: input.exchange_id,
+      exchange_id: input.exchange_id,
       query: input.question,
       status: "running",
       answer: "",
@@ -2161,7 +2112,7 @@ describe("read-only HTTP integration", () => {
       answer: "Committed partial",
       status: "running",
       version: 7,
-      thinking: [{ sources: completion().sources }],
+      sources: completion().sources,
     });
     const settlement = await runDb(ReplySettlement);
     await runDb(
@@ -2305,7 +2256,7 @@ describe("read-only HTTP integration", () => {
     const refreshed = await api("GET", path, currentFixture().aliceToken);
     expect(refreshed.status).toBe(200);
     expect(asRecord(refreshed.body).activity).toBeNull();
-    expect(asArray(asRecord(refreshed.body).events)).toContainEqual(
+    expect(asArray(asRecord(refreshed.body).exchanges)).toContainEqual(
       expect.objectContaining({
         reply_id: accepted.reply_id,
         status: "completed",
@@ -2326,8 +2277,12 @@ describe("read-only HTTP integration", () => {
       detail: "Conversation history is unavailable; no content has been discarded",
     });
 
-    await writeVaultFile(id.vaultAlpha, "sessions/s-empty.jsonl", "");
-    const emptyReplay = await api("GET", `/vaults/${id.vaultAlpha}/sessions/s-empty`, aliceToken);
+    await writeVaultFile(id.vaultAlpha, "sessions/00000000-0000-4000-8000-00000000b00a.jsonl", "");
+    const emptyReplay = await api(
+      "GET",
+      `/vaults/${id.vaultAlpha}/sessions/00000000-0000-4000-8000-00000000b00a`,
+      aliceToken,
+    );
     expect(emptyReplay.status).toBe(404);
     expect(emptyReplay.body).toMatchObject({ detail: "Session not found" });
 
@@ -2429,13 +2384,13 @@ describe("read-only HTTP integration", () => {
     const path = `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`;
     const saved = await rawApi("GET", path, aliceToken);
     const session = Schema.decodeUnknownSync(SessionResponse)(await saved.json());
-    const root = session.events.find((event) => event.type === "exchange")!;
+    const root = session.exchanges[0]!;
     const note = session.threads.find((thread) => thread.availability === "available")!;
     if (note.availability !== "available") throw new Error("Expected an available note");
-    const reply = note.events.find((event) => event.type === "exchange")!;
+    const reply = note.exchanges[0]!;
     const messages = [
-      { session_id: note.session.id, exchange_id: reply.exId, role: "assistant" },
-      { session_id: session.id, exchange_id: root.exId, role: "user" },
+      { session_id: note.session.id, exchange_id: reply.exchange_id, role: "assistant" },
+      { session_id: session.session.id, exchange_id: root.exchange_id, role: "user" },
     ];
     const response = await rawApi("POST", `${path}/export`, aliceToken, { paper: "a4", messages });
     expect(response.status).toBe(200);
@@ -2512,13 +2467,13 @@ describe("read-only HTTP integration", () => {
     expect(saved).toEqual((await api("GET", path, aliceToken)).body);
     expect(content(await call({ format: "json" }))).toEqual(saved);
     const session = Schema.decodeUnknownSync(SessionResponse)(saved);
-    const root = session.events.find((event) => event.type === "exchange")!;
+    const root = session.exchanges[0]!;
     const note = session.threads.find((thread) => thread.availability === "available")!;
     if (note.availability !== "available") throw new Error("Expected an available note");
-    const reply = note.events.find((event) => event.type === "exchange")!;
+    const reply = note.exchanges[0]!;
     const messages = [
-      { session_id: note.session.id, exchange_id: reply.exId, role: "assistant" },
-      { session_id: session.id, exchange_id: root.exId, role: "user" },
+      { session_id: note.session.id, exchange_id: reply.exchange_id, role: "assistant" },
+      { session_id: session.session.id, exchange_id: root.exchange_id, role: "user" },
     ];
     expect(content(await call({ format: "markdown" })).markdown).toBe(
       await (await rawApi("GET", `${path}/markdown`, aliceToken)).text(),

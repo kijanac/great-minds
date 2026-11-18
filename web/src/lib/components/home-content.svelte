@@ -79,6 +79,7 @@
     exportButton?.focus();
   }
   const exportBusy = $derived(session.phase !== "done");
+  const hasOutline = $derived(conversationOutline(session.exchanges).length > 0);
   let query = $state(initial.initialQuery ?? session.exchanges[0]?.query ?? "");
 
   const [send, receive] = crossfade({
@@ -146,7 +147,7 @@
           >
             {currentVault ? `${currentVault.name} · conversation` : "conversation"}
           </span>
-          {#if conversationOutline(session.exchanges).length > 0}
+          {#if hasOutline}
             <Button
               variant="ghost"
               size="icon-sm"

@@ -2060,7 +2060,6 @@ Response: `200` with a `SessionPage` (standard page envelope). Each item is a
 | Field | Type | Description |
 | --- | --- | --- |
 | `id` | `SessionId` | Session id. |
-| `kind` | `"session"` \| `"btw"` | Current standalone/inline placement. Not historical generation mode. |
 | `query` | string | The first exchange's question. |
 | `created_at` | ISO 8601 | Creation time. |
 | `updated_at` | ISO 8601 | Last update time. |
@@ -2068,7 +2067,7 @@ Response: `200` with a `SessionPage` (standard page envelope). Each item is a
 | `origin` | `SessionOrigin` or `null` | The document the session originated from, if any. |
 | `origin_title` | string or `null` | The current title of the origin document, resolved at read time; `null` when the origin document cannot be resolved. |
 
-`SessionOrigin` is a tagged union. A document origin has `kind: "document"`, `doc_path`, `origin_scope` (`"vault"` or `"personal"`), and nullable `anchor`, `paragraph`, and `paragraph_index`. An answer origin has `kind: "answer"`, parent `session_id`, parent `exchange_id`, and the selected `anchor`, `paragraph`, and nonnegative `paragraph_index`. Continue preserves the saved origin.
+`SessionOrigin` is a tagged union. A document origin has `kind: "document"`, `doc_path`, `origin_scope` (`"vault"` or `"personal"`), and nullable `anchor`, `paragraph`, `section` and `occurrence`. An answer origin has `kind: "answer"`, parent `session_id`, parent `exchange_id`, the selected `anchor` and `paragraph`, and nullable `section` and `occurrence`. `section` is the passage's section index and `occurrence` says which match of the quote is meant.
 
 Errors: `403 Forbidden`, `422 Validation`.
 
@@ -2076,7 +2075,7 @@ Errors: `403 Forbidden`, `422 Validation`.
 
 Auth: required.
 
-Lists the caller's conversations that originated from a given document, including inline BTWs and continued standalone conversations.
+Lists the caller's conversations that originated from a given document.
 
 Path parameters: `vault_id` (`Uuid`).
 
@@ -2086,12 +2085,12 @@ Query parameters:
 | --- | --- | --- | --- |
 | `doc_path` | string | yes | The origin document path. |
 
-Response: `200` with an array of `OriginSessionDetail`, discriminated by `availability`:
+Response: `200` with an array of `SessionDetail`, discriminated by `availability`:
 
 | Variant | Fields | Description |
 | --- | --- | --- |
-| `"available"` | `session: SessionOverview`, `events: SessionEvent[]`, `activity: SessionActivity \| null` | Authorized recorded content plus the current operation observation. |
-| `"unavailable"` | `session: SessionOverview`, `detail: string` | The owned note remains identifiable, but its content could not be read consistently. There is no fabricated empty `events` array. |
+| `"available"` | `session: SessionOverview`, `exchanges: SessionExchange[]`, `activity: SessionActivity \| null` | Authorized recorded content plus the current operation observation. |
+| `"unavailable"` | `session: SessionOverview`, `detail: string` | The owned note remains identifiable, but its content could not be read consistently. There is no fabricated empty `exchanges` array. |
 
 Access is rechecked before returning the captured conversations. Missing or corrupt authorized note content yields the unavailable variant; loss of ownership or membership fails the request instead of disclosing that note.
 
@@ -2101,60 +2100,42 @@ Errors: `403 Forbidden`, `404 NotFound`, `503 ServiceUnavailable`, `422 Validati
 
 Auth: required.
 
-Reads an owned session's native history projection. It returns the opening metadata and selected attempt for each exchange, plus owned direct answer-origin threads. Retained provider messages and generation internals are not exposed.
+Reads an owned session's native history projection. It returns the session's overview and the selected attempt for each exchange, plus owned direct answer-origin threads. Retained provider messages and generation internals are not exposed.
 
 Path parameters: `vault_id` (`Uuid`), `session_id` (`SessionId`).
 
 Response: `200` with a `SessionResponse`:
 
+A `SessionResponse` is the available `SessionDetail` variant plus `threads`:
+
 | Field | Type | Description |
 | --- | --- | --- |
-| `id` | `SessionId` | Session id. |
-| `kind` | `"session"` \| `"btw"` | Current placement projection. |
-| `events` | array of `SessionEvent` | Opening metadata and selected exchanges in acceptance order, including same-attempt committed progress. |
+| `availability` | `"available"` | A root that cannot be read fails the request with `503` instead. |
+| `session` | `SessionOverview` | Id, opening question, origin, origin title and timestamps. |
+| `exchanges` | array of `SessionExchange` | Selected exchanges in acceptance order, including same-attempt committed progress. |
 | `activity` | `SessionActivity` or `null` | Live operation readiness; null when no operation remains pending. |
-| `threads` | array of `OriginSessionDetail` | Owned direct answer-origin conversations. |
-| `origin_title` | string or `null` | Current origin title (as in `SessionOverview`). |
+| `threads` | array of `SessionDetail` | Owned direct answer-origin conversations. |
 
 `SessionActivity` contains `reply_id: Uuid` and `status: "admitting" | "running" | "settling"`. A recorded terminal answer can coexist with `activity.status: "settling"` while the operation projection catches up. Follow-up remains blocked until activity clears; do not infer readiness from answer length or terminal content alone.
 
-The reader checks the current receipt and application revision around each history read, then rechecks ownership and membership for the returned root/child IDs. Root corruption, missing operations behind pending history, or an acknowledged tail absent from the captured file produce `503`, not invented content or read-triggered repair. This is a bounded multi-part read, not a global atomic snapshot or a guarantee that no child was added after enumeration. An initial admission without acknowledged readable history remains unavailable until admission completes.
+The reader checks the current receipt around each history read, then rechecks ownership and membership for the returned root/child IDs. Root corruption, missing operations behind pending history, or an acknowledged tail absent from the captured file produce `503`, not invented content or read-triggered repair. This is a bounded multi-part read, not a global atomic snapshot or a guarantee that no child was added after enumeration. An initial admission without acknowledged readable history remains unavailable until admission completes.
 
-`SessionEvent` is a union discriminated by `type`:
-
-**`type: "meta"`** - the session's opening event.
+`SessionExchange` is a question and its answer:
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `type` | `"meta"` | Discriminator. |
-| `id` | string | Session id. |
-| `query` | string | Opening question. |
-| `ts` | ISO 8601 | Timestamp. |
-| `user_id` | string | User id. |
-| `origin` | `SessionOrigin` or `null` | Origin document. |
-
-**`type: "exchange"`** - a question and its answer.
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `type` | `"exchange"` | Discriminator. |
-| `exId` | `Uuid` | Exchange id. |
+| `exchange_id` | `Uuid` | Exchange id. |
 | `reply_id` | `Uuid` | Required selected attempt identity. |
 | `status` | `"running"` \| `"completed"` \| `"stopped"` \| `"failed"` | Explicit state; an empty answer does not imply running. |
 | `error` | string or `null` | Recorded failure detail, otherwise null. |
 | `query` | string | The question. |
-| `thinking` | array | Visible `ThinkingBlock` entries. |
+| `sources` | array of `ThinkingSource` | What the agent searched and read for this answer. |
 | `answer` | string | Recorded answer, including a labelled private failed partial, or the same live attempt's committed partial. |
+| `citations` | array of `Citation` | Numbered citations found in the answer. |
 | `version` | number or `null` | DB observation version for the active attempt; null for history-only content. Compare only within the same `reply_id`. |
 | `ts` | ISO 8601 or `null` | Recorded timestamp; unknown historical time remains null. |
 
-BTWs are separate conversations in `threads`, not embedded `type: "btw"` events.
-
-`ThinkingBlock`:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `sources` | array | `ThinkingSource` entries (optional). |
+BTWs are separate conversations in `threads`.
 
 `ThinkingSource`:
 
@@ -2221,16 +2202,6 @@ Private source links require access to the original vault. Images are linked des
 
 Errors: `403 Forbidden`, `404 NotFound`, `409 Conflict` (included content still generating/saving), `503 ServiceUnavailable` (required history unavailable, renderer busy, or PDF preparation failed), `422 Validation`. Ordinary authentication failures remain `401 Unauthorized`.
 
-#### POST /v1/vaults/:vault_id/sessions/:session_id/continue
-
-Auth: required; caller must own the conversation and remain a vault member.
-
-Continues an inline BTW as the same standalone session. It atomically changes placement and the future reply default, preserving origin and history. Repeated or concurrent calls are idempotent; already accepted replies retain their frozen mode.
-
-Response: `200` with an empty body.
-
-Errors: `403 Forbidden`, `404 NotFound`, `422 Validation`.
-
 ### Replies
 
 Replies are the unit of work for querying a vault's knowledge base. There is
@@ -2258,7 +2229,7 @@ Request fields:
 | `question` | string | yes | The question to answer. |
 | `origin_path` | string | no | Path of the document the question is about. |
 | `origin_scope` | `"vault"` \| `"personal"` | no | Whether the origin document is vault content or the user's personal documents. Defaults to `"vault"`. |
-| `inline` | boolean | no | Whether the question was asked inline beside its passage. `true` answers as a BTW with a brief-answer cue; `false` uses the default style. When omitted, the conversation's future-reply default applies. |
+| `inline` | boolean | no | Whether the question was asked inline beside its passage. `true` answers as a BTW with a brief-answer cue; `false` or omitted gives a full answer. |
 
 **New session — `session.kind: "new"`**:
 
@@ -2266,8 +2237,6 @@ Request fields:
 | --- | --- | --- | --- |
 | `kind` | `"new"` | yes | Create or reuse a session by idempotency key. |
 | `idempotency_key` | string | yes | An owned session with the same creation key is reused; another user cannot take it over. |
-| `conversation_kind` | `"session"` \| `"btw"` | no | Initial placement/default choice; defaults to `"session"`. A BTW requires a selected passage origin. |
-| `origin_scope` | `"vault"` \| `"personal"` | no | Scope of the session's origin document. Defaults to `"vault"`. |
 | `origin` | `SessionOrigin` | no | Origin document and optional highlighted passage, saved with the session. |
 
 **Existing session — `session.kind: "existing"`**:
@@ -2277,7 +2246,7 @@ Request fields:
 | `kind` | `"existing"` | yes | Append to a saved session. |
 | `id` | `SessionId` | yes | Destination session. |
 
-Answer style is frozen at acceptance from `inline` when present, otherwise from the conversation's future-reply default; it is not supplied as client `mode`. A retry keeps the original request's `inline`. A new BTW has `conversation_kind: "btw"` and a document/answer origin. Follow-ups target that BTW's own session ID. Continue changes the default for later acceptance without changing earlier attempts.
+Answer style is frozen at acceptance from `inline`: `true` answers as a BTW with a brief-answer cue, and `false` or absent gives a full answer. It is not supplied as client `mode`. A retry keeps the original request's `inline`. A new BTW is a session whose origin has a selected passage. Follow-ups target that BTW's own session ID.
 
 Response: `202 Accepted` with a `CreateReplyResponse`:
 
@@ -2296,14 +2265,14 @@ Example (new session):
   "session": {
     "kind": "new",
     "idempotency_key": "session-for-capital",
-    "origin_scope": "vault",
     "origin": {
       "kind": "document",
       "doc_path": "raw/books/capital.md",
       "origin_scope": "vault",
       "anchor": null,
       "paragraph": null,
-      "paragraph_index": null
+      "section": null,
+      "occurrence": null
     }
   }
 }
@@ -2331,7 +2300,7 @@ Auth: required.
 Retries a failed reply. Only replies in the `failed` status can be retried,
 and the retry must use a new `reply_id`. The retry keeps the original question,
 options, exchange ID, session, and parent reply. Highlighted passage context
-comes from the saved conversation, even when the failed reply created it. The new attempt freezes the current future-reply default; it does not copy the failed attempt's old mode.
+comes from the saved conversation, even when the failed reply created it. The new attempt keeps the failed request's `inline` choice.
 
 Path parameters: `vault_id` (`Uuid`), `reply_id` (`Uuid`) - the failed reply.
 
@@ -2379,7 +2348,7 @@ Events:
 | `message` | JSON `ReplySnapshot` | Sent whenever the reply's state changes. |
 | `done` | `{"id": "<reply_id>"}` | Sent once after `completed`, `stopped`, or `failed`; the stream then closes. |
 
-The `message` payload is a `ReplySnapshot`. Session/BTW placement belongs to the conversation, not to a reply discriminator:
+The `message` payload is a `ReplySnapshot`:
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -2824,7 +2793,6 @@ Every error body has the same shape:
 | GET | `/v1/vaults/:vault_id/sessions/:session_id/markdown` | required | sessions |
 | POST | `/v1/vaults/:vault_id/sessions/:session_id/export` | required | sessions |
 | POST | `/v1/vaults/:vault_id/sessions/:session_id/markdown` | required | sessions |
-| POST | `/v1/vaults/:vault_id/sessions/:session_id/continue` | required | sessions |
 | POST | `/v1/vaults/:vault_id/replies` | required | replies |
 | POST | `/v1/vaults/:vault_id/replies/:reply_id/retry` | required | replies |
 | POST | `/v1/vaults/:vault_id/replies/:reply_id/stop` | required | replies |

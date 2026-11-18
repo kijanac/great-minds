@@ -61,8 +61,7 @@
 
   const readMore = (exchange: Exchange) => {
     const seen = new Set<string>();
-    return exchange.thinking
-      .flatMap((block) => block.sources)
+    return exchange.sources
       .filter((source) => {
         if (source.type !== "article" || source.pending || seen.has(source.label)) return false;
         seen.add(source.label);
@@ -297,9 +296,7 @@
               onBtwDismiss={session.dismissBtw}
               onCitation={(citation) => opener.openCitation(exchange, citation.href)}
               sourceTitle={(path) =>
-                exchange.thinking
-                  .flatMap((block) => block.sources)
-                  .find((source) => source.label === path)?.title ?? null}
+                exchange.sources.find((source) => source.label === path)?.title ?? null}
             />
           </div>
         {/if}
@@ -344,7 +341,7 @@
                     >{/each}
                 </div>
               {/if}
-              {#if canPromote && session.sessionId && (vaultRole === "owner" || vaultRole === "editor")}
+              {#if session.sessionId && (vaultRole === "owner" || vaultRole === "editor")}
                 <PromoteButton
                   sessionId={session.sessionId}
                   exchangeId={exchange.id}

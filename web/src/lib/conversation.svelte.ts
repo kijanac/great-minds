@@ -1,7 +1,7 @@
 import { browser } from "$app/env";
 import type {
-  OriginSessionDetail,
   SessionActivity,
+  SessionDetail,
   SessionId,
   SessionOrigin,
   SessionResponse,
@@ -11,7 +11,6 @@ import type {
 import { createReply, retryReply, stopReply, type CreateReplyPayload } from "#lib/api/replies.ts";
 import { newUuid, replyRequest } from "@great-minds/client";
 import { LIVE_UPDATES_UNAVAILABLE, tailReply } from "#lib/reply-tail.ts";
-import { replayExchanges } from "#lib/session-events.ts";
 import type { Exchange, Phase, SelectionInfo, TextAnchor, ThreadLike } from "#lib/types.ts";
 import { genId, isAbortError } from "#lib/utils.ts";
 
@@ -23,8 +22,7 @@ type ReplyAttempt = {
 type SubmissionState = { status: "ready" } | { status: "failed"; attempt: ReplyAttempt };
 
 export interface ConversationOptions {
-  saved?: SessionResponse;
-  detail?: OriginSessionDetail;
+  saved?: SessionDetail | SessionResponse;
   origin?: SessionOrigin | null;
   initialQuery?: string;
   onCreated?: (sessionId: SessionId) => void;
@@ -53,19 +51,14 @@ export class Conversation implements ThreadLike {
   #destroyed = false;
 
   constructor(options: ConversationOptions = {}) {
-    const { saved, detail } = options;
-    const meta = saved?.events.find((event) => event.type === "meta");
-    this.sessionId = saved?.id ?? detail?.session.id ?? null;
+    const { saved } = options;
+    this.sessionId = saved?.session.id ?? null;
     this.id = this.sessionId === null ? genId("thread") : `thread:${this.sessionId}`;
-    this.origin = detail
-      ? detail.session.origin
-      : saved
-        ? (meta?.origin ?? null)
-        : (options.origin ?? null);
-    this.originTitle = detail?.session.origin_title ?? saved?.origin_title ?? null;
-    this.#title = detail?.session.query ?? meta?.query ?? null;
-    this.createdAt = detail?.session.created_at ?? null;
-    this.unavailable = detail?.availability === "unavailable" ? detail.detail : null;
+    this.origin = saved ? saved.session.origin : (options.origin ?? null);
+    this.originTitle = saved?.session.origin_title ?? null;
+    this.#title = saved?.session.query ?? null;
+    this.createdAt = saved?.session.created_at ?? null;
+    this.unavailable = saved?.availability === "unavailable" ? saved.detail : null;
     this.anchor = {
       quote: this.origin?.anchor ?? "",
       context: this.origin?.paragraph ?? "",
@@ -73,15 +66,26 @@ export class Conversation implements ThreadLike {
       occurrence: this.origin?.occurrence ?? null,
     };
     this.#onCreated = options.onCreated;
-    const content = saved ?? (detail?.availability === "available" ? detail : null);
-    this.exchanges = replayExchanges(content?.events ?? []);
+    const content = saved?.availability === "available" ? saved : null;
+    this.exchanges = (content?.exchanges ?? []).map((exchange) => ({
+      id: exchange.exchange_id,
+      query: exchange.query,
+      sources: exchange.sources,
+      answer: exchange.answer,
+      citations: exchange.citations,
+      btws: [],
+      replyId: exchange.reply_id,
+      status: exchange.status,
+      version: exchange.version,
+      error: exchange.error,
+    }));
     this.activity = content?.activity ?? null;
-    for (const child of saved?.threads ?? []) {
+    for (const child of saved !== undefined && "threads" in saved ? saved.threads : []) {
       const origin = child.session.origin;
       if (origin?.kind !== "answer") continue;
       this.exchanges
         .find((exchange) => exchange.id === origin.exchange_id)
-        ?.btws.push(new Conversation({ detail: child }));
+        ?.btws.push(new Conversation({ saved: child }));
     }
 
     if (browser) {
@@ -198,7 +202,6 @@ export class Conversation implements ThreadLike {
           ? { kind: "existing", id: this.sessionId }
           : {
               kind: "new",
-              conversationKind: origin?.anchor ? "btw" : "session",
               idempotencyKey: this.#idempotencyKey,
               ...(origin ? { origin } : {}),
             },
@@ -219,7 +222,7 @@ export class Conversation implements ThreadLike {
       {
         id: attempt.exchangeId,
         query: attempt.payload.question,
-        thinking: [],
+        sources: [],
         answer: "",
         citations: [],
         btws: [],
@@ -278,7 +281,7 @@ export class Conversation implements ThreadLike {
         : { previousReplyId: previous.replyId, replyId: newUuid() };
     this.#retry = attempt;
     this.#updateExchange(exchangeId, {
-      thinking: [],
+      sources: [],
       answer: "",
       citations: [],
       status: "running",

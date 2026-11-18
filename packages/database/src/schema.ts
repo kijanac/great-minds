@@ -7,6 +7,7 @@ import type {
   RunOutcome,
   ReplySnapshot,
   SessionId,
+  SessionOrigin,
   Uuid,
 } from "@great-minds/domain";
 import {
@@ -482,10 +483,7 @@ export const sessions = pgTable(
     vaultId: uuidColumn("vault_id").notNull(),
     userId: uuidColumn("user_id").notNull(),
     query: text("query").notNull(),
-    origin: jsonb("origin"),
-    placement: text("placement").$type<"inline" | "standalone">().default("standalone").notNull(),
-    replyMode: text("reply_mode").$type<"btw" | "query">().default("query").notNull(),
-    revision: integer("revision").default(0).notNull(),
+    origin: jsonb("origin").$type<SessionOrigin>(),
     historySeq: bigint("history_seq", { mode: "number" }),
     historySha256: varchar("history_sha256", { length: 64 }).$type<FileFingerprint>(),
     createdAt: timestamptz("created_at").notNull(),
@@ -509,13 +507,6 @@ export const sessions = pgTable(
     check(
       "sessions_history_receipt_check",
       sql`(${table.historySeq} IS NULL AND ${table.historySha256} IS NULL) OR (${table.historySeq} IS NOT NULL AND ${table.historySha256} IS NOT NULL AND ${table.historySeq} BETWEEN 1 AND ${sql.raw(String(Number.MAX_SAFE_INTEGER))} AND ${table.historySha256} ~ '^[0-9a-f]{64}$')`,
-    ),
-    check("sessions_placement_check", sql`${table.placement} IN ('inline', 'standalone')`),
-    check("sessions_reply_mode_check", sql`${table.replyMode} IN ('btw', 'query')`),
-    check("sessions_revision_check", sql`${table.revision} >= 0`),
-    check(
-      "sessions_inline_origin_check",
-      sql`${table.placement} != 'inline' OR ${table.origin}->>'anchor' IS NOT NULL`,
     ),
   ],
 );

@@ -1,7 +1,7 @@
 import { Option, Schema } from "effect";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
-import type { SessionExchangeEvent, SessionOrigin, Uuid } from "@great-minds/domain";
+import type { SessionExchange, SessionId, SessionOrigin, Uuid } from "@great-minds/domain";
 
 const PARA_SPLIT_RE = /\n\s*\n/;
 const HEADING_LINE_RE = /^(#{1,6})\s+(.+)$/;
@@ -197,18 +197,18 @@ export const buildDocument = (content: string, input: BuildDocumentInput = {}) =
   return buildFrontmatter(known) + injectAnchors(content);
 };
 
-export const sessionExchangePath = (exchangeId: string, sourceId: Uuid) =>
+export const sessionExchangePath = (exchangeId: Uuid, sourceId: Uuid) =>
   `raw/sessions/${exchangeId}-${sourceId}.md`;
 
 export const sessionExchangeDocumentInput = (
-  sessionId: string,
-  exchange: SessionExchangeEvent,
+  sessionId: SessionId,
+  exchange: SessionExchange,
   sessionOrigin: SessionOrigin | null,
 ): BuildDocumentInput => ({
   sourceType: "session",
   origin: "session-exchange",
   sessionId,
-  exchangeId: exchange.exId,
+  exchangeId: exchange.exchange_id,
   sessionQuery: exchange.query,
   sourceDocPath: sessionOrigin?.kind === "document" ? sessionOrigin.doc_path : null,
   sourceAnchor:
@@ -220,8 +220,8 @@ export const sessionExchangeDocumentInput = (
 });
 
 export const buildSessionExchangeDocument = (
-  sessionId: string,
-  exchange: SessionExchangeEvent,
+  sessionId: SessionId,
+  exchange: SessionExchange,
   sessionOrigin: SessionOrigin | null,
 ) =>
   buildDocument(exchange.answer, sessionExchangeDocumentInput(sessionId, exchange, sessionOrigin));

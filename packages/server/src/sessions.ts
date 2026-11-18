@@ -9,33 +9,31 @@ import {
   NotFound,
   ServiceUnavailable,
   SessionActivity,
-  type OriginSessionDetail,
   type PageParams,
   type PromoteExchangeResponse,
   type SessionContent,
-  type SessionExchangeEvent,
+  type SessionDetail,
+  type SessionExchange,
   type SessionId,
-  type SessionOrigin,
-  SessionOrigin as SessionOriginSchema,
   type SessionOverview,
   type SessionPage,
   type SessionResponse,
   type Uuid,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
-import { Context, Effect, Layer, Result, Schema } from "effect";
+import { Context, Effect, Layer, Result } from "effect";
 
-import { ClockService } from "./clock.ts";
 import { acceptedRequestFor } from "./conversation-history/admission.ts";
 import {
   type ConversationHistory,
   hasUsableAnswer,
+  type SettledOrPendingAttempt,
   verifyHistoryReceipt,
 } from "./conversation-history/history.ts";
 import { acknowledgedReceipt, sessionReceipt } from "./conversation-history/rows.ts";
 import {
+  isPublished,
   projectSession,
-  publicationExchanges,
   type PublishedExchange,
 } from "./conversation-history/presentation.ts";
 import { HistoryStore } from "./conversation-history/store.ts";
@@ -58,11 +56,6 @@ export type ReplyTranscript = {
 };
 
 type SessionsServiceShape = {
-  readonly continueAsSession: (
-    userId: Uuid,
-    vaultId: Uuid,
-    sessionId: SessionId,
-  ) => Effect.Effect<void, Forbidden | NotFound>;
   readonly readTranscript: (
     userId: Uuid,
     vaultId: Uuid,
@@ -79,7 +72,7 @@ type SessionsServiceShape = {
     userId: Uuid,
     vaultId: Uuid,
     sessionId: SessionId,
-    exchangeId: string,
+    exchangeId: Uuid,
   ) => Effect.Effect<PromoteExchangeResponse, BadRequest | Conflict | SessionReadError>;
   readonly listSessions: (
     userId: Uuid,
@@ -90,7 +83,7 @@ type SessionsServiceShape = {
     userId: Uuid,
     vaultId: Uuid,
     docPath: string,
-  ) => Effect.Effect<readonly OriginSessionDetail[], SessionReadError>;
+  ) => Effect.Effect<readonly SessionDetail[], SessionReadError>;
   readonly readSession: (
     userId: Uuid,
     vaultId: Uuid,
@@ -107,10 +100,6 @@ export class SessionsService extends Context.Service<SessionsService, SessionsSe
   "@great-minds/server/SessionsService",
 ) {}
 
-export const readSessionOrigin = (value: unknown) =>
-  Schema.decodeUnknownEffect(Schema.NullOr(SessionOriginSchema))(value).pipe(Effect.orDie);
-const kindFor = (row: SessionRow) =>
-  row.placement === "inline" ? ("btw" as const) : ("session" as const);
 const stubToolResults = (messages: readonly LlmMessage[]): readonly LlmMessage[] =>
   messages.map((message) =>
     message.role === "tool"
@@ -126,28 +115,30 @@ const attemptFor = (history: ConversationHistory, replyId: Uuid) =>
     .flatMap((turn) => turn.attempts)
     .find((attempt) => attempt.accepted.reply_id === replyId);
 
-const questionFor = (history: ConversationHistory, replyId: Uuid) =>
-  Effect.gen(function* () {
-    const attempt = attemptFor(history, replyId);
-    if (attempt === undefined)
-      return yield* new NotFound({ detail: "Reply not found in conversation history" });
-    const origin = history.header.origin;
-    return attempt.accepted.parent_reply_id === null &&
-      origin?.anchor !== null &&
-      origin?.anchor !== undefined
-      ? composeAnchoredQuestion(
-          { quote: origin.anchor, context: origin.paragraph },
-          attempt.accepted.question,
-        )
-      : attempt.accepted.question;
-  });
+const requireAttempt = (history: ConversationHistory, replyId: Uuid) => {
+  const attempt = attemptFor(history, replyId);
+  return attempt === undefined
+    ? Effect.fail(new NotFound({ detail: "Reply not found in conversation history" }))
+    : Effect.succeed(attempt);
+};
+
+const questionOf = (history: ConversationHistory, attempt: SettledOrPendingAttempt) => {
+  const origin = history.header.origin;
+  return attempt.accepted.parent_reply_id === null &&
+    origin?.anchor !== null &&
+    origin?.anchor !== undefined
+    ? composeAnchoredQuestion(
+        { quote: origin.anchor, context: origin.paragraph },
+        attempt.accepted.question,
+      )
+    : attempt.accepted.question;
+};
 
 const makeSessions = Effect.gen(function* () {
   const db = yield* Database;
   const access = yield* VaultAccessService;
   const histories = yield* HistoryStore;
   const logger = yield* StructuredLogger;
-  const clock = yield* ClockService;
   const sourceDocuments = yield* SourceDocumentsService;
   const proposals = yield* ProposalsService;
   const ingest = yield* IngestService;
@@ -230,8 +221,8 @@ const makeSessions = Effect.gen(function* () {
 
   const ownedHistory = (userId: Uuid, vaultId: Uuid, sessionId: SessionId) =>
     Effect.gen(function* () {
-      const row = yield* requireSessionOwner(userId, vaultId, sessionId);
-      const history = yield* loadHistory(row);
+      yield* access.requireMember(userId, vaultId);
+      const history = yield* loadHistory(yield* requireSessionOwner(userId, vaultId, sessionId));
       yield* confirmReceipt(yield* requireSessionOwner(userId, vaultId, sessionId), history);
       yield* access.requireMember(userId, vaultId);
       return history;
@@ -255,7 +246,6 @@ const makeSessions = Effect.gen(function* () {
             .for("share");
           if (current === undefined) return yield* new NotFound({ detail: "Session not found" });
           yield* confirmReceipt(current, history);
-          if (current.revision !== row.revision) return yield* unavailable();
           const live = yield* tx
             .select()
             .from(replies)
@@ -269,192 +259,158 @@ const makeSessions = Effect.gen(function* () {
           return live[0];
         }),
       );
-      let events = projectSession(history);
+      const exchanges = projectSession(history);
       if (
         history.turns.some(
           (turn) => turn.latest.settlement === null && turn.latest.accepted.reply_id !== active?.id,
         )
       )
         return yield* unavailable();
-      if (active === undefined) return { events, activity: null } satisfies SessionContent;
+      if (active === undefined) return { exchanges, activity: null } satisfies SessionContent;
       if (active.userId !== row.userId) return yield* unavailable();
-      const saved = events.find(
-        (event) => event.type === "exchange" && event.reply_id === active.id,
-      );
-      if (saved?.type === "exchange") {
-        if (saved.status !== "running") {
-          events = events.map((event) =>
-            event === saved ? { ...saved, version: active.version } : event,
-          );
-          return {
-            events,
-            activity: { reply_id: active.id, status: "settling" },
-          } satisfies SessionContent;
-        }
-        events = events.map((event) =>
-          event === saved
-            ? {
-                ...saved,
-                version: active.version,
-                answer: active.answer,
-                citations: citationsOf(active.answer),
-                thinking: active.sources.length === 0 ? [] : [{ sources: active.sources }],
-              }
-            : event,
-        );
-      } else {
-        if (active.status !== "admitting") return yield* unavailable();
-        const request = yield* acceptedRequestFor(active).pipe(Effect.mapError(unavailable));
-        const pending: SessionExchangeEvent = {
-          type: "exchange",
-          exId: request.command.exchange_id,
-          reply_id: active.id,
-          version: active.version,
-          status: "running",
-          error: null,
-          query: request.command.question,
-          answer: "",
-          citations: [],
-          thinking: [],
-          ts: new Date(request.accepted_at),
-        };
-        const previous = events.find(
-          (event) => event.type === "exchange" && event.exId === pending.exId,
-        );
-        events =
-          previous === undefined
-            ? [...events, pending]
-            : events.map((event) => (event === previous ? pending : event));
-      }
+      const saved = exchanges.find((exchange) => exchange.reply_id === active.id);
+      const replace = (target: SessionExchange, next: SessionExchange) =>
+        exchanges.map((exchange) => (exchange === target ? next : exchange));
+      if (saved !== undefined && saved.status !== "running")
+        return {
+          exchanges: replace(saved, { ...saved, version: active.version }),
+          activity: { reply_id: active.id, status: "settling" },
+        } satisfies SessionContent;
       if (!isReplyPending(active.status)) return yield* unavailable();
+      const activity = { reply_id: active.id, status: active.status };
+      if (saved !== undefined)
+        return {
+          exchanges: replace(saved, {
+            ...saved,
+            version: active.version,
+            answer: active.answer,
+            citations: citationsOf(active.answer),
+            sources: active.sources,
+          }),
+          activity,
+        } satisfies SessionContent;
+      if (active.status !== "admitting") return yield* unavailable();
+      const request = yield* acceptedRequestFor(active).pipe(Effect.mapError(unavailable));
+      const pending: SessionExchange = {
+        exchange_id: request.command.exchange_id,
+        reply_id: active.id,
+        version: active.version,
+        status: "running",
+        error: null,
+        query: request.command.question,
+        answer: "",
+        citations: [],
+        sources: [],
+        ts: new Date(request.accepted_at),
+      };
+      const previous = exchanges.find((exchange) => exchange.exchange_id === pending.exchange_id);
       return {
-        events,
-        activity: { reply_id: active.id, status: active.status },
+        exchanges: previous === undefined ? [...exchanges, pending] : replace(previous, pending),
+        activity,
       } satisfies SessionContent;
     });
 
-  const originTitleFor = (userId: Uuid, vaultId: Uuid, origin: SessionOrigin | null) =>
+  const originTitles = (userId: Uuid, vaultId: Uuid, rows: readonly SessionRow[]) =>
     Effect.gen(function* () {
-      if (origin === null) return null;
-      if (origin.kind === "answer") {
-        const rows = yield* db.query((d) =>
-          d
-            .select({ query: sessions.query })
-            .from(sessions)
-            .where(
-              and(
-                eq(sessions.vaultId, vaultId),
-                eq(sessions.userId, userId),
-                eq(sessions.id, origin.session_id),
+      const parents = new Set<SessionId>();
+      const personal = new Set<string>();
+      const vault = new Set<string>();
+      for (const { origin } of rows) {
+        if (origin === null) continue;
+        if (origin.kind === "answer") parents.add(origin.session_id);
+        else (origin.origin_scope === "personal" ? personal : vault).add(origin.doc_path);
+      }
+      const known = new Map(rows.map((row) => [row.id, row.query]));
+      const missing = [...parents].filter((id) => !known.has(id));
+      const [questions, references, sources] = yield* Effect.all(
+        [
+          missing.length === 0
+            ? Effect.succeed([])
+            : db.query((d) =>
+                d
+                  .select({ id: sessions.id, query: sessions.query })
+                  .from(sessions)
+                  .where(
+                    and(
+                      eq(sessions.vaultId, vaultId),
+                      eq(sessions.userId, userId),
+                      inArray(sessions.id, missing),
+                    ),
+                  ),
               ),
-            )
-            .limit(1),
-        );
-        return rows[0]?.query ?? null;
-      }
-      if (origin.origin_scope === "personal") {
-        const rows = yield* db.query((d) =>
-          d
-            .select({ title: userDocuments.title })
-            .from(userDocuments)
-            .where(
-              and(eq(userDocuments.userId, userId), eq(userDocuments.filePath, origin.doc_path)),
-            )
-            .limit(1),
-        );
-        return rows[0]?.title ?? null;
-      }
-      return (yield* sourceDocuments.getByPath(vaultId, origin.doc_path))?.title ?? null;
-    });
-
-  const readOverview = (row: SessionRow) =>
-    Effect.gen(function* () {
-      const origin = yield* readSessionOrigin(row.origin);
-      const originTitle = yield* originTitleFor(row.userId, row.vaultId, origin);
-      return {
-        id: row.id,
-        kind: kindFor(row),
-        query: row.query,
-        created_at: row.createdAt,
-        updated_at: row.updatedAt,
-        user_id: row.userId,
-        origin,
-        origin_title: originTitle,
-      } satisfies SessionOverview;
-    });
-
-  const sessionDetail = (row: SessionRow) =>
-    Effect.gen(function* () {
-      const session = yield* readOverview(row);
-      return yield* readContent(row).pipe(
-        Effect.map((content): OriginSessionDetail => ({
-          availability: "available",
-          session,
-          ...content,
-        })),
-        Effect.catchTag("ServiceUnavailable", (error) =>
-          Effect.succeed({
-            availability: "unavailable" as const,
-            session,
-            detail: error.detail,
-          }),
-        ),
+          personal.size === 0
+            ? Effect.succeed([])
+            : db.query((d) =>
+                d
+                  .select({ path: userDocuments.filePath, title: userDocuments.title })
+                  .from(userDocuments)
+                  .where(
+                    and(
+                      eq(userDocuments.userId, userId),
+                      inArray(userDocuments.filePath, [...personal]),
+                    ),
+                  ),
+              ),
+          sourceDocuments.titlesByPath(vaultId, [...vault]),
+        ],
+        { concurrency: 3 },
       );
+      for (const question of questions) known.set(question.id, question.query);
+      const referenceTitles = new Map(references.map((row) => [row.path, row.title]));
+      return (row: SessionRow): SessionOverview => {
+        const origin = row.origin;
+        return {
+          id: row.id,
+          query: row.query,
+          created_at: row.createdAt,
+          updated_at: row.updatedAt,
+          user_id: row.userId,
+          origin,
+          origin_title:
+            origin === null
+              ? null
+              : origin.kind === "answer"
+                ? (known.get(origin.session_id) ?? null)
+                : origin.origin_scope === "personal"
+                  ? (referenceTitles.get(origin.doc_path) ?? null)
+                  : (sources.get(origin.doc_path) ?? null),
+        };
+      };
     });
+
+  const sessionDetail = (row: SessionRow, session: SessionOverview) =>
+    readContent(row).pipe(
+      Effect.map((content): SessionDetail => ({ availability: "available", session, ...content })),
+      Effect.catchTag("ServiceUnavailable", (error) =>
+        Effect.succeed<SessionDetail>({
+          availability: "unavailable",
+          session,
+          detail: error.detail,
+        }),
+      ),
+    );
 
   const readPublication = (userId: Uuid, vaultId: Uuid, sessionId: SessionId) =>
-    Effect.gen(function* () {
-      yield* access.requireMember(userId, vaultId);
-      return publicationExchanges(projectSession(yield* ownedHistory(userId, vaultId, sessionId)));
-    });
+    ownedHistory(userId, vaultId, sessionId).pipe(
+      Effect.map((history) => projectSession(history).filter(isPublished)),
+    );
 
   return {
-    continueAsSession: (userId, vaultId, sessionId) =>
-      Effect.gen(function* () {
-        yield* access.requireMember(userId, vaultId);
-        yield* db.transaction(
-          Effect.fn(function* (tx) {
-            const rows = yield* tx
-              .select()
-              .from(sessions)
-              .where(and(eq(sessions.id, sessionId), eq(sessions.vaultId, vaultId)))
-              .for("update");
-            const row = rows[0];
-            if (row === undefined || row.userId !== userId)
-              return yield* new NotFound({ detail: "Session not found" });
-            if (row.placement === "standalone" && row.replyMode === "query") return;
-            const now = yield* clock.now;
-            yield* tx
-              .update(sessions)
-              .set({
-                placement: "standalone",
-                replyMode: "query",
-                revision: sql`${sessions.revision} + 1`,
-                updatedAt: sql`greatest(${sessions.updatedAt}, ${now})`,
-              })
-              .where(eq(sessions.id, sessionId));
-          }),
-        );
-      }),
     readReplyQuestion: (userId, vaultId, sessionId, replyId) =>
       Effect.gen(function* () {
-        yield* access.requireMember(userId, vaultId);
-        return yield* questionFor(yield* ownedHistory(userId, vaultId, sessionId), replyId);
+        const history = yield* ownedHistory(userId, vaultId, sessionId);
+        return questionOf(history, yield* requireAttempt(history, replyId));
       }),
     readTranscript: (userId, vaultId, sessionId, replyId) =>
       Effect.gen(function* () {
-        yield* access.requireMember(userId, vaultId);
         let history = yield* ownedHistory(userId, vaultId, sessionId);
-        const question = yield* questionFor(history, replyId);
-        const attempt = attemptFor(history, replyId);
-        if (attempt === undefined)
-          return yield* new NotFound({ detail: "Reply not found in conversation history" });
+        const attempt = yield* requireAttempt(history, replyId);
+        const question = questionOf(history, attempt);
         let parent =
           attempt.accepted.parent_reply_id === null
             ? history.header.context
             : { session_id: sessionId, reply_id: attempt.accepted.parent_reply_id };
         const visited = new Set([`${sessionId}:${replyId}`]);
-        const readSessions = new Set<SessionId>([sessionId]);
         const chain: (readonly LlmMessage[])[] = [];
         while (parent !== null) {
           const key = `${parent.session_id}:${parent.reply_id}`;
@@ -465,7 +421,6 @@ const makeSessions = Effect.gen(function* () {
           visited.add(key);
           if (history.header.session_id !== parent.session_id) {
             history = yield* ownedHistory(userId, vaultId, parent.session_id);
-            readSessions.add(parent.session_id);
           }
           const previous = attemptFor(history, parent.reply_id);
           if (!hasUsableAnswer(previous) || previous.settlement.context_messages === null) {
@@ -482,7 +437,6 @@ const makeSessions = Effect.gen(function* () {
                   reply_id: previous.accepted.parent_reply_id,
                 };
         }
-        yield* confirmAccess(userId, vaultId, [...readSessions]);
         return {
           question,
           prior: chain
@@ -519,21 +473,20 @@ const makeSessions = Effect.gen(function* () {
               proposal_id: existing.id,
             };
         }
-        const source = yield* sourceDocuments.admit(vaultId, sourceId, dest);
         const history = yield* loadHistory(row);
         const exchange = projectSession(history).find(
-          (event): event is SessionExchangeEvent =>
-            event.type === "exchange" && event.exId === exchangeId,
+          (candidate) => candidate.exchange_id === exchangeId,
         );
         if (exchange === undefined)
           return yield* new NotFound({ detail: "Exchange not found in session" });
-        if (exchange.status !== "completed" && exchange.status !== "stopped") {
+        if (!isPublished(exchange)) {
           return yield* new BadRequest({
             detail: "Only completed or stopped answers can be promoted",
           });
         }
         if (exchange.answer.trim().length === 0)
           return yield* new BadRequest({ detail: "Exchange has no answer yet" });
+        const source = yield* sourceDocuments.admit(vaultId, sourceId, dest);
         if (scope.role === "owner") {
           const result = yield* ingest.ingestSessionExchange(
             source,
@@ -585,8 +538,8 @@ const makeSessions = Effect.gen(function* () {
             .limit(params.limit)
             .offset(params.offset),
         );
-        const overviews = yield* Effect.forEach(rows, readOverview, { concurrency: 1 });
-        return pageEnvelope(overviews, params, oneTotal(counts));
+        const overview = yield* originTitles(userId, vaultId, rows);
+        return pageEnvelope(rows.map(overview), params, oneTotal(counts));
       }),
     listSessionsByOrigin: (userId, vaultId, docPath) =>
       Effect.gen(function* () {
@@ -604,7 +557,10 @@ const makeSessions = Effect.gen(function* () {
             )
             .orderBy(asc(sessions.createdAt)),
         );
-        const details = yield* Effect.forEach(rows, sessionDetail, { concurrency: 1 });
+        const overview = yield* originTitles(userId, vaultId, rows);
+        const details = yield* Effect.forEach(rows, (row) => sessionDetail(row, overview(row)), {
+          concurrency: 4,
+        });
         yield* confirmAccess(
           userId,
           vaultId,
@@ -617,8 +573,6 @@ const makeSessions = Effect.gen(function* () {
         yield* access.requireMember(userId, vaultId);
         const row = yield* requireSessionOwner(userId, vaultId, sessionId);
         const content = yield* readContent(row);
-        const origin = yield* readSessionOrigin(row.origin);
-        const originTitle = yield* originTitleFor(userId, vaultId, origin);
         const children = yield* db.query((d) =>
           d
             .select()
@@ -633,13 +587,17 @@ const makeSessions = Effect.gen(function* () {
             )
             .orderBy(asc(sessions.createdAt)),
         );
-        const threads = yield* Effect.forEach(children, sessionDetail, { concurrency: 4 });
+        const overview = yield* originTitles(userId, vaultId, [row, ...children]);
+        const threads = yield* Effect.forEach(
+          children,
+          (child) => sessionDetail(child, overview(child)),
+          { concurrency: 4 },
+        );
         yield* confirmAccess(userId, vaultId, [sessionId, ...children.map((child) => child.id)]);
         return {
-          id: sessionId,
-          kind: kindFor(row),
+          availability: "available" as const,
+          session: overview(row),
           ...content,
-          origin_title: originTitle,
           threads,
         };
       }),

@@ -204,7 +204,7 @@ const GreatMindsTools = Toolkit.make(
   }),
   tool("read_session", "readSession", {
     description:
-      "Read a saved conversation; the result is wrapped in data. Default json returns structured events and attached notes: each exchange has exId, query (user) and answer (assistant). Markdown returns prose without PDF rendering. PDF returns base64 pdf bytes plus matching Markdown; decode the bytes to save a file. For Markdown/PDF, optionally select messages using session_id, exchange_id (exId), and role; omit messages for everything. Does not publish, store an artifact, or call a model.",
+      "Read a saved conversation; the result is wrapped in data. Default json returns the conversation, its exchanges and its attached notes: each exchange has exchange_id, query (user) and answer (assistant). Markdown returns prose without PDF rendering. PDF returns base64 pdf bytes plus matching Markdown; decode the bytes to save a file. For Markdown/PDF, optionally select messages using session_id, exchange_id, and role; omit messages for everything. Does not publish, store an artifact, or call a model.",
     parameters: Schema.Struct({
       vault_id: vaultId,
       session_id: SessionId,
@@ -246,12 +246,6 @@ const GreatMindsTools = Toolkit.make(
       next_reply_id: RetryReplyRequest.fields.reply_id,
     }),
     success: CreateReplyResponse,
-  }),
-  tool("continue_session", "continueAsSession", {
-    description:
-      "Make your saved side note a standalone conversation for future replies. Preserves its id and history; does not generate an answer. Follow up with ask using the returned session_id.",
-    parameters: Schema.Struct({ vault_id: vaultId, session_id: SessionId }),
-    success: Schema.Struct({ session_id: SessionId }),
   }),
   tool("promote_answer", "promoteSessionExchange", {
     description:
@@ -478,10 +472,6 @@ const ToolHandlers = GreatMindsTools.toLayer(
         asUser((user) => replies.stop(user, vault_id, reply_id).pipe(Effect.as({ reply_id }))),
       retry_reply: ({ vault_id, reply_id, next_reply_id }) =>
         asUser((user) => replies.retry(user, vault_id, reply_id, next_reply_id)),
-      continue_session: ({ vault_id, session_id }) =>
-        asUser((user) =>
-          sessions.continueAsSession(user, vault_id, session_id).pipe(Effect.as({ session_id })),
-        ),
       promote_answer: ({ vault_id, session_id, exchange_id }) =>
         asUser((user) => sessions.promoteExchange(user, vault_id, session_id, exchange_id)),
       list_jobs: ({ vault_id, ...query }) =>
@@ -551,12 +541,7 @@ const ToolHandlers = GreatMindsTools.toLayer(
               origin_scope: "vault",
               session:
                 session_id === undefined
-                  ? {
-                      kind: "new",
-                      idempotency_key: newUuid(),
-                      conversation_kind: "session",
-                      origin_scope: "vault",
-                    }
+                  ? { kind: "new", idempotency_key: newUuid() }
                   : { kind: "existing", id: session_id },
             });
             const reply = yield* replies.settled(user, vault_id, created.reply_id);

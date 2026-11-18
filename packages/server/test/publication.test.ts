@@ -1,13 +1,14 @@
 import type {
-  OriginSessionDetail,
-  SessionExchangeEvent,
+  SessionDetail,
+  SessionExchange,
+  SessionOrigin,
   SessionResponse,
 } from "@great-minds/domain";
 import { Effect, Result } from "effect";
 import { OfficeParser } from "officeparser";
 import { describe, expect, it } from "vitest";
 
-import { publicationExchanges } from "../src/conversation-history/presentation.ts";
+import { isPublished } from "../src/conversation-history/presentation.ts";
 import { compilePublication, prepareSessionPublication } from "../src/publication/markdown.ts";
 import { makePdfRenderer } from "../src/publication/pdf.ts";
 import { sessionId, uuid, vaultId } from "./fixtures/conversation-history.ts";
@@ -16,10 +17,9 @@ const links = { webUrl: new URL("https://research.example"), vaultId };
 const exchange = (
   index: number,
   answer: string,
-  status: SessionExchangeEvent["status"] = "completed",
-): SessionExchangeEvent => ({
-  type: "exchange",
-  exId: uuid(index),
+  status: SessionExchange["status"] = "completed",
+): SessionExchange => ({
+  exchange_id: uuid(index),
   reply_id: uuid(index + 100),
   version: 1,
   status,
@@ -27,18 +27,26 @@ const exchange = (
   query: `Question ${index}`,
   answer,
   citations: [],
-  thinking: [],
+  sources: [],
   ts: new Date("2026-01-01"),
 });
-const session = (
-  events: readonly SessionExchangeEvent[],
-  threads: readonly OriginSessionDetail[] = [],
-): SessionResponse => ({
+const overview = (query: string, origin: SessionOrigin | null) => ({
   id: sessionId,
-  kind: "session",
-  activity: null,
-  events,
+  query,
+  created_at: new Date("2026-01-01"),
+  updated_at: new Date("2026-01-01"),
+  user_id: uuid(2),
+  origin,
   origin_title: null,
+});
+const session = (
+  exchanges: readonly SessionExchange[],
+  threads: readonly SessionDetail[] = [],
+): SessionResponse => ({
+  availability: "available",
+  session: overview("Root", null),
+  activity: null,
+  exchanges,
   threads,
 });
 const origin = {
@@ -50,34 +58,15 @@ const origin = {
   section: null,
   occurrence: 1,
 } as const;
-const note = (): Extract<OriginSessionDetail, { availability: "available" }> => ({
+const note = (): Extract<SessionDetail, { availability: "available" }> => ({
   availability: "available",
   activity: null,
-  session: {
-    id: sessionId,
-    kind: "session",
-    query: "Continued note",
-    created_at: new Date("2026-01-01"),
-    updated_at: new Date("2026-01-01"),
-    user_id: uuid(2),
-    origin,
-    origin_title: null,
-  },
-  events: [
-    {
-      type: "meta",
-      id: sessionId,
-      query: "Continued note",
-      ts: new Date("2026-01-01"),
-      user_id: uuid(2),
-      origin,
-    },
-    exchange(3, "ATTACHED_NOTE[^1]\n\n[^1]: NOTE_CITATION"),
-  ],
+  session: overview("Attached note", origin),
+  exchanges: [exchange(3, "ATTACHED_NOTE[^1]\n\n[^1]: NOTE_CITATION")],
 });
 
 describe("conversation publication", () => {
-  it("includes saved private partials and continued notes without widening public selection", async () => {
+  it("includes saved private partials and attached notes without widening public selection", async () => {
     const root = session(
       [exchange(1, "STOPPED_PROSE", "stopped"), exchange(2, "PRIVATE_PARTIAL", "failed")],
       [note()],
@@ -94,7 +83,7 @@ describe("conversation publication", () => {
       expect(publication.markdown).toContain(value.replaceAll("_", "\\_"));
     expect(publication.markdown).not.toMatch(/Response (stopped|failed|in progress)/u);
     const shared = compilePublication(
-      [{ exchanges: publicationExchanges(root.events), origin: null }],
+      [{ exchanges: root.exchanges.filter(isPublished), origin: null }],
       links,
     ).markdown;
     expect(shared).toContain("STOPPED\\_PROSE");

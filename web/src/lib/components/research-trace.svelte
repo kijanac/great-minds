@@ -24,12 +24,7 @@
     onOpen?: (source: SourceRef) => void;
   } = $props();
 
-  const rounds = $derived(
-    researchRounds(
-      exchange.thinking.flatMap((block) => block.sources),
-      exchange.answer,
-    ),
-  );
+  const rounds = $derived(researchRounds(exchange.sources, exchange.answer));
   const steps = $derived(rounds.flatMap((round) => round.steps));
   const reads = $derived(
     steps.filter((step): step is ReadStep => step.kind === "read" && !step.pending),

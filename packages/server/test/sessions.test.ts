@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 
 import { parseHistory } from "../src/conversation-history/history.ts";
 import {
+  isPublished,
   projectSession,
-  publicationExchanges,
   renderSessionMarkdown,
 } from "../src/conversation-history/presentation.ts";
 import {
@@ -18,6 +18,8 @@ import {
   uuid,
 } from "./fixtures/conversation-history.ts";
 
+const publicationExchanges = (exchanges: ReturnType<typeof projectSession>) =>
+  exchanges.filter(isPublished);
 const project = (writes: readonly object[]) => {
   const parsed = parseHistory(sessionId, historyBytes(writes));
   if (Result.isFailure(parsed)) throw parsed.failure;
@@ -35,14 +37,18 @@ describe("native session projection", () => {
       attempt({ reply_id: uuid(103), previous_attempt_id: replyId, question: "First question" }),
       settlement({ reply_id: uuid(103), answer: "First answer" }),
     ]);
-    expect(projected.filter((event) => event.type === "exchange")).toEqual([
+    expect(projected).toEqual([
       expect.objectContaining({
-        exId: uuid(201),
+        exchange_id: uuid(201),
         reply_id: uuid(103),
         answer: "First answer",
         status: "completed",
       }),
-      expect.objectContaining({ exId: uuid(202), answer: "Second answer", status: "completed" }),
+      expect.objectContaining({
+        exchange_id: uuid(202),
+        answer: "Second answer",
+        status: "completed",
+      }),
     ]);
     const markdown = renderSessionMarkdown(publicationExchanges(projected));
     expect(markdown.match(/^# First question$/gmu)).toHaveLength(1);
@@ -79,7 +85,7 @@ describe("native session projection", () => {
       }),
       settlement({ reply_id: uuid(102), answer: "Second BTW answer" }),
     ]);
-    expect(events.filter((event) => event.type === "exchange")).toHaveLength(2);
+    expect(events).toHaveLength(2);
     expect(JSON.stringify(events)).not.toContain("Private tool result");
     expect(events[0]).not.toHaveProperty("context");
     const markdown = renderSessionMarkdown(publicationExchanges(events));
@@ -88,26 +94,26 @@ describe("native session projection", () => {
   });
 
   it("distinguishes pending work from an empty completed answer", () => {
-    expect(project([header(), attempt()])[1]).toMatchObject({
+    expect(project([header(), attempt()])[0]).toMatchObject({
       status: "running",
       answer: "",
-      thinking: [],
+      sources: [],
     });
     expect(
-      project([header(), attempt(), settlement({ answer: "", sources: [] })])[1],
+      project([header(), attempt(), settlement({ answer: "", sources: [] })])[0],
     ).toMatchObject({ status: "completed", answer: "" });
   });
 
   it("keeps unknown historical settlement time unknown", () => {
-    expect(project([header(), attempt(), settlement({ settled_at: null })])[1]).toMatchObject({
+    expect(project([header(), attempt(), settlement({ settled_at: null })])[0]).toMatchObject({
       ts: null,
     });
   });
 
   it("retains visible tool activity separately from private tool messages", () => {
     const result = settlement();
-    expect(project([header(), attempt(), result])[1]).toMatchObject({
-      thinking: [{ sources: result.sources }],
+    expect(project([header(), attempt(), result])[0]).toMatchObject({
+      sources: result.sources,
     });
     expect(
       renderSessionMarkdown(publicationExchanges(project([header(), attempt(), result]))),
@@ -123,7 +129,7 @@ describe("native session projection", () => {
         outcome: { status: "failed", code: "external_outcome_unknown", message: "Not repeated" },
       }),
     ]);
-    expect(events[1]).toMatchObject({
+    expect(events[0]).toMatchObject({
       status: "failed",
       answer: "A private failed partial",
       error: "Not repeated",

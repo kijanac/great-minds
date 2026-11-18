@@ -46,7 +46,7 @@
           exchanges: annotation.exchanges.map((exchange) => ({
             id: shareExchangeId,
             query: exchange.query,
-            thinking: [],
+            sources: [],
             answer: exchange.answer,
             citations: [],
             btws: [],

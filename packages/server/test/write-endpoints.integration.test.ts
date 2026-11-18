@@ -254,7 +254,6 @@ const createSessionForTest = (
     readonly id: Uuid;
     readonly query: string;
     readonly answer: string;
-    readonly thinking?: readonly unknown[];
   },
   origin?: SessionOrigin,
 ) =>
@@ -2679,7 +2678,7 @@ describe("M3.1 write endpoint integration", () => {
             yield* db
               .query((d) =>
                 d.insert(sessions).values({
-                  id: decodeSessionId("s-rename-origin"),
+                  id: decodeSessionId("00000000-0000-4000-8000-00000000d002"),
                   vaultId: id.vault,
                   userId: id.alice,
                   query: "Anchored session on the reference",
@@ -2702,7 +2701,7 @@ describe("M3.1 write endpoint integration", () => {
           }),
         );
         await runDb(
-          savedConversation(id.vault, decodeSessionId("s-rename-origin"), [
+          savedConversation(id.vault, decodeSessionId("00000000-0000-4000-8000-00000000d002"), [
             Schema.decodeUnknownSync(ConversationTurnFixture)({
               replyId: randomUUID(),
               exchangeId: randomUUID(),
@@ -2720,7 +2719,7 @@ describe("M3.1 write endpoint integration", () => {
         );
         expect(before.status).toBe(200);
         expect(asRecord(asRecord(asArray(before.body)[0]).session)).toMatchObject({
-          id: decodeSessionId("s-rename-origin"),
+          id: decodeSessionId("00000000-0000-4000-8000-00000000d002"),
           origin_title: "Origin Title Article",
         });
 
@@ -2736,7 +2735,7 @@ describe("M3.1 write endpoint integration", () => {
         );
         expect(after.status).toBe(200);
         expect(asRecord(asRecord(asArray(after.body)[0]).session)).toMatchObject({
-          id: decodeSessionId("s-rename-origin"),
+          id: decodeSessionId("00000000-0000-4000-8000-00000000d002"),
           origin_title: "Renamed Origin Article",
         });
       },
@@ -3225,7 +3224,6 @@ describe("M3.1 write endpoint integration", () => {
       {
         id: EX_PROMOTE,
         query: "What should be promoted?",
-        thinking: [],
         answer: "Promoted answer body.",
       },
       {
@@ -3242,7 +3240,6 @@ describe("M3.1 write endpoint integration", () => {
     const editorSessionId = await createSessionForTest(id.bob, "editor-promote-key", {
       id: EX_PROPOSAL,
       query: "What should editors propose?",
-      thinking: [],
       answer: "Proposal answer body.",
     });
 
@@ -3397,16 +3394,16 @@ describe("M3.1 write endpoint integration", () => {
 
     const missingSession = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/s-missing/exchanges/${EX_ANY}/promote`,
+      `/vaults/${id.vault}/sessions/00000000-0000-4000-8000-00000000d0ff/exchanges/${EX_ANY}/promote`,
       aliceToken,
     );
     expect(missingSession.status).toBe(404);
     expect(missingSession.body).toMatchObject({ detail: "Session not found" });
 
-    await writeVaultFile(id.vault, "sessions/s-empty.jsonl", "");
+    await writeVaultFile(id.vault, "sessions/00000000-0000-4000-8000-00000000d003.jsonl", "");
     const emptySession = await api(
       "POST",
-      `/vaults/${id.vault}/sessions/s-empty/exchanges/${EX_ANY}/promote`,
+      `/vaults/${id.vault}/sessions/00000000-0000-4000-8000-00000000d003/exchanges/${EX_ANY}/promote`,
       aliceToken,
     );
     expect(emptySession.status).toBe(404);
@@ -3415,7 +3412,6 @@ describe("M3.1 write endpoint integration", () => {
     const emptyAnswerSessionId = await createSessionForTest(id.alice, "empty-answer-key", {
       id: EX_EMPTY,
       query: "Empty answer",
-      thinking: [],
       answer: "  ",
     });
     const emptyAnswer = await api(

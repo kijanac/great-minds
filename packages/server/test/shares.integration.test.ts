@@ -546,7 +546,7 @@ describe("share links", () => {
             yield* db
               .query((d) =>
                 d.insert(sessions).values({
-                  id: decodeSessionId("s-annotated"),
+                  id: decodeSessionId("00000000-0000-4000-8000-00000000d001"),
                   vaultId: id.vault,
                   userId: id.alice,
                   query: "What does the quote mean?",
@@ -571,7 +571,7 @@ describe("share links", () => {
         await runDb(
           savedConversation(
             id.vault,
-            decodeSessionId("s-annotated"),
+            decodeSessionId("00000000-0000-4000-8000-00000000d001"),
             Schema.decodeUnknownSync(Schema.NonEmptyArray(ConversationTurnFixture))([
               {
                 replyId: "00000000-0000-4000-8000-000000000711",

@@ -15,7 +15,7 @@ export const applyReplySnapshot = (
     ...exchange,
     answer: snapshot.answer,
     citations: snapshot.citations,
-    thinking: snapshot.sources.length > 0 ? [{ sources: snapshot.sources }] : [],
+    sources: snapshot.sources,
     startedAt: snapshot.created_at,
     status: isReplyPending(snapshot.status) ? "running" : snapshot.status,
     error: snapshot.error,

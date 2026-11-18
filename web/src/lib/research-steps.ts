@@ -141,9 +141,7 @@ export const answerText = (exchange: Exchange) => {
   const answer = exchange.answer.trim();
   return exchange.status === "running" &&
     answer !== "" &&
-    exchange.thinking.some((block) =>
-      block.sources.some((source) => source.thinking?.trim() === answer),
-    )
+    exchange.sources.some((source) => source.thinking?.trim() === answer)
     ? ""
     : exchange.answer;
 };
@@ -153,21 +151,20 @@ export const readingTrail = (
   label: string,
   focus: number | null = null,
 ): ReadingTrail | null => {
-  const sources = exchange.thinking.flatMap((block) => block.sources);
-  const step = researchRounds(sources, exchange.answer)
+  const step = researchRounds(exchange.sources, exchange.answer)
     .flatMap((round) => round.steps)
     .find((item): item is ReadStep => item.kind === "read" && item.source.label === label);
   if (step === undefined) return null;
   return {
     step,
     found:
-      sources.find(
+      exchange.sources.find(
         (source) =>
           source.type === "search" &&
           source.path === null &&
           source.hits?.some((hit) => hit.path === label),
       ) ?? null,
-    within: sources.filter((source) => source.type === "search" && source.path === label),
+    within: exchange.sources.filter((source) => source.type === "search" && source.path === label),
     cited: new Map(
       [...step.cited].map((chunk) => [
         chunk,

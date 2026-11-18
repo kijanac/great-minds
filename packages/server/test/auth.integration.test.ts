@@ -1334,7 +1334,6 @@ describe("auth HTTP integration", () => {
       "read_session",
       "stop_reply",
       "retry_reply",
-      "continue_session",
       "promote_answer",
       "list_jobs",
       "read_job",
@@ -1383,7 +1382,6 @@ describe("auth HTTP integration", () => {
       "retry_url_job",
       "stop_reply",
       "retry_reply",
-      "continue_session",
       "promote_answer",
     ])
       expect(

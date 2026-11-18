@@ -79,7 +79,7 @@ describe("native conversation history", () => {
       failed(),
     ]);
     expect(history.turns.map((turn) => turn.exchange_id)).toEqual([uuid(201), uuid(202)]);
-    expect(projectSession(history)[1]).toMatchObject({
+    expect(projectSession(history)[0]).toMatchObject({
       reply_id: uuid(103),
       status: "completed",
       query: retry.question,
@@ -272,8 +272,6 @@ describe("native conversation history", () => {
         session: {
           kind: "new",
           idempotency_key: "descriptor",
-          conversation_kind: "session",
-          origin_scope: "vault",
         },
       },
     } satisfies AcceptedReplyRequest;

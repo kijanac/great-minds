@@ -24,7 +24,7 @@ export type Uuid = typeof Uuid.Type;
 export const isUuid = Schema.is(Uuid);
 
 export const SessionId = Schema.String.pipe(
-  Schema.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)),
+  Schema.check(Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)),
   Schema.brand("SessionId"),
 );
 export type SessionId = typeof SessionId.Type;
@@ -911,9 +911,6 @@ export const AnswerSessionOrigin = Schema.Struct({
 export const SessionOrigin = Schema.Union([DocumentSessionOrigin, AnswerSessionOrigin]);
 export type SessionOrigin = typeof SessionOrigin.Type;
 
-export const ConversationKind = Schema.Literals(["session", "btw"] as const);
-export type ConversationKind = typeof ConversationKind.Type;
-
 export const composeAnchoredQuestion = (
   anchor: { readonly quote: string | null; readonly context: string | null },
   question: string,
@@ -1001,11 +998,6 @@ export const citationsOf = (markdown: string): Citation[] => {
   return [...seen.values()];
 };
 
-export const ThinkingBlock = Schema.Struct({
-  sources: Schema.Array(ThinkingSource).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
-});
-export type ThinkingBlock = typeof ThinkingBlock.Type;
-
 export const ReplyStatus = Schema.Literals([
   "admitting",
   "running",
@@ -1027,37 +1019,22 @@ export const SessionActivity = Schema.Struct({
 });
 export type SessionActivity = typeof SessionActivity.Type;
 
-export const SessionMetaEvent = Schema.Struct({
-  type: Schema.Literal("meta"),
-  id: SessionId,
-  query: Schema.String,
-  ts: IsoDateTime,
-  user_id: Uuid,
-  origin: Schema.NullOr(SessionOrigin),
-});
-export type SessionMetaEvent = typeof SessionMetaEvent.Type;
-
-export const SessionExchangeEvent = Schema.Struct({
-  type: Schema.Literal("exchange"),
-  exId: Uuid,
+export const SessionExchange = Schema.Struct({
+  exchange_id: Uuid,
   reply_id: Uuid,
   version: Schema.NullOr(Schema.Number),
   status: Schema.Literals(["running", "completed", "stopped", "failed"]),
   error: Schema.NullOr(Schema.String),
   query: Schema.String,
-  thinking: Schema.Array(ThinkingBlock).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
-  answer: Schema.String.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed(""))),
-  citations: Schema.Array(Citation).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
+  sources: Schema.Array(ThinkingSource),
+  answer: Schema.String,
+  citations: Schema.Array(Citation),
   ts: Schema.NullOr(IsoDateTime),
 });
-export type SessionExchangeEvent = typeof SessionExchangeEvent.Type;
-
-export const SessionEvent = Schema.Union([SessionMetaEvent, SessionExchangeEvent]);
-export type SessionEvent = typeof SessionEvent.Type;
+export type SessionExchange = typeof SessionExchange.Type;
 
 export const SessionOverview = Schema.Struct({
   id: SessionId,
-  kind: ConversationKind,
   query: Schema.String,
   created_at: IsoDateTime,
   updated_at: IsoDateTime,
@@ -1073,31 +1050,30 @@ export const SessionPage = pageOf(SessionOverview);
 export type SessionPage = typeof SessionPage.Type;
 
 export const SessionContent = Schema.Struct({
-  events: Schema.Array(SessionEvent),
+  exchanges: Schema.Array(SessionExchange),
   activity: Schema.NullOr(SessionActivity),
 });
 export type SessionContent = typeof SessionContent.Type;
 
-export const OriginSessionDetail = Schema.Union([
-  Schema.Struct({
-    availability: Schema.Literal("available"),
-    session: SessionOverview,
-    ...SessionContent.fields,
-  }),
+const AvailableSession = Schema.Struct({
+  availability: Schema.Literal("available"),
+  session: SessionOverview,
+  ...SessionContent.fields,
+});
+
+export const SessionDetail = Schema.Union([
+  AvailableSession,
   Schema.Struct({
     availability: Schema.Literal("unavailable"),
     session: SessionOverview,
     detail: Schema.String,
   }),
 ]);
-export type OriginSessionDetail = typeof OriginSessionDetail.Type;
+export type SessionDetail = typeof SessionDetail.Type;
 
 export const SessionResponse = Schema.Struct({
-  id: SessionId,
-  kind: ConversationKind,
-  ...SessionContent.fields,
-  origin_title: Schema.NullOr(Schema.String),
-  threads: Schema.Array(OriginSessionDetail),
+  ...AvailableSession.fields,
+  threads: Schema.Array(SessionDetail),
 });
 export type SessionResponse = typeof SessionResponse.Type;
 
@@ -1443,12 +1419,6 @@ export type ReplySource = typeof ReplySource.Type;
 const CreateReplySession = Schema.Struct({
   kind: Schema.Literal("new"),
   idempotency_key: Schema.String,
-  conversation_kind: ConversationKind.pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed("session" as const)),
-  ),
-  origin_scope: OriginScope.pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed("vault" as const)),
-  ),
   origin: Schema.optionalKey(SessionOrigin),
 });
 
@@ -2162,11 +2132,6 @@ const DocumentsApiGroup = HttpApiGroup.make("documents").add(
 );
 
 const SessionsApiGroup = HttpApiGroup.make("sessions").add(
-  HttpApiEndpoint.post("continueAsSession", "/vaults/:vault_id/sessions/:session_id/continue", {
-    params: { vault_id: Uuid, session_id: SessionId },
-    success: Schema.Void,
-    error: ForbiddenNotFoundValidationErrors,
-  }).middleware(AuthMiddleware),
   HttpApiEndpoint.post(
     "promoteSessionExchange",
     "/vaults/:vault_id/sessions/:session_id/exchanges/:exchange_id/promote",
@@ -2196,7 +2161,7 @@ const SessionsApiGroup = HttpApiGroup.make("sessions").add(
   HttpApiEndpoint.get("listSessionsByOrigin", "/vaults/:vault_id/sessions/by-origin", {
     params: VaultIdParams,
     query: OriginSessionsQuery,
-    success: Schema.Array(OriginSessionDetail),
+    success: Schema.Array(SessionDetail),
     error: [...ForbiddenNotFoundValidationErrors, ServiceUnavailableResponse],
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("readSession", "/vaults/:vault_id/sessions/:session_id", {
@@ -2431,7 +2396,6 @@ export const endpointPermissions: { readonly [Name in EndpointName]: Permission 
   readSessionMarkdown: "read",
   prepareSessionExport: "read",
   prepareSessionMarkdown: "read",
-  continueAsSession: "ask",
   promoteSessionExchange: "change",
   createReply: "ask",
   retryReply: "ask",

@@ -223,9 +223,6 @@ export const makeReplyAdmission = (
   const newConversation = (userId: Uuid, vaultId: Uuid, session: NewSession) =>
     Effect.gen(function* () {
       const origin = session.origin ?? null;
-      if (session.conversation_kind === "btw" && !origin?.anchor) {
-        return yield* new BadRequest({ detail: "A BTW needs a selected passage" });
-      }
       let context: NewConversation["context"] = null;
       let anchorReplyId: Uuid | null = null;
       if (origin?.kind === "answer") {
@@ -332,8 +329,6 @@ export const makeReplyAdmission = (
                 userId,
                 query: command.question,
                 origin: target.session.origin ?? null,
-                placement: target.session.conversation_kind === "btw" ? "inline" : "standalone",
-                replyMode: target.session.conversation_kind === "btw" ? "btw" : "query",
                 createdAt,
                 updatedAt: createdAt,
                 idempotencyKey: target.session.idempotency_key,
@@ -419,8 +414,7 @@ export const makeReplyAdmission = (
           const now = yield* clock.now;
           const request = {
             command,
-            mode:
-              command.inline === undefined ? session.replyMode : command.inline ? "btw" : "query",
+            mode: command.inline === true ? "btw" : "query",
             accepted_at: HistoryTimestamp.make(now.toISOString()),
             previous_attempt_id: previousReplyId,
             parent_reply_id: parentReplyId,

@@ -45,12 +45,11 @@ Only failed/cancelled URL imports have a retry operation. A retry has a new UUID
 | --- | --- | --- |
 | Stop a reply | `gm reply stop <reply-id>` | `stop_reply` |
 | Retry a failed reply | `gm reply retry <reply-id> [--reply-id <new-uuid>]` | `retry_reply` |
-| Continue a saved side note | `gm continue-session <session-id>` | `continue_session` |
 | Add a saved answer to a vault | `gm promote-answer <session-id> <exchange-id>` | `promote_answer` |
 
 `gm ask` and reply retries print accepted reply/session IDs to stderr before following the answer. JSON stdout remains the final reply snapshot. Stop receipts acknowledge a request, not a stopped outcome; a settled reply is unchanged. Retrying is only for failed replies, not stopped replies or disconnected streams. The CLI prints the replacement UUID before submission; MCP requires `next_reply_id`. After a lost acceptance response, repeat the same predecessor/replacement pair. The CLI follows the existing reply stream; MCP returns accepted identities immediately, with progress available through `read_session`.
 
-Continue preserves the conversation ID and history, changing placement and the mode of future replies without generating an answer. Promotion copies a completed/stopped nonempty answer verbatim with citations and origin: owners ingest, editors propose. Inspect the returned `mode` before claiming publication. Repeats reuse an existing source or pending proposal. Get exchange IDs from `exId` in `gm session <id> --json` or `read_session`. All actions retain private-conversation ownership; retry and promotion require sponsorship, while stop and continue do not.
+Promotion copies a completed/stopped nonempty answer verbatim with citations and origin: owners ingest, editors propose. Inspect the returned `mode` before claiming publication. Repeats reuse an existing source or pending proposal. Get exchange IDs from `exchange_id` in `gm session <id> --json` or `read_session`. All actions retain private-conversation ownership; retry and promotion require sponsorship, while stop does not.
 
 ## Ingestion and personal references
 

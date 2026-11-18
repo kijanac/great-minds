@@ -2,7 +2,6 @@ import {
   JobProgressSnapshot,
   ReplySnapshot,
   isReplyPending,
-  type ConversationKind,
   type CreateReplyRequest,
   type OriginScope,
   type SessionId,
@@ -56,7 +55,6 @@ export type ReplyConversation =
   | { readonly kind: "existing"; readonly id: SessionId }
   | {
       readonly kind: "new";
-      readonly conversationKind: ConversationKind;
       readonly idempotencyKey: string;
       readonly origin?: SessionOrigin;
     };
@@ -80,9 +78,7 @@ export const replyRequest = (input: {
       ? { kind: "existing", id: input.conversation.id }
       : {
           kind: "new",
-          conversation_kind: input.conversation.conversationKind,
           idempotency_key: input.conversation.idempotencyKey,
-          origin_scope: input.originScope,
           ...(input.conversation.origin === undefined ? {} : { origin: input.conversation.origin }),
         },
 });

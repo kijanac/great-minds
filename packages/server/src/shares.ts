@@ -19,7 +19,7 @@ import { renderSessionMarkdown } from "./conversation-history/presentation.ts";
 import { StructuredLogger } from "./logging.ts";
 import { parseFrontmatter, stripAnchors } from "./markdown.ts";
 import { RandomBytesService, formatUuid7 } from "./random.ts";
-import { readSessionOrigin, SessionsService } from "./sessions.ts";
+import { SessionsService } from "./sessions.ts";
 import { UserDocumentsService } from "./user-documents.ts";
 
 type ShareRow = typeof shares.$inferSelect;
@@ -104,10 +104,8 @@ export const SharesServiceLive = Layer.effect(
         );
         const annotations: SharedAnnotation[] = [];
         for (const row of rows) {
-          const origin = yield* readSessionOrigin(row.origin);
-          if (origin === null) {
-            continue;
-          }
+          const origin = row.origin;
+          if (origin === null) continue;
           const events = yield* Effect.result(
             sessionsService.readPublication(userId, row.vaultId, row.id),
           );
