@@ -4,7 +4,7 @@ import GithubSlugger from "github-slugger";
 import { hastText, type HastNode } from "#lib/markdown-plugins.ts";
 
 const HEADINGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
-const ANCHORED_TAGS = new Set([...HEADINGS, "p", "ul", "ol", "blockquote"]);
+const ANCHORED_TAGS = new Set([...HEADINGS, "p", "ul", "ol", "blockquote", "pre"]);
 
 export function assignBlockRefIds(root: HastNode, originalSource: string): void {
   let removed = 0;
