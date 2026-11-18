@@ -5,5 +5,5 @@ export const sessionOriginHref = (origin: SessionOrigin, conversationId: Session
     origin.kind === "answer"
       ? `/sessions/${origin.session_id}`
       : `${origin.origin_scope === "personal" ? "/refs/" : "/doc/"}${origin.doc_path}`;
-  return origin.anchor ? `${path}?thread=${encodeURIComponent(conversationId)}` : path;
+  return origin.passage ? `${path}?thread=${encodeURIComponent(conversationId)}` : path;
 };

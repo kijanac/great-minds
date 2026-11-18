@@ -37,12 +37,7 @@
           id: `ann:${index}`,
           sessionId: null,
           draft: false,
-          anchor: {
-            quote: annotation.anchor.quote,
-            context: annotation.anchor.context ?? "",
-            section: annotation.anchor.section,
-            occurrence: annotation.anchor.occurrence,
-          },
+          passage: annotation.passage,
           exchanges: annotation.exchanges.map((exchange) => ({
             id: shareExchangeId,
             query: exchange.query,

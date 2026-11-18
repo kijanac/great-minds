@@ -123,14 +123,9 @@ const requireAttempt = (history: ConversationHistory, replyId: Uuid) => {
 };
 
 const questionOf = (history: ConversationHistory, attempt: SettledOrPendingAttempt) => {
-  const origin = history.header.origin;
-  return attempt.accepted.parent_reply_id === null &&
-    origin?.anchor !== null &&
-    origin?.anchor !== undefined
-    ? composeAnchoredQuestion(
-        { quote: origin.anchor, context: origin.paragraph },
-        attempt.accepted.question,
-      )
+  const passage = history.header.origin?.passage ?? null;
+  return attempt.accepted.parent_reply_id === null && passage !== null
+    ? composeAnchoredQuestion(passage, attempt.accepted.question)
     : attempt.accepted.question;
 };
 

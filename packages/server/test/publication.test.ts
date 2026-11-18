@@ -53,10 +53,12 @@ const origin = {
   kind: "answer",
   session_id: sessionId,
   exchange_id: uuid(1),
-  anchor: "SELECTED_PASSAGE",
-  paragraph: "RECORDED_PARAGRAPH",
-  section: null,
-  occurrence: 1,
+  passage: {
+    quote: "SELECTED_PASSAGE",
+    context: "RECORDED_PARAGRAPH",
+    section: null,
+    occurrence: 1,
+  },
 } as const;
 const note = (): Extract<SessionDetail, { availability: "available" }> => ({
   availability: "available",

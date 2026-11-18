@@ -40,8 +40,8 @@
         class="inline-flex min-w-0 items-baseline gap-1 text-warm-ghost transition-colors [overflow-wrap:anywhere] group-hover:text-warm-faint"
       >
         <CornerUpRight size={10} class="shrink-0 text-gold-muted" />
-        {session.origin.anchor
-          ? `“${session.origin.anchor.length > 60 ? `${session.origin.anchor.slice(0, 60)}…` : session.origin.anchor}” in`
+        {session.origin.passage
+          ? `“${session.origin.passage.quote.length > 60 ? `${session.origin.passage.quote.slice(0, 60)}…` : session.origin.passage.quote}” in`
           : "from"}
         {session.origin_title ??
           (session.origin.kind === "document"

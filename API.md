@@ -2067,7 +2067,7 @@ Response: `200` with a `SessionPage` (standard page envelope). Each item is a
 | `origin` | `SessionOrigin` or `null` | The document the session originated from, if any. |
 | `origin_title` | string or `null` | The current title of the origin document, resolved at read time; `null` when the origin document cannot be resolved. |
 
-`SessionOrigin` is a tagged union. A document origin has `kind: "document"`, `doc_path`, `origin_scope` (`"vault"` or `"personal"`), and nullable `anchor`, `paragraph`, `section` and `occurrence`. An answer origin has `kind: "answer"`, parent `session_id`, parent `exchange_id`, the selected `anchor` and `paragraph`, and nullable `section` and `occurrence`. `section` is the passage's section index and `occurrence` says which match of the quote is meant.
+`SessionOrigin` is a tagged union. A document origin has `kind: "document"`, `doc_path`, `origin_scope` (`"vault"` or `"personal"`) and `passage`, which is `null` for a conversation about the whole document. An answer origin has `kind: "answer"`, parent `session_id`, parent `exchange_id` and `passage`. A `Passage` is `{quote, context, section, occurrence}`: `quote` is the selected text, `context` is the paragraph it was selected in (empty when not recorded), `section` is the passage's section index or `null`, and `occurrence` says which match of the quote is meant, counted from 1.
 
 Errors: `403 Forbidden`, `422 Validation`.
 
@@ -2269,10 +2269,7 @@ Example (new session):
       "kind": "document",
       "doc_path": "raw/books/capital.md",
       "origin_scope": "vault",
-      "anchor": null,
-      "paragraph": null,
-      "section": null,
-      "occurrence": null
+      "passage": null
     }
   }
 }
@@ -2505,7 +2502,7 @@ Response: `200` with a `SharedShareDetail`, a union discriminated by
 | `origin` | string or `null` | Origin annotation. |
 | `author` | string or `null` | Author. |
 | `published` | string or `null` | Publication date. |
-| `annotations` | array | `SharedAnnotation` entries: `anchor` (`{quote, context: string or null, block_offset: number or null}`), `exchanges` (array of `{query, answer}`), `created_at`. |
+| `annotations` | array | `SharedAnnotation` entries: `passage` (a `Passage`, as in `SessionOrigin`), `exchanges` (array of `{query, answer}`), `created_at`. |
 | `created_at` | ISO 8601 | Creation time. |
 
 Reference annotations use the same completed/stopped selection and retain only their query/answer surface. Private history richness does not widen bearer disclosure.

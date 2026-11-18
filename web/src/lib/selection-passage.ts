@@ -1,6 +1,6 @@
 const isSpace = (character: string) => /\s/.test(character);
 
-export function selectionPassage(range: Range): string {
+export function selectionExcerpt(range: Range): string {
   const passage = range.cloneRange();
   const start = passage.startContainer;
   if (start.nodeType === Node.TEXT_NODE) {
@@ -17,11 +17,6 @@ export function selectionPassage(range: Range): string {
     passage.setEnd(end, offset);
   }
   return withoutMarkers(passage.cloneContents()).replace(/\s+/g, " ").trim();
-}
-
-export function blockText(block: Element): string {
-  const copy = block.cloneNode(true);
-  return copy instanceof Element ? withoutMarkers(copy) : "";
 }
 
 function withoutMarkers(root: Element | DocumentFragment): string {

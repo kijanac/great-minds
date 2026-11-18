@@ -126,10 +126,12 @@ try {
                       kind: "answer",
                       session_id: root.session_id,
                       exchange_id: btw.exchangeId,
-                      anchor: btw.quote,
-                      section: btw.section,
-                      occurrence: btw.occurrence,
-                      paragraph: btw.context,
+                      passage: {
+                        quote: btw.quote,
+                        context: btw.context,
+                        section: btw.section,
+                        occurrence: btw.occurrence,
+                      },
                     },
                   }
                 : { kind: "existing", id: child },

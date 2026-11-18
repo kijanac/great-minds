@@ -28,10 +28,12 @@ const btwCommand = () =>
         kind: "document",
         doc_path: "wiki/meaning.md",
         origin_scope: "vault",
-        anchor: "Passage",
-        paragraph: "Passage in context",
-        section: null,
-        occurrence: 2,
+        passage: {
+          quote: "Passage",
+          context: "Passage in context",
+          section: null,
+          occurrence: 2,
+        },
       },
     },
   });
@@ -46,10 +48,12 @@ const answerThread = (sessionId: SessionId, exchangeId: Uuid) =>
         kind: "answer",
         session_id: sessionId,
         exchange_id: exchangeId,
-        anchor: "Answer",
-        paragraph: "Answer",
-        section: null,
-        occurrence: 1,
+        passage: {
+          quote: "Answer",
+          context: "Answer",
+          section: null,
+          occurrence: 1,
+        },
       },
     },
   });

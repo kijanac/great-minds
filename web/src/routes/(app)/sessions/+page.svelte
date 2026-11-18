@@ -19,7 +19,7 @@
     const term = filter.trim().toLowerCase();
     return term
       ? sessions.filter((session) =>
-          `${session.query} ${session.origin?.anchor ?? ""}`.toLowerCase().includes(term),
+          `${session.query} ${session.origin?.passage?.quote ?? ""}`.toLowerCase().includes(term),
         )
       : sessions;
   });

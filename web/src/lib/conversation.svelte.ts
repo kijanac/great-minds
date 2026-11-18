@@ -1,5 +1,6 @@
 import { browser } from "$app/env";
 import type {
+  Passage,
   SessionActivity,
   SessionDetail,
   SessionId,
@@ -11,7 +12,7 @@ import type {
 import { createReply, retryReply, stopReply, type CreateReplyPayload } from "#lib/api/replies.ts";
 import { newUuid, replyRequest } from "@great-minds/client";
 import { LIVE_UPDATES_UNAVAILABLE, tailReply } from "#lib/reply-tail.ts";
-import type { Exchange, Phase, SelectionInfo, TextAnchor, ThreadLike } from "#lib/types.ts";
+import type { Exchange, Phase, SelectionInfo, ThreadLike } from "#lib/types.ts";
 import { genId, isAbortError } from "#lib/utils.ts";
 
 type ReplyAttempt = {
@@ -39,7 +40,7 @@ export class Conversation implements ThreadLike {
   readonly id: string;
   readonly origin: SessionOrigin | null;
   readonly originTitle: string | null;
-  readonly anchor: TextAnchor;
+  readonly passage: Passage | null;
   readonly createdAt: Date | null;
   readonly unavailable: string | null;
 
@@ -59,12 +60,7 @@ export class Conversation implements ThreadLike {
     this.#title = saved?.session.query ?? null;
     this.createdAt = saved?.session.created_at ?? null;
     this.unavailable = saved?.availability === "unavailable" ? saved.detail : null;
-    this.anchor = {
-      quote: this.origin?.anchor ?? "",
-      context: this.origin?.paragraph ?? "",
-      section: this.origin?.section ?? null,
-      occurrence: this.origin?.occurrence ?? null,
-    };
+    this.passage = this.origin?.passage ?? null;
     this.#onCreated = options.onCreated;
     const content = saved?.availability === "available" ? saved : null;
     this.exchanges = (content?.exchanges ?? []).map((exchange) => ({
@@ -194,7 +190,7 @@ export class Conversation implements ThreadLike {
       exchangeId,
       inline,
       originScope: origin?.kind === "document" ? origin.origin_scope : "vault",
-      ...(this.sessionId === null && origin?.kind === "document" && !origin.anchor
+      ...(this.sessionId === null && origin?.kind === "document" && origin.passage === null
         ? { originPath: origin.doc_path }
         : {}),
       conversation:
@@ -351,10 +347,7 @@ export class Conversation implements ThreadLike {
           kind: "answer",
           session_id: this.sessionId,
           exchange_id: info.exchangeId,
-          anchor: info.quote,
-          paragraph: info.context,
-          section: info.section,
-          occurrence: info.occurrence,
+          passage: info.passage,
         },
       }),
     );

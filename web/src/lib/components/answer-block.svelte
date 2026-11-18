@@ -14,7 +14,7 @@
   import { parseMarkdown } from "#lib/markdown.ts";
   import { hastText, type HastNode } from "#lib/markdown-plugins.ts";
   import { passageMark } from "#lib/passage-navigation.ts";
-  import { blockText, selectionPassage } from "#lib/selection-passage.ts";
+  import { selectionExcerpt } from "#lib/selection-passage.ts";
   import { splitStreamingMarkdown } from "#lib/streaming-markdown.ts";
   import type { SelectionInfo, ThreadLike } from "#lib/types.ts";
 
@@ -70,7 +70,9 @@
   const tailSource = $derived(split?.tail ?? "");
 
   const threadAnchors = $derived.by<ThreadAnchor[]>(() =>
-    bodyThreads.map((btw) => ({ threadId: btw.id, anchor: btw.anchor, mark: !btw.draft })),
+    btws.flatMap((btw) =>
+      btw.passage === null ? [] : [{ threadId: btw.id, passage: btw.passage, mark: !btw.draft }],
+    ),
   );
   // `stableTree` only depends on the stable prefix string. During token
   // streaming Svelte does not invalidate it until a complete block lands.
@@ -101,7 +103,7 @@
   const placed = $derived(streaming ? stableParsed.placed : fullParsed.placed);
   // Only anchored threads (quote present) render in the body; doc-initiated
   // conversations surface through the doc-header chip instead.
-  const bodyThreads = $derived(btws.filter((btw) => btw.anchor.quote.length > 0));
+  const bodyThreads = $derived(btws.filter((btw) => btw.passage !== null));
   const threadsAt = $derived.by(() => {
     const byBlock = new Map<number, ThreadLike[]>();
     for (const btw of bodyThreads) {
@@ -159,7 +161,7 @@
 
   $effect(() => {
     const currentRoot = root;
-    const currentBtws = btws.filter((btw) => btw.draft && btw.anchor.quote);
+    const currentBtws = bodyThreads.filter((btw) => btw.draft);
     const currentPlaced = placed;
     if (!currentRoot) return;
 
@@ -315,12 +317,11 @@
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
     const range = selection.getRangeAt(0);
     if (!element.contains(range.commonAncestorContainer)) return;
-    const captured = capturePassage(range, element);
-    if (!captured.quote) return;
+    const passage = capturePassage(range, element);
+    if (!passage.quote) return;
     onSelection({
-      ...captured,
-      context: blockText(element),
-      passage: selectionPassage(range),
+      passage,
+      excerpt: selectionExcerpt(range),
       rect: range.getBoundingClientRect(),
       exchangeId,
     });

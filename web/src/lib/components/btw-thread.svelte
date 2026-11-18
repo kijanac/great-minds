@@ -98,7 +98,7 @@
               btw
             </span>
             <span class="min-w-0 truncate text-[length:var(--text-caption)] text-warm-faint italic">
-              “{btw.anchor.quote}”
+              “{btw.passage?.quote}”
             </span>
             <span class="shrink-0 text-gold-muted">
               {#if open}

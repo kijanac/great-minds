@@ -880,15 +880,19 @@ export type SourceQuery = typeof SourceQuery.Type;
 export const OriginScope = Schema.Literals(["vault", "personal"] as const);
 export type OriginScope = typeof OriginScope.Type;
 
-const PassageLocation = {
+export const Passage = Schema.Struct({
+  quote: Schema.String.pipe(Schema.check(Schema.isMinLength(1))),
+  context: Schema.String.annotate({
+    description: "The paragraph the quote was selected in; empty when it was not recorded",
+  }),
   section: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))).annotate({
     description: "The document section (its ^pN index) holding the quote; null when it has none",
   }),
-  occurrence: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))).annotate({
-    description:
-      "Which match of the quote is meant, counted within the section or the whole text; null without a quote",
+  occurrence: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).annotate({
+    description: "Which match of the quote is meant, counted within the section or the whole text",
   }),
-};
+});
+export type Passage = typeof Passage.Type;
 
 const PASSAGE_ID = /^\^p(\d+)$/;
 const PASSAGE_MARKER = /[ \t]*\^p(\d+)$/gm;
@@ -923,35 +927,23 @@ export const DocumentSessionOrigin = Schema.Struct({
   origin_scope: OriginScope.pipe(
     Schema.withDecodingDefaultTypeKey(Effect.succeed("vault" as const)),
   ),
-  anchor: Schema.NullOr(Schema.String),
-  paragraph: Schema.NullOr(Schema.String),
-  ...PassageLocation,
+  passage: Schema.NullOr(Passage),
 });
 export const AnswerSessionOrigin = Schema.Struct({
   kind: Schema.Literal("answer"),
   session_id: SessionId,
   exchange_id: Uuid,
-  anchor: Schema.String,
-  paragraph: Schema.String,
-  ...PassageLocation,
+  passage: Passage,
 });
 export const SessionOrigin = Schema.Union([DocumentSessionOrigin, AnswerSessionOrigin]);
 export type SessionOrigin = typeof SessionOrigin.Type;
 
-export const composeAnchoredQuestion = (
-  anchor: { readonly quote: string | null; readonly context: string | null },
-  question: string,
-): string => {
-  const parts: string[] = [];
-  if (anchor.context !== null && anchor.context.length > 0) {
-    parts.push(`Passage:\n> ${anchor.context}`);
-  }
-  if (anchor.quote !== null && anchor.quote.length > 0 && anchor.quote !== anchor.context) {
-    parts.push(`Highlighted: "${anchor.quote}"`);
-  }
-  parts.push(question);
-  return parts.join("\n\n");
-};
+export const composeAnchoredQuestion = (passage: Passage, question: string): string =>
+  [
+    ...(passage.context.length > 0 ? [`Passage:\n> ${passage.context}`] : []),
+    ...(passage.quote === passage.context ? [] : [`Highlighted: "${passage.quote}"`]),
+    question,
+  ].join("\n\n");
 
 const ChunkIndex = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 export const ChunkRange = Schema.Struct({ start: ChunkIndex, end: ChunkIndex }).pipe(
@@ -1268,14 +1260,6 @@ export const SharedSessionDetail = Schema.Struct({
 });
 export type SharedSessionDetail = typeof SharedSessionDetail.Type;
 
-export const SharedAnnotationAnchor = Schema.Struct({
-  quote: Schema.String,
-  context: Schema.NullOr(Schema.String),
-  section: Schema.NullOr(Schema.Int),
-  occurrence: Schema.NullOr(Schema.Int),
-});
-export type SharedAnnotationAnchor = typeof SharedAnnotationAnchor.Type;
-
 export const SharedAnnotationExchange = Schema.Struct({
   query: Schema.String,
   answer: Schema.String,
@@ -1283,7 +1267,7 @@ export const SharedAnnotationExchange = Schema.Struct({
 export type SharedAnnotationExchange = typeof SharedAnnotationExchange.Type;
 
 export const SharedAnnotation = Schema.Struct({
-  anchor: SharedAnnotationAnchor,
+  passage: Passage,
   exchanges: Schema.Array(SharedAnnotationExchange),
   created_at: IsoDateTime,
 });

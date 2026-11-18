@@ -51,8 +51,10 @@
   let titleInput = $state<HTMLInputElement | null>(null);
   let renameError = $state<string | null>(null);
   const rename = useReferenceRename();
-  const notes = $derived(threads.filter((thread) => !thread.draft && thread.anchor.quote));
-  const conversations = $derived(threads.filter((thread) => !thread.draft && !thread.anchor.quote));
+  const notes = $derived(threads.filter((thread) => !thread.draft && thread.passage !== null));
+  const conversations = $derived(
+    threads.filter((thread) => !thread.draft && thread.passage === null),
+  );
   const total = $derived(notes.length + conversations.length);
   const shortQuote = (quote: string) => (quote.length > 44 ? `${quote.slice(0, 44)}...` : quote);
   const metadata = $derived(articleMeta(document));
@@ -271,7 +273,7 @@
                 <span
                   class="min-w-0 flex-1 truncate font-serif text-[length:var(--text-small)] text-warm-dim italic transition-colors group-hover:text-warm"
                 >
-                  “{shortQuote(note.anchor.quote)}”
+                  “{shortQuote(note.passage?.quote ?? "")}”
                 </span>
                 <span
                   class="shrink-0 font-mono text-[length:var(--text-chrome)] text-warm-ghost lowercase"
