@@ -9,13 +9,14 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
   passageId,
   stripPassageMarkers,
+  withoutHtmlBlocks,
   type SessionExchange,
   type SessionId,
   type SessionOrigin,
   type Uuid,
 } from "@great-minds/domain";
 
-const blockParser = unified().use(remarkParse).use(remarkGfm);
+const blockParser = unified().use(remarkParse).use(remarkGfm).use(withoutHtmlBlocks);
 
 type BuildDocumentInput = {
   readonly sourceType?: string;

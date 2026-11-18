@@ -894,6 +894,13 @@ export const Passage = Schema.Struct({
 });
 export type Passage = typeof Passage.Type;
 
+export function withoutHtmlBlocks(this: {
+  data(): { micromarkExtensions?: unknown[] | undefined };
+}) {
+  const data = this.data();
+  (data.micromarkExtensions ??= []).push({ disable: { null: ["htmlFlow"] } });
+}
+
 const PASSAGE_ID = /^\^p(\d+)$/;
 const PASSAGE_MARKER = /[ \t]*\^p(\d+)$/gm;
 
