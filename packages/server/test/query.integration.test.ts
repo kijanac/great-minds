@@ -655,7 +655,7 @@ describe("query stream", () => {
       Effect.gen(function* () {
         const service = yield* RepliesService;
         expect(yield* service.prepareStep(replyId)).toMatchObject({ outcome: "stopped" });
-        yield* service.finalizeStep(replyId, "stopped", null);
+        yield* service.finalizeStep(replyId, { outcome: "stopped" });
       }),
     );
     expect(replySnapshots((await tailReply(replyId)).text).at(-1)).toMatchObject({
@@ -1122,7 +1122,7 @@ describe("query stream", () => {
         yield* db.query((d) =>
           d
             .update(replies)
-            .set({ dispatchedAt: initialTime, dispatchedTaskId: result.reply_id })
+            .set({ dispatchedAt: initialTime })
             .where(eq(replies.id, result.reply_id)),
         );
         const service = yield* RepliesService;
@@ -1885,15 +1885,12 @@ describe("query stream", () => {
     ]);
     expect(recorded.reply[0]).toMatchObject({
       status: "completed",
-      dispatchedTaskId: replyId,
       dispatchedAt: expect.any(Date),
       generationCursor: 10,
       activeGenerationStep: null,
-      activeGenerationKind: null,
-      activeGenerationKey: null,
     });
-    const checkpoint = JSON.parse(
-      await readFile(
+    await expect(
+      readFile(
         join(
           currentState().storageRoot,
           "vaults",
@@ -1904,8 +1901,7 @@ describe("query stream", () => {
         ),
         "utf8",
       ),
-    ) as { readonly query: { readonly turnStart: number } };
-    expect(checkpoint.query.turnStart).toBe(1);
+    ).rejects.toMatchObject({ code: "ENOENT" });
     expect(promptContentHash(recorded.prompts[0]!.content)).toBe(recorded.prompts[0]!.hash);
     expect(costs.lookups).toEqual([]);
   });

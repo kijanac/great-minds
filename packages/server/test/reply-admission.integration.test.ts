@@ -7,7 +7,7 @@ import { and, eq } from "drizzle-orm";
 import { Cause, Deferred, Effect, Exit, Fiber, Result, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { AcceptedReplyRequest } from "../src/conversation-history/admission.ts";
+import { AcceptedReplyRequest, acceptedWrites } from "../src/conversation-history/admission.ts";
 import { makeReplySettlement } from "../src/conversation-history/settlement.ts";
 import { type HistoryStoreShape, makeHistoryStore } from "../src/conversation-history/store.ts";
 import { ObjectVersionConflict, storageBackendError } from "../src/storage/object-store.ts";
@@ -77,13 +77,9 @@ describe("durable admission", () => {
         expect(request).toMatchObject({
           command: input,
           mode: "btw",
-          attempt: {
-            reply_id: input.reply_id,
-            exchange_id: input.exchange_id,
-            accepted_at: timestamp,
-            parent_reply_id: null,
-            previous_attempt_id: null,
-          },
+          accepted_at: timestamp,
+          parent_reply_id: null,
+          previous_attempt_id: null,
         });
         expect(yield* storedHistory(f.objects, f.address(response.session_id))).toBeNull();
         expect((yield* f.session(response.session_id)).historySeq).toBeNull();
@@ -93,10 +89,9 @@ describe("durable admission", () => {
         });
         expect(yield* f.admission.accept(f.userId, f.vaultId, input)).toEqual(response);
         const history = (yield* storedHistory(f.objects, f.address(response.session_id)))!.history;
-        expect(history.records).toEqual([
-          { ...request.header, seq: 1 },
-          { ...request.attempt, seq: 2 },
-        ]);
+        expect(history.records).toEqual(
+          acceptedWrites(reserved, request).map((write, index) => ({ ...write, seq: index + 1 })),
+        );
         expect(yield* f.reply(input.reply_id)).toMatchObject({
           status: "running",
           version: 1,
@@ -121,7 +116,7 @@ describe("durable admission", () => {
           response.session_id,
         );
         expect(decodeRequest((yield* f.reply(next.reply_id)).request)).toMatchObject({
-          header: null,
+          conversation: null,
           mode: "query",
         });
         expect(yield* f.allSessions()).toHaveLength(1);
@@ -171,7 +166,7 @@ describe("durable admission", () => {
           expect(writes).toBe(1);
           const recorded = yield* storedHistory(f.objects, f.address(response.session_id));
           expect(recorded!.history.records[1]).toEqual({
-            ...decodeRequest(reserved.request).attempt,
+            ...acceptedWrites(reserved, decodeRequest(reserved.request)).at(-1),
             seq: 2,
           });
           if (saved) expect(recorded).toEqual(saved);
@@ -447,7 +442,7 @@ describe("durable admission", () => {
         yield* expectFailure(f.coordinator({ db }).reserve(f.userId, f.vaultId, next), "Conflict");
         expect(yield* f.reply(next.reply_id)).toBeUndefined();
         yield* f.admission.reserve(f.userId, f.vaultId, next);
-        expect(decodeRequest((yield* f.reply(next.reply_id)).request).attempt.parent_reply_id).toBe(
+        expect(decodeRequest((yield* f.reply(next.reply_id)).request).parent_reply_id).toBe(
           other.reply_id,
         );
       }),
@@ -464,9 +459,9 @@ describe("durable admission", () => {
         yield* failReply(f, failed.reply_id);
         const later = followUp(response.session_id);
         yield* f.admission.accept(f.userId, f.vaultId, later);
-        expect(
-          decodeRequest((yield* f.reply(later.reply_id)).request).attempt.parent_reply_id,
-        ).toBe(first.reply_id);
+        expect(decodeRequest((yield* f.reply(later.reply_id)).request).parent_reply_id).toBe(
+          first.reply_id,
+        );
         yield* f.finalize(later.reply_id);
         yield* expectFailure(
           f.admission.accept(
@@ -478,7 +473,8 @@ describe("durable admission", () => {
         );
         const retryId = nextId();
         yield* f.admission.retry(f.userId, f.vaultId, failed.reply_id, retryId);
-        expect(decodeRequest((yield* f.reply(retryId)).request).attempt).toMatchObject({
+        const retried = yield* f.reply(retryId);
+        expect(acceptedWrites(retried, decodeRequest(retried.request)).at(-1)).toMatchObject({
           reply_id: retryId,
           exchange_id: failed.exchange_id,
           previous_attempt_id: failed.reply_id,
@@ -563,8 +559,9 @@ describe("durable admission", () => {
         yield* f.admission.accept(f.userId, f.vaultId, pending);
         const input = answerThread(parent.session_id, first.exchange_id);
         const child = yield* f.admission.reserve(f.userId, f.vaultId, input);
-        const original = decodeRequest((yield* f.reply(input.reply_id)).request);
-        expect(original.header).toMatchObject({
+        const reserved = yield* f.reply(input.reply_id);
+        const original = decodeRequest(reserved.request);
+        expect(original.conversation).toMatchObject({
           anchor_reply_id: first.reply_id,
           context: { session_id: parent.session_id, reply_id: second.reply_id },
         });
@@ -572,10 +569,7 @@ describe("durable admission", () => {
         yield* f.admission.admit(input.reply_id);
         expect(
           (yield* storedHistory(f.objects, f.address(child.session_id)))!.history.header,
-        ).toEqual({
-          ...original.header,
-          seq: 1,
-        });
+        ).toEqual({ ...acceptedWrites(reserved, original)[0], seq: 1 });
       }),
     ));
 
@@ -600,9 +594,11 @@ describe("durable admission", () => {
         expect(yield* f.allSessions()).toHaveLength(1);
         const nested = answerThread(parent.session_id, input.exchange_id);
         yield* f.admission.reserve(f.userId, f.vaultId, nested);
-        expect(decodeRequest((yield* f.reply(nested.reply_id)).request).header).toMatchObject({
-          context: { session_id: parent.session_id, reply_id: input.reply_id },
-        });
+        expect(decodeRequest((yield* f.reply(nested.reply_id)).request).conversation).toMatchObject(
+          {
+            context: { session_id: parent.session_id, reply_id: input.reply_id },
+          },
+        );
       }),
     ));
 
@@ -716,10 +712,9 @@ describe("durable admission", () => {
       Effect.gen(function* () {
         const input = command();
         const response = yield* f.admission.reserve(f.userId, f.vaultId, input);
-        const request = decodeRequest((yield* f.reply(input.reply_id)).request);
+        const reserved = yield* f.reply(input.reply_id);
         yield* f.histories.commit(f.address(response.session_id), [
-          request.header!,
-          request.attempt,
+          ...acceptedWrites(reserved, decodeRequest(reserved.request)),
           settlement({ reply_id: input.reply_id }),
         ]);
         expect(failure(yield* Effect.exit(f.admission.admit(input.reply_id)))).toMatchObject({

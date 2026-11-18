@@ -13,7 +13,12 @@ import {
   type ReplyRow,
   type SessionRow,
 } from "./rows.ts";
-import { type GenerationMetadata, HistorySettlementWrite, HistoryTimestamp } from "./schema.ts";
+import {
+  type GenerationMetadata,
+  HistorySettlementWrite,
+  HistoryTimestamp,
+  type ReplyFailure,
+} from "./schema.ts";
 import { type HistoryCommitError, HistoryStore, type HistoryStoreShape } from "./store.ts";
 
 export type ReplySettlementResult =
@@ -31,7 +36,7 @@ export type ReplySettlementResult =
     }
   | {
       readonly status: "failed";
-      readonly code: Extract<HistorySettlementWrite["outcome"], { status: "failed" }>["code"];
+      readonly code: ReplyFailure["code"];
       readonly message: string;
       readonly context_messages: readonly LlmMessage[] | null;
       readonly generation: GenerationMetadata | null;
@@ -158,8 +163,6 @@ export const makeReplySettlement = (
           error: payload.outcome.status === "failed" ? payload.outcome.message : null,
           settlement: null,
           activeGenerationStep: null,
-          activeGenerationKind: null,
-          activeGenerationKey: null,
           version: sql`${replies.version} + 1`,
           updatedAt: now,
         })

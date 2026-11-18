@@ -30,7 +30,6 @@ export class HistoryInvalid extends Data.TaggedError("HistoryInvalid")<{
     | "attempt_predecessor"
     | "context_parent"
     | "origin"
-    | "source_range"
     | "history_receipt";
 }> {
   override get message() {
@@ -162,18 +161,6 @@ const reduceRecords = (
     }
     const attempt = attempts.get(record.reply_id);
     if (attempt === undefined) return invalid("missing_attempt", line);
-    if (
-      record.sources.some((source) =>
-        source.ranges?.some(
-          (range) =>
-            !Number.isSafeInteger(range.start) ||
-            !Number.isSafeInteger(range.end) ||
-            range.start < 0 ||
-            range.end < range.start,
-        ),
-      )
-    )
-      return invalid("source_range", line);
     attempt.settlement = record;
   }
   if (attempts.size === 0) return invalid("empty_history", null);

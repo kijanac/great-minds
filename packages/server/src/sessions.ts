@@ -307,16 +307,16 @@ const makeSessions = Effect.gen(function* () {
         const request = yield* acceptedRequestFor(active).pipe(Effect.mapError(unavailable));
         const pending: SessionExchangeEvent = {
           type: "exchange",
-          exId: request.attempt.exchange_id,
+          exId: request.command.exchange_id,
           reply_id: active.id,
           version: active.version,
           status: "running",
           error: null,
-          query: request.attempt.question,
+          query: request.command.question,
           answer: "",
           citations: [],
           thinking: [],
-          ts: new Date(request.attempt.accepted_at),
+          ts: new Date(request.accepted_at),
         };
         const previous = events.find(
           (event) => event.type === "exchange" && event.exId === pending.exId,

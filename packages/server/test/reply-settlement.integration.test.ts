@@ -93,8 +93,6 @@ describe("durable settlement", () => {
             version: frozen.version + 1,
             settlement: null,
             activeGenerationStep: null,
-            activeGenerationKind: null,
-            activeGenerationKey: null,
           });
           expect(yield* f.session()).toMatchObject({
             historySeq: 3,

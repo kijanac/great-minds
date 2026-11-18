@@ -2256,10 +2256,8 @@ Request fields:
 | `exchange_id` | `Uuid` | yes | Client-chosen id for the question within the conversation. A retry retains this id and uses a new `reply_id`. |
 | `session` | object | yes | New-session details or an existing session destination, described below. |
 | `question` | string | yes | The question to answer. |
-| `model` | string | no | The model to use for this reply. When omitted, the vault default is used. |
 | `origin_path` | string | no | Path of the document the question is about. |
 | `origin_scope` | `"vault"` \| `"personal"` | no | Whether the origin document is vault content or the user's personal documents. Defaults to `"vault"`. |
-| `extra_instructions` | string | no | Additional instructions for how to answer. |
 | `inline` | boolean | no | Whether the question was asked inline beside its passage. `true` answers as a BTW with a brief-answer cue; `false` uses the default style. When omitted, the conversation's future-reply default applies. |
 
 **New session — `session.kind: "new"`**:
