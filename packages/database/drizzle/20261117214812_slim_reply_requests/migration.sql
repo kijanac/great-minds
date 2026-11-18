@@ -1,8 +1,10 @@
 UPDATE "replies" AS r
 SET "request" = jsonb_build_object(
   'command', CASE
-    WHEN jsonb_typeof(r."request"->'header') = 'object' AND s."origin" IS NOT NULL
+    WHEN r."request"->'command'->'session'->>'kind' = 'new' AND s."origin" IS NOT NULL
       THEN jsonb_set((r."request"->'command') - 'model' - 'extra_instructions', '{session,origin}', s."origin")
+    WHEN r."request"->'command'->'session'->>'kind' = 'new'
+      THEN (r."request"->'command') - 'model' - 'extra_instructions' #- '{session,origin}'
     ELSE (r."request"->'command') - 'model' - 'extra_instructions'
   END,
   'mode', r."request"->'mode',
