@@ -18,7 +18,7 @@
     "@great-minds/domain": "workspace:*",
     "@simplewebauthn/server": "14.1.0",
     "defuddle": "0.19.6",
-    "drizzle-orm": "1.0.0-rc.5-169397b",
+    "drizzle-orm": "1.0.0-rc.5",
     "effect": "4.1.2",
     "fs-native-extensions": "1.5.3",
     "github-slugger": "2.0.0",
