@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   footnoteDefinitions,
   footnoteNotes,
+  injectAnchors,
   markdownParagraphs,
   openingSentence,
   withoutFootnoteDefinitions,
@@ -30,6 +31,18 @@ describe("article footnotes and openings", () => {
     expect(markdownParagraphs(withoutFootnoteDefinitions(article)).map((p) => p.body)).toEqual([
       "The strikes of 1896 in St. Petersburg drew 30,000 workers[^1]. Later ones grew[^2].",
       "Banditry spread behind the lines[^2][^3].",
+    ]);
+  });
+
+  it("keeps a fenced code block whole and its closing fence intact", () => {
+    const source = "Intro.\n\n```py\ndef f():\n\n    return 1\n```\n\nAfter.\n";
+    const marked = injectAnchors(source);
+    expect(marked).toBe("Intro. ^p0\n\n```py\ndef f():\n\n    return 1\n```\n^p1\n\nAfter. ^p2\n");
+    expect(injectAnchors(marked)).toBe(marked);
+    expect(markdownParagraphs(marked).map((p) => p.body)).toEqual([
+      "Intro.",
+      "```py\ndef f():\n\n    return 1\n```",
+      "After.",
     ]);
   });
 

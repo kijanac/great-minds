@@ -3,16 +3,15 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import {
   passageId,
+  stripPassageMarkers,
   type SessionExchange,
   type SessionId,
   type SessionOrigin,
   type Uuid,
 } from "@great-minds/domain";
 
-const PARA_SPLIT_RE = /\n\s*\n/;
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
 const HEADING_LINE_RE = /^(#{1,6})\s+(.+)$/;
-const ANCHOR_MARKER_RE = /\s*\^p\d+\s*$/gm;
-
 type BuildDocumentInput = {
   readonly sourceType?: string;
   readonly url?: string | null;
@@ -39,11 +38,31 @@ const buildFrontmatter = (known: Record<string, unknown>) => {
   return `---\n${stringifyYaml(frontmatter)}---\n`;
 };
 
+const splitBlocks = (content: string): readonly string[] => {
+  const blocks: string[] = [];
+  let lines: string[] = [];
+  let fence: string | null = null;
+  for (const line of content.split("\n")) {
+    if (fence === null && line.trim().length === 0) {
+      blocks.push(lines.join("\n"));
+      lines = [];
+      continue;
+    }
+    lines.push(line);
+    const marker = FENCE_RE.exec(line)?.[1];
+    if (marker === undefined) continue;
+    if (fence === null) fence = marker;
+    else if (marker.startsWith(fence) && line.trim() === marker) fence = null;
+  }
+  blocks.push(lines.join("\n"));
+  return blocks;
+};
+
 const walkBlocks = (content: string): readonly Block[] => {
   const blocks: Block[] = [];
   let paragraph = 0;
-  for (const rawBlock of content.split(PARA_SPLIT_RE)) {
-    const raw = rawBlock.replace(ANCHOR_MARKER_RE, "").trim();
+  for (const rawBlock of splitBlocks(stripPassageMarkers(content))) {
+    const raw = rawBlock.trim();
     if (raw.length === 0) {
       continue;
     }
@@ -169,8 +188,6 @@ const stringifyRuamelFrontmatter = (frontmatter: Record<string, unknown>) => {
 export const serializeFrontmatter = (frontmatter: Record<string, unknown>, body: string) =>
   `---\n${stringifyRuamelFrontmatter(frontmatter)}---\n${body}`;
 
-// Horizontal whitespace only: ANCHOR_MARKER_RE would swallow the newline and
-// merge adjacent paragraphs when stripping a whole document.
 export const injectAnchors = (content: string) => {
   const blocks = walkBlocks(content);
   if (blocks.length === 0) {
@@ -179,7 +196,9 @@ export const injectAnchors = (content: string) => {
   return (
     blocks
       .map((block) =>
-        block.chunkIndex === null ? block.raw : `${block.raw} ${passageId(block.chunkIndex)}`,
+        block.chunkIndex === null
+          ? block.raw
+          : `${block.raw}${FENCE_RE.test(block.raw.slice(block.raw.lastIndexOf("\n") + 1)) ? "\n" : " "}${passageId(block.chunkIndex)}`,
       )
       .join("\n\n") + "\n"
   );
