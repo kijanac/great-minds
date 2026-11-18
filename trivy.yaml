@@ -15,3 +15,5 @@ pkg:
 
 vulnerability:
   ignore-unfixed: false
+
+ignorefile: .trivyignore.yaml
