@@ -1,4 +1,9 @@
 import { Option, Schema } from "effect";
+import type { RootContent } from "mdast";
+import { toString } from "mdast-util-to-string";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import {
@@ -10,8 +15,8 @@ import {
   type Uuid,
 } from "@great-minds/domain";
 
-const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
-const HEADING_LINE_RE = /^(#{1,6})\s+(.+)$/;
+const blockParser = unified().use(remarkParse).use(remarkGfm);
+
 type BuildDocumentInput = {
   readonly sourceType?: string;
   readonly url?: string | null;
@@ -29,6 +34,7 @@ type Block = {
   readonly raw: string;
   readonly chunkIndex: number | null;
   readonly heading: string | null;
+  readonly endsInText: boolean;
 };
 
 const buildFrontmatter = (known: Record<string, unknown>) => {
@@ -38,42 +44,27 @@ const buildFrontmatter = (known: Record<string, unknown>) => {
   return `---\n${stringifyYaml(frontmatter)}---\n`;
 };
 
-const splitBlocks = (content: string): readonly string[] => {
-  const blocks: string[] = [];
-  let lines: string[] = [];
-  let fence: string | null = null;
-  for (const line of content.split("\n")) {
-    if (fence === null && line.trim().length === 0) {
-      blocks.push(lines.join("\n"));
-      lines = [];
-      continue;
-    }
-    lines.push(line);
-    const marker = FENCE_RE.exec(line)?.[1];
-    if (marker === undefined) continue;
-    if (fence === null) fence = marker;
-    else if (marker.startsWith(fence) && line.trim() === marker) fence = null;
-  }
-  blocks.push(lines.join("\n"));
-  return blocks;
-};
+const endsInText = (node: RootContent | undefined): boolean =>
+  node?.type === "paragraph" ||
+  ((node?.type === "blockquote" || node?.type === "list" || node?.type === "listItem") &&
+    endsInText(node.children.at(-1)));
 
 const walkBlocks = (content: string): readonly Block[] => {
+  const source = stripPassageMarkers(content);
   const blocks: Block[] = [];
   let paragraph = 0;
-  for (const rawBlock of splitBlocks(stripPassageMarkers(content))) {
-    const raw = rawBlock.trim();
-    if (raw.length === 0) {
-      continue;
+  for (const node of blockParser.parse(source).children) {
+    for (const part of node.type === "list" && node.spread ? node.children : [node]) {
+      if (part.position === undefined) continue;
+      const { start, end } = part.position;
+      const raw = source.slice((start.offset ?? 0) - start.column + 1, end.offset).trimEnd();
+      if (part.type === "heading") {
+        blocks.push({ raw, chunkIndex: null, heading: toString(part), endsInText: false });
+        continue;
+      }
+      blocks.push({ raw, chunkIndex: paragraph, heading: null, endsInText: endsInText(part) });
+      paragraph += 1;
     }
-    const [firstLine = "", ...rest] = raw.split("\n");
-    const heading = HEADING_LINE_RE.exec(firstLine)?.[2]?.trim() ?? null;
-    if (heading !== null && rest.join("\n").trim().length === 0) {
-      blocks.push({ raw, chunkIndex: null, heading });
-      continue;
-    }
-    blocks.push({ raw, chunkIndex: paragraph, heading });
-    paragraph += 1;
   }
   return blocks;
 };
@@ -104,7 +95,7 @@ export const markdownParagraphs = (content: string) => {
   for (const block of walkBlocks(content)) {
     if (block.heading !== null) heading = block.heading;
     if (block.chunkIndex === null) continue;
-    paragraphs.push({ index: block.chunkIndex, heading, body: block.raw });
+    paragraphs.push({ index: block.chunkIndex, heading, body: block.raw.trimStart() });
   }
   return paragraphs;
 };
@@ -198,7 +189,7 @@ export const injectAnchors = (content: string) => {
       .map((block) =>
         block.chunkIndex === null
           ? block.raw
-          : `${block.raw}${FENCE_RE.test(block.raw.slice(block.raw.lastIndexOf("\n") + 1)) ? "\n" : " "}${passageId(block.chunkIndex)}`,
+          : `${block.raw}${block.endsInText ? " " : "\n\n"}${passageId(block.chunkIndex)}`,
       )
       .join("\n\n") + "\n"
   );

@@ -34,15 +34,48 @@ describe("article footnotes and openings", () => {
     ]);
   });
 
-  it("keeps a fenced code block whole and its closing fence intact", () => {
-    const source = "Intro.\n\n```py\ndef f():\n\n    return 1\n```\n\nAfter.\n";
-    const marked = injectAnchors(source);
-    expect(marked).toBe("Intro. ^p0\n\n```py\ndef f():\n\n    return 1\n```\n^p1\n\nAfter. ^p2\n");
-    expect(injectAnchors(marked)).toBe(marked);
-    expect(markdownParagraphs(marked).map((p) => p.body)).toEqual([
+  it("numbers the blocks Markdown sees and never writes a marker where it would break one", () => {
+    const source = [
+      "# Title",
       "Intro.",
-      "```py\ndef f():\n\n    return 1\n```",
-      "After.",
+      "| a |",
+      "| - |",
+      "| 1 |",
+      "",
+      "```py",
+      "def f():",
+      "",
+      "    return 1",
+      "```",
+      "",
+      "- one",
+      "",
+      "- two",
+      "",
+      "---",
+    ].join("\n");
+    const marked = injectAnchors(source);
+    expect(marked).toBe(
+      [
+        "# Title",
+        "Intro. ^p0",
+        "| a |\n| - |\n| 1 |\n\n^p1",
+        "```py\ndef f():\n\n    return 1\n```\n\n^p2",
+        "- one ^p3",
+        "- two ^p4",
+        "---\n\n^p5",
+      ].join("\n\n") + "\n",
+    );
+    expect(injectAnchors(marked)).toBe(marked);
+    expect(
+      markdownParagraphs(marked).map((p) => [p.index, p.heading, p.body.split("\n")[0]]),
+    ).toEqual([
+      [0, "Title", "Intro."],
+      [1, "Title", "| a |"],
+      [2, "Title", "```py"],
+      [3, "Title", "- one"],
+      [4, "Title", "- two"],
+      [5, "Title", "---"],
     ]);
   });
 

@@ -4,7 +4,7 @@ import GithubSlugger from "github-slugger";
 import { hastText, type HastNode } from "#lib/markdown-plugins.ts";
 
 const HEADINGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
-const ANCHORED_TAGS = new Set([...HEADINGS, "p", "ul", "ol", "blockquote", "pre"]);
+const ANCHORED_TAGS = new Set([...HEADINGS, "p", "ul", "ol", "blockquote", "pre", "table", "hr"]);
 
 export function assignBlockRefIds(root: HastNode, originalSource: string): void {
   let removed = 0;
@@ -31,7 +31,7 @@ export function assignBlockRefIds(root: HastNode, originalSource: string): void 
           (candidate) =>
             !claimed.has(candidate.chunk) &&
             candidate.position >= start &&
-            candidate.position <= end + 1,
+            candidate.position <= end + 2,
         );
         if (marker) {
           claimed.add(marker.chunk);
