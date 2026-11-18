@@ -1,0 +1,6 @@
+vulnerabilities:
+  - id: CVE-2026-112366
+    paths:
+      - pnpm-lock.yaml
+    statement: picomatch 4.0.7 is the latest release and has no fix. It is reached only through development tools (vite, vitest, svelte-check), which never match user-supplied patterns.
+    expired_at: 2026-12-18
