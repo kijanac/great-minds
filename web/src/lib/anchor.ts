@@ -1,3 +1,5 @@
+import { passageOf } from "@great-minds/domain";
+
 export function uniqueQuoteSpan(
   text: string,
   quote: string,
@@ -13,13 +15,6 @@ export function* quoteMatches(text: string, quote: string): Generator<number> {
     yield start;
 }
 
-const SECTION_ID = /^\^p(\d+)$/;
-
-export function sectionOf(id: unknown): number | null {
-  const match = typeof id === "string" ? SECTION_ID.exec(id) : null;
-  return match ? Number(match[1]) : null;
-}
-
 const APP_TEXT = "[data-citation-ref]";
 
 function passageText(root: Element | DocumentFragment): string {
@@ -33,8 +28,8 @@ const blockCopyText = (block: Element) => {
 };
 
 const domSection = (block: Element) =>
-  sectionOf(block.id) ??
-  (block.firstElementChild?.tagName === "SPAN" ? sectionOf(block.firstElementChild.id) : null);
+  passageOf(block.id) ??
+  (block.firstElementChild?.tagName === "SPAN" ? passageOf(block.firstElementChild.id) : null);
 
 export function capturePassage(
   range: Range,

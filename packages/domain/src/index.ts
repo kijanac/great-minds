@@ -890,6 +890,33 @@ const PassageLocation = {
   }),
 };
 
+const PASSAGE_ID = /^\^p(\d+)$/;
+const PASSAGE_MARKER = /[ \t]*\^p(\d+)$/gm;
+
+export const passageId = (index: number) => `^p${index}`;
+
+export const passageOf = (id: unknown): number | null => {
+  const match = typeof id === "string" ? PASSAGE_ID.exec(id) : null;
+  return match === null ? null : Number(match[1]);
+};
+
+export const citedPassage = (href: string): number | null => {
+  try {
+    return passageOf(decodeURIComponent(href.split("#", 2)[1] ?? ""));
+  } catch {
+    return null;
+  }
+};
+
+export const stripPassageMarkers = (text: string) => text.replace(PASSAGE_MARKER, "");
+
+export const passageMarkers = (text: string) =>
+  [...text.matchAll(PASSAGE_MARKER)].map((match) => ({
+    at: match.index,
+    length: match[0].length,
+    passage: Number(match[1]),
+  }));
+
 export const DocumentSessionOrigin = Schema.Struct({
   kind: Schema.Literal("document"),
   doc_path: Schema.String,

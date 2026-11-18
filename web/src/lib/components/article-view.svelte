@@ -67,8 +67,7 @@
     btws={threads}
     streaming={false}
     variant="article"
-    stripBlockRefs
-    resolveBlockRefs
+    blockRefs
     marginFootnotes
     {panelDocked}
     {onLinkClick}

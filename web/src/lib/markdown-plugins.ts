@@ -16,6 +16,9 @@ export interface HastNode {
   };
 }
 
+export const hastText = (node: HastNode): string =>
+  node.type === "text" ? (node.value ?? "") : (node.children ?? []).map(hastText).join("");
+
 function isFootnoteRefSup(node: HastNode): boolean {
   return (
     node.type === "element" &&

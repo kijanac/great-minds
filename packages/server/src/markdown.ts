@@ -1,7 +1,13 @@
 import { Option, Schema } from "effect";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
-import type { SessionExchange, SessionId, SessionOrigin, Uuid } from "@great-minds/domain";
+import {
+  passageId,
+  type SessionExchange,
+  type SessionId,
+  type SessionOrigin,
+  type Uuid,
+} from "@great-minds/domain";
 
 const PARA_SPLIT_RE = /\n\s*\n/;
 const HEADING_LINE_RE = /^(#{1,6})\s+(.+)$/;
@@ -165,8 +171,6 @@ export const serializeFrontmatter = (frontmatter: Record<string, unknown>, body:
 
 // Horizontal whitespace only: ANCHOR_MARKER_RE would swallow the newline and
 // merge adjacent paragraphs when stripping a whole document.
-export const stripAnchors = (content: string) => content.replace(/[ \t]*\^p\d+$/gm, "");
-
 export const injectAnchors = (content: string) => {
   const blocks = walkBlocks(content);
   if (blocks.length === 0) {
@@ -175,7 +179,7 @@ export const injectAnchors = (content: string) => {
   return (
     blocks
       .map((block) =>
-        block.chunkIndex === null ? block.raw : `${block.raw} ^p${block.chunkIndex}`,
+        block.chunkIndex === null ? block.raw : `${block.raw} ${passageId(block.chunkIndex)}`,
       )
       .join("\n\n") + "\n"
   );

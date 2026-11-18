@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { assignBlockRefIds, stripBlockRefMarkers } from "#lib/block-refs.ts";
+  import { stripPassageMarkers } from "@great-minds/domain";
+
+  import { assignBlockRefIds } from "#lib/block-refs.ts";
   import FootnoteNotes from "#lib/components/footnote-notes.svelte";
   import HastNodeView from "#lib/components/hast-node.svelte";
   import { parseMarkdown } from "#lib/markdown.ts";
@@ -22,7 +24,7 @@
     panelDocked?: boolean;
   } = $props();
 
-  const displaySource = $derived(stripBlockRefs ? stripBlockRefMarkers(source) : source);
+  const displaySource = $derived(stripBlockRefs ? stripPassageMarkers(source) : source);
   const tree = $derived.by(() => {
     const rendered = parseMarkdown(displaySource);
     if (stripBlockRefs && resolveBlockRefs) {

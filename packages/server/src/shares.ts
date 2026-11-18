@@ -9,6 +9,7 @@ import {
   type SharedAnnotation,
   type SharedShareDetail,
   SessionId,
+  stripPassageMarkers,
   type Uuid,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
@@ -17,7 +18,7 @@ import { Context, Effect, Layer, Schema } from "effect";
 import { ClockService } from "./clock.ts";
 import { renderSessionMarkdown } from "./conversation-history/presentation.ts";
 import { StructuredLogger } from "./logging.ts";
-import { parseFrontmatter, stripAnchors } from "./markdown.ts";
+import { parseFrontmatter } from "./markdown.ts";
 import { RandomBytesService, formatUuid7 } from "./random.ts";
 import { SessionsService } from "./sessions.ts";
 import { UserDocumentsService } from "./user-documents.ts";
@@ -308,7 +309,7 @@ export const SharesServiceLive = Layer.effect(
           return {
             subject_kind: "reference" as const,
             title: reference.title,
-            markdown: row.includeAnnotations ? body : stripAnchors(body),
+            markdown: row.includeAnnotations ? body : stripPassageMarkers(body),
             origin: reference.origin,
             author: reference.author,
             published: reference.published,

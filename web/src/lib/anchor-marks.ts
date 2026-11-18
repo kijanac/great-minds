@@ -1,5 +1,7 @@
-import { quoteMatches, sectionOf } from "#lib/anchor.ts";
-import type { HastNode } from "#lib/markdown-plugins.ts";
+import { passageOf } from "@great-minds/domain";
+
+import { quoteMatches } from "#lib/anchor.ts";
+import { hastText, type HastNode } from "#lib/markdown-plugins.ts";
 import type { TextAnchor } from "#lib/types.ts";
 
 export interface ThreadAnchor {
@@ -16,24 +18,11 @@ export interface Placement {
 
 const MARK_CLASS = "btw-anchor-mark";
 
-function collectText(block: HastNode): string {
-  let out = "";
-  const walk = (node: HastNode): void => {
-    if (node.type === "text") {
-      out += node.value ?? "";
-      return;
-    }
-    for (const child of node.children ?? []) walk(child);
-  };
-  walk(block);
-  return out;
-}
-
 function blockSection(block: HastNode): number | null {
-  const own = sectionOf(block.properties?.id);
+  const own = passageOf(block.properties?.id);
   if (own !== null) return own;
   const first = block.children?.find((child) => child.type === "element");
-  return first?.tagName === "span" ? sectionOf(first.properties?.id) : null;
+  return first?.tagName === "span" ? passageOf(first.properties?.id) : null;
 }
 
 export function resolvePassage(
@@ -57,12 +46,12 @@ export function resolvePassage(
     }
     let seen = 0;
     for (const block of scope)
-      for (const start of quoteMatches(collectText(block), quote))
+      for (const start of quoteMatches(hastText(block), quote))
         if (++seen === anchor.occurrence) return at(block, start);
   }
   let found: (Placement & { block: HastNode }) | null = null;
   for (const block of blocks)
-    for (const start of quoteMatches(collectText(block), quote)) {
+    for (const start of quoteMatches(hastText(block), quote)) {
       if (found) return null;
       found = at(block, start);
     }

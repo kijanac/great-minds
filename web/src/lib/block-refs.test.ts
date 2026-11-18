@@ -1,12 +1,14 @@
 import { expect, it } from "vitest";
-import { assignBlockRefIds, stripBlockRefMarkers } from "#lib/block-refs.ts";
+import { stripPassageMarkers } from "@great-minds/domain";
+
+import { assignBlockRefIds } from "#lib/block-refs.ts";
 import { parseMarkdown } from "#lib/markdown.ts";
 import type { HastNode } from "#lib/markdown-plugins.ts";
 
 it("keeps heading and recorded passage destinations distinct and addressable", () => {
   const source =
     "# Evidence ^p0\n\nA recorded paragraph. ^p7\n\n## Evidence\n\n### *Another* heading";
-  const tree = parseMarkdown(stripBlockRefMarkers(source));
+  const tree = parseMarkdown(stripPassageMarkers(source));
   assignBlockRefIds(tree, source);
   const ids: unknown[] = [];
   const collect = (node: HastNode) => {

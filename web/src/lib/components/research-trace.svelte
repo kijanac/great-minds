@@ -12,7 +12,7 @@
     type ResearchStep,
   } from "#lib/research-steps.ts";
   import type { Exchange, SourceRef } from "#lib/types.ts";
-  import { displayTitle } from "#lib/utils.ts";
+  import { displayTitle, sectionLabel } from "#lib/utils.ts";
 
   let {
     exchange,
@@ -196,7 +196,7 @@
         <span class="whitespace-nowrap tabular-nums">
           {step.source.hits[0].chunks
             .filter((chunk) => chunk >= 0)
-            .map((chunk) => `§${chunk + 1}`)
+            .map((chunk) => sectionLabel(chunk))
             .join(", ")}
         </span>
       {/if}
