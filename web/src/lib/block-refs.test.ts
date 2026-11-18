@@ -19,8 +19,8 @@ it("keeps heading and recorded passage destinations distinct and addressable", (
   expect(ids).toEqual(["evidence", "^p0", "^p7", "evidence-1", "another-heading"]);
 });
 
-it("gives a fenced code block the passage marker written under it", () => {
-  const source = "Intro. ^p0\n\n```\ncode\n\nmore\n```\n^p1\n\nAfter. ^p2";
+it("gives a code block or table the passage marker written under it", () => {
+  const source = "Intro. ^p0\n\n```\ncode\n\nmore\n```\n\n^p1\n\n| a |\n| - |\n| 1 |\n\n^p2";
   const tree = parseMarkdown(stripPassageMarkers(source));
   assignBlockRefIds(tree, source);
   expect(
@@ -30,6 +30,6 @@ it("gives a fenced code block the passage marker written under it", () => {
   ).toEqual([
     ["p", "^p0"],
     ["pre", "^p1"],
-    ["p", "^p2"],
+    ["table", "^p2"],
   ]);
 });
