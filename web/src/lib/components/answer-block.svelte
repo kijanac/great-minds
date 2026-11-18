@@ -1,10 +1,10 @@
 <script lang="ts">
-  import type { Uuid } from "@great-minds/domain";
+  import { stripPassageMarkers, type Uuid } from "@great-minds/domain";
   import { tick, type Snippet } from "svelte";
 
   import { capturePassage, rangeFromOffsets } from "#lib/anchor.ts";
   import { placeAnchors, type Placement, type ThreadAnchor } from "#lib/anchor-marks.ts";
-  import { assignBlockRefIds, stripBlockRefMarkers } from "#lib/block-refs.ts";
+  import { assignBlockRefIds } from "#lib/block-refs.ts";
   import AnswerCitations from "#lib/components/answer-citations.svelte";
   import BtwThread from "#lib/components/btw-thread.svelte";
   import { numberCitations, type Citation } from "#lib/citations.ts";
@@ -12,7 +12,7 @@
   import HastNodeView from "#lib/components/hast-node.svelte";
   import { clearAnchorHighlights, setAnchorHighlights } from "#lib/highlight.ts";
   import { parseMarkdown } from "#lib/markdown.ts";
-  import type { HastNode } from "#lib/markdown-plugins.ts";
+  import { hastText, type HastNode } from "#lib/markdown-plugins.ts";
   import { passageMark } from "#lib/passage-navigation.ts";
   import { blockText, selectionPassage } from "#lib/selection-passage.ts";
   import { splitStreamingMarkdown } from "#lib/streaming-markdown.ts";
@@ -31,8 +31,7 @@
     onLinkClick,
     variant = "answer",
     marginFootnotes = true,
-    stripBlockRefs = false,
-    resolveBlockRefs = false,
+    blockRefs = false,
     readOnly = false,
     expandedThreads = null,
     onToggleThread,
@@ -53,8 +52,7 @@
     onLinkClick?: (event: MouseEvent) => void;
     variant?: "answer" | "article";
     marginFootnotes?: boolean;
-    stripBlockRefs?: boolean;
-    resolveBlockRefs?: boolean;
+    blockRefs?: boolean;
     readOnly?: boolean;
     // When provided, thread expansion is controlled externally (reader chip /
     // DocThreads); otherwise AnswerBlock owns a local expansion map.
@@ -66,7 +64,7 @@
 
   let root: HTMLDivElement | null = $state(null);
   let localExpanded = $state<Record<string, boolean>>({});
-  const displayText = $derived(stripBlockRefs ? stripBlockRefMarkers(text) : text);
+  const displayText = $derived(blockRefs ? stripPassageMarkers(text) : text);
   const split = $derived(streaming ? splitStreamingMarkdown(displayText) : null);
   const stableSource = $derived(split?.stable ?? "");
   const tailSource = $derived(split?.tail ?? "");
@@ -97,13 +95,24 @@
     return (
       !!documentTitle &&
       first?.tagName === "h1" &&
-      nodeText(first).replace(/\s+/g, " ").trim() === documentTitle.replace(/\s+/g, " ").trim()
+      hastText(first).replace(/\s+/g, " ").trim() === documentTitle.replace(/\s+/g, " ").trim()
     );
   });
   const placed = $derived(streaming ? stableParsed.placed : fullParsed.placed);
   // Only anchored threads (quote present) render in the body; doc-initiated
   // conversations surface through the doc-header chip instead.
   const bodyThreads = $derived(btws.filter((btw) => btw.anchor.quote.length > 0));
+  const threadsAt = $derived.by(() => {
+    const byBlock = new Map<number, ThreadLike[]>();
+    for (const btw of bodyThreads) {
+      const offset = placed.get(btw.id)?.offset;
+      if (offset === undefined) continue;
+      const threads = byBlock.get(offset);
+      if (threads) threads.push(btw);
+      else byBlock.set(offset, [btw]);
+    }
+    return byBlock;
+  });
   const footnoteRoots = $derived(streaming ? [stableTree, tailTree] : [fullTree]);
 
   const isOpen = (btwId: string): boolean =>
@@ -269,10 +278,6 @@
     };
   });
 
-  function nodeText(node: HastNode): string {
-    return node.type === "text" ? (node.value ?? "") : (node.children ?? []).map(nodeText).join("");
-  }
-
   function emptyRoot(): HastNode {
     return { type: "root", children: [] };
   }
@@ -285,9 +290,7 @@
 
   function parseAnswer(source: string): HastNode {
     const tree = parseMarkdown(source);
-    if (stripBlockRefs && resolveBlockRefs) {
-      assignBlockRefIds(tree, text);
-    }
+    if (blockRefs) assignBlockRefIds(tree, text);
     return onCitation ? numberCitations(tree, citations) : tree;
   }
 
@@ -375,7 +378,7 @@
           {@render blockNode(node)}
           {#if index === 0 && leadingTitle}{@render header?.(false)}{/if}
           {#if offset != null}
-            {#each bodyThreads.filter((btw) => placed.get(btw.id)?.offset === offset) as btw (btw.id)}
+            {#each threadsAt.get(offset) ?? [] as btw (btw.id)}
               <BtwThread
                 {btw}
                 open={isOpen(btw.id)}

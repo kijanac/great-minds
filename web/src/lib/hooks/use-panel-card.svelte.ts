@@ -1,4 +1,5 @@
 import { goto } from "$app/navigation";
+import { passageId } from "@great-minds/domain";
 import type { DocumentScope } from "#lib/api/doc.ts";
 import { createLinkInterceptor } from "#lib/hooks/use-link-interceptor.ts";
 import type { ReadingTrail } from "#lib/research-steps.ts";
@@ -13,51 +14,25 @@ export function usePanelCard(scope: DocumentScope = "vault") {
     trail = next;
   }
 
-  function openArticle(article: WikiArticleOverview) {
-    select({
-      type: "article",
-      label: article.file_path,
-      document_id: null,
-      title: article.title,
-      scope: null,
-      path: null,
-      thinking: null,
-    });
-  }
+  const card = (
+    type: "article" | "raw",
+    label: string,
+    title: string | null,
+    document_id: SourceRef["document_id"] = null,
+  ): SourceRef => ({ type, label, document_id, title, scope: null, path: null, thinking: null });
 
-  function openSource(source: SourceDocumentSummary) {
-    select({
-      type: "raw",
-      label: source.file_path,
-      document_id: source.id,
-      title: source.title,
-      scope: null,
-      path: null,
-      thinking: null,
-    });
-  }
+  const openArticle = (article: WikiArticleOverview) =>
+    select(card("article", article.file_path, article.title));
 
-  function openSourceArticle(slug: string, title: string) {
-    select({
-      type: "article",
-      label: `wiki/${slug}.md`,
-      document_id: null,
-      title,
-      scope: null,
-      path: null,
-      thinking: null,
-    });
-  }
+  const openSource = (source: SourceDocumentSummary) =>
+    select(card("raw", source.file_path, source.title, source.id));
+
+  const openSourceArticle = (slug: string, title: string) =>
+    select(card("article", `wiki/${slug}.md`, title));
 
   function openPath(path: string, chunk: number | null = null) {
     select({
-      type: path.startsWith("wiki/") ? "article" : "raw",
-      label: path,
-      document_id: null,
-      title: null,
-      scope: null,
-      path: null,
-      thinking: null,
+      ...card(path.startsWith("wiki/") ? "article" : "raw", path, null),
       ranges: chunk === null ? undefined : [{ start: chunk, end: chunk }],
       full: scope === "personal" || chunk === null,
     });
@@ -84,7 +59,7 @@ export function usePanelCard(scope: DocumentScope = "vault") {
   function href(chunk: number | null) {
     const card = selectedCard;
     if (!card) return null;
-    const hash = chunk === null ? "" : `#^p${chunk}`;
+    const hash = chunk === null ? "" : `#${passageId(chunk)}`;
     return scope === "vault" && card.type === "raw" && card.document_id
       ? `/source/${card.document_id}${hash}`
       : `${scope === "personal" ? "/refs/" : "/doc/"}${card.label}${hash}`;

@@ -3,7 +3,9 @@ import { render } from "svelte/server";
 
 import { uniqueQuoteSpan } from "#lib/anchor.ts";
 import { placeAnchors } from "#lib/anchor-marks.ts";
-import { assignBlockRefIds, stripBlockRefMarkers } from "#lib/block-refs.ts";
+import { stripPassageMarkers } from "@great-minds/domain";
+
+import { assignBlockRefIds } from "#lib/block-refs.ts";
 import ConversationAbout from "#lib/components/conversation-about.svelte";
 import { parseMarkdown } from "#lib/markdown.ts";
 import type { HastNode } from "#lib/markdown-plugins.ts";
@@ -17,7 +19,7 @@ describe("saved passage anchors", () => {
     ...fields,
   });
   const source = (text: string) => {
-    const tree = parseMarkdown(stripBlockRefMarkers(text));
+    const tree = parseMarkdown(stripPassageMarkers(text));
     assignBlockRefIds(tree, text);
     return tree;
   };

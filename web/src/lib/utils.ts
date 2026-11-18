@@ -63,3 +63,6 @@ export function docDisplayName(path: string): string {
 export function displayTitle(path: string, title?: string | null): string {
   return title || docDisplayName(path);
 }
+
+export const sectionLabel = (from: number, to: number = from) =>
+  from === to ? `§${from + 1}` : `§${from + 1}–${to + 1}`;

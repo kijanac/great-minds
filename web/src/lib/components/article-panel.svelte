@@ -3,6 +3,7 @@
   import Link from "@lucide/svelte/icons/link";
   import Maximize2 from "@lucide/svelte/icons/maximize-2";
   import X from "@lucide/svelte/icons/x";
+  import { passageId } from "@great-minds/domain";
 
   import { Button } from "#lib/components/ui/button/index.ts";
   import { Skeleton } from "#lib/components/ui/skeleton/index.ts";
@@ -12,7 +13,7 @@
   import { copyPassageLink } from "#lib/passage-navigation.ts";
   import { readLabel, type ReadingTrail } from "#lib/research-steps.ts";
   import type { SourceRef } from "#lib/types.ts";
-  import { displayTitle } from "#lib/utils.ts";
+  import { displayTitle, sectionLabel } from "#lib/utils.ts";
 
   let {
     card,
@@ -55,11 +56,7 @@
     if (trail) return `read · ${readLabel(trail.step)}`;
     if (content?.mode === "chunks") {
       const ranges = (card.ranges ?? [])
-        .map((range) =>
-          range.start === range.end
-            ? `§${range.start + 1}`
-            : `§${range.start + 1}–${range.end + 1}`,
-        )
+        .map((range) => sectionLabel(range.start, range.end))
         .join(", ");
       const label = context === "citation" ? "cited passage" : "what the agent read";
       return ranges ? `${ranges} · ${label}` : label;
@@ -67,9 +64,6 @@
     const kind = card.label.startsWith("wiki/") ? "wiki article" : "raw source";
     return `${kind} · full document`;
   });
-  const sections = (index: number) => `§${index + 1}`;
-  const span = (from: number, to: number) =>
-    from === to ? sections(from) : `${sections(from)}–${sections(to)}`;
   const passages = $derived.by(() => {
     if (content?.mode !== "chunks") return [];
     const total = trail?.step.source.chunks;
@@ -96,7 +90,7 @@
       gaps.find(
         (gap) => Number(gap.dataset.gapFrom) <= section && section <= Number(gap.dataset.gapTo),
       ) ??
-      body?.querySelector(`[id="^p${section}"]`);
+      body?.querySelector(`[id="${passageId(section)}"]`);
     target?.scrollIntoView({ block: "center", behavior });
   };
   $effect(() => {
@@ -127,11 +121,13 @@
           size={focus === null ? "icon-xs" : "xs"}
           onclick={onFullScreen}
           class="shrink-0 text-muted-foreground hover:bg-transparent hover:text-gold"
-          title={focus === null ? "Open full page" : `Open full page at §${focus + 1}`}
-          aria-label={focus === null ? "open full page" : `open full page at §${focus + 1}`}
+          title={focus === null ? "Open full page" : `Open full page at ${sectionLabel(focus)}`}
+          aria-label={focus === null
+            ? "open full page"
+            : `open full page at ${sectionLabel(focus)}`}
         >
           {#if focus !== null}<span class="font-mono text-[length:var(--text-chrome)]"
-              >§{focus + 1}</span
+              >{sectionLabel(focus)}</span
             >{/if}
           <Maximize2 size={12} />
         </Button>
@@ -172,14 +168,14 @@
             >
             → {(search.hits?.[0]?.chunks ?? [])
               .filter((chunk) => chunk >= 0)
-              .map(sections)
+              .map((chunk) => sectionLabel(chunk))
               .join(", ") || "no passages"}
           </dd>
         {/each}
         {#if trail.cited.size > 0}
           <dt class="text-warm-faint">cited</dt>
           <dd>
-            {[...trail.cited].map(([chunk, n]) => `[${n}] at ${sections(chunk)}`).join(", ")}
+            {[...trail.cited].map(([chunk, n]) => `[${n}] at ${sectionLabel(chunk)}`).join(", ")}
           </dd>
         {/if}
       </dl>
@@ -218,7 +214,7 @@
                   data-gap-to={item.to}
                   class="flex items-center gap-3 py-1 font-mono text-[length:var(--text-chrome)] text-warm-ghost before:h-px before:flex-1 before:border-t before:border-dashed before:border-ink-border after:h-px after:flex-1 after:border-t after:border-dashed after:border-ink-border"
                 >
-                  {span(item.from, item.to)} · not read
+                  {sectionLabel(item.from, item.to)} · not read
                 </div>
               {:else}
                 {@const cited = trail?.cited.get(item.chunk.chunk_index)}
@@ -232,7 +228,7 @@
                     class="mb-1 flex items-baseline justify-between gap-2 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold-muted"
                   >
                     <span
-                      >{sections(item.chunk.chunk_index)}{item.chunk.heading
+                      >{sectionLabel(item.chunk.chunk_index)}{item.chunk.heading
                         ? ` · ${item.chunk.heading}`
                         : ""}{cited ? ` · cited as [${cited}]` : ""}</span
                     >
@@ -240,7 +236,7 @@
                       <button
                         type="button"
                         title="Copy link"
-                        aria-label={`Copy link to ${sections(item.chunk.chunk_index)}`}
+                        aria-label={`Copy link to ${sectionLabel(item.chunk.chunk_index)}`}
                         onclick={() => copy(link, item.chunk.chunk_index)}
                         class="cursor-pointer self-center text-warm-ghost opacity-0 transition-opacity group-hover:opacity-100 hover:text-gold focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                       >

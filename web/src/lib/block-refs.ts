@@ -1,28 +1,18 @@
+import { passageId, passageMarkers } from "@great-minds/domain";
 import GithubSlugger from "github-slugger";
-import type { HastNode } from "#lib/markdown-plugins.ts";
+
+import { hastText, type HastNode } from "#lib/markdown-plugins.ts";
 
 const HEADINGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
 const ANCHORED_TAGS = new Set([...HEADINGS, "p", "ul", "ol", "blockquote"]);
-const textContent = (node: HastNode): string =>
-  node.value ?? node.children?.map(textContent).join("") ?? "";
-
-export function stripBlockRefMarkers(source: string): string {
-  return source.replace(/\s*\^p\d+(?=\n|$)/gm, "");
-}
 
 export function assignBlockRefIds(root: HastNode, originalSource: string): void {
-  const markers: { position: number; chunk: number }[] = [];
-  const markerPattern = /\s*\^p(\d+)(?=\n|$)/gm;
   let removed = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = markerPattern.exec(originalSource)) !== null) {
-    markers.push({
-      position: match.index - removed,
-      chunk: Number(match[1]),
-    });
-    removed += match[0].length;
-  }
+  const markers = passageMarkers(originalSource).map((marker) => {
+    const position = marker.at - removed;
+    removed += marker.length;
+    return { position, chunk: marker.passage };
+  });
 
   const claimed = new Set<number>();
   const headings = new GithubSlugger();
@@ -30,7 +20,7 @@ export function assignBlockRefIds(root: HastNode, originalSource: string): void 
     if (node.type === "element" && node.tagName && HEADINGS.has(node.tagName)) {
       node.properties = {
         ...node.properties,
-        id: headings.slug(textContent(node)),
+        id: headings.slug(hastText(node)),
       };
     }
     if (node.type === "element" && node.tagName && ANCHORED_TAGS.has(node.tagName)) {
@@ -45,7 +35,7 @@ export function assignBlockRefIds(root: HastNode, originalSource: string): void 
         );
         if (marker) {
           claimed.add(marker.chunk);
-          const id = `^p${marker.chunk}`;
+          const id = passageId(marker.chunk);
           if (node.properties?.id) {
             node.children = [
               {

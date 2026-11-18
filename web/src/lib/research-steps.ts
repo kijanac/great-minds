@@ -1,6 +1,7 @@
-import { citationPath, type ChunkRange } from "@great-minds/domain";
+import { citationPath, citedPassage, type ChunkRange } from "@great-minds/domain";
 
 import type { Exchange, SourceRef } from "#lib/types.ts";
+import { sectionLabel } from "#lib/utils.ts";
 
 export interface ReadStep {
   readonly kind: "read";
@@ -38,16 +39,10 @@ const sections = (ranges: readonly ChunkRange[] | undefined) =>
     Array.from({ length: range.end - range.start + 1 }, (_, index) => range.start + index),
   );
 
-export const citedChunk = (href: string) => {
-  const fragment = href.split("#", 2)[1] ?? "";
-  const match = /^(?:\^|%5E)p(\d+)$/i.exec(fragment);
-  return match === null ? null : Number(match[1]);
-};
-
 const citedSections = (answer: string) => {
   const cited = new Map<string, Set<number>>();
   for (const [, href = ""] of answer.matchAll(/\]\(((?:raw|wiki)\/[^)\s]+)\)/g)) {
-    const chunk = citedChunk(href);
+    const chunk = citedPassage(href);
     if (chunk === null) continue;
     const path = citationPath(href);
     const chunks = cited.get(path) ?? new Set<number>();
@@ -119,7 +114,7 @@ const spans = (sections: ReadonlySet<number>) => {
     if (last !== undefined && section === last[1] + 1) last[1] = section;
     else runs.push([section, section]);
   }
-  return runs.map(([from, to]) => (from === to ? `§${from + 1}` : `§${from + 1}–${to + 1}`));
+  return runs.map(([from, to]) => sectionLabel(from, to));
 };
 
 export const readLabel = (step: ReadStep) => {

@@ -1,4 +1,5 @@
 import { goto } from "$app/navigation";
+import { citationPath, citedPassage } from "@great-minds/domain";
 
 export interface RawCitation {
   path: string;
@@ -34,12 +35,7 @@ export function createLinkInterceptor(onRawOpen: (citation: RawCitation) => void
 
     if (href.startsWith("raw/")) {
       event.preventDefault();
-      const [path, fragment = ""] = href.split("#", 2);
-      const match = /^\^p(\d+)$/.exec(decodeURIComponent(fragment));
-      onRawOpen({
-        path,
-        chunk: match ? Number(match[1]) : null,
-      });
+      onRawOpen({ path: citationPath(href), chunk: citedPassage(href) });
     }
   };
 }

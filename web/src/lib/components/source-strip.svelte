@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ReadStep } from "#lib/research-steps.ts";
+  import { sectionLabel } from "#lib/utils.ts";
 
   let {
     step,
@@ -61,7 +62,7 @@
         this={onPick ? "button" : "i"}
         type={onPick ? "button" : undefined}
         role={onPick ? "button" : undefined}
-        aria-label={onPick ? `§${sections[0]! + 1}` : undefined}
+        aria-label={onPick ? sectionLabel(sections[0]!) : undefined}
         onclick={onPick ? () => onPick(sections[0]!) : undefined}
         class:read={any(sections, step.read)}
         class:fetching={any(sections, step.fetching) && !any(sections, step.read)}

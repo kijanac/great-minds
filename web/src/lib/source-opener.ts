@@ -1,4 +1,4 @@
-import { citationPath } from "@great-minds/domain";
+import { citationPath, citedPassage } from "@great-minds/domain";
 import { getContext, setContext } from "svelte";
 
 import { readingTrail, type ReadingTrail } from "#lib/research-steps.ts";
@@ -23,8 +23,7 @@ export const provideSourceOpener = (panel: {
       else panel.toggle(source);
     },
     openCitation: (exchange, href) => {
-      const match = /^\^p(\d+)$/.exec(decodeURIComponent(href.split("#", 2)[1] ?? ""));
-      const chunk = match ? Number(match[1]) : null;
+      const chunk = citedPassage(href);
       const path = citationPath(href);
       const trail = readingTrail(exchange, path, chunk);
       if (trail) panel.openTrail(trail);

@@ -1,13 +1,12 @@
 <script lang="ts">
   import { browser } from "$app/env";
+  import { citedPassage, stripPassageMarkers } from "@great-minds/domain";
   import { SvelteMap } from "svelte/reactivity";
 
   import { fetchChunks, type DocChunk } from "#lib/api/doc.ts";
-  import { stripBlockRefMarkers } from "#lib/block-refs.ts";
   import type { Citation } from "#lib/citations.ts";
   import MarkdownView from "#lib/components/markdown-view.svelte";
-  import { citedChunk } from "#lib/research-steps.ts";
-  import { displayTitle } from "#lib/utils.ts";
+  import { displayTitle, sectionLabel } from "#lib/utils.ts";
 
   let {
     root,
@@ -49,7 +48,7 @@
     sourceTitle?.(citation.path) ?? displayTitle(citation.path, null);
 
   const load = (citation: Citation) => {
-    const chunk = citedChunk(citation.href);
+    const chunk = citedPassage(citation.href);
     if (chunk === null || passages.has(citation.href)) return;
     passages.set(citation.href, "loading");
     fetchChunks(citation.path, chunk, chunk).then(
@@ -181,7 +180,7 @@
     <div
       class="relative mt-2 max-h-[13.5em] overflow-hidden text-[length:var(--text-caption)] leading-[1.6] text-warm-dim after:absolute after:inset-x-0 after:bottom-0 after:h-6 after:bg-gradient-to-t after:from-ink-panel"
     >
-      <MarkdownView source={stripBlockRefMarkers(passage.body)} variant="panel" />
+      <MarkdownView source={stripPassageMarkers(passage.body)} variant="panel" />
     </div>
   {/if}
   <div
@@ -189,7 +188,7 @@
   >
     <span
       >{citation.kind}{passage && passage !== "loading"
-        ? ` · §${passage.chunk_index + 1}`
+        ? ` · ${sectionLabel(passage.chunk_index)}`
         : ""}</span
     >
     <button

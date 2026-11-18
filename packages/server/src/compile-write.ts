@@ -1,5 +1,5 @@
 import { anchors, type Database, ideas, inUuidArray, sourceDocuments } from "@great-minds/database";
-import type { Uuid } from "@great-minds/domain";
+import { passageId, type Uuid } from "@great-minds/domain";
 import { asc, eq } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 
@@ -97,7 +97,7 @@ export const withFootnotes = (body: string, numbered: readonly Numbered[]) => {
       anchor.source === undefined
         ? "unknown source"
         : `[${sourceLabel(anchor.source)}](${anchor.source.filePath}${
-            anchor.chunkIndex === null ? "" : `#^p${anchor.chunkIndex}`
+            anchor.chunkIndex === null ? "" : `#${passageId(anchor.chunkIndex)}`
           })`;
     return [`[^${index + 1}]: ${link} — "${anchor.quote.trim()}"`];
   });

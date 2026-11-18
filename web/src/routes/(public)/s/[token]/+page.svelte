@@ -128,8 +128,7 @@
       btws={threads}
       streaming={false}
       variant="article"
-      stripBlockRefs
-      resolveBlockRefs
+      blockRefs
       marginFootnotes={false}
       readOnly
       {onLinkClick}
