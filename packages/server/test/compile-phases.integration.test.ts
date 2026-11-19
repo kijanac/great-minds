@@ -635,7 +635,7 @@ describe("M4.3a deterministic compile phases", () => {
       description: "",
     });
     expect(extracted.anchors).toEqual([
-      expect.objectContaining({ claim: "", quote: "GOOD BODY", chunkIndex: 0 }),
+      expect.objectContaining({ claim: "", quote: "GOOD\u0085BODY", chunkIndex: 0 }),
     ]);
     expect(extracted.docs.find((doc) => doc.id === id.sourceB)).toMatchObject({
       title: "",

@@ -167,12 +167,11 @@ describe("writing articles", () => {
       [
         "# Liquidationism",
         "",
-        "The liquidators gave up the underground [^1] and lost. Lenin held on [^2] [^1].",
+        "The liquidators gave up the underground and lost. Lenin held on [^1].",
         "",
         "---",
         "",
-        '[^1]: [The Liquidators (1909)](raw/liquidators.md) — "condemned"',
-        '[^2]: [The Liquidators (1909)](raw/liquidators.md#^p3) — "a legal party"',
+        '[^1]: [The Liquidators (1909)](raw/liquidators.md#^p3) — "a legal party"',
         "",
       ].join("\n"),
     );

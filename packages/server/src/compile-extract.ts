@@ -746,13 +746,88 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
   return extract;
 };
 
-const PYTHON_WHITESPACE = new RegExp(
-  String.raw`[\t\n\v\f\r\u001c-\u001f \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+`,
-  "g",
-);
+type Word = { readonly text: string; readonly start: number; readonly end: number };
 
-export const normalizePythonWhitespace = (value: string) =>
-  value.replace(PYTHON_WHITESPACE, " ").replace(/^ | $/g, "");
+const wordsOf = (text: string): Word[] =>
+  [...text.matchAll(/[\p{L}\p{N}]+/gu)].map((match) => ({
+    text: match[0].normalize("NFKD").toLowerCase(),
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
+
+const squash = (text: string) => text.replace(/\s+/g, " ").trim();
+const gram = (list: readonly string[], at: number) => `${list[at]} ${list[at + 1]} ${list[at + 2]}`;
+const NEAR_MATCH = 0.8;
+
+export const quoteLocator = (
+  paragraphs: readonly { readonly index: number; readonly body: string }[],
+) => {
+  const squashed = paragraphs.map((paragraph) => squash(paragraph.body));
+  const starts: number[] = [];
+  let joined = "";
+  for (const text of squashed) {
+    starts.push(joined.length);
+    joined += `${text} `;
+  }
+  const words = wordsOf(joined);
+  const texts = words.map((word) => word.text);
+  const chunkAt = (offset: number) =>
+    paragraphs[starts.findLastIndex((start) => start <= offset)]!.index;
+  const span = (from: number, to: number) => ({
+    chunkIndex: chunkAt(words[from]!.start),
+    quote: joined.slice(words[from]!.start, words[to]!.end),
+  });
+  const ranges: (readonly [number, number])[] = [];
+  let next = 0;
+  for (const [position] of paragraphs.entries()) {
+    const from = next;
+    const limit = starts[position + 1] ?? Number.POSITIVE_INFINITY;
+    while (next < words.length && words[next]!.start < limit) next += 1;
+    ranges.push([from, next]);
+  }
+
+  return (quote: string): { readonly chunkIndex: number; readonly quote: string } | undefined => {
+    const verbatim = squash(quote);
+    if (verbatim.length === 0) return undefined;
+    const own = squashed.findIndex((text) => text.includes(verbatim));
+    if (own >= 0) return { chunkIndex: paragraphs[own]!.index, quote };
+    const across = joined.indexOf(verbatim);
+    if (across >= 0) return { chunkIndex: chunkAt(across), quote };
+    const wanted = wordsOf(quote).map((word) => word.text);
+    if (wanted.length === 0) return undefined;
+    for (let from = 0; from + wanted.length <= texts.length; from += 1)
+      if (wanted.every((word, offset) => texts[from + offset] === word))
+        return span(from, from + wanted.length - 1);
+    if (wanted.length < 3) return undefined;
+    const grams = new Set(wanted.slice(2).map((_, at) => gram(wanted, at)));
+    let best: { readonly score: number; readonly from: number; readonly to: number } | undefined;
+    for (const [first, end] of ranges) {
+      const hit = Array.from({ length: end - first }, () => false);
+      const matched = new Set<string>();
+      for (let at = first; at + 2 < end; at += 1) {
+        const key = gram(texts, at);
+        if (!grams.has(key)) continue;
+        matched.add(key);
+        hit[at - first] = hit[at - first + 1] = hit[at - first + 2] = true;
+      }
+      const score = matched.size / grams.size;
+      if (score < NEAR_MATCH || (best !== undefined && score <= best.score)) continue;
+      const size = Math.min(hit.length, wanted.length + 4);
+      let count = hit.slice(0, size).filter(Boolean).length;
+      let top = { count, start: 0 };
+      for (let start = 1; start + size <= hit.length; start += 1) {
+        count += Number(hit[start + size - 1]) - Number(hit[start - 1]);
+        if (count > top.count) top = { count, start };
+      }
+      best = {
+        score,
+        from: first + hit.indexOf(true, top.start),
+        to: first + hit.lastIndexOf(true, top.start + size - 1),
+      };
+    }
+    return best === undefined ? undefined : span(best.from, best.to);
+  };
+};
 
 const buildSourceCard = (
   data: typeof ExtractResponse.Type,
@@ -762,24 +837,13 @@ const buildSourceCard = (
   mintUuid7: Effect.Effect<Uuid>,
 ) =>
   Effect.gen(function* () {
-    const paragraphBodies = markdownParagraphs(body).map((paragraph) => ({
-      index: paragraph.index,
-      body: normalizePythonWhitespace(paragraph.body),
-    }));
+    const locate = quoteLocator(markdownParagraphs(body));
     const parsedIdeas: Idea[] = [];
     for (const idea of data.ideas) {
       const kind = allowedKinds.includes(idea.kind) || idea.kind === "other" ? idea.kind : "other";
-      const parsedAnchors: Anchor[] = idea.anchors.map((anchor) => {
-        const normalizedQuote = normalizePythonWhitespace(anchor.quote);
-        return {
-          claim: anchor.claim,
-          quote: anchor.quote,
-          chunkIndex:
-            normalizedQuote.length === 0
-              ? null
-              : (paragraphBodies.find((paragraph) => paragraph.body.includes(normalizedQuote))
-                  ?.index ?? null),
-        };
+      const parsedAnchors: Anchor[] = idea.anchors.flatMap((anchor) => {
+        const located = locate(anchor.quote);
+        return located === undefined ? [] : [{ claim: anchor.claim, ...located }];
       });
       parsedIdeas.push({
         ideaId: yield* mintUuid7,

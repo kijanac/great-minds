@@ -75,7 +75,13 @@ const normalizeTags = (tags: readonly string[]) => [
 ];
 
 export const withFootnotes = (body: string, numbered: readonly Numbered[]) => {
-  const byNumber = new Map(numbered.map((anchor) => [anchor.number, anchor]));
+  const byNumber = new Map(
+    numbered.flatMap((anchor) =>
+      anchor.chunkIndex === null
+        ? []
+        : [[anchor.number, { ...anchor, chunkIndex: anchor.chunkIndex }] as const],
+    ),
+  );
   const used: number[] = [];
   for (const match of body.matchAll(/\[\^(\d+)\]/g)) {
     const number = Number.parseInt(match[1] ?? "", 10);
@@ -96,9 +102,7 @@ export const withFootnotes = (body: string, numbered: readonly Numbered[]) => {
     const link =
       anchor.source === undefined
         ? "unknown source"
-        : `[${sourceLabel(anchor.source)}](${anchor.source.filePath}${
-            anchor.chunkIndex === null ? "" : `#${passageId(anchor.chunkIndex)}`
-          })`;
+        : `[${sourceLabel(anchor.source)}](${anchor.source.filePath}#${passageId(anchor.chunkIndex)})`;
     return [`[^${index + 1}]: ${link} — "${anchor.quote.trim()}"`];
   });
   return `${text}\n\n---\n\n${notes.join("\n")}\n`;
