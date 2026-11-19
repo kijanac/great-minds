@@ -3,16 +3,15 @@ import {
   NotFound,
   ServiceUnavailable,
   type ShareCreate,
-  type ShareCreateResult,
   type ShareOverview,
-  type ShareSubjectKind,
+  type SharesQuery,
   type SharedAnnotation,
   type SharedShareDetail,
   SessionId,
   stripPassageMarkers,
   type Uuid,
 } from "@great-minds/domain";
-import { and, asc, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 
 import { ClockService } from "./clock.ts";
@@ -30,8 +29,8 @@ type SharesServiceShape = {
   readonly create: (
     userId: Uuid,
     input: ShareCreate,
-  ) => Effect.Effect<ShareCreateResult, NotFound | ServiceUnavailable>;
-  readonly listMine: (userId: Uuid) => Effect.Effect<readonly ShareOverview[]>;
+  ) => Effect.Effect<ShareOverview, NotFound | ServiceUnavailable>;
+  readonly listMine: (userId: Uuid, query: SharesQuery) => Effect.Effect<readonly ShareOverview[]>;
   readonly revoke: (userId: Uuid, shareId: Uuid) => Effect.Effect<void, NotFound>;
   readonly resolve: (
     token: string,
@@ -45,12 +44,11 @@ export class SharesService extends Context.Service<SharesService, SharesServiceS
 const shareOverview = (row: ShareRow): ShareOverview => ({
   id: row.id,
   token: row.token,
-  subject_kind: row.subjectKind as ShareSubjectKind,
+  subject_kind: row.subjectKind,
   subject_id: row.subjectId,
   created_by: row.createdBy,
   include_annotations: row.includeAnnotations,
   created_at: row.createdAt,
-  expires_at: row.expiresAt,
   revoked_at: row.revokedAt,
 });
 
@@ -148,108 +146,76 @@ export const SharesServiceLive = Layer.effect(
                 ),
               );
           } else {
-            const rows = yield* db
-              .query((d) =>
-                d
-                  .select()
-                  .from(userDocuments)
-                  .where(
-                    and(eq(userDocuments.id, input.subject_id), eq(userDocuments.userId, userId)),
-                  )
-                  .limit(1),
-              )
-              .pipe(Effect.orDie);
+            const rows = yield* db.query((d) =>
+              d
+                .select()
+                .from(userDocuments)
+                .where(
+                  and(eq(userDocuments.id, input.subject_id), eq(userDocuments.userId, userId)),
+                )
+                .limit(1),
+            );
             if (rows[0] === undefined) {
               return yield* new NotFound({ detail: "Reference not found" });
             }
           }
 
           const now = yield* clock.now;
-          const existing = yield* db
-            .query((d) =>
-              d
-                .select()
-                .from(shares)
-                .where(
-                  and(
-                    eq(shares.createdBy, userId),
-                    eq(shares.subjectKind, input.subject_kind),
-                    eq(shares.subjectId, input.subject_id),
-                    isNull(shares.revokedAt),
-                    or(isNull(shares.expiresAt), gt(shares.expiresAt, now)),
-                  ),
-                )
-                .limit(1),
-            )
-            .pipe(Effect.orDie);
-          const existingRow = existing[0];
-          if (existingRow !== undefined) {
-            const includeAnnotations = input.include_annotations ?? true;
-            if (existingRow.includeAnnotations !== includeAnnotations) {
-              const updated = yield* db
-                .query((d) =>
-                  d
-                    .update(shares)
-                    .set({ includeAnnotations })
-                    .where(eq(shares.id, existingRow.id))
-                    .returning(),
-                )
-                .pipe(Effect.orDie);
-              const updatedRow = updated[0];
-              if (updatedRow === undefined) {
-                throw new Error("share update returned no rows");
-              }
-              return { share: shareOverview(updatedRow), created: false };
-            }
-            return { share: shareOverview(existingRow), created: false };
-          }
-
           const idBytes = yield* randomBytes.bytes(16);
           const token = yield* mintToken();
-          const rows = yield* db
-            .query((d) =>
-              d
-                .insert(shares)
-                .values({
-                  id: formatUuid7(now.getTime(), idBytes),
-                  token,
-                  subjectKind: input.subject_kind,
-                  subjectId: input.subject_id,
-                  createdBy: userId,
-                  includeAnnotations: input.include_annotations ?? true,
-                  expiresAt: input.expires_at ?? null,
-                })
-                .returning(),
-            )
-            .pipe(Effect.orDie);
-          const row = rows[0];
-          if (row === undefined) {
-            throw new Error("share insert returned no rows");
-          }
-          return { share: shareOverview(row), created: true };
+          const includeAnnotations = input.include_annotations ?? true;
+          const [row] = yield* db.query((d) =>
+            d
+              .insert(shares)
+              .values({
+                id: formatUuid7(now.getTime(), idBytes),
+                token,
+                subjectKind: input.subject_kind,
+                subjectId: input.subject_id,
+                createdBy: userId,
+                includeAnnotations,
+              })
+              .onConflictDoUpdate({
+                target: [shares.createdBy, shares.subjectKind, shares.subjectId],
+                targetWhere: sql`${shares.revokedAt} IS NULL`,
+                set: { includeAnnotations },
+              })
+              .returning(),
+          );
+          if (row === undefined)
+            return yield* Effect.die(new Error("share upsert returned no rows"));
+          return shareOverview(row);
         }),
-      listMine: (userId) =>
+      listMine: (userId, query) =>
         db
           .query((d) =>
             d
               .select()
               .from(shares)
-              .where(eq(shares.createdBy, userId))
+              .where(
+                and(
+                  eq(shares.createdBy, userId),
+                  query.subject_kind === undefined
+                    ? undefined
+                    : eq(shares.subjectKind, query.subject_kind),
+                  query.subject_id === undefined
+                    ? undefined
+                    : eq(shares.subjectId, query.subject_id),
+                ),
+              )
               .orderBy(desc(shares.createdAt)),
           )
           .pipe(Effect.map((rows) => rows.map(shareOverview))),
       revoke: (userId, shareId) =>
         Effect.gen(function* () {
           const now = yield* clock.now;
-          const rows = yield* db
-            .query((d) =>
-              d
-                .update(shares)
-                .set({ revokedAt: now })
-                .where(and(eq(shares.id, shareId), eq(shares.createdBy, userId)))
-                .returning({ id: shares.id }),
-            )
-            .pipe(Effect.orDie);
+          const rows = yield* db.query((d) =>
+            d
+              .update(shares)
+              .set({ revokedAt: now })
+              .where(and(eq(shares.id, shareId), eq(shares.createdBy, userId)))
+              .returning({ id: shares.id }),
+          );
           if (rows[0] === undefined) {
             return yield* new NotFound({ detail: "Share not found" });
           }
@@ -257,12 +223,7 @@ export const SharesServiceLive = Layer.effect(
       resolve: (token) =>
         Effect.gen(function* () {
           const row = yield* getByToken(token);
-          const now = yield* clock.now;
-          if (
-            row === undefined ||
-            row.revokedAt !== null ||
-            (row.expiresAt !== null && row.expiresAt.getTime() <= now.getTime())
-          ) {
+          if (row === undefined || row.revokedAt !== null) {
             return yield* new NotFound({ detail: "Share not found" });
           }
 
@@ -289,11 +250,9 @@ export const SharesServiceLive = Layer.effect(
             };
           }
 
-          const rows = yield* db
-            .query((d) =>
-              d.select().from(userDocuments).where(eq(userDocuments.id, row.subjectId)).limit(1),
-            )
-            .pipe(Effect.orDie);
+          const rows = yield* db.query((d) =>
+            d.select().from(userDocuments).where(eq(userDocuments.id, row.subjectId)).limit(1),
+          );
           const reference = rows[0];
           if (reference === undefined) {
             return yield* new NotFound({ detail: "Share not found" });

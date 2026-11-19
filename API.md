@@ -2405,9 +2405,11 @@ authentication.
 
 Auth: required (session credential).
 
-Creates a share for a session or reference. Share creation requires a JWT
-session credential; API keys cannot create shares (the server returns
-`403 Forbidden`).
+Returns the active share for a session or reference, creating it if there is
+none. A subject has at most one active share per user, so repeating the request
+returns the same `token`; a different `include_annotations` updates that share
+in place. Share creation requires a JWT session credential; API keys cannot
+create shares (the server returns `403 Forbidden`).
 
 Request body (`ShareCreate`):
 
@@ -2415,32 +2417,24 @@ Request body (`ShareCreate`):
 | --- | --- | --- | --- |
 | `subject_kind` | `"session"` \| `"reference"` | yes | What to share. |
 | `subject_id` | `Uuid` | yes | Id of the session or reference to share. |
-| `include_annotations` | boolean | no | Whether to include annotated passages in the shared view. |
-| `expires_at` | ISO 8601 | no | Expiry time for the share. |
+| `include_annotations` | boolean | no | Whether to include annotated passages in the shared view. Defaults to `true`. |
 
-Response: `201 Created` with a `ShareCreateResult`:
+Response: `201 Created` with a `ShareOverview`:
 
 ```json
 {
-  "share": {
-    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-    "token": "f7c2ab90",
-    "subject_kind": "session",
-    "subject_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
-    "created_by": "0f8fad5b-d9cb-469f-a165-70867728950e",
-    "include_annotations": true,
-    "created_at": "2025-06-01T12:34:56.789Z",
-    "expires_at": null,
-    "revoked_at": null
-  },
-  "created": true
+  "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "token": "f7c2ab90",
+  "subject_kind": "session",
+  "subject_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "created_by": "0f8fad5b-d9cb-469f-a165-70867728950e",
+  "include_annotations": true,
+  "created_at": "2025-06-01T12:34:56.789Z",
+  "revoked_at": null
 }
 ```
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `share` | `ShareOverview` | `id`, `token` (used in the public URL), `subject_kind`, `subject_id`, `created_by`, `include_annotations`, `created_at`, `expires_at` (nullable), `revoked_at` (nullable). |
-| `created` | boolean | `false` when an identical share already exists and the existing one is returned. |
+`token` is used in the public URL. `revoked_at` is `null` for an active share.
 
 Errors: `403 Forbidden`, `404 NotFound`, `422 Validation`.
 
@@ -2448,9 +2442,10 @@ Errors: `403 Forbidden`, `404 NotFound`, `422 Validation`.
 
 Auth: required.
 
-Lists the authenticated user's shares.
+Lists the authenticated user's shares, newest first, including revoked ones.
 
-No query parameters.
+Query parameters (`SharesQuery`), both optional: `subject_kind` and
+`subject_id` restrict the list to one subject.
 
 Response: `200` with an array of `ShareOverview`.
 

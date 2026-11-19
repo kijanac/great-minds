@@ -21,7 +21,7 @@ import {
   CreateReplyResponse,
   SessionResponse,
   SessionId,
-  ShareCreateResult,
+  ShareOverview,
   Uuid,
 } from "@great-minds/domain";
 import { and, eq, sql } from "drizzle-orm";
@@ -1627,9 +1627,9 @@ describe("query stream", () => {
       subject_id: identifiers.session_id,
     });
     expect(shareResponse.response.status).toBe(201);
-    const shared = Schema.decodeUnknownSync(ShareCreateResult)(JSON.parse(shareResponse.text));
+    const shared = Schema.decodeUnknownSync(ShareOverview)(JSON.parse(shareResponse.text));
     const publicRead = await fetch(
-      `${currentState().started.url}/v1/public/shares/${shared.share.token}`,
+      `${currentState().started.url}/v1/public/shares/${shared.token}`,
     );
     expect(publicRead.status).toBe(200);
     const publicBody = await publicRead.text();

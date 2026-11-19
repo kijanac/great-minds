@@ -4,7 +4,6 @@ import { Effect } from "effect";
 import { api, run } from "./app";
 
 export type {
-  ShareCreateResult,
   ShareOverview,
   ShareSubjectKind,
   SharedAnnotation,

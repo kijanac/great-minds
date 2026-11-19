@@ -8,6 +8,7 @@ import type {
   ReplySnapshot,
   SessionId,
   SessionOrigin,
+  ShareSubjectKind,
   Uuid,
 } from "@great-minds/domain";
 import {
@@ -692,17 +693,19 @@ export const shares = pgTable(
   {
     id: uuidColumn("id").primaryKey(),
     token: text("token").notNull(),
-    subjectKind: text("subject_kind").notNull(),
+    subjectKind: text("subject_kind").$type<ShareSubjectKind>().notNull(),
     subjectId: uuidColumn("subject_id").notNull(),
     createdBy: uuidColumn("created_by").notNull(),
     includeAnnotations: boolean("include_annotations").default(false).notNull(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
-    expiresAt: timestamptz("expires_at"),
     revokedAt: timestamptz("revoked_at"),
   },
   (table) => [
     references(table.createdBy, users.id, "shares_created_by_fkey", "cascade"),
     uniqueIndex("ix_shares_token").on(table.token),
+    uniqueIndex("uq_shares_active_subject")
+      .on(table.createdBy, table.subjectKind, table.subjectId)
+      .where(sql`${table.revokedAt} IS NULL`),
   ],
 );
 
