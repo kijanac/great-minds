@@ -2489,7 +2489,7 @@ Response: `200` with a `SharedShareDetail`, a union discriminated by
 | --- | --- | --- |
 | `subject_kind` | `"session"` | Discriminator. |
 | `title` | string | Session title. |
-| `markdown` | string | Root-only completed/stopped selection. No failed partials, child threads, raw context, or generation internals. |
+| `markdown` | string | The conversation as export renders it: completed and stopped exchanges, the passage it is about, and attached side notes. Vault links are absolute and need vault access. No failed partials, research trace, raw context, or generation internals. |
 | `created_at` | ISO 8601 | Creation time. |
 
 **`subject_kind: "reference"`**:

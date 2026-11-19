@@ -16,9 +16,10 @@ import { and, asc, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 
 import { ClockService } from "./clock.ts";
-import { renderSessionMarkdown } from "./conversation-history/presentation.ts";
+import { AppConfig } from "./config.ts";
 import { StructuredLogger } from "./logging.ts";
 import { parseFrontmatter } from "./markdown.ts";
+import { sharedSessionPublication } from "./publication/markdown.ts";
 import { RandomBytesService, formatUuid7 } from "./random.ts";
 import { SessionsService } from "./sessions.ts";
 import { UserDocumentsService } from "./user-documents.ts";
@@ -64,6 +65,7 @@ export const SharesServiceLive = Layer.effect(
     const sessionsService = yield* SessionsService;
     const documents = yield* UserDocumentsService;
     const logger = yield* StructuredLogger;
+    const config = yield* AppConfig;
 
     const getByToken = (token: string) =>
       db
@@ -269,10 +271,9 @@ export const SharesServiceLive = Layer.effect(
             if (session === undefined) {
               return yield* new NotFound({ detail: "Share not found" });
             }
-            const markdown = yield* sessionsService
-              .readPublication(row.createdBy, session.vaultId, session.id)
+            const shared = yield* sessionsService
+              .readSession(row.createdBy, session.vaultId, session.id)
               .pipe(
-                Effect.map(renderSessionMarkdown),
                 Effect.catchTag("Forbidden", () =>
                   Effect.fail(new NotFound({ detail: "Share not found" })),
                 ),
@@ -280,7 +281,10 @@ export const SharesServiceLive = Layer.effect(
             return {
               subject_kind: "session" as const,
               title: session.query,
-              markdown,
+              markdown: sharedSessionPublication(shared, {
+                webUrl: config.publicWebUrl,
+                vaultId: session.vaultId,
+              }).markdown,
               created_at: session.createdAt,
             };
           }

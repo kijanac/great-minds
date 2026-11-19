@@ -25,18 +25,3 @@ export type PublishedExchange = SessionExchange & {
 
 export const isPublished = (exchange: SessionExchange): exchange is PublishedExchange =>
   exchange.status === "completed" || exchange.status === "stopped";
-
-export const renderSessionMarkdown = (exchanges: readonly PublishedExchange[]) => {
-  const parts: string[] = [];
-  for (const [index, exchange] of exchanges.entries()) {
-    if (index > 0) parts.push("\n---\n\n");
-    parts.push(`# ${exchange.query}\n\n`);
-    if (exchange.status === "stopped") parts.push("> Response stopped.\n\n");
-    if (exchange.sources.length > 0) {
-      for (const source of exchange.sources) parts.push(`> \`${source.label}\`\n`);
-      parts.push(">\n");
-    }
-    parts.push(`${exchange.answer}\n`);
-  }
-  return `${parts.join("").replace(/\s+$/u, "")}\n`;
-};

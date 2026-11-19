@@ -2,11 +2,7 @@ import { Result } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { parseHistory } from "../src/conversation-history/history.ts";
-import {
-  isPublished,
-  projectSession,
-  renderSessionMarkdown,
-} from "../src/conversation-history/presentation.ts";
+import { isPublished, projectSession } from "../src/conversation-history/presentation.ts";
 import {
   attempt,
   header,
@@ -50,11 +46,6 @@ describe("native session projection", () => {
         status: "completed",
       }),
     ]);
-    const markdown = renderSessionMarkdown(publicationExchanges(projected));
-    expect(markdown.match(/^# First question$/gmu)).toHaveLength(1);
-    expect(markdown.indexOf("# First question")).toBeLessThan(
-      markdown.indexOf("# Second question"),
-    );
   });
 
   it("projects only a child's own turns and does not expose retained model context", () => {
@@ -90,9 +81,6 @@ describe("native session projection", () => {
     expect(events).toHaveLength(2);
     expect(JSON.stringify(events)).not.toContain("Private tool result");
     expect(events[0]).not.toHaveProperty("context");
-    const markdown = renderSessionMarkdown(publicationExchanges(events));
-    expect(markdown).toContain("# First BTW");
-    expect(markdown).toContain("# Second BTW");
   });
 
   it("distinguishes pending work from an empty completed answer", () => {
@@ -117,9 +105,6 @@ describe("native session projection", () => {
     expect(project([header(), attempt(), result])[0]).toMatchObject({
       sources: result.sources,
     });
-    expect(
-      renderSessionMarkdown(publicationExchanges(project([header(), attempt(), result]))),
-    ).toContain("`raw/source.md`");
   });
 
   it("retains failed partials privately but excludes them from publication", () => {
@@ -136,9 +121,6 @@ describe("native session projection", () => {
       answer: "A private failed partial",
       error: "Not repeated",
     });
-    expect(renderSessionMarkdown(publicationExchanges(events))).not.toContain(
-      "A private failed partial",
-    );
     expect(publicationExchanges(events)).toEqual([]);
   });
 
@@ -151,6 +133,5 @@ describe("native session projection", () => {
     ]);
     expect(publicationExchanges(events)).toHaveLength(1);
     expect(publicationExchanges(events)[0].status).toBe("stopped");
-    expect(renderSessionMarkdown(publicationExchanges(events))).toContain("Response stopped.");
   });
 });

@@ -8,8 +8,11 @@ import { Effect, Result } from "effect";
 import { OfficeParser } from "officeparser";
 import { describe, expect, it } from "vitest";
 
-import { isPublished } from "../src/conversation-history/presentation.ts";
-import { compilePublication, prepareSessionPublication } from "../src/publication/markdown.ts";
+import {
+  compilePublication,
+  prepareSessionPublication,
+  sharedSessionPublication,
+} from "../src/publication/markdown.ts";
 import { makePdfRenderer } from "../src/publication/pdf.ts";
 import { sessionId, uuid, vaultId } from "./fixtures/conversation-history.ts";
 
@@ -84,12 +87,33 @@ describe("conversation publication", () => {
     ])
       expect(publication.markdown).toContain(value.replaceAll("_", "\\_"));
     expect(publication.markdown).not.toMatch(/Response (stopped|failed|in progress)/u);
-    const shared = compilePublication(
-      [{ exchanges: root.exchanges.filter(isPublished), origin: null }],
-      links,
-    ).markdown;
-    expect(shared).toContain("STOPPED\\_PROSE");
-    expect(shared).not.toMatch(/PRIVATE|ATTACHED|RECORDED|SELECTED/u);
+    const withSources = {
+      ...root,
+      exchanges: root.exchanges.map((item) => ({
+        ...item,
+        sources: [
+          {
+            label: "TRACE_LABEL",
+            type: "search" as const,
+            document_id: null,
+            title: null,
+            scope: null,
+            path: null,
+            thinking: null,
+          },
+        ],
+      })),
+    };
+    const shared = sharedSessionPublication(withSources, links).markdown;
+    for (const value of ["STOPPED_PROSE", "ATTACHED_NOTE", "RECORDED_PARAGRAPH", "NOTE_CITATION"])
+      expect(shared).toContain(value.replaceAll("_", "\\_"));
+    expect(shared).not.toMatch(/PRIVATE|TRACE/u);
+    const noteQuestion = await Effect.runPromise(
+      prepareSessionPublication(root, links, {
+        messages: [{ session_id: sessionId, exchange_id: uuid(3), role: "user" }],
+      }),
+    );
+    expect(noteQuestion.markdown).toContain("RECORDED\\_PARAGRAPH");
   });
 
   it("selects either side independently without leaking excluded questions or note context", async () => {

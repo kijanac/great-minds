@@ -39,7 +39,7 @@
           draft: false,
           passage: annotation.passage,
           exchanges: annotation.exchanges.map((exchange) => ({
-            id: shareExchangeId,
+            id: newUuid(),
             query: exchange.query,
             sources: [],
             answer: exchange.answer,
