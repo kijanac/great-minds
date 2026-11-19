@@ -844,6 +844,7 @@ export const topics = pgTable(
     articleStatus: text("article_status").default("no_article").notNull(),
     compiledFromHash: text("compiled_from_hash"),
     renderedFromHash: text("rendered_from_hash"),
+    supersedes: uuidColumn("supersedes"),
     supersededBy: uuidColumn("superseded_by"),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
     updatedAt: timestamptz("updated_at").defaultNow().notNull(),
@@ -852,7 +853,7 @@ export const topics = pgTable(
     references(table.vaultId, vaults.id, "topics_vault_id_fkey", "cascade"),
     check(
       "ck_topics_article_status",
-      sql`${table.articleStatus} in ('no_article', 'rendered', 'archived')`,
+      sql`${table.articleStatus} in ('no_article', 'rendered', 'needs_revision', 'archived')`,
     ),
     index("ix_topics_vault_id").on(table.vaultId),
     unique("topics_vault_id_slug_key").on(table.vaultId, table.slug),

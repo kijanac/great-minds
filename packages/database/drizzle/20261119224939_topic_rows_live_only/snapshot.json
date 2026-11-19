@@ -1,10 +1,10 @@
 {
-  "version": "8",
-  "dialect": "postgres",
-  "id": "bc0a0aae-4843-4b29-8b6d-d96586b95c8a",
+  "id": "d1840864-a06a-42a8-8daf-8c45b7af5ce8",
   "prevIds": [
     "7a5ea78d-ab68-450b-abf6-67886d275a57"
   ],
+  "version": "8",
+  "dialect": "postgres",
   "ddl": [
     {
       "values": [
@@ -3554,6 +3554,19 @@
       "generated": null,
       "identity": null,
       "name": "rendered_from_hash",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "topics"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "supersedes",
       "entityType": "columns",
       "schema": "public",
       "table": "topics"
@@ -7180,7 +7193,7 @@
       "table": "topic_candidates"
     },
     {
-      "value": "\"article_status\" in ('no_article', 'rendered', 'archived')",
+      "value": "\"article_status\" in ('no_article', 'rendered', 'needs_revision', 'archived')",
       "name": "ck_topics_article_status",
       "entityType": "checks",
       "schema": "public",
