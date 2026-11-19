@@ -649,6 +649,7 @@ export const RepliesServiceLive = Layer.effect(
           row.vaultId,
           {
             question: transcript.question,
+            typedQuestion: transcript.typedQuestion,
             mode: accepted.mode,
             vaultLabel: vault.name,
             originPath: accepted.command.origin_path,
