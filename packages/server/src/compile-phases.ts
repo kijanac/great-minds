@@ -7,6 +7,7 @@ import {
   type TransactionClient,
   searchIndex,
   sourceDocuments,
+  topicLinks,
   topicMembership,
   topicRelated,
   topics,
@@ -14,7 +15,7 @@ import {
   wikiArticles,
 } from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
-import { and, asc, eq, inArray, like, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, like, notInArray, or, sql } from "drizzle-orm";
 import type { PgInsertValue } from "drizzle-orm/pg-core";
 import { Context, Effect, Layer } from "effect";
 
@@ -571,6 +572,30 @@ export const CompilePhasesLive = Layer.effect(
       transitions: readonly ArchiveTransition[],
     ) =>
       Effect.gen(function* () {
+        const archived = transitions.map((transition) => transition.topicId);
+        yield* db.query((d) =>
+          d.delete(topicMembership).where(inUuidArray(topicMembership.topicId, archived)),
+        );
+        yield* db.query((d) =>
+          d
+            .delete(topicLinks)
+            .where(
+              or(
+                inUuidArray(topicLinks.sourceTopicId, archived),
+                inUuidArray(topicLinks.targetTopicId, archived),
+              ),
+            ),
+        );
+        yield* db.query((d) =>
+          d
+            .delete(topicRelated)
+            .where(
+              or(
+                inUuidArray(topicRelated.topicId, archived),
+                inUuidArray(topicRelated.relatedTopicId, archived),
+              ),
+            ),
+        );
         for (const transition of transitions) {
           yield* db.query((d) =>
             d
