@@ -741,7 +741,9 @@ const SharesHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "shares", 
         return yield* shares.create(current.user_id, payload);
       }),
     )
-    .handle("listShares", () => asUser(SharesService, (shares, userId) => shares.listMine(userId)))
+    .handle("listShares", ({ query }) =>
+      asUser(SharesService, (shares, userId) => shares.listMine(userId, query)),
+    )
     .handle("deleteShare", ({ params }) =>
       asUser(SharesService, (shares, userId) => shares.revoke(userId, params.share_id)),
     ),

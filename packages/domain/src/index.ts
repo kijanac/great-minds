@@ -1236,9 +1236,14 @@ export const ShareCreate = Schema.Struct({
   subject_kind: ShareSubjectKind,
   subject_id: Uuid,
   include_annotations: Schema.optionalKey(Schema.Boolean),
-  expires_at: Schema.optionalKey(IsoDateTime),
 });
 export type ShareCreate = typeof ShareCreate.Type;
+
+export const SharesQuery = Schema.Struct({
+  subject_kind: Schema.optionalKey(ShareSubjectKind),
+  subject_id: Schema.optionalKey(Uuid),
+});
+export type SharesQuery = typeof SharesQuery.Type;
 
 export const ShareOverview = Schema.Struct({
   id: Uuid,
@@ -1248,16 +1253,9 @@ export const ShareOverview = Schema.Struct({
   created_by: Uuid,
   include_annotations: Schema.Boolean,
   created_at: IsoDateTime,
-  expires_at: Schema.NullOr(IsoDateTime),
   revoked_at: Schema.NullOr(IsoDateTime),
 });
 export type ShareOverview = typeof ShareOverview.Type;
-
-export const ShareCreateResult = Schema.Struct({
-  share: ShareOverview,
-  created: Schema.Boolean,
-});
-export type ShareCreateResult = typeof ShareCreateResult.Type;
 
 export const SharedSessionDetail = Schema.Struct({
   subject_kind: Schema.Literal("session"),
@@ -1651,7 +1649,7 @@ const CreatedUserSuggestionResult = UserSuggestionResult.pipe(HttpApiSchema.stat
 const CreatedFileIngestBatch = FileIngestBatch.pipe(HttpApiSchema.status("Created"));
 const CreatedJobResponse = JobResponse.pipe(HttpApiSchema.status("Created"));
 const CreatedReferenceDetail = ReferenceDetail.pipe(HttpApiSchema.status("Created"));
-const CreatedShare = ShareCreateResult.pipe(HttpApiSchema.status("Created"));
+const CreatedShare = ShareOverview.pipe(HttpApiSchema.status("Created"));
 const Shares = Schema.Array(ShareOverview);
 const CreatedPromoteExchangeResponse = PromoteExchangeResponse.pipe(
   HttpApiSchema.status("Created"),
@@ -2264,6 +2262,7 @@ const SharesApiGroup = HttpApiGroup.make("shares").add(
     error: [...ForbiddenNotFoundValidationErrors, ServiceUnavailableResponse],
   }).middleware(AuthMiddleware),
   HttpApiEndpoint.get("listShares", "/shares", {
+    query: SharesQuery,
     success: Shares,
     error: ValidationErrors,
   }).middleware(AuthMiddleware),

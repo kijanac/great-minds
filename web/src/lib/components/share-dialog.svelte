@@ -46,12 +46,11 @@
     loading = true;
     error = null;
     try {
-      const shares = await run(api.shares.listShares());
-      share =
-        shares.find(
-          (s) =>
-            s.subject_kind === subjectKind && s.subject_id === subjectId && s.revoked_at === null,
-        ) ?? null;
+      if (!isUuid(subjectId)) return;
+      const shares = await run(
+        api.shares.listShares({ query: { subject_kind: subjectKind, subject_id: subjectId } }),
+      );
+      share = shares.find((s) => s.revoked_at === null) ?? null;
     } catch (cause) {
       error = errorMessage(cause, "Failed to load share status");
     } finally {
@@ -68,7 +67,7 @@
       return;
     }
     try {
-      const result = await run(
+      share = await run(
         api.shares.createShare({
           payload: {
             subject_kind: subjectKind,
@@ -77,7 +76,6 @@
           },
         }),
       );
-      share = result.share;
       created = true;
       window.setTimeout(() => (created = false), 1500);
     } catch (cause) {
