@@ -28,6 +28,7 @@ import { Cause, Context, Data, Effect, Layer, Option, Schema, Stream } from "eff
 
 import { ClockService } from "./clock.ts";
 import { AppConfig, missingModelKey, notConfiguredDetail } from "./config.ts";
+import { existingUser } from "./cost-ledger.ts";
 import { defaultVaultConfigFile, readVaultConfig, type VaultConfigFile } from "./vault-config.ts";
 import { promptContentHash } from "./crypto.ts";
 import { type EmbeddingBatchFailed, EmbeddingsService, vectorLiteral } from "./embeddings.ts";
@@ -1552,7 +1553,7 @@ export const QueryServiceLive = Layer.effect(
               d
                 .insert(llmCostEvents)
                 .values({
-                  userId: context.userId,
+                  userId: existingUser(context.userId),
                   vaultId: context.vaultId,
                   eventType: "query.stream",
                   costUsd: context.costUsd.toFixed(6),

@@ -47,6 +47,7 @@ import {
 } from "../scripts/lib/seed-conversation.ts";
 import { ClockService, makeTestClock } from "../src/clock.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
+import { CostLedger, CostLedgerLive } from "../src/cost-ledger.ts";
 import { bodyContentHash, fileContentHash, rawFileHash } from "../src/crypto.ts";
 import { FileIngestBatches } from "../src/file-ingest-batches.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
@@ -283,6 +284,7 @@ const resetDatabase = () =>
     Effect.gen(function* () {
       const db = yield* Database;
       yield* db.query((d) => d.delete(authCodes)).pipe(Effect.orDie);
+      yield* db.query((d) => d.delete(llmCostEvents)).pipe(Effect.orDie);
       yield* db.query((d) => d.delete(users)).pipe(Effect.orDie);
     }),
   );
@@ -764,6 +766,25 @@ const asArray = (value: unknown): Array<Record<string, unknown>> => {
   }
   return value.map(asRecord);
 };
+
+const costRows = () =>
+  runDb(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      return yield* db
+        .query((d) =>
+          d
+            .select({
+              userId: llmCostEvents.userId,
+              vaultId: llmCostEvents.vaultId,
+              costUsd: llmCostEvents.costUsd,
+            })
+            .from(llmCostEvents)
+            .orderBy(llmCostEvents.costUsd),
+        )
+        .pipe(Effect.orDie);
+    }),
+  );
 
 const countTable = <A>(table: A) =>
   runDb(
@@ -3427,7 +3448,7 @@ describe("M3.1 write endpoint integration", () => {
     expect(emptyAnswer.body).toMatchObject({ detail: "Exchange has no answer yet" });
   });
 
-  it("deletes vault DB cascades, uploads and link imports included, and local storage", async () => {
+  it("deletes vault DB cascades, uploads and link imports included, and local storage, keeping spend", async () => {
     const { aliceToken } = currentFixture();
     await seedSourceGraph();
     await writeVaultFile(id.vault, "wiki/capital.md", "# Capital\n");
@@ -3598,7 +3619,9 @@ describe("M3.1 write endpoint integration", () => {
     expect(await countTable(sourceIncarnations)).toBe(0);
     expect(await countTable(searchIndex)).toBe(0);
     expect(await countTable(compileCacheEntries)).toBe(0);
-    expect(await countTable(llmCostEvents)).toBe(0);
+    expect(await costRows()).toEqual([
+      { userId: id.alice, vaultId: id.vault, costUsd: "0.010000" },
+    ]);
     const remainingShares = await runDb(
       Effect.gen(function* () {
         const db = yield* Database;
@@ -3613,10 +3636,45 @@ describe("M3.1 write endpoint integration", () => {
     await resetStorage();
     fixture = await seedBase();
     await writeVaultFile(id.vault, "raw/docs/auth-cleanup.md", "cleanup");
+    await runDb(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .query((d) =>
+            d.insert(llmCostEvents).values({
+              userId: id.alice,
+              vaultId: id.vault,
+              eventType: "query.stream",
+              costUsd: "0.010000",
+            }),
+          )
+          .pipe(Effect.orDie);
+      }),
+    );
     const authDelete = await api("DELETE", "/auth/me", currentFixture().aliceToken, {
       confirm: "DELETE",
     });
     expect(authDelete.status).toBe(204);
     expect(await fileExists(join(currentState().storageRoot, "vaults", id.vault))).toBe(false);
+
+    // A model call still in flight when the account went finishes and records its cost.
+    await runDb(
+      Effect.gen(function* () {
+        const ledger = yield* CostLedger;
+        const entry = {
+          vaultId: id.vault,
+          eventType: "compile",
+          phase: "extract",
+          model: "m",
+        } as const;
+        yield* ledger.record({ ...entry, userId: id.alice, promptTokens: 1, costUsd: 0.02 });
+        yield* ledger.record({ ...entry, promptTokens: 1, costUsd: 0.03 });
+      }).pipe(Effect.provide(CostLedgerLive)),
+    );
+    expect(await costRows()).toEqual([
+      { userId: null, vaultId: id.vault, costUsd: "0.010000" },
+      { userId: null, vaultId: id.vault, costUsd: "0.020000" },
+      { userId: null, vaultId: id.vault, costUsd: "0.030000" },
+    ]);
   });
 });

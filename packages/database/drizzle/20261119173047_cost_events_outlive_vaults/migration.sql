@@ -1,0 +1,1 @@
+ALTER TABLE "llm_cost_events" DROP CONSTRAINT "llm_cost_events_vault_id_fkey";

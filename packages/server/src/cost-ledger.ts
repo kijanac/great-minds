@@ -1,4 +1,4 @@
-import { Database, llmCostEvents, vaults } from "@great-minds/database";
+import { Database, llmCostEvents, users, vaults } from "@great-minds/database";
 import type { Uuid } from "@great-minds/domain";
 import { eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
@@ -26,6 +26,10 @@ export class CostLedger extends Context.Service<CostLedger, CostLedgerShape>()(
   "@great-minds/server/CostLedger",
 ) {}
 
+// A call can finish after its account is deleted; its cost row then saves with no user.
+export const existingUser = (userId: Uuid) =>
+  sql<Uuid | null>`(select ${users.id} from ${users} where ${eq(users.id, userId)})`;
+
 export const CostLedgerLive = Layer.effect(
   CostLedger,
   Effect.map(Database, (db) => ({
@@ -33,8 +37,9 @@ export const CostLedgerLive = Layer.effect(
       db.query((d) =>
         d.insert(llmCostEvents).values({
           userId:
-            entry.userId ??
-            sql`(select ${vaults.ownerId} from ${vaults} where ${eq(vaults.id, entry.vaultId)})`,
+            entry.userId === undefined
+              ? sql`(select ${vaults.ownerId} from ${vaults} where ${eq(vaults.id, entry.vaultId)})`
+              : existingUser(entry.userId),
           vaultId: entry.vaultId,
           eventType: entry.eventType,
           phase: entry.phase,

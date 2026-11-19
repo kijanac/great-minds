@@ -236,6 +236,7 @@ const seedBase = () =>
   run(
     Effect.gen(function* () {
       const db = yield* Database;
+      yield* db.query((d) => d.delete(llmCostEvents)).pipe(Effect.orDie);
       yield* db.query((d) => d.delete(users)).pipe(Effect.orDie);
       yield* db
         .query((d) => d.insert(users).values({ id: id.user, email: "phases@example.com" }))
