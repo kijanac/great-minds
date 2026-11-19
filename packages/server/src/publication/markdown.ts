@@ -18,6 +18,8 @@ import remarkStringify from "remark-stringify";
 import { unified } from "unified";
 import { visit } from "unist-util-visit";
 
+import { isPublished } from "../conversation-history/presentation.ts";
+
 export interface PublicationSection {
   readonly exchanges: readonly {
     readonly query: string | null;
@@ -179,6 +181,16 @@ export const compilePublication = (
   return { title, tree, markdown: markdown.stringify(tree) };
 };
 
+export const sharedSessionPublication = (session: SessionResponse, links: PublicationLinks) =>
+  compilePublication(
+    [session, ...session.threads].flatMap((part) =>
+      part.availability === "available"
+        ? [{ origin: part.session.origin, exchanges: part.exchanges.filter(isPublished) }]
+        : [],
+    ),
+    links,
+  );
+
 export const prepareSessionPublication = (
   session: SessionResponse,
   links: PublicationLinks,
@@ -201,15 +213,19 @@ export const prepareSessionPublication = (
             detail:
               "Wait for the conversation and attached notes to finish saving before exporting.",
           });
+        const exchanges = content.exchanges.map((exchange) => {
+          const include = (role: "user" | "assistant") =>
+            all || remaining.delete(JSON.stringify([session.id, exchange.exchange_id, role]));
+          return {
+            query: include("user") ? exchange.query : null,
+            answer: include("assistant") ? exchange.answer : null,
+          };
+        });
         return {
-          origin: all ? session.origin : null,
-          exchanges: content.exchanges.flatMap((exchange) => {
-            const include = (role: "user" | "assistant") =>
-              all || remaining.delete(JSON.stringify([session.id, exchange.exchange_id, role]));
-            const query = include("user") ? exchange.query : null;
-            const answer = include("assistant") ? exchange.answer : null;
-            return query === null && answer === null ? [] : [{ query, answer }];
-          }),
+          origin: exchanges[0]?.query == null ? null : session.origin,
+          exchanges: exchanges.filter(
+            (exchange) => exchange.query !== null || exchange.answer !== null,
+          ),
         };
       });
     const sections = [yield* section(session.session, session)];
