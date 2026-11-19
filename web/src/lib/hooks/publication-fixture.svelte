@@ -4,7 +4,7 @@
   import { onMount } from "svelte";
   import SessionExport from "#lib/components/session-export.svelte";
   import { useLinkedVault } from "./use-linked-vault.svelte";
-  import { SessionExport as ExportController } from "./use-session-export.svelte";
+  import { ExportController } from "./use-session-export.svelte";
   import { activeVault } from "./use-vault.svelte";
 
   let {

@@ -1,6 +1,7 @@
 import {
   ServiceUnavailable,
   type PublicationPaper,
+  type SessionExportFormat,
   type SessionExportMessage,
   type SessionId,
 } from "@great-minds/domain";
@@ -8,11 +9,11 @@ import { Data, Effect, Fiber, type Scope } from "effect";
 
 import { fork } from "#lib/api/app.ts";
 import { errorMessage } from "@great-minds/client";
-import { prepareSessionExport, readSession, readSessionMarkdown } from "#lib/api/sessions.ts";
+import { exportSession, readSession } from "#lib/api/sessions.ts";
 import { auth } from "#lib/auth.svelte.ts";
 import { activeVault } from "#lib/hooks/use-vault.svelte.ts";
 
-export type ExportFormat = "pdf" | "markdown";
+export type ExportFormat = SessionExportFormat;
 export type ExportMessage = {
   readonly message: SessionExportMessage;
   readonly text: string;
@@ -38,7 +39,7 @@ const objectUrl = (blob: Blob) =>
     (url) => Effect.sync(() => URL.revokeObjectURL(url)),
   );
 
-export class SessionExport {
+export class ExportController {
   private view = $state<"closed" | "selection" | "preview">("closed");
   readonly open = $derived(this.view !== "closed");
   readonly previewing = $derived(this.view === "preview");
@@ -134,35 +135,18 @@ export class SessionExport {
       this.view = "preview";
       return;
     }
-    const selection = { messages: [first.message, ...rest.map((entry) => entry.message)] as const };
+    const messages = [first.message, ...rest.map((entry) => entry.message)] as const;
     const paper = this.paper;
     const format = this.format;
     this.runTask(
       Effect.gen({ self: this }, function* () {
-        const result =
-          format === "pdf"
-            ? yield* prepareSessionExport(vaultId, id, { ...selection, paper })
-            : {
-                title: "Conversation",
-                markdown: yield* readSessionMarkdown(vaultId, id, selection),
-                pdf: null,
-              };
-        const filename =
-          result.title
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/gu, "-")
-            .replace(/^-+|-+$/gu, "")
-            .slice(0, 60) || "conversation";
+        const { body, filename } = yield* exportSession(vaultId, id, { messages, format, paper });
         const url = yield* objectUrl(
-          result.pdf === null
-            ? new Blob([result.markdown], { type: "text/markdown;charset=utf-8" })
-            : new Blob([new Uint8Array(result.pdf)], { type: "application/pdf" }),
+          typeof body === "string"
+            ? new Blob([body], { type: "text/markdown;charset=utf-8" })
+            : new Blob([new Uint8Array(body)], { type: "application/pdf" }),
         );
-        this.prepared = {
-          filename: `${filename}.${format === "pdf" ? "pdf" : "md"}`,
-          url,
-          autoDownload: action === "download",
-        };
+        this.prepared = { filename, url, autoDownload: action === "download" };
         this.pending = false;
         if (action === "preview") this.view = "preview";
         yield* Effect.never;

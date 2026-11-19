@@ -693,19 +693,19 @@ const SessionsHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "session
         sessions.readSession(userId, params.vault_id, params.session_id),
       ),
     )
-    .handle("readSessionMarkdown", ({ params }) =>
+    .handle("exportSession", ({ params, payload }) =>
       asUser(SessionExportsService, (exports, userId) =>
-        exports.readMarkdown(userId, params.vault_id, params.session_id),
-      ),
-    )
-    .handle("prepareSessionMarkdown", ({ params, payload }) =>
-      asUser(SessionExportsService, (exports, userId) =>
-        exports.readMarkdown(userId, params.vault_id, params.session_id, payload),
-      ),
-    )
-    .handle("prepareSessionExport", ({ params, payload }) =>
-      asUser(SessionExportsService, (exports, userId) =>
-        exports.prepare(userId, params.vault_id, params.session_id, payload),
+        exports.export(userId, params.vault_id, params.session_id, payload),
+      ).pipe(
+        Effect.map((file) =>
+          HttpServerResponse.setHeader(
+            file.format === "pdf"
+              ? HttpServerResponse.uint8Array(file.pdf, { contentType: "application/pdf" })
+              : HttpServerResponse.text(file.markdown, { contentType: "text/markdown" }),
+            "Content-Disposition",
+            `attachment; filename="${file.filename}"`,
+          ),
+        ),
       ),
     ),
 );
@@ -869,6 +869,7 @@ const ServerLive = (nodeServer: Server, options: StartServerOptions) => {
         allowedOrigins: config.corsOrigins,
         allowedMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allowedHeaders: ["Content-Type", "Authorization"],
+        exposedHeaders: ["Content-Disposition"],
         credentials: true,
         maxAge: 86_400,
       });

@@ -1,6 +1,6 @@
 export { domainErrorDetail, errorMessage } from "./errors.ts";
 export { newUuid } from "./ids.ts";
-export { allVaults, followJob, followReply, replyRequest } from "./operations.ts";
+export { allVaults, exportSession, followJob, followReply, replyRequest } from "./operations.ts";
 export {
   changedNothing,
   isFirstBuild,

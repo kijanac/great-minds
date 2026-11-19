@@ -610,15 +610,9 @@ describe("reading", () => {
       route = (request) => {
         if (request.path === `/v1/vaults/${vaultId}`) return vaultDetail();
         if (request.path.endsWith("/export"))
-          return json(200, {
-            title: "Conversation",
-            prepared_at: now,
-            paper: "us-letter",
-            markdown,
-            pdf: pdf.toString("base64"),
-          });
-        if (request.path.endsWith("/markdown"))
-          return new Response(markdown, { headers: { "content-type": "text/markdown" } });
+          return format === "pdf"
+            ? new Response(pdf, { headers: { "content-type": "application/pdf" } })
+            : new Response(markdown, { headers: { "content-type": "text/markdown" } });
         return json(404, {});
       };
       const env = { GM_API_KEY: "gm_export", GM_VAULT: vaultId, GM_API_URL: apiUrl };
@@ -635,11 +629,12 @@ describe("reading", () => {
       expect(requests.at(-1)).toMatchObject({
         method: "POST",
         auth: "Bearer gm_export",
-        path: `/v1/vaults/${vaultId}/sessions/${session}/${format === "pdf" ? "export" : "markdown"}`,
+        path: `/v1/vaults/${vaultId}/sessions/${session}/export`,
       });
       expect(JSON.parse(requests.at(-1)!.body)).toEqual({
         ...selection,
-        ...(format === "pdf" ? { paper: "us-letter" } : {}),
+        format,
+        paper: "us-letter",
       });
       expect(await readFile(input.output)).toEqual(format === "pdf" ? pdf : Buffer.from(markdown));
       expect((await stat(input.output)).mode & 0o777).toBe(0o600);
@@ -656,9 +651,7 @@ describe("reading", () => {
         }),
         env,
       );
-      expect(JSON.parse(requests.at(-1)!.body)).toEqual(
-        format === "pdf" ? { paper: "us-letter" } : {},
-      );
+      expect(JSON.parse(requests.at(-1)!.body)).toEqual({ format, paper: "us-letter" });
       route = (request) =>
         request.path === `/v1/vaults/${vaultId}`
           ? vaultDetail()

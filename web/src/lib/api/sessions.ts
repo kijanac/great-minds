@@ -3,7 +3,6 @@ import {
   type PromoteExchangeResponse,
   type SessionDetail,
   type SessionExportRequest,
-  type SessionExportSelection,
   type SessionOrigin,
   type SessionOverview,
   type SessionPage,
@@ -14,7 +13,7 @@ import {
 
 import { api, run } from "./app";
 import { selectedVault } from "./selected-vault";
-import { withApiErrors } from "@great-minds/client";
+import { exportSession as exportSessionFile, withApiErrors } from "@great-minds/client";
 
 export type { OriginScope, SessionOrigin };
 export type SessionSummary = SessionOverview;
@@ -50,30 +49,8 @@ export function readSession(vaultId: Uuid, sessionId: SessionId) {
   );
 }
 
-export function prepareSessionExport(
-  vaultId: Uuid,
-  sessionId: SessionId,
-  payload: SessionExportRequest,
-) {
-  return withApiErrors(
-    api.sessions.prepareSessionExport({
-      params: { vault_id: vaultId, session_id: sessionId },
-      payload,
-    }),
-  );
-}
-
-export function readSessionMarkdown(
-  vaultId: Uuid,
-  sessionId: SessionId,
-  payload: SessionExportSelection,
-) {
-  return withApiErrors(
-    api.sessions.prepareSessionMarkdown({
-      params: { vault_id: vaultId, session_id: sessionId },
-      payload,
-    }),
-  );
+export function exportSession(vaultId: Uuid, sessionId: SessionId, payload: SessionExportRequest) {
+  return withApiErrors(exportSessionFile(api, vaultId, sessionId, payload));
 }
 
 export function promoteExchange(

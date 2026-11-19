@@ -1128,20 +1128,19 @@ export const SessionExportSelection = Schema.Struct({
 });
 export type SessionExportSelection = typeof SessionExportSelection.Type;
 
+export const SessionExportFormat = Schema.Literals(["pdf", "markdown"]);
+export type SessionExportFormat = typeof SessionExportFormat.Type;
+
 export const SessionExportRequest = Schema.Struct({
   ...SessionExportSelection.fields,
-  paper: PublicationPaper,
+  format: SessionExportFormat,
+  paper: Schema.optionalKey(PublicationPaper),
 });
 export type SessionExportRequest = typeof SessionExportRequest.Type;
 
-export const SessionExport = Schema.Struct({
-  title: Schema.String,
-  prepared_at: IsoDateTime,
-  paper: PublicationPaper,
-  markdown: Schema.String,
-  pdf: Schema.Uint8ArrayFromBase64,
-});
-export type SessionExport = typeof SessionExport.Type;
+export const SessionPdf = Schema.Uint8Array.pipe(
+  HttpApiSchema.asUint8Array({ contentType: "application/pdf" }),
+);
 
 export const PromoteExchangeResponse = Schema.Struct({
   mode: Schema.Literals(["ingested", "proposed"] as const),
@@ -2188,28 +2187,10 @@ const SessionsApiGroup = HttpApiGroup.make("sessions").add(
     success: SessionResponse,
     error: [...ForbiddenNotFoundValidationErrors, ServiceUnavailableResponse],
   }).middleware(AuthMiddleware),
-  HttpApiEndpoint.get("readSessionMarkdown", "/vaults/:vault_id/sessions/:session_id/markdown", {
-    params: {
-      vault_id: Uuid,
-      session_id: SessionId,
-    },
-    success: SessionMarkdown,
-    error: [...ForbiddenNotFoundValidationErrors, ConflictResponse, ServiceUnavailableResponse],
-  }).middleware(AuthMiddleware),
-  HttpApiEndpoint.post(
-    "prepareSessionMarkdown",
-    "/vaults/:vault_id/sessions/:session_id/markdown",
-    {
-      params: { vault_id: Uuid, session_id: SessionId },
-      payload: SessionExportSelection,
-      success: SessionMarkdown,
-      error: [...ForbiddenNotFoundValidationErrors, ConflictResponse, ServiceUnavailableResponse],
-    },
-  ).middleware(AuthMiddleware),
-  HttpApiEndpoint.post("prepareSessionExport", "/vaults/:vault_id/sessions/:session_id/export", {
+  HttpApiEndpoint.post("exportSession", "/vaults/:vault_id/sessions/:session_id/export", {
     params: { vault_id: Uuid, session_id: SessionId },
     payload: SessionExportRequest,
-    success: SessionExport,
+    success: [SessionMarkdown, SessionPdf],
     error: [...ForbiddenNotFoundValidationErrors, ConflictResponse, ServiceUnavailableResponse],
   }).middleware(AuthMiddleware),
 );
@@ -2410,9 +2391,7 @@ export const endpointPermissions: { readonly [Name in EndpointName]: Permission 
   listSessions: "read",
   listSessionsByOrigin: "read",
   readSession: "read",
-  readSessionMarkdown: "read",
-  prepareSessionExport: "read",
-  prepareSessionMarkdown: "read",
+  exportSession: "read",
   promoteSessionExchange: "change",
   createReply: "ask",
   retryReply: "ask",

@@ -44,14 +44,14 @@ const vaults = Array.from({ length: 51 }, (_, index) => ({
 }));
 const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
-const pdf = () =>
-  json({
-    title: "Research notes",
-    prepared_at: "2026-01-01T00:00:00Z",
-    paper: "a4",
-    markdown: literal,
-    pdf: btoa("%PDF-fixture"),
+const file = (body: string, contentType: string, extension: string) =>
+  new Response(body, {
+    headers: {
+      "content-type": contentType,
+      "content-disposition": `attachment; filename="research-notes.${extension}"`,
+    },
   });
+const pdf = () => file("%PDF-fixture", "application/pdf", "pdf");
 let target: HTMLDivElement;
 let dispose: () => Promise<void>;
 let failPdf: boolean;
@@ -148,6 +148,8 @@ beforeEach(() => {
       });
     }
     if (url.pathname.endsWith("/export")) {
+      if ((await request.clone().json()).format === "markdown")
+        return file(literal, "text/markdown", "md");
       if (deferPdf)
         return new Promise<Response>((resolve) => {
           waiting.push({ request, resolve });
@@ -156,8 +158,6 @@ beforeEach(() => {
         ? json({ _tag: "ServiceUnavailable", detail: "PDF rendering unavailable" }, 503)
         : pdf();
     }
-    if (url.pathname.endsWith("/markdown"))
-      return new Response(literal, { headers: { "content-type": "text/markdown" } });
     if (/\/sessions\/[^/]+$/u.test(url.pathname)) return json(savedSession);
     throw new Error(`Unexpected request: ${url.pathname}`);
   };
@@ -195,7 +195,7 @@ describe("mounted publication ownership", () => {
     click("Download Markdown");
     await vi.waitFor(() => expect(downloads).toHaveLength(1));
     const downloaded = downloads[0]!;
-    expect(downloaded.filename).toBe("conversation.md");
+    expect(downloaded.filename).toBe("research-notes.md");
     const text = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result));
@@ -203,7 +203,7 @@ describe("mounted publication ownership", () => {
       reader.readAsText(blobs.get(downloaded.href)!);
     });
     expect(text).toBe(literal);
-    expect(target.querySelector('a[download="conversation.md"]')?.getAttribute("href")).toBe(
+    expect(target.querySelector('a[download="research-notes.md"]')?.getAttribute("href")).toBe(
       downloaded.href,
     );
     auth.userId = uuid(101);
@@ -264,7 +264,7 @@ describe("mounted publication ownership", () => {
         .find((request) => request.url.endsWith("/export"))!
         .clone()
         .json(),
-    ).toEqual({ paper: "a4", messages });
+    ).toEqual({ format: "pdf", paper: "a4", messages });
     const list = target.querySelector("ol");
     const scroller = list!.parentElement!.parentElement!;
     scroller.scrollTop = 120;
@@ -287,9 +287,9 @@ describe("mounted publication ownership", () => {
     await vi.waitFor(() => expect(revoked).toHaveBeenCalledTimes(1));
     click("Download Markdown");
     await vi.waitFor(() => expect(downloads).toHaveLength(3));
-    const request = requests.find((entry) => entry.url.endsWith("/markdown"))!;
+    const request = requests.filter((entry) => entry.url.endsWith("/export")).at(-1)!;
     expect(request.method).toBe("POST");
-    expect(await request.json()).toEqual({ messages });
+    expect(await request.clone().json()).toEqual({ format: "markdown", paper: "a4", messages });
     checkboxes()[0]!.click();
     flushSync();
     expect(checkboxes().every((input) => input.checked)).toBe(true);
@@ -301,7 +301,7 @@ describe("mounted publication ownership", () => {
     paper.value = "us-letter";
     paper.dispatchEvent(new Event("change", { bubbles: true }));
     flushSync();
-    expect(requests.filter((entry) => entry.url.endsWith("/export"))).toHaveLength(1);
+    expect(requests.filter((entry) => entry.url.endsWith("/export"))).toHaveLength(2);
     click("Preview");
     await vi.waitFor(() => expect(target.querySelector("iframe")).not.toBeNull());
     expect(

@@ -4,9 +4,9 @@
   import ExportMessageRow from "#lib/components/export-message.svelte";
   import { Button } from "#lib/components/ui/button/index.ts";
   import { LoadingState } from "#lib/components/ui/feedback/index.ts";
-  import type { SessionExport } from "#lib/hooks/use-session-export.svelte.ts";
+  import type { ExportController } from "#lib/hooks/use-session-export.svelte.ts";
 
-  let { publication, onClose }: { publication: SessionExport; onClose: () => void } = $props();
+  let { publication, onClose }: { publication: ExportController; onClose: () => void } = $props();
   const selectedCount = $derived(publication.messages.filter((entry) => entry.selected).length);
   const formatLabel = $derived(publication.format === "pdf" ? "PDF" : "Markdown");
   let backButton: HTMLButtonElement | HTMLAnchorElement | null = $state(null);
