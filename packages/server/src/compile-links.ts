@@ -5,7 +5,7 @@ import { Buffer } from "node:buffer";
 
 import { append } from "./collections.ts";
 import type { ReasoningEffort } from "./config.ts";
-import type { AskFailed, AskRunner, Progress } from "./compile-asks.ts";
+import { type AskFailed, type AskRunner, orNoted, type Progress } from "./compile-asks.ts";
 import { contentHash } from "./crypto.ts";
 import type { ArticleContent } from "./compile-write.ts";
 import { responseFormat } from "./compile-themes.ts";
@@ -130,16 +130,7 @@ export const findLinks = (
     yield* runner.preloadKind("embed");
     const failedQuestions = noFailures();
     const counted = <A>(effect: Effect.Effect<A, AskFailed>, fallback: A, item: string) =>
-      effect.pipe(
-        Effect.catchTag("AskFailed", (error) =>
-          Effect.sync(() => {
-            (error.reason === "set_aside" ? failedQuestions.setAside : failedQuestions.failed).push(
-              item,
-            );
-            return fallback;
-          }),
-        ),
-      );
+      effect.pipe(orNoted(failedQuestions, item, fallback));
 
     let checkedCount = 0;
     let checkTotal = texts.length;
