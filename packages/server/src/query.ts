@@ -100,6 +100,7 @@ export const QueryExecutionState = Schema.Struct({
   userId: Uuid,
   vaultId: Uuid,
   question: Schema.String,
+  typedQuestion: Schema.String,
   vaultLabel: Schema.String,
   mode: Schema.Literals(["query", "btw"] as const),
   correlationId: Schema.String,
@@ -122,7 +123,6 @@ export const QueryPreparedToolCall = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   arguments: Schema.String,
-  args: Schema.Record(Schema.String, Schema.Unknown),
   pendingSource: Schema.optionalKey(QuerySourceDataSchema),
 });
 export type QueryPreparedToolCall = typeof QueryPreparedToolCall.Type;
@@ -205,7 +205,9 @@ const QueryTool = Schema.Union([
 ]);
 type QueryTool = typeof QueryTool.Type;
 const decodeQueryTool = Schema.decodeUnknownEffect(QueryTool);
-const previewQueryTool = Schema.decodeUnknownOption(QueryTool);
+const jsonArguments = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
 
 type QueryModelAttemptResult =
   | { readonly kind: "retryable"; readonly state: QueryExecutionState }
@@ -231,6 +233,7 @@ type ModelRoundState = {
 
 export type QueryInput = {
   readonly question: string;
+  readonly typedQuestion: string;
   readonly mode: QueryMode;
   readonly vaultLabel: string;
   readonly originPath: string | undefined;
@@ -251,12 +254,29 @@ class ToolMiss extends Data.TaggedError("ToolMiss")<{
   readonly message: string;
 }> {}
 
-class MalformedToolArgs extends Data.TaggedError("MalformedToolArgs")<{
-  readonly message: string;
-  readonly issue: Schema.SchemaError["issue"];
-}> {}
-
 export const sanitizedStreamError = "Something went wrong while answering. Try again in a minute.";
+export const truncatedAnswerError =
+  "The answer was cut off at the model's length limit. Try again, or ask a narrower question.";
+
+export const searchWords = (query: string) =>
+  query
+    .replace(/[^\p{L}\p{N}_\s]/gu, "")
+    .split(/\s+/)
+    .filter((word) => word.length > 2);
+
+const parseTool = (toolCall: { readonly name: string; readonly arguments: string }) =>
+  Option.match(jsonArguments(toolCall.arguments), {
+    onNone: () =>
+      Effect.fail(
+        new ToolMiss({
+          message: `The arguments for ${toolCall.name} were not a JSON object. Call it again with valid JSON arguments.`,
+        }),
+      ),
+    onSome: (args) =>
+      decodeQueryTool({ name: toolCall.name, args }).pipe(
+        Effect.mapError((error) => new ToolMiss({ message: error.message })),
+      ),
+  });
 const readWholeLimit = 20_000;
 const maxRangeChunks = 40;
 const articlesPerPage = 25;
@@ -432,19 +452,6 @@ const queryDocumentsTool = (
     parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.query_documents)).schema,
   },
 });
-
-const parseToolArgs = (json: string, toolName: string) =>
-  Schema.decodeEffect(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)))(
-    json,
-  ).pipe(
-    Effect.mapError(
-      (error) =>
-        new MalformedToolArgs({
-          message: `Malformed tool args for ${toolName}`,
-          issue: error.issue,
-        }),
-    ),
-  );
 
 const truthyEntries = (args: Record<string, unknown>) =>
   Object.entries(args).filter(([, value]) => Boolean(value));
@@ -792,12 +799,7 @@ export const QueryServiceLive = Layer.effect(
           return [];
         }
         const armLimit = maxSearchResults * searchArmMultiplier;
-        // OR-joined per-word tsquery matching the Python search repository:
-        // strip non-word chars, drop words <= 2 chars, OR-join via plainto_tsquery.
-        const words = query
-          .replace(/[^\w\s]/g, "")
-          .split(/\s+/)
-          .filter((word) => word.length > 2);
+        const words = searchWords(query);
         const orJoined = words
           .slice(1)
           .reduce(
@@ -1346,7 +1348,7 @@ export const QueryServiceLive = Layer.effect(
       Effect.gen(function* () {
         const source = yield* sourceEvent(context, { name: "web_search", args: { query } });
         return yield* Effect.gen(function* () {
-          const results = yield* parallel.search({ question: context.question, query });
+          const results = yield* parallel.search({ question: context.typedQuestion, query });
           const found = source?.type === "search" ? { ...source, results: results.length } : source;
           if (results.length === 0) {
             return {
@@ -1478,24 +1480,15 @@ export const QueryServiceLive = Layer.effect(
       error: RetryableModelError | ModelProviderError,
     ): Effect.Effect<QueryModelAttemptResult> =>
       Effect.gen(function* () {
-        if (error._tag === "RetryableModelError") {
-          yield* warnSafely("query.stream_retryable", {
-            correlation_id: context.correlationId,
-            model,
-            ...logErrorFields(error),
-          });
-          const nextModelIndex = context.modelIndex + 1;
-          if (nextModelIndex < context.models.length) {
-            return { kind: "retryable", state: { ...context, modelIndex: nextModelIndex } };
-          }
-          return { kind: "failed", state: context, error: sanitizedStreamError };
-        }
-        yield* errorSafely("query.stream_failed", {
-          correlation_id: context.correlationId,
-          model,
-          ...logErrorFields(error),
-        });
-        return { kind: "failed", state: context, error: sanitizedStreamError };
+        const transient = error._tag === "RetryableModelError" || error.transient === true;
+        const fields = { correlation_id: context.correlationId, model, ...logErrorFields(error) };
+        yield* transient
+          ? warnSafely("query.stream_retryable", fields)
+          : errorSafely("query.stream_failed", fields);
+        const nextModelIndex = context.modelIndex + 1;
+        return transient && nextModelIndex < context.models.length
+          ? { kind: "retryable", state: { ...context, modelIndex: nextModelIndex } }
+          : { kind: "failed", state: context, error: sanitizedStreamError };
       });
 
     const executeModelAttempt = (
@@ -1541,20 +1534,10 @@ export const QueryServiceLive = Layer.effect(
             .map(([, toolCall]) => toolCall);
           const toolCalls: QueryPreparedToolCall[] = [];
           for (const toolCall of rawToolCalls) {
-            const parsed = yield* Effect.result(parseToolArgs(toolCall.arguments, toolCall.name));
-            if (parsed._tag === "Failure") {
-              return {
-                kind: "failed",
-                state: context,
-                error: parsed.failure.message,
-              } satisfies QueryModelAttemptResult;
-            }
-            const args = parsed.success;
-            const tool = previewQueryTool({ name: toolCall.name, args });
+            const tool = yield* Effect.option(parseTool(toolCall));
             const pendingSource = Option.isSome(tool) ? pendingSourceEvent(tool.value) : undefined;
             toolCalls.push({
               ...toolCall,
-              args,
               ...(pendingSource === undefined ? {} : { pendingSource }),
             });
           }
@@ -1567,7 +1550,12 @@ export const QueryServiceLive = Layer.effect(
             tool_calls: rawToolCalls.map((toolCall) => ({
               id: toolCall.id,
               type: "function",
-              function: { name: toolCall.name, arguments: toolCall.arguments },
+              function: {
+                name: toolCall.name,
+                arguments: Option.isSome(jsonArguments(toolCall.arguments))
+                  ? toolCall.arguments
+                  : "{}",
+              },
             })),
           });
           return {
@@ -1576,15 +1564,18 @@ export const QueryServiceLive = Layer.effect(
             toolCalls,
           } satisfies QueryModelAttemptResult;
         }
-        if (roundState.content.length > 0) {
-          messages.push({
-            role: "assistant",
-            content: roundState.content,
-            ...(roundState.reasoning.length === 0
-              ? {}
-              : { reasoning_content: roundState.reasoning }),
-          });
-        }
+        if (roundState.finishReason === "length" || roundState.content.length === 0)
+          return {
+            kind: "failed",
+            state: context,
+            error:
+              roundState.finishReason === "length" ? truncatedAnswerError : sanitizedStreamError,
+          } satisfies QueryModelAttemptResult;
+        messages.push({
+          role: "assistant",
+          content: roundState.content,
+          ...(roundState.reasoning.length === 0 ? {} : { reasoning_content: roundState.reasoning }),
+        });
         return {
           kind: "done",
           state: context,
@@ -1604,10 +1595,7 @@ export const QueryServiceLive = Layer.effect(
         const messages = context.messages;
         context.trace.toolCalls += 1;
         const result = yield* Effect.gen(function* () {
-          const tool = yield* decodeQueryTool(toolCall).pipe(
-            Effect.mapError((error) => new ToolMiss({ message: error.message })),
-          );
-          return yield* dispatchTool(context, tool);
+          return yield* dispatchTool(context, yield* parseTool(toolCall));
         }).pipe(
           Effect.catchTag("ToolMiss", (error) =>
             Effect.succeed<ToolResult>({ content: error.message }),
@@ -1698,6 +1686,7 @@ export const QueryServiceLive = Layer.effect(
           userId,
           vaultId,
           question: input.question,
+          typedQuestion: input.typedQuestion,
           vaultLabel,
           mode: input.mode,
           correlationId,

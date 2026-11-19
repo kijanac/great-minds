@@ -41,6 +41,7 @@ import {
   type LlmMessage,
 } from "../src/llm.ts";
 import { ParallelSearchService } from "../src/parallel.ts";
+import { sanitizedStreamError, searchWords, truncatedAnswerError } from "../src/query.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { RepliesService, ReplyWorkflow } from "../src/replies.ts";
 import { startServer } from "../src/server.ts";
@@ -2344,30 +2345,51 @@ describe("query stream", () => {
     expect(loop.text).toContain("event: done\n");
   });
 
-  it("emits an error and skips the batch when tool arguments are malformed JSON", async () => {
-    const language = makeScriptedLanguageModel({
-      streams: [
-        {
-          kind: "parts",
-          parts: [
-            malformedToolCallPart(0, "tc-bad", "search_content", '{"query":'),
-            toolCallPart(1, "tc-list", "list_articles", { contains: "Alpha" }),
-            finishPart("tool_calls", "bad-tool-round"),
+  it.each(['{"query":', '["Alpha"]'])(
+    "returns malformed tool arguments %j to the model and runs the rest of the batch",
+    async (badArguments) => {
+      const language = makeScriptedLanguageModel({
+        streams: [
+          {
+            kind: "parts",
+            parts: [
+              malformedToolCallPart(0, "tc-bad", "search_content", badArguments),
+              toolCallPart(1, "tc-list", "list_articles", { contains: "Alpha" }),
+              finishPart("tool_calls", "bad-tool-round"),
+            ],
+          },
+          { kind: "parts", parts: [tokenPart("Recovered"), finishPart("stop", "recovered")] },
+        ],
+      });
+      await startHarness({ language });
+
+      const result = await runReply({ question: "break tool args" });
+
+      expect(result.snapshots.at(-1)).toMatchObject({
+        status: "completed",
+        answer: "Recovered",
+        sources: [{ type: "query", label: "contains: Alpha" }],
+      });
+      const secondRound = language.streamCalls[1]!.messages;
+      expect(secondRound).toContainEqual({
+        role: "tool",
+        tool_call_id: "tc-bad",
+        content: expect.stringContaining("not a JSON object"),
+      });
+      expect(secondRound).toContainEqual(
+        expect.objectContaining({
+          role: "assistant",
+          tool_calls: [
+            expect.objectContaining({
+              id: "tc-bad",
+              function: { name: "search_content", arguments: "{}" },
+            }),
+            expect.objectContaining({ id: "tc-list" }),
           ],
-        },
-      ],
-    });
-    await startHarness({ language });
-
-    const malformed = await runReply({ question: "break tool args" });
-
-    expect(malformed.snapshots.at(-1)).toMatchObject({
-      status: "failed",
-      error: "Malformed tool args for search_content",
-    });
-    expect(malformed.text).toContain("event: done\n");
-    expect(malformed.text).not.toContain("Alpha");
-  });
+        }),
+      );
+    },
+  );
 
   it("removes missing sources without losing or duplicating the remaining citations", async () => {
     const language = makeScriptedLanguageModel({
@@ -2457,28 +2479,6 @@ describe("query stream", () => {
     });
   });
 
-  it("treats non-object tool arguments as malformed", async () => {
-    const language = makeScriptedLanguageModel({
-      streams: [
-        {
-          kind: "parts",
-          parts: [
-            malformedToolCallPart(0, "tc-array", "search_content", '["Alpha"]'),
-            finishPart("tool_calls", "array-args-round"),
-          ],
-        },
-      ],
-    });
-    await startHarness({ language });
-
-    const result = await runReply({ question: "array args" });
-
-    expect(result.snapshots.at(-1)).toMatchObject({
-      status: "failed",
-      error: "Malformed tool args for search_content",
-    });
-  });
-
   it("uses exact genre matching while keeping query_documents limit clamped", async () => {
     const language = makeScriptedLanguageModel({
       streams: [
@@ -2523,6 +2523,43 @@ describe("query stream", () => {
       "fallback/test-model",
     ]);
     expect(snapshots.at(-1)).toMatchObject({ status: "completed", answer: "Fallback" });
+  });
+
+  it("keeps accented and non-Latin words in the full-text query", () => {
+    expect(searchWords("naïve café, on Ленин!")).toEqual(["naïve", "café", "Ленин"]);
+  });
+
+  it("falls through to the next model on a transient provider failure and fails a truncated answer", async () => {
+    const language = makeScriptedLanguageModel({
+      streams: [
+        {
+          kind: "fail",
+          error: new ModelProviderError({ message: "provider returned 503", transient: true }),
+        },
+        { kind: "parts", parts: [tokenPart("Fallback"), finishPart("stop", "fallback-gen")] },
+        { kind: "parts", parts: [tokenPart("Cut off mid"), finishPart("length", "length-gen")] },
+        { kind: "parts", parts: [finishPart("stop", "empty-gen")] },
+      ],
+    });
+    await startHarness({ language });
+
+    expect((await runReply({ question: "transient please" })).snapshots.at(-1)).toMatchObject({
+      status: "completed",
+      answer: "Fallback",
+    });
+    expect(language.streamCalls.map((call) => call.model)).toEqual([
+      "primary/test-model",
+      "fallback/test-model",
+    ]);
+    expect((await runReply({ question: "too long" })).snapshots.at(-1)).toMatchObject({
+      status: "failed",
+      answer: "Cut off mid",
+      error: truncatedAnswerError,
+    });
+    expect((await runReply({ question: "say nothing" })).snapshots.at(-1)).toMatchObject({
+      status: "failed",
+      error: sanitizedStreamError,
+    });
   });
 
   it("falls back to generation cost lookup after done when streamed cost is absent", async () => {

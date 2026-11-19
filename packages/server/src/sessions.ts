@@ -53,6 +53,7 @@ type SessionReadError = Forbidden | NotFound | ServiceUnavailable;
 export type ReplyTranscript = {
   readonly prior: readonly LlmMessage[];
   readonly question: string;
+  readonly typedQuestion: string;
 };
 
 type SessionsServiceShape = {
@@ -434,6 +435,7 @@ const makeSessions = Effect.gen(function* () {
         }
         return {
           question,
+          typedQuestion: attempt.accepted.question,
           prior: chain
             .reverse()
             .flatMap((messages, index) =>
