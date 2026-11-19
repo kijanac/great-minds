@@ -13,7 +13,7 @@ import { Effect, Queue, Schema, Semaphore } from "effect";
 
 import { append } from "./collections.ts";
 import type { ReasoningEffort } from "./config.ts";
-import { askKey, type AskRunner, type Progress } from "./compile-asks.ts";
+import { askKey, type AskRunner, orNoted, type Progress } from "./compile-asks.ts";
 import { contentHash } from "./crypto.ts";
 import type { EmbeddingsService } from "./embeddings.ts";
 import { noFailures, sortedFailures } from "./failure-ledger.ts";
@@ -44,7 +44,7 @@ export const ProposalAnswer = Schema.Struct({
   ),
 }).pipe(Schema.encodeKeys({ setAside: "set_aside" }));
 
-export const SameTopicAnswer = Schema.Struct({
+export const RelationAnswer = Schema.Struct({
   relation: Schema.Literals(["same", "related", "unrelated"] as const),
   reason: Schema.String,
 });
@@ -465,20 +465,28 @@ export const loadBlocks = (db: Database["Service"], vaultId: Uuid, library: Libr
         return [proposal.id, lines.join("\n")] as const;
       }),
     );
-    return { proposals, blocks, ideaById, claimsOf };
+    const orderKey = new Map(
+      proposals.map((proposal) => [
+        proposal.id,
+        contentHash(proposal.askKey, String(proposal.position)),
+      ]),
+    );
+    const byOrder = (left: Uuid, right: Uuid) =>
+      (orderKey.get(left) ?? left) < (orderKey.get(right) ?? right) ? -1 : 1;
+    return { proposals, blocks, ideaById, claimsOf, byOrder };
   });
 
 export type Blocks = Effect.Success<ReturnType<typeof loadBlocks>>;
 
 export const groupThemes = (
-  dependencies: Dependencies,
+  dependencies: Omit<Dependencies, "embeddings">,
   vaultId: Uuid,
   loaded: Blocks,
   settings: ThemeSettings,
 ) =>
   Effect.gen(function* () {
     const { db, runner } = dependencies;
-    const { proposals, blocks } = loaded;
+    const { proposals, blocks, byOrder } = loaded;
     const candidates = yield* db.query((d) =>
       d
         .select({
@@ -494,14 +502,6 @@ export const groupThemes = (
       append(scored, lowerId, [higherId, similarity]);
       append(scored, higherId, [lowerId, similarity]);
     }
-    const orderKey = new Map(
-      proposals.map((proposal) => [
-        proposal.id,
-        contentHash(proposal.askKey, String(proposal.position)),
-      ]),
-    );
-    const byOrder = (left: Uuid, right: Uuid) =>
-      (orderKey.get(left) ?? "") < (orderKey.get(right) ?? "") ? -1 : 1;
     const neighbours = new Map(
       [...scored].map(([id, list]) => [
         id,
@@ -532,24 +532,18 @@ export const groupThemes = (
               ],
               temperature: settings.temperature,
               reasoningEffort: settings.reasoningEffort,
-              responseFormat: responseFormat("topic_relation", SameTopicAnswer),
-              answer: SameTopicAnswer,
+              responseFormat: responseFormat("topic_relation", RelationAnswer),
+              answer: RelationAnswer,
             })
             .pipe(
               Semaphore.withPermit(permits),
               Effect.map((answer): readonly Uuid[] =>
                 answer.relation === "same" ? [candidate] : [],
               ),
-              Effect.catchTag("AskFailed", (error) =>
-                Effect.sync((): readonly Uuid[] => {
-                  (error.reason === "set_aside"
-                    ? failedJudgments.setAside
-                    : failedJudgments.failed
-                  ).push(
-                    `"${proposalTitle.get(pivot) ?? pivot}" / "${proposalTitle.get(candidate) ?? candidate}"`,
-                  );
-                  return [];
-                }),
+              orNoted<readonly Uuid[]>(
+                failedJudgments,
+                `"${proposalTitle.get(pivot) ?? pivot}" / "${proposalTitle.get(candidate) ?? candidate}"`,
+                [],
               ),
             ),
         { concurrency: "unbounded" },

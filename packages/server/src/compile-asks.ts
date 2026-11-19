@@ -6,7 +6,7 @@ import { Effect, Schema } from "effect";
 import type { ReasoningEffort } from "./config.ts";
 import { contentHash } from "./crypto.ts";
 import { errorDetails } from "./error-details.ts";
-import { failedAttempts, recordFailure, SET_ASIDE_AFTER } from "./failure-ledger.ts";
+import { type Failures, failedAttempts, recordFailure, SET_ASIDE_AFTER } from "./failure-ledger.ts";
 import { type LanguageModel, type LlmMessage, stripJsonFence } from "./llm.ts";
 import type { StructuredLogger } from "./logging.ts";
 
@@ -25,6 +25,18 @@ export class AskFailed extends Schema.TaggedError<AskFailed>()("AskFailed", {
   reason: Schema.Literals(["provider", "truncated", "malformed", "set_aside"] as const),
   message: Schema.String,
 }) {}
+
+export const orNoted =
+  <A>(failures: Failures, item: string, fallback: A) =>
+  (effect: Effect.Effect<A, AskFailed>) =>
+    effect.pipe(
+      Effect.catchTag("AskFailed", (error) =>
+        Effect.sync(() => {
+          (error.reason === "set_aside" ? failures.setAside : failures.failed).push(item);
+          return fallback;
+        }),
+      ),
+    );
 
 export type Progress = (step: string, done: number, total: number) => Effect.Effect<void>;
 

@@ -178,12 +178,7 @@ export const makeThemesPipeline = (options: {
       yield* steps.start("group_topics");
       yield* pairCandidates(db, vaultId);
       const blocks = yield* loadBlocks(db, vaultId, library);
-      const grouped = yield* groupThemes(
-        { db, embeddings: embeddingsFor(vaultId, runId, "embed:topics"), runner },
-        vaultId,
-        blocks,
-        themeSettings,
-      );
+      const grouped = yield* groupThemes({ db, runner }, vaultId, blocks, themeSettings);
       yield* steps.start("build_articles");
       const built = yield* buildArticles({ db, runner }, blocks, grouped.themes, {
         model: config.mapModel,

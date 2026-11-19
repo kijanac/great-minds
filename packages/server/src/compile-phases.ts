@@ -487,6 +487,7 @@ export const CompilePhasesLive = Layer.effect(
           d
             .select({
               filePath: wikiArticles.filePath,
+              fileHash: wikiArticles.fileHash,
               bodyHash: wikiArticles.bodyHash,
               archived: wikiArticles.archived,
             })
@@ -507,7 +508,9 @@ export const CompilePhasesLive = Layer.effect(
           },
           output.body,
         );
-        yield* storage.writeText(vaultOwner(vaultId), path, content);
+        const fileHash = fileContentHash(content);
+        if (added || previousPath !== path || previous.fileHash !== fileHash)
+          yield* storage.writeText(vaultOwner(vaultId), path, content);
         yield* db.query((d) =>
           d
             .insert(wikiArticles)
@@ -516,7 +519,7 @@ export const CompilePhasesLive = Layer.effect(
               vaultId,
               topicId: topic.topicId,
               filePath: path,
-              fileHash: fileContentHash(content),
+              fileHash,
               bodyHash,
               title: topic.title,
               precis,
@@ -529,7 +532,7 @@ export const CompilePhasesLive = Layer.effect(
               target: wikiArticles.topicId,
               set: {
                 filePath: path,
-                fileHash: fileContentHash(content),
+                fileHash,
                 bodyHash,
                 title: topic.title,
                 precis,

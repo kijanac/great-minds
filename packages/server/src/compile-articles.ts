@@ -3,10 +3,16 @@ import { Uuid } from "@great-minds/domain";
 import { sql } from "drizzle-orm";
 import { Effect, Schema, Semaphore } from "effect";
 
-import type { AskRunner, Progress } from "./compile-asks.ts";
+import { type AskRunner, orNoted, type Progress } from "./compile-asks.ts";
 import type { ReasoningEffort } from "./config.ts";
 import { append } from "./collections.ts";
-import { type Blocks, pivotGroups, responseFormat, type Theme } from "./compile-themes.ts";
+import {
+  type Blocks,
+  pivotGroups,
+  RelationAnswer,
+  responseFormat,
+  type Theme,
+} from "./compile-themes.ts";
 import { contentHash } from "./crypto.ts";
 import { noFailures, sortedFailures } from "./failure-ledger.ts";
 
@@ -18,11 +24,6 @@ const PLACE_NEAREST_THEMES = 20;
 const SAMPLE_MEMBERS = 5;
 const SAMPLE_IDEAS = 2;
 const MERGE_NEAREST = 3;
-
-export const SameEntryAnswer = Schema.Struct({
-  relation: Schema.Literals(["same", "related", "unrelated"] as const),
-  reason: Schema.String,
-});
 
 export const PlacementAnswer = Schema.Struct({
   verdict: Schema.Literals(["yes", "no"] as const),
@@ -70,13 +71,8 @@ export const buildArticles = (
 ) =>
   Effect.gen(function* () {
     const { db, runner } = dependencies;
-    const { proposals, blocks, ideaById, claimsOf } = loaded;
+    const { proposals, blocks, ideaById, claimsOf, byOrder } = loaded;
     const proposalById = new Map(proposals.map((proposal) => [proposal.id, proposal]));
-    const orderKey = (id: Uuid) => {
-      const proposal = proposalById.get(id);
-      return proposal === undefined ? id : contentHash(proposal.askKey, String(proposal.position));
-    };
-    const byOrder = (left: Uuid, right: Uuid) => (orderKey(left) < orderKey(right) ? -1 : 1);
     const big = themes.filter((theme) => theme.documentIds.length >= ARTICLE_MIN_DOCUMENTS);
     const small = themes.filter((theme) => theme.documentIds.length < ARTICLE_MIN_DOCUMENTS);
     const themeById = new Map(themes.map((theme) => [theme.id, theme]));
@@ -168,22 +164,16 @@ export const buildArticles = (
           ],
           temperature: settings.temperature,
           reasoningEffort: settings.reasoningEffort,
-          responseFormat: responseFormat("topic_relation", SameEntryAnswer),
-          answer: SameEntryAnswer,
+          responseFormat: responseFormat("topic_relation", RelationAnswer),
+          answer: RelationAnswer,
         })
         .pipe(
           Semaphore.withPermit(permits),
           Effect.map((answer) => answer.relation === "same"),
-          Effect.catchTag("AskFailed", (error) =>
-            Effect.sync(() => {
-              (error.reason === "set_aside"
-                ? failedQuestions.setAside
-                : failedQuestions.failed
-              ).push(
-                `"${themeById.get(pivot)?.title ?? pivot}" / "${themeById.get(candidate)?.title ?? candidate}"`,
-              );
-              return false;
-            }),
+          orNoted(
+            failedQuestions,
+            `"${themeById.get(pivot)?.title ?? pivot}" / "${themeById.get(candidate)?.title ?? candidate}"`,
+            false,
           ),
         );
     const sampleOf = new Map(big.map((theme) => [theme.id, sampleBlock(theme)]));
@@ -303,14 +293,10 @@ export const buildArticles = (
               })
               .pipe(
                 Semaphore.withPermit(permits),
-                Effect.catchTag("AskFailed", (error) =>
-                  Effect.sync(() => {
-                    (error.reason === "set_aside"
-                      ? failedQuestions.setAside
-                      : failedQuestions.failed
-                    ).push(`"${theme.title}" in "${heads.get(article)?.title ?? article}"`);
-                    return undefined;
-                  }),
+                orNoted<typeof PlacementAnswer.Type | undefined>(
+                  failedQuestions,
+                  `"${theme.title}" in "${heads.get(article)?.title ?? article}"`,
+                  undefined,
                 ),
               );
             if (answer?.verdict === "yes") return [theme.id, article] as const;
