@@ -36,7 +36,6 @@ import {
   JobResponse,
   SearchHit,
   PublicationPaper,
-  SessionExport,
   SessionExportSelection,
   SessionResponse,
   SessionId,
@@ -225,8 +224,8 @@ const GreatMindsTools = Toolkit.make(
     success: Schema.Struct({
       data: Schema.Union([
         SessionResponse,
-        SessionExport,
-        Schema.Struct({ markdown: Schema.String }),
+        Schema.Struct({ filename: Schema.String, pdf: Schema.Uint8ArrayFromBase64 }),
+        Schema.Struct({ filename: Schema.String, markdown: Schema.String }),
       ]),
     }),
     readOnly: true,
@@ -463,9 +462,12 @@ const ToolHandlers = GreatMindsTools.toLayer(
         asUser((user) =>
           Effect.gen(function* () {
             if (format === "json") return yield* sessions.readSession(user, vault_id, session_id);
-            if (format === "pdf")
-              return yield* exports.prepare(user, vault_id, session_id, { ...selection, paper });
-            return { markdown: yield* exports.readMarkdown(user, vault_id, session_id, selection) };
+            const { format: _, ...file } = yield* exports.export(user, vault_id, session_id, {
+              ...selection,
+              format,
+              paper,
+            });
+            return file;
           }),
         ).pipe(Effect.map((data) => ({ data }))),
       stop_reply: ({ vault_id, reply_id }) =>

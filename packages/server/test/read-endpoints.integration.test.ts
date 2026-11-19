@@ -19,7 +19,7 @@ import {
   vaults,
   wikiArticles,
 } from "@great-minds/database";
-import { SessionExport, SessionResponse, SessionId, Uuid } from "@great-minds/domain";
+import { SessionResponse, SessionId, Uuid } from "@great-minds/domain";
 import { eq, sql } from "drizzle-orm";
 import { Deferred, Effect, Layer, Option, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -2018,9 +2018,10 @@ describe("read-only HTTP integration", () => {
   it("rejects markdown reads of another member's session", async () => {
     const { bobToken } = currentFixture();
     const markdown = await api(
-      "GET",
-      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}/markdown`,
+      "POST",
+      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}/export`,
       bobToken,
+      { format: "markdown" },
     );
     expect(markdown.status).toBe(404);
     expect(markdown.body).toMatchObject({ detail: "Session not found" });
@@ -2209,7 +2210,7 @@ describe("read-only HTTP integration", () => {
     },
   );
 
-  it.each(["", "/markdown", "/by-origin"])(
+  it.each(["", "/export", "/by-origin"])(
     "rechecks vault access after history I/O for %s reads",
     async (suffix) => {
       const db = await runDb(Database);
@@ -2228,7 +2229,10 @@ describe("read-only HTTP integration", () => {
         suffix === "/by-origin"
           ? `/vaults/${id.vaultAlpha}/sessions/by-origin?doc_path=${encodeURIComponent("wiki/alpha-practice.md")}`
           : `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}${suffix}`;
-      const response = await api("GET", path, currentFixture().aliceToken);
+      const response =
+        suffix === "/export"
+          ? await api("POST", path, currentFixture().aliceToken, { format: "markdown" })
+          : await api("GET", path, currentFixture().aliceToken);
       expect(response.status).toBe(403);
       expect(response.text).not.toContain("Record the passage");
     },
@@ -2311,11 +2315,11 @@ describe("read-only HTTP integration", () => {
 
   it("derives Markdown from history, ignoring edited or missing sidecars", async () => {
     const { aliceToken, malloryToken } = currentFixture();
-    const response = await rawApi(
-      "GET",
-      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}/markdown`,
-      aliceToken,
-    );
+    const markdownOf = (session: string, token?: string) =>
+      rawApi("POST", `/vaults/${id.vaultAlpha}/sessions/${session}/export`, token, {
+        format: "markdown",
+      });
+    const response = await markdownOf(id.sessionAliceMain, aliceToken);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/markdown");
     const markdown = await response.text();
@@ -2323,42 +2327,36 @@ describe("read-only HTTP integration", () => {
     expect(markdown).toContain("Record the passage, the claim, and unresolved questions.");
     expect(markdown).not.toContain("This came from the sidecar.");
 
-    const missingSidecar = await rawApi(
-      "GET",
-      `/vaults/${id.vaultAlpha}/sessions/${id.sessionNoMarkdown}/markdown`,
-      aliceToken,
-    );
+    const missingSidecar = await markdownOf(id.sessionNoMarkdown, aliceToken);
     expect(missingSidecar.status).toBe(200);
     expect(await missingSidecar.text()).toContain("Derived without a sidecar.");
 
-    const nonMember = await api(
-      "GET",
-      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}/markdown`,
-      malloryToken,
-    );
-    expect(nonMember.status).toBe(403);
-
-    const unauthenticated = await api(
-      "GET",
-      `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}/markdown`,
-    );
-    expect(unauthenticated.status).toBe(401);
+    expect((await markdownOf(id.sessionAliceMain, malloryToken)).status).toBe(403);
+    expect((await markdownOf(id.sessionAliceMain)).status).toBe(401);
   });
 
   it("prepares one private export with attached notes and refuses unauthorized, unreadable, or active input", async () => {
     const { aliceToken, bobToken, malloryToken } = currentFixture();
     const path = `/vaults/${id.vaultAlpha}/sessions/${id.sessionAliceMain}`;
-    const response = await rawApi("POST", `${path}/export`, aliceToken, { paper: "us-letter" });
+    const response = await rawApi("POST", `${path}/export`, aliceToken, {
+      format: "pdf",
+      paper: "us-letter",
+    });
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
-    const prepared = Schema.decodeUnknownSync(SessionExport)(await response.json());
-    expect(prepared.paper).toBe("us-letter");
-    expect(new TextDecoder().decode(prepared.pdf)).toBe("%PDF-controlled-renderer");
-    expect(prepared.markdown).toContain("It gives the group something specific to test.");
-    expect(prepared.markdown).toContain("Keep claims proportional to the evidence.");
-    expect(prepared.markdown).not.toContain("Raw source grounds the discussion.");
-    const markdown = await rawApi("GET", `${path}/markdown`, aliceToken);
-    expect(await markdown.text()).toBe(prepared.markdown);
+    expect(response.headers.get("content-type")).toBe("application/pdf");
+    expect(response.headers.get("content-disposition")).toMatch(
+      /^attachment; filename="[a-z0-9-]+\.pdf"$/u,
+    );
+    expect(await response.text()).toBe("%PDF-controlled-renderer");
+    const exported = await rawApi("POST", `${path}/export`, aliceToken, { format: "markdown" });
+    expect(exported.headers.get("content-disposition")).toMatch(
+      /^attachment; filename="[a-z0-9-]+\.md"$/u,
+    );
+    const markdown = await exported.text();
+    expect(markdown).toContain("It gives the group something specific to test.");
+    expect(markdown).toContain("Keep claims proportional to the evidence.");
+    expect(markdown).not.toContain("Raw source grounds the discussion.");
     const waiting = {
       started: Effect.runSync(Deferred.make<void>()),
       interrupted: Effect.runSync(Deferred.make<void>()),
@@ -2366,7 +2364,7 @@ describe("read-only HTTP integration", () => {
     pdfWait = waiting;
     const abort = new AbortController();
     const cancelled = expect(
-      rawApi("POST", `${path}/export`, aliceToken, { paper: "a4" }, abort.signal),
+      rawApi("POST", `${path}/export`, aliceToken, { format: "pdf" }, abort.signal),
     ).rejects.toMatchObject({ name: "AbortError" });
     await Effect.runPromise(Deferred.await(waiting.started));
     abort.abort();
@@ -2378,18 +2376,17 @@ describe("read-only HTTP integration", () => {
       [bobToken, 404],
       [malloryToken, 403],
     ] as const) {
-      expect((await api("POST", `${path}/export`, token, { paper: "a4" })).status).toBe(status);
+      expect((await api("POST", `${path}/export`, token, { format: "pdf" })).status).toBe(status);
     }
-    expect((await api("POST", `${path}/export`, aliceToken, { paper: "unknown" })).status).toBe(
-      422,
-    );
+    for (const invalid of [{ format: "pdf", paper: "unknown" }, { format: "docx" }, {}])
+      expect((await api("POST", `${path}/export`, aliceToken, invalid)).status).toBe(422);
     const child = historyFile(id.sessionAliceBtw);
     const saved = await readFile(child);
     await writeFile(child, "{invalid}\n");
-    expect((await api("POST", `${path}/export`, aliceToken, { paper: "a4" })).status).toBe(503);
+    expect((await api("POST", `${path}/export`, aliceToken, { format: "pdf" })).status).toBe(503);
     await writeFile(child, saved);
     await acceptReadReply();
-    expect((await api("POST", `${path}/export`, aliceToken, { paper: "a4" })).status).toBe(409);
+    expect((await api("POST", `${path}/export`, aliceToken, { format: "pdf" })).status).toBe(409);
     expect(pdfRenders).toBe(2);
   });
 
@@ -2406,32 +2403,38 @@ describe("read-only HTTP integration", () => {
       { session_id: note.session.id, exchange_id: reply.exchange_id, role: "assistant" },
       { session_id: session.session.id, exchange_id: root.exchange_id, role: "user" },
     ];
-    const response = await rawApi("POST", `${path}/export`, aliceToken, { paper: "a4", messages });
+    const response = await rawApi("POST", `${path}/export`, aliceToken, {
+      format: "pdf",
+      messages,
+    });
     expect(response.status).toBe(200);
-    const prepared = Schema.decodeUnknownSync(SessionExport)(await response.json());
-    expect(prepared.markdown).toContain(root.query);
-    expect(prepared.markdown).toContain(reply.answer);
-    expect(prepared.markdown).not.toContain(root.answer);
-    expect(prepared.markdown).not.toContain(reply.query);
-    const markdown = await rawApi("POST", `${path}/markdown`, aliceToken, { messages });
-    expect(markdown.status).toBe(200);
-    expect(markdown.headers.get("cache-control")).toBe("private, no-store");
-    expect(await markdown.text()).toBe(prepared.markdown);
+    const exported = await rawApi("POST", `${path}/export`, aliceToken, {
+      format: "markdown",
+      messages,
+    });
+    expect(exported.status).toBe(200);
+    expect(exported.headers.get("cache-control")).toBe("private, no-store");
+    const markdown = await exported.text();
+    expect(markdown).toContain(root.query);
+    expect(markdown).toContain(reply.answer);
+    expect(markdown).not.toContain(root.answer);
+    expect(markdown).not.toContain(reply.query);
     for (const [token, status] of [
       [undefined, 401],
       [bobToken, 404],
       [malloryToken, 403],
     ] as const)
-      expect((await api("POST", `${path}/markdown`, token, { messages })).status).toBe(status);
-    for (const endpoint of ["export", "markdown"]) {
       expect(
-        (await api("POST", `${path}/${endpoint}`, aliceToken, { paper: "a4", messages: [] }))
-          .status,
+        (await api("POST", `${path}/export`, token, { format: "markdown", messages })).status,
+      ).toBe(status);
+    for (const format of ["pdf", "markdown"]) {
+      expect(
+        (await api("POST", `${path}/export`, aliceToken, { format, messages: [] })).status,
       ).toBe(422);
       expect(
         (
-          await api("POST", `${path}/${endpoint}`, aliceToken, {
-            paper: "a4",
+          await api("POST", `${path}/export`, aliceToken, {
+            format,
             messages: [{ ...messages[0], exchange_id: id.vaultBeta }],
           })
         ).status,
@@ -2489,25 +2492,19 @@ describe("read-only HTTP integration", () => {
       { session_id: note.session.id, exchange_id: reply.exchange_id, role: "assistant" },
       { session_id: session.session.id, exchange_id: root.exchange_id, role: "user" },
     ];
+    const exported = async (body: object) =>
+      (await rawApi("POST", `${path}/export`, aliceToken, body)).text();
     expect(content(await call({ format: "markdown" })).markdown).toBe(
-      await (await rawApi("GET", `${path}/markdown`, aliceToken)).text(),
+      await exported({ format: "markdown" }),
     );
-    const selected = content(await call({ format: "markdown", messages })).markdown;
-    expect(selected).toBe(
-      await (await rawApi("POST", `${path}/markdown`, aliceToken, { messages })).text(),
-    );
+    const selected = content(await call({ format: "markdown", messages }));
+    expect(selected.markdown).toBe(await exported({ format: "markdown", messages }));
+    expect(selected.filename).toMatch(/^[a-z0-9-]+\.md$/u);
     expect(pdfRenders).toBe(0);
     const prepared = content(await call({ format: "pdf", messages, paper: "us-letter" }));
-    expect(prepared).toEqual(
-      (await api("POST", `${path}/export`, aliceToken, { messages, paper: "us-letter" })).body,
-    );
-    expect(prepared.markdown).toBe(selected);
-    expect(new TextDecoder().decode(Schema.decodeUnknownSync(SessionExport)(prepared).pdf)).toBe(
-      "%PDF-controlled-renderer",
-    );
-    const whole = content(await call({ format: "pdf" }));
-    expect(whole.paper).toBe("a4");
-    expect(whole.markdown).toBe(content(await call({ format: "markdown" })).markdown);
+    expect(prepared.filename).toMatch(/^[a-z0-9-]+\.pdf$/u);
+    expect(Buffer.from(String(prepared.pdf), "base64").toString()).toBe("%PDF-controlled-renderer");
+    expect(Object.keys(content(await call({ format: "pdf" }))).sort()).toEqual(["filename", "pdf"]);
     for (const format of ["json", "markdown", "pdf"]) {
       expect(asRecord((await call({ format, session_id: id.sessionBob })).result).isError).toBe(
         true,
@@ -2536,7 +2533,7 @@ describe("read-only HTTP integration", () => {
     await writeFile(historyFile(id.sessionAliceBtw), "{invalid}\n");
     for (const format of ["markdown", "pdf"])
       expect(asRecord((await call({ format })).result).isError).toBe(true);
-    expect(pdfRenders).toBe(3);
+    expect(pdfRenders).toBe(2);
   });
 
   it("pages every source exactly once when a bulk import gives sources tied timestamps", async () => {

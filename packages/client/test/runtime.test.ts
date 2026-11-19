@@ -132,16 +132,16 @@ describe("makeApi", () => {
       tokens: tokens.layer,
     });
     const owner = fork(
-      api.sessions.prepareSessionExport({
+      api.sessions.exportSession({
         params: {
           vault_id: vaultId,
           session_id: SessionId.make("00000000-0000-4000-8000-00000000c003"),
         },
-        payload: { paper: "a4" },
+        payload: { format: "pdf" },
       }),
     );
     const request = await started.promise;
-    expect(await request.json()).toEqual({ paper: "a4" });
+    expect(await request.json()).toEqual({ format: "pdf" });
     await Effect.runPromise(Fiber.interrupt(owner));
     expect(request.signal.aborted).toBe(true);
     expect(aborts).toBe(1);

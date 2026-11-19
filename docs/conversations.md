@@ -56,8 +56,8 @@ MCP exposes one `read_session` tool at `/v1/mcp`, taking `vault_id`, `session_id
 | Format | Options | Result |
 | --- | --- | --- |
 | `json` (default) | None | The API's structured `SessionResponse`, with the root's exchanges and its attached notes |
-| `markdown` | Optional `messages` | `{ markdown }`, without PDF rendering |
-| `pdf` | Optional `messages`; `paper` defaults to `a4` | The API's `SessionExport`: title, preparation time, paper, Markdown and base64 PDF |
+| `markdown` | Optional `messages` | `{ filename, markdown }`, without PDF rendering |
+| `pdf` | Optional `messages`; `paper` defaults to `a4` | `{ filename, pdf }`, where `pdf` is the file as standard base64 |
 
 Selection requires an explicit Markdown or PDF format; passing `messages` in JSON mode is rejected rather than ignored. Paper size is used only for PDF. The tool requires read access only, not ask/change permission. It does not call a model, publish content or store an artifact. Decode the `pdf` field to save a PDF; it is not a URL or server path. Domain failures use the existing MCP tool-error response; malformed parameters use the protocol's invalid-parameters error. Neither client retries an export automatically.
 

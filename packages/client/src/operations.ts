@@ -4,6 +4,7 @@ import {
   isReplyPending,
   type CreateReplyRequest,
   type OriginScope,
+  type SessionExportRequest,
   type SessionId,
   type SessionOrigin,
   type Uuid,
@@ -35,6 +36,27 @@ export const followReply = (api: Api, vaultId: Uuid, replyId: Uuid) =>
     ReplySnapshot,
     (snapshot) => !isReplyPending(snapshot.status),
   );
+
+export const exportSession = (
+  api: Api,
+  vaultId: Uuid,
+  sessionId: SessionId,
+  payload: SessionExportRequest,
+) =>
+  api.sessions
+    .exportSession({
+      params: { vault_id: vaultId, session_id: sessionId },
+      payload,
+      responseMode: "decoded-and-response",
+    })
+    .pipe(
+      Effect.map(([body, response]) => ({
+        body,
+        filename:
+          /filename="([^"]+)"/u.exec(response.headers["content-disposition"] ?? "")?.[1] ??
+          `conversation.${payload.format === "pdf" ? "pdf" : "md"}`,
+      })),
+    );
 
 export const allVaults = (api: Api) =>
   Effect.gen(function* () {

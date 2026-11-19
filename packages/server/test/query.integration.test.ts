@@ -2013,7 +2013,16 @@ describe("query stream", () => {
       { exchange_id: EX_BRANCH_BTW_1, reply_id: child.reply_id, answer: "First BTW answer." },
       { exchange_id: EX_BRANCH_BTW_2, reply_id: second.reply_id, answer: "Second BTW answer." },
     ]);
-    const markdown = await (await getWithToken(`${path}/markdown`)).text();
+    const markdown = await (
+      await fetch(`${currentState().started.url}/v1${path}/export`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${currentState().token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ format: "markdown" }),
+      })
+    ).text();
     for (const text of [
       "# Parent question",
       "## Main follow-up",

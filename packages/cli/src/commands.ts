@@ -942,9 +942,10 @@ export const readSession = (input: {
       return yield* printJson(
         yield* connection.use(connection.api.sessions.readSession({ params })),
       );
-    yield* Console.log(
-      yield* connection.use(connection.api.sessions.readSessionMarkdown({ params })),
+    const markdown = yield* connection.use(
+      connection.api.sessions.exportSession({ params, payload: { format: "markdown" } }),
     );
+    yield* Console.log(typeof markdown === "string" ? markdown : "");
   });
 
 export const exportSession = (input: {
@@ -960,21 +961,21 @@ export const exportSession = (input: {
     const fs = yield* FileSystem.FileSystem;
     const { connection, vaultId } = yield* vaultConnection(input.vault);
     const params = { vault_id: vaultId, session_id: input.session };
-    const payload = Option.isSome(input.messages) ? { messages: input.messages.value } : {};
-    const bytes =
-      input.format === "pdf"
-        ? (yield* connection.use(
-            connection.api.sessions.prepareSessionExport({
-              params,
-              payload: { ...payload, paper: input.paper },
-            }),
-          )).pdf
-        : new TextEncoder().encode(
-            yield* connection.use(
-              connection.api.sessions.prepareSessionMarkdown({ params, payload }),
-            ),
-          );
-    yield* fs.writeFile(input.output, bytes, { flag: "wx", mode: 0o600 });
+    const file = yield* connection.use(
+      connection.api.sessions.exportSession({
+        params,
+        payload: {
+          ...(Option.isSome(input.messages) ? { messages: input.messages.value } : {}),
+          format: input.format,
+          paper: input.paper,
+        },
+      }),
+    );
+    yield* fs.writeFile(
+      input.output,
+      typeof file === "string" ? new TextEncoder().encode(file) : file,
+      { flag: "wx", mode: 0o600 },
+    );
     if (input.json) return yield* printJson({ path: input.output, format: input.format });
     yield* Console.log(`Saved ${input.format === "pdf" ? "PDF" : "Markdown"} to ${input.output}`);
   });

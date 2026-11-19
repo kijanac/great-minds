@@ -28,7 +28,7 @@
   import { usePanelContent } from "#lib/hooks/use-panel-content.svelte.ts";
   import { useSessions } from "#lib/hooks/use-sessions.svelte.ts";
   import { activeVault, useVaultDetail, useVaults } from "#lib/hooks/use-vault.svelte.ts";
-  import { SessionExport as ExportController } from "#lib/hooks/use-session-export.svelte.ts";
+  import { ExportController } from "#lib/hooks/use-session-export.svelte.ts";
   import { Conversation } from "#lib/conversation.svelte.ts";
 
   let {

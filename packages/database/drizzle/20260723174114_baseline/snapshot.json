@@ -2,26 +2,16 @@
   "version": "8",
   "dialect": "postgres",
   "id": "d5072c9d-bbfa-440a-adfb-25612e699080",
-  "prevIds": [
-    "00000000-0000-0000-0000-000000000000"
-  ],
+  "prevIds": ["00000000-0000-0000-0000-000000000000"],
   "ddl": [
     {
-      "values": [
-        "OWNER",
-        "EDITOR",
-        "VIEWER"
-      ],
+      "values": ["OWNER", "EDITOR", "VIEWER"],
       "name": "member_role",
       "entityType": "enums",
       "schema": "public"
     },
     {
-      "values": [
-        "PENDING",
-        "APPROVED",
-        "REJECTED"
-      ],
+      "values": ["PENDING", "APPROVED", "REJECTED"],
       "name": "proposal_status",
       "entityType": "enums",
       "schema": "public"
@@ -3217,14 +3207,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "idea_id"
-      ],
+      "columns": ["idea_id"],
       "schemaTo": "public",
       "tableTo": "ideas",
-      "columnsTo": [
-        "idea_id"
-      ],
+      "columnsTo": ["idea_id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "anchors_idea_id_fkey",
@@ -3234,14 +3220,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "user_id"
-      ],
+      "columns": ["user_id"],
       "schemaTo": "public",
       "tableTo": "users",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "api_keys_user_id_fkey",
@@ -3251,14 +3233,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "source_article_id"
-      ],
+      "columns": ["source_article_id"],
       "schemaTo": "public",
       "tableTo": "wiki_articles",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "backlinks_source_article_id_fkey",
@@ -3268,14 +3246,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "target_article_id"
-      ],
+      "columns": ["target_article_id"],
       "schemaTo": "public",
       "tableTo": "wiki_articles",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "backlinks_target_article_id_fkey",
@@ -3285,14 +3259,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id"
-      ],
+      "columns": ["vault_id"],
       "schemaTo": "public",
       "tableTo": "vaults",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "compile_cache_entries_vault_id_fkey",
@@ -3302,14 +3272,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id"
-      ],
+      "columns": ["vault_id"],
       "schemaTo": "public",
       "tableTo": "vaults",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "compile_intents_vault_id_fkey",
@@ -3319,14 +3285,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "pipeline_run_id"
-      ],
+      "columns": ["pipeline_run_id"],
       "schemaTo": "public",
       "tableTo": "pipeline_runs",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
       "name": "compile_intents_pipeline_run_id_fkey",
@@ -3336,14 +3298,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id"
-      ],
+      "columns": ["vault_id"],
       "schemaTo": "public",
       "tableTo": "vaults",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "ideas_vault_id_fkey",
@@ -3353,14 +3311,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "document_id"
-      ],
+      "columns": ["document_id"],
       "schemaTo": "public",
       "tableTo": "source_documents",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "ideas_document_id_fkey",
@@ -3370,14 +3324,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "user_id"
-      ],
+      "columns": ["user_id"],
       "schemaTo": "public",
       "tableTo": "users",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
       "name": "llm_cost_events_user_id_fkey",
@@ -3387,14 +3337,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id"
-      ],
+      "columns": ["vault_id"],
       "schemaTo": "public",
       "tableTo": "vaults",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "llm_cost_events_vault_id_fkey",
@@ -3404,14 +3350,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id"
-      ],
+      "columns": ["vault_id"],
       "schemaTo": "public",
       "tableTo": "vaults",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "pipeline_runs_vault_id_fkey",
@@ -3421,14 +3363,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "user_id"
-      ],
+      "columns": ["user_id"],
       "schemaTo": "public",
       "tableTo": "users",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "refresh_tokens_user_id_fkey",
@@ -3438,14 +3376,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id"
-      ],
+      "columns": ["vault_id"],
       "schemaTo": "public",
       "tableTo": "vaults",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "search_index_vault_id_fkey",
@@ -3455,14 +3389,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id"
-      ],
+      "columns": ["vault_id"],
       "schemaTo": "public",
       "tableTo": "vaults",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "sessions_vault_id_fkey",
@@ -3472,14 +3402,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "user_id"
-      ],
+      "columns": ["user_id"],
       "schemaTo": "public",
       "tableTo": "users",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "sessions_user_id_fkey",
@@ -3489,14 +3415,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id"
-      ],
+      "columns": ["vault_id"],
       "schemaTo": "public",
       "tableTo": "vaults",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "source_documents_vault_id_fkey",
@@ -3506,14 +3428,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id"
-      ],
+      "columns": ["vault_id"],
       "schemaTo": "public",
       "tableTo": "vaults",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "source_proposals_vault_id_fkey",
@@ -3523,14 +3441,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "user_id"
-      ],
+      "columns": ["user_id"],
       "schemaTo": "public",
       "tableTo": "users",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "source_proposals_user_id_fkey",
@@ -3540,14 +3454,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "document_id"
-      ],
+      "columns": ["document_id"],
       "schemaTo": "public",
       "tableTo": "source_documents",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
       "name": "source_proposals_document_id_fkey",
@@ -3557,14 +3467,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id"
-      ],
+      "columns": ["vault_id"],
       "schemaTo": "public",
       "tableTo": "vaults",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "tasks_vault_id_fkey",
@@ -3574,14 +3480,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "pipeline_run_id"
-      ],
+      "columns": ["pipeline_run_id"],
       "schemaTo": "public",
       "tableTo": "pipeline_runs",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
       "name": "tasks_pipeline_run_id_fkey",
@@ -3591,14 +3493,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "source_topic_id"
-      ],
+      "columns": ["source_topic_id"],
       "schemaTo": "public",
       "tableTo": "topics",
-      "columnsTo": [
-        "topic_id"
-      ],
+      "columnsTo": ["topic_id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "topic_links_source_topic_id_fkey",
@@ -3608,14 +3506,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "target_topic_id"
-      ],
+      "columns": ["target_topic_id"],
       "schemaTo": "public",
       "tableTo": "topics",
-      "columnsTo": [
-        "topic_id"
-      ],
+      "columnsTo": ["topic_id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "topic_links_target_topic_id_fkey",
@@ -3625,14 +3519,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "topic_id"
-      ],
+      "columns": ["topic_id"],
       "schemaTo": "public",
       "tableTo": "topics",
-      "columnsTo": [
-        "topic_id"
-      ],
+      "columnsTo": ["topic_id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "topic_membership_topic_id_fkey",
@@ -3642,14 +3532,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "topic_id"
-      ],
+      "columns": ["topic_id"],
       "schemaTo": "public",
       "tableTo": "topics",
-      "columnsTo": [
-        "topic_id"
-      ],
+      "columnsTo": ["topic_id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "topic_related_topic_id_fkey",
@@ -3659,14 +3545,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "related_topic_id"
-      ],
+      "columns": ["related_topic_id"],
       "schemaTo": "public",
       "tableTo": "topics",
-      "columnsTo": [
-        "topic_id"
-      ],
+      "columnsTo": ["topic_id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "topic_related_related_topic_id_fkey",
@@ -3676,14 +3558,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id"
-      ],
+      "columns": ["vault_id"],
       "schemaTo": "public",
       "tableTo": "vaults",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "topics_vault_id_fkey",
@@ -3693,14 +3571,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id"
-      ],
+      "columns": ["vault_id"],
       "schemaTo": "public",
       "tableTo": "vaults",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vault_memberships_vault_id_fkey",
@@ -3710,14 +3584,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "user_id"
-      ],
+      "columns": ["user_id"],
       "schemaTo": "public",
       "tableTo": "users",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vault_memberships_user_id_fkey",
@@ -3727,14 +3597,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "owner_id"
-      ],
+      "columns": ["owner_id"],
       "schemaTo": "public",
       "tableTo": "users",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vaults_owner_id_fkey",
@@ -3744,14 +3610,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "user_id"
-      ],
+      "columns": ["user_id"],
       "schemaTo": "public",
       "tableTo": "users",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "webauthn_challenges_user_id_fkey",
@@ -3761,14 +3623,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "user_id"
-      ],
+      "columns": ["user_id"],
       "schemaTo": "public",
       "tableTo": "users",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "webauthn_credentials_user_id_fkey",
@@ -3778,14 +3636,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id"
-      ],
+      "columns": ["vault_id"],
       "schemaTo": "public",
       "tableTo": "vaults",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "wiki_articles_vault_id_fkey",
@@ -3795,14 +3649,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "topic_id"
-      ],
+      "columns": ["topic_id"],
       "schemaTo": "public",
       "tableTo": "topics",
-      "columnsTo": [
-        "topic_id"
-      ],
+      "columnsTo": ["topic_id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "wiki_articles_topic_id_fkey",
@@ -3812,14 +3662,10 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "render_run_id"
-      ],
+      "columns": ["render_run_id"],
       "schemaTo": "public",
       "tableTo": "pipeline_runs",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
       "name": "fk_wiki_articles_render_run_id_pipeline_runs",
@@ -3828,10 +3674,7 @@
       "table": "wiki_articles"
     },
     {
-      "columns": [
-        "idea_id",
-        "position"
-      ],
+      "columns": ["idea_id", "position"],
       "nameExplicit": false,
       "name": "anchors_pkey",
       "entityType": "pks",
@@ -3839,10 +3682,7 @@
       "table": "anchors"
     },
     {
-      "columns": [
-        "source_article_id",
-        "target_article_id"
-      ],
+      "columns": ["source_article_id", "target_article_id"],
       "nameExplicit": false,
       "name": "backlinks_pkey",
       "entityType": "pks",
@@ -3850,10 +3690,7 @@
       "table": "backlinks"
     },
     {
-      "columns": [
-        "id",
-        "vault_id"
-      ],
+      "columns": ["id", "vault_id"],
       "nameExplicit": false,
       "name": "sessions_pkey",
       "entityType": "pks",
@@ -3861,10 +3698,7 @@
       "table": "sessions"
     },
     {
-      "columns": [
-        "source_topic_id",
-        "target_topic_id"
-      ],
+      "columns": ["source_topic_id", "target_topic_id"],
       "nameExplicit": false,
       "name": "topic_links_pkey",
       "entityType": "pks",
@@ -3872,10 +3706,7 @@
       "table": "topic_links"
     },
     {
-      "columns": [
-        "topic_id",
-        "idea_id"
-      ],
+      "columns": ["topic_id", "idea_id"],
       "nameExplicit": false,
       "name": "topic_membership_pkey",
       "entityType": "pks",
@@ -3883,10 +3714,7 @@
       "table": "topic_membership"
     },
     {
-      "columns": [
-        "topic_id",
-        "related_topic_id"
-      ],
+      "columns": ["topic_id", "related_topic_id"],
       "nameExplicit": false,
       "name": "topic_related_pkey",
       "entityType": "pks",
@@ -3894,9 +3722,7 @@
       "table": "topic_related"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "api_keys_pkey",
       "schema": "public",
@@ -3904,9 +3730,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "auth_codes_pkey",
       "schema": "public",
@@ -3914,9 +3738,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "compile_cache_entries_pkey",
       "schema": "public",
@@ -3924,9 +3746,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "compile_intents_pkey",
       "schema": "public",
@@ -3934,9 +3754,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "idea_id"
-      ],
+      "columns": ["idea_id"],
       "nameExplicit": false,
       "name": "ideas_pkey",
       "schema": "public",
@@ -3944,9 +3762,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "llm_cost_events_pkey",
       "schema": "public",
@@ -3954,9 +3770,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "pipeline_runs_pkey",
       "schema": "public",
@@ -3964,9 +3778,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "refresh_tokens_pkey",
       "schema": "public",
@@ -3974,9 +3786,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "search_index_pkey",
       "schema": "public",
@@ -3984,9 +3794,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "source_documents_pkey",
       "schema": "public",
@@ -3994,9 +3802,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "source_proposals_pkey",
       "schema": "public",
@@ -4004,9 +3810,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "tasks_pkey",
       "schema": "public",
@@ -4014,9 +3818,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "topic_id"
-      ],
+      "columns": ["topic_id"],
       "nameExplicit": false,
       "name": "topics_pkey",
       "schema": "public",
@@ -4024,9 +3826,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "users_pkey",
       "schema": "public",
@@ -4034,9 +3834,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vault_memberships_pkey",
       "schema": "public",
@@ -4044,9 +3842,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vaults_pkey",
       "schema": "public",
@@ -4054,9 +3850,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "challenge"
-      ],
+      "columns": ["challenge"],
       "nameExplicit": false,
       "name": "webauthn_challenges_pkey",
       "schema": "public",
@@ -4064,9 +3858,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "webauthn_credentials_pkey",
       "schema": "public",
@@ -4074,9 +3866,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "wiki_articles_pkey",
       "schema": "public",
@@ -4085,11 +3875,7 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id",
-        "phase",
-        "cache_key"
-      ],
+      "columns": ["vault_id", "phase", "cache_key"],
       "nullsNotDistinct": false,
       "name": "compile_cache_entries_vault_id_phase_cache_key_key",
       "entityType": "uniques",
@@ -4098,11 +3884,7 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id",
-        "path",
-        "chunk_index"
-      ],
+      "columns": ["vault_id", "path", "chunk_index"],
       "nullsNotDistinct": false,
       "name": "search_index_vault_id_path_chunk_index_key",
       "entityType": "uniques",
@@ -4111,10 +3893,7 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id",
-        "idempotency_key"
-      ],
+      "columns": ["vault_id", "idempotency_key"],
       "nullsNotDistinct": false,
       "name": "uq_sessions_vault_idempotency",
       "entityType": "uniques",
@@ -4123,10 +3902,7 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id",
-        "file_path"
-      ],
+      "columns": ["vault_id", "file_path"],
       "nullsNotDistinct": false,
       "name": "source_documents_vault_id_file_path_key",
       "entityType": "uniques",
@@ -4135,10 +3911,7 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id",
-        "slug"
-      ],
+      "columns": ["vault_id", "slug"],
       "nullsNotDistinct": false,
       "name": "topics_vault_id_slug_key",
       "entityType": "uniques",
@@ -4147,10 +3920,7 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "vault_id",
-        "user_id"
-      ],
+      "columns": ["vault_id", "user_id"],
       "nullsNotDistinct": false,
       "name": "vault_memberships_vault_id_user_id_key",
       "entityType": "uniques",
@@ -4159,9 +3929,7 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "credential_id"
-      ],
+      "columns": ["credential_id"],
       "nullsNotDistinct": false,
       "name": "uq_webauthn_credentials_credential_id",
       "entityType": "uniques",
@@ -4170,9 +3938,7 @@
     },
     {
       "nameExplicit": true,
-      "columns": [
-        "topic_id"
-      ],
+      "columns": ["topic_id"],
       "nullsNotDistinct": false,
       "name": "wiki_articles_topic_id_key",
       "entityType": "uniques",
