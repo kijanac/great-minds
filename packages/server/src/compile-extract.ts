@@ -10,7 +10,7 @@ import {
 import { Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import type { PgInsertValue } from "drizzle-orm/pg-core";
-import { Data, Effect, Option, Schema, SchemaGetter } from "effect";
+import { Data, Effect, Option, Schema } from "effect";
 
 import type { ClockService } from "./clock.ts";
 import { EXTRACT_STEP_LABELS } from "./compile-contract.ts";
@@ -89,9 +89,7 @@ const ExtractResponse = Schema.Struct({
 const Anchor = Schema.Struct({
   claim: Schema.String,
   quote: Schema.String,
-  chunkIndex: Schema.NullOr(Schema.Int).pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
-  ),
+  chunkIndex: Schema.NullOr(Schema.Int),
 }).pipe(Schema.encodeKeys({ chunkIndex: "chunk_index" }));
 type Anchor = typeof Anchor.Type;
 
@@ -101,17 +99,11 @@ const Idea = Schema.Struct({
   kind: Schema.String,
   label: Schema.String,
   description: Schema.String,
-  anchors: Schema.Array(Anchor).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
+  anchors: Schema.Array(Anchor),
 }).pipe(Schema.encodeKeys({ ideaId: "idea_id", documentId: "document_id" }));
 type Idea = typeof Idea.Type;
 
-const MetadataText = Schema.NullOr(Schema.String).pipe(
-  Schema.decodeTo(Schema.NullOr(Schema.String), {
-    decode: SchemaGetter.transform(nullableString),
-    encode: SchemaGetter.transform((value) => value),
-  }),
-  Schema.withDecodingDefaultTypeKey(Effect.succeed(null)),
-);
+const MetadataText = Schema.NullOr(Schema.String);
 
 const SourceCard = Schema.Struct({
   documentId: Uuid,
@@ -120,10 +112,8 @@ const SourceCard = Schema.Struct({
   author: MetadataText,
   publishedDate: MetadataText,
   genre: MetadataText,
-  tags: Schema.Array(Schema.String).pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed([]))),
-  derivedExtras: Schema.Record(Schema.String, Schema.Unknown).pipe(
-    Schema.withDecodingDefaultTypeKey(Effect.succeed({})),
-  ),
+  tags: Schema.Array(Schema.String),
+  derivedExtras: Schema.Record(Schema.String, Schema.Unknown),
   ideas: Schema.Array(Idea),
 })
   .pipe(
@@ -352,8 +342,8 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
       );
       const promptTemplate = yield* loadPrompt(storage, vaultId, "extract");
       const renderedTemplate = promptTemplate
-        .replace("{kinds}", vaultConfig.kinds.join(", "))
-        .replace("{vault_enriched_fields}", formatEnrichedFields(vaultConfig.enrichedFields));
+        .replace("{kinds}", () => vaultConfig.kinds.join(", "))
+        .replace("{vault_enriched_fields}", () => formatEnrichedFields(vaultConfig.enrichedFields));
       const promptHash = promptContentHash(renderedTemplate);
       yield* recordPrompt(db, promptHash, renderedTemplate);
       const responseFormat = extractResponseFormat(vaultConfig);
@@ -408,7 +398,10 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
                     promptHash,
                     model: config.extractModel,
                     messages: [
-                      { role: "user", content: renderedTemplate.replace("{doc_content}", body) },
+                      {
+                        role: "user",
+                        content: renderedTemplate.replace("{doc_content}", () => body),
+                      },
                     ],
                     temperature: config.extractTemperature,
                     reasoningEffort: Option.getOrUndefined(config.extractReasoningEffort),
@@ -432,12 +425,8 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
                     body,
                     mintUuid7,
                   );
-                  yield* putCache(vaultId, cacheKey, { sourceCard: card });
-                  cached = yield* getCache(vaultId, cacheKey);
-                  if (cached === undefined)
-                    return yield* new MalformedCompileCache({
-                      message: `extract cache row ${cacheKey} is missing after persistence`,
-                    });
+                  cached = { sourceCard: card };
+                  yield* putCache(vaultId, cacheKey, cached);
                 }
                 if (cached.sourceCard.documentId !== document.id)
                   return yield* new MalformedCompileCache({
@@ -521,6 +510,7 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
       );
 
       let embeddedCount = 0;
+      let skippedCount = 0;
       for (let offset = 0; offset < embeddingInputs.length; offset += 50) {
         const batch = embeddingInputs.slice(offset, offset + 50);
         const embedded = yield* Effect.result(
@@ -540,6 +530,7 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
             error_type: details.errorType,
             error: details.message,
           });
+          skippedCount += batch.length;
           continue;
         }
         const paired = batch.flatMap((input, index) => {
@@ -581,8 +572,11 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
               })
               .pipe(
                 Effect.tapError((error) =>
-                  Effect.logError("idea insert failed", {
-                    cause: "cause" in error ? error.cause : error,
+                  logger.error("idea_insert_failed", {
+                    vault_id: vaultId,
+                    run_id: runId,
+                    document_id: document.id,
+                    error: errorDetails(error).message,
                   }),
                 ),
                 Effect.asVoid,
@@ -602,6 +596,15 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
             },
           }),
         );
+      }
+
+      if (skippedCount > 0) {
+        yield* pipeline.recordWarning(runId, {
+          phase: "extract",
+          message: `of ${embeddingInputs.length} ideas were not embedded because the embedding provider timed out; the next Update retries them`,
+          count: skippedCount,
+          items: [],
+        });
       }
 
       yield* Effect.forEach(
@@ -734,7 +737,7 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
           completed: new Set(Object.keys(EXTRACT_STEP_LABELS)),
           counts: {
             extract_cards: [documents.length, documents.length],
-            embed_ideas: [embeddingInputs.length, embeddingInputs.length],
+            embed_ideas: [embeddedCount, embeddingInputs.length],
           },
         }),
       );

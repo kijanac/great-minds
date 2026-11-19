@@ -753,6 +753,47 @@ describe("M4.3a deterministic compile phases", () => {
         error_type: "TimeoutError",
       }),
     });
+    const [recorded] = await run(
+      Effect.flatMap(Database, (db) =>
+        db
+          .query((d) =>
+            d
+              .select({ warnings: pipelineRuns.warnings, stages: pipelineRuns.stages })
+              .from(pipelineRuns)
+              .where(eq(pipelineRuns.id, id.run)),
+          )
+          .pipe(Effect.orDie),
+      ),
+    );
+    expect(recorded?.warnings).toContainEqual(
+      expect.objectContaining({ phase: "extract", count: 1, items: [] }),
+    );
+    expect(recorded?.stages.flatMap((stage) => stage.steps)).toContainEqual(
+      expect.objectContaining({ key: "embed_ideas", done: 0, total: 1 }),
+    );
+  });
+
+  it("puts a document into the extract prompt verbatim, whatever it contains", async () => {
+    const body = "# Prices\n\nIt cost $$5, then $& more, then $' and $` again.\n";
+    files.set("raw/docs/source.md", body);
+    await insertSource(id.source, "raw/docs/source.md");
+    let prompt = "";
+    complete = async (input) => {
+      prompt = String(input.messages[0]?.content);
+      return { text: JSON.stringify(fullCard([])), finishReason: "stop" };
+    };
+
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.extract(id.vault, id.run)));
+
+    const template = (await defaultPrompt("extract"))
+      .replace("{kinds}", "person, event, organization, concept")
+      .replace("{vault_enriched_fields}", "");
+    const [before, after] = template.split("{doc_content}");
+    expect(prompt.startsWith(before!)).toBe(true);
+    expect(prompt.endsWith(after!)).toBe(true);
+    expect(prompt.slice(before!.length, prompt.length - after!.length)).toContain(
+      "It cost $$5, then $& more, then $' and $` again.",
+    );
   });
 
   it("drops an omitted embedding tail instead of inserting an empty vector", async () => {
