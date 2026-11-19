@@ -1554,11 +1554,23 @@ describe("M4.3a deterministic compile phases", () => {
             }),
           )
           .pipe(Effect.orDie);
+        yield* db
+          .query((d) => d.insert(topicMembership).values({ topicId: id.topicA, ideaId: id.ideaA }))
+          .pipe(Effect.orDie);
+        yield* db
+          .query((d) =>
+            d.insert(topicLinks).values({ sourceTopicId: id.topicB, targetTopicId: id.topicA }),
+          )
+          .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.archiveTransitions(id.vault, id.run, [
           { topicId: id.topicA, slug: "alpha", supersededBy: id.topicB },
           { topicId: id.topicC, slug: "no-file", supersededBy: null },
         ]);
+        expect(yield* db.query((d) => d.select().from(topicMembership)).pipe(Effect.orDie)).toEqual(
+          [],
+        );
+        expect(yield* db.query((d) => d.select().from(topicLinks)).pipe(Effect.orDie)).toEqual([]);
       }),
     );
     expect(files.has("wiki/alpha.md")).toBe(false);
