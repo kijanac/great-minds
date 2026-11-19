@@ -715,7 +715,7 @@ export const RepliesServiceLive = Layer.effect(
                   accumulator,
                   toolCall.id,
                   toolCall.pendingSource,
-                  outcome.state.trace.llmRounds,
+                  checkpoint.query.trace.llmRounds,
                 );
             }
             pendingTools = outcome.toolCalls;
@@ -729,7 +729,7 @@ export const RepliesServiceLive = Layer.effect(
           const nextCheckpoint: ReplyCheckpoint = {
             version: 1,
             cursor: expectedCursor + 1,
-            query: outcome.state,
+            query: checkpoint.query,
             accumulator,
             pendingTools,
             nextToolIndex: 0,
@@ -770,16 +770,11 @@ export const RepliesServiceLive = Layer.effect(
             yield* freezeOutcome(row, checkpoint, { outcome: "stopped" });
             return stoppedControl(expectedCursor);
           }
-          const result = attempt.value;
+          const source = attempt.value;
           const pendingIndex = accumulator.pendingCalls.get(toolCall.id) ?? null;
           accumulator.pendingCalls.delete(toolCall.id);
-          if (result.source !== undefined)
-            addResolvedSource(
-              accumulator,
-              result.source,
-              pendingIndex,
-              checkpoint.query.trace.llmRounds,
-            );
+          if (source !== undefined)
+            addResolvedSource(accumulator, source, pendingIndex, checkpoint.query.trace.llmRounds);
           else if (pendingIndex !== null) removeSource(accumulator, pendingIndex);
           yield* flushAccumulator(replyId, accumulator);
           const nextToolIndex = checkpoint.nextToolIndex + 1;
@@ -791,7 +786,7 @@ export const RepliesServiceLive = Layer.effect(
           const nextCheckpoint: ReplyCheckpoint = {
             version: 1,
             cursor: expectedCursor + 1,
-            query: result.state,
+            query: checkpoint.query,
             accumulator,
             pendingTools: remaining > 0 ? checkpoint.pendingTools : [],
             nextToolIndex: remaining > 0 ? nextToolIndex : 0,

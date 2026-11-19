@@ -64,7 +64,7 @@ type QueryServiceShape = {
   readonly runTool: (
     state: QueryExecutionState,
     toolCall: QueryPreparedToolCall,
-  ) => Effect.Effect<QueryToolExecutionResult, EmbeddingBatchFailed>;
+  ) => Effect.Effect<QuerySourceData | undefined, EmbeddingBatchFailed>;
   readonly finalizeExecution: (state: QueryExecutionState) => Effect.Effect<void>;
   readonly draftHint: (
     userId: Uuid,
@@ -89,9 +89,9 @@ type ToolCallState = {
 };
 
 const QueryTraceSchema = Schema.Struct({
-  articlesRead: Schema.mutable(Schema.Array(Schema.String)),
-  sourcesRead: Schema.mutable(Schema.Array(Schema.String)),
-  searches: Schema.mutable(Schema.Array(Schema.String)),
+  articlesRead: Schema.mutableKey(Schema.Number),
+  sourcesRead: Schema.mutableKey(Schema.Number),
+  searches: Schema.mutableKey(Schema.Number),
   llmRounds: Schema.mutableKey(Schema.Number),
   toolCalls: Schema.mutableKey(Schema.Number),
 });
@@ -114,7 +114,7 @@ export const QueryExecutionState = Schema.Struct({
   costUsd: Schema.mutableKey(Schema.Number),
   selectedModel: Schema.mutableKey(Schema.NullOr(Schema.String)),
   models: Schema.NonEmptyArray(Schema.NonEmptyString),
-  modelIndex: Schema.Number,
+  modelIndex: Schema.mutableKey(Schema.Number),
   startedAt: Schema.Number,
 });
 export type QueryExecutionState = typeof QueryExecutionState.Type;
@@ -131,77 +131,112 @@ const ToolInteger = Schema.Union([Schema.Int, Schema.NumberFromString]).pipe(
   Schema.decodeTo(Schema.Int),
 );
 
-const toolArgs = {
-  read_document: Schema.Struct({
-    path: Schema.NonEmptyString.annotate({
-      description:
-        "Document path, e.g. wiki/capitalism.md or raw/texts/lenin/works/1893/market/02.md",
-    }),
-  }),
-  expand_context: Schema.Struct({
-    path: Schema.NonEmptyString.annotate({
-      description:
-        "Document path from a search result or outline, e.g. raw/texts/lenin/works/1916/imperialism/03.md",
-    }),
-    start: ToolInteger.annotate({ description: "First chunk index to read (inclusive)" }),
-    end: ToolInteger.annotate({ description: "Last chunk index to read (inclusive)" }),
-  }),
-  linked_articles: Schema.Struct({
-    path: Schema.NonEmptyString.annotate({
-      description:
-        "Wiki article path, e.g. wiki/imperialism.md (from a search hit or another article's links)",
-    }),
-  }),
-  search_content: Schema.Struct({
-    query: Schema.NonEmptyString.annotate({ description: "Search term or phrase" }),
-  }),
-  list_articles: Schema.Struct({
-    contains: Schema.optionalKey(
-      Schema.String.annotate({
+const tools = {
+  read_document: {
+    description:
+      "Use to read a document you already have the `path` for. A small document is returned in full; a LARGE document returns only a section OUTLINE, not its text. If you have a query and the document is large, do NOT use this to read it — use search_in_document(path, query) to jump to the relevant passages. Read an outlined section with expand_context(path, start, end).",
+    args: Schema.Struct({
+      path: Schema.NonEmptyString.annotate({
         description:
-          "Literal substring to match in an article's title/precis (not semantic — use search_content for meaning-based discovery)",
+          "Document path, e.g. wiki/capitalism.md or raw/texts/lenin/works/1893/market/02.md",
       }),
-    ),
-    sort: Schema.optionalKey(
-      Schema.Literals(["central", "recent", "alpha"]).annotate({
-        description:
-          "central = most-linked first (best for orientation), recent = newest first, alpha = A–Z. Default central.",
-      }),
-    ),
-    page: Schema.optionalKey(
-      ToolInteger.annotate({ description: "1-based page number (default 1)" }),
-    ),
-  }),
-  search_in_document: Schema.Struct({
-    path: Schema.NonEmptyString.annotate({
-      description:
-        "Document path to search within, e.g. raw/texts/lenin/works/1916/imperialism/03.md",
     }),
-    query: Schema.NonEmptyString.annotate({ description: "Search term or phrase" }),
-  }),
-  web_search: Schema.Struct({
-    query: Schema.NonEmptyString.annotate({ description: "Web search query" }),
-  }),
-  query_documents: Schema.Struct({
-    ...SourceQuery.fields,
-    limit: Schema.optionalKey(
-      Schema.Int.annotate({ description: "Results per call (default 20, at most 50)" }),
-    ),
-    offset: Schema.optionalKey(
-      Schema.Int.annotate({ description: "Skip this many results, to page through a total" }),
-    ),
-  }),
+  },
+  expand_context: {
+    description:
+      "Use to fetch a specific `start`-`end` chunk range you ALREADY obtained from a search hit or a read_document outline. Do NOT use it to explore a document — guessing a range (e.g. chunks 1-10) wastes turns; run search_in_document(path, query) first and expand only the chunks it returns.",
+    args: Schema.Struct({
+      path: Schema.NonEmptyString.annotate({
+        description:
+          "Document path from a search result or outline, e.g. raw/texts/lenin/works/1916/imperialism/03.md",
+      }),
+      start: ToolInteger.annotate({ description: "First chunk index to read (inclusive)" }),
+      end: ToolInteger.annotate({ description: "Last chunk index to read (inclusive)" }),
+    }),
+  },
+  linked_articles: {
+    description:
+      "Use when you have a wiki article `path` and want its neighbors in the citation graph — outgoing and incoming links — to follow related articles without reading their bodies. Returns linked titles + paths only. Do NOT use it to find passages or do topical search (use search_content / search_in_document). Pass a wiki article path, e.g. wiki/imperialism.md.",
+    args: Schema.Struct({
+      path: Schema.NonEmptyString.annotate({
+        description:
+          "Wiki article path, e.g. wiki/imperialism.md (from a search hit or another article's links)",
+      }),
+    }),
+  },
+  search_content: {
+    description:
+      "Use FIRST only when you don't yet know which document holds the answer — hybrid search across the WHOLE knowledge base (all raw sources + all wiki articles), matching title, precis, author, and body text. Returns ranked excerpts each with a `path` and `chunk_index`. Once you have a specific path, do NOT search here again — use search_in_document to search inside it, or read_document to read it.",
+    args: Schema.Struct({
+      query: Schema.NonEmptyString.annotate({ description: "Search term or phrase" }),
+    }),
+  },
+  list_articles: {
+    description:
+      "Use to BROWSE the wiki article index — the synthesized encyclopedia — by title and path, most-linked first (sort=central). Reach for it FIRST to orient on a concept, person, work, or '-ism', or to find a known article's real path before reading it. Returns titles + paths only, no body text. `contains` is a literal title/precis substring filter — for topical or fuzzy discovery use search_content instead.",
+    args: Schema.Struct({
+      contains: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Literal substring to match in an article's title/precis (not semantic — use search_content for meaning-based discovery)",
+        }),
+      ),
+      sort: Schema.optionalKey(
+        Schema.Literals(["central", "recent", "alpha"]).annotate({
+          description:
+            "central = most-linked first (best for orientation), recent = newest first, alpha = A–Z. Default central.",
+        }),
+      ),
+      page: Schema.optionalKey(
+        ToolInteger.annotate({ description: "1-based page number (default 1)" }),
+      ),
+    }),
+  },
+  search_in_document: {
+    description:
+      "Use when you HAVE a document `path` and want the passages of THAT document relevant to a query — hybrid search scoped to one document. ALWAYS prefer this over read_document + expand_context for any document large enough to return an outline: it finds the relevant chunks instead of making you guess a range. Returns matching chunks with indexes for expand_context(path, start, end).",
+    args: Schema.Struct({
+      path: Schema.NonEmptyString.annotate({
+        description:
+          "Document path to search within, e.g. raw/texts/lenin/works/1916/imperialism/03.md",
+      }),
+      query: Schema.NonEmptyString.annotate({ description: "Search term or phrase" }),
+    }),
+  },
+  query_documents: {
+    description:
+      "Use when the question names a STRUCTURED attribute of raw sources — a tag, author, genre, date/date-range, or one of this vault's own metadata fields (e.g. 'sources by X', 'everything tagged Y', 'written after Z'). Filters by metadata, not text content. Results report the total that match; page through them with offset. Do NOT use it for topical/conceptual questions (use search_content), and do NOT use it for wiki articles (use list_articles). ",
+    args: Schema.Struct({
+      ...SourceQuery.fields,
+      limit: Schema.optionalKey(
+        Schema.Int.annotate({ description: "Results per call (default 20, at most 50)" }),
+      ),
+      offset: Schema.optionalKey(
+        Schema.Int.annotate({ description: "Skip this many results, to page through a total" }),
+      ),
+    }),
+  },
+  web_search: {
+    description:
+      "Search the open web for facts the knowledge base does not contain — recent events, dates, figures, names. Use ONLY after the knowledge base has come up empty on a factual point; the knowledge base remains the source for analysis and interpretation. Results are EXTERNAL: cite them as [title](url) and make clear they are from the web, not the knowledge base.",
+    args: Schema.Struct({
+      query: Schema.NonEmptyString.annotate({ description: "Web search query" }),
+    }),
+  },
 };
 
 const QueryTool = Schema.Union([
-  Schema.Struct({ name: Schema.Literal("read_document"), args: toolArgs.read_document }),
-  Schema.Struct({ name: Schema.Literal("expand_context"), args: toolArgs.expand_context }),
-  Schema.Struct({ name: Schema.Literal("linked_articles"), args: toolArgs.linked_articles }),
-  Schema.Struct({ name: Schema.Literal("search_content"), args: toolArgs.search_content }),
-  Schema.Struct({ name: Schema.Literal("list_articles"), args: toolArgs.list_articles }),
-  Schema.Struct({ name: Schema.Literal("search_in_document"), args: toolArgs.search_in_document }),
-  Schema.Struct({ name: Schema.Literal("web_search"), args: toolArgs.web_search }),
-  Schema.Struct({ name: Schema.Literal("query_documents"), args: toolArgs.query_documents }),
+  Schema.Struct({ name: Schema.Literal("read_document"), args: tools.read_document.args }),
+  Schema.Struct({ name: Schema.Literal("expand_context"), args: tools.expand_context.args }),
+  Schema.Struct({ name: Schema.Literal("linked_articles"), args: tools.linked_articles.args }),
+  Schema.Struct({ name: Schema.Literal("search_content"), args: tools.search_content.args }),
+  Schema.Struct({ name: Schema.Literal("list_articles"), args: tools.list_articles.args }),
+  Schema.Struct({
+    name: Schema.Literal("search_in_document"),
+    args: tools.search_in_document.args,
+  }),
+  Schema.Struct({ name: Schema.Literal("web_search"), args: tools.web_search.args }),
+  Schema.Struct({ name: Schema.Literal("query_documents"), args: tools.query_documents.args }),
 ]);
 type QueryTool = typeof QueryTool.Type;
 const decodeQueryTool = Schema.decodeUnknownEffect(QueryTool);
@@ -210,19 +245,10 @@ const jsonArguments = Schema.decodeUnknownOption(
 );
 
 type QueryModelAttemptResult =
-  | { readonly kind: "retryable"; readonly state: QueryExecutionState }
-  | { readonly kind: "failed"; readonly state: QueryExecutionState; readonly error: string }
-  | { readonly kind: "done"; readonly state: QueryExecutionState }
-  | {
-      readonly kind: "tool_calls";
-      readonly state: QueryExecutionState;
-      readonly toolCalls: readonly QueryPreparedToolCall[];
-    };
-
-type QueryToolExecutionResult = {
-  readonly state: QueryExecutionState;
-  readonly source?: QuerySourceData;
-};
+  | { readonly kind: "retryable" }
+  | { readonly kind: "done" }
+  | { readonly kind: "failed"; readonly error: string }
+  | { readonly kind: "tool_calls"; readonly toolCalls: readonly QueryPreparedToolCall[] };
 
 type ModelRoundState = {
   content: string;
@@ -364,97 +390,82 @@ export const draftHintSystem =
   "concrete, and actionable. Do not include preamble, headings, or " +
   "quotation marks — return only the steer text.";
 
-const baseTools: readonly LlmToolDefinition[] = [
-  {
-    type: "function",
-    function: {
-      name: "read_document",
-      description:
-        "Use to read a document you already have the `path` for. A small document is returned in full; a LARGE document returns only a section OUTLINE, not its text. If you have a query and the document is large, do NOT use this to read it — use search_in_document(path, query) to jump to the relevant passages. Read an outlined section with expand_context(path, start, end).",
-      parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.read_document)).schema,
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "expand_context",
-      description:
-        "Use to fetch a specific `start`-`end` chunk range you ALREADY obtained from a search hit or a read_document outline. Do NOT use it to explore a document — guessing a range (e.g. chunks 1-10) wastes turns; run search_in_document(path, query) first and expand only the chunks it returns.",
-      parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.expand_context)).schema,
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "linked_articles",
-      description:
-        "Use when you have a wiki article `path` and want its neighbors in the citation graph — outgoing and incoming links — to follow related articles without reading their bodies. Returns linked titles + paths only. Do NOT use it to find passages or do topical search (use search_content / search_in_document). Pass a wiki article path, e.g. wiki/imperialism.md.",
-      parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.linked_articles)).schema,
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "search_content",
-      description:
-        "Use FIRST only when you don't yet know which document holds the answer — hybrid search across the WHOLE knowledge base (all raw sources + all wiki articles), matching title, precis, author, and body text. Returns ranked excerpts each with a `path` and `chunk_index`. Once you have a specific path, do NOT search here again — use search_in_document to search inside it, or read_document to read it.",
-      parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.search_content)).schema,
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "list_articles",
-      description:
-        "Use to BROWSE the wiki article index — the synthesized encyclopedia — by title and path, most-linked first (sort=central). Reach for it FIRST to orient on a concept, person, work, or '-ism', or to find a known article's real path before reading it. Returns titles + paths only, no body text. `contains` is a literal title/precis substring filter — for topical or fuzzy discovery use search_content instead.",
-      parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.list_articles)).schema,
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "search_in_document",
-      description:
-        "Use when you HAVE a document `path` and want the passages of THAT document relevant to a query — hybrid search scoped to one document. ALWAYS prefer this over read_document + expand_context for any document large enough to return an outline: it finds the relevant chunks instead of making you guess a range. Returns matching chunks with indexes for expand_context(path, start, end).",
-      parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.search_in_document)).schema,
-    },
-  },
-];
-
-const webSearchTool: LlmToolDefinition = {
-  type: "function",
-  function: {
-    name: "web_search",
-    description:
-      "Search the open web for facts the knowledge base does not contain — recent events, dates, figures, names. Use ONLY after the knowledge base has come up empty on a factual point; the knowledge base remains the source for analysis and interpretation. Results are EXTERNAL: cite them as [title](url) and make clear they are from the web, not the knowledge base.",
-    parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.web_search)).schema,
-  },
-};
-
-const queryDocumentsTool = (
+const toolDefinitions = (
   tags: readonly string[],
   fields: VaultConfigFile["enrichedFields"],
-): LlmToolDefinition => ({
-  type: "function",
-  function: {
-    name: "query_documents",
-    description:
-      "Use when the question names a STRUCTURED attribute of raw sources — a tag, author, genre, date/date-range, or one of this vault's own metadata fields (e.g. 'sources by X', 'everything tagged Y', 'written after Z'). Filters by metadata, not text content. Results report the total that match; page through them with offset. Do NOT use it for topical/conceptual questions (use search_content), and do NOT use it for wiki articles (use list_articles). " +
-      (tags.length > 0 ? `Available tags: ${tags.join(", ")}. ` : "No tags yet. ") +
-      (fields.length > 0
-        ? `This vault's own fields (filter with fields: {name: value}): ${fields
-            .map(
-              (field) =>
-                `${field.name} (${field.type}${field.description === "" ? "" : `: ${field.description}`})`,
-            )
-            .join("; ")}.`
-        : "This vault declares no metadata fields of its own."),
-    parameters: Schema.toJsonSchemaDocument(Schema.toType(toolArgs.query_documents)).schema,
-  },
-});
+  webSearch: boolean,
+): readonly LlmToolDefinition[] =>
+  Object.entries(tools).flatMap(([name, tool]): LlmToolDefinition[] =>
+    name === "web_search" && !webSearch
+      ? []
+      : [
+          {
+            type: "function",
+            function: {
+              name,
+              description:
+                name === "query_documents"
+                  ? tool.description +
+                    (tags.length > 0 ? `Available tags: ${tags.join(", ")}. ` : "No tags yet. ") +
+                    (fields.length > 0
+                      ? `This vault's own fields (filter with fields: {name: value}): ${fields
+                          .map(
+                            (field) =>
+                              `${field.name} (${field.type}${field.description === "" ? "" : `: ${field.description}`})`,
+                          )
+                          .join("; ")}.`
+                      : "This vault declares no metadata fields of its own.")
+                  : tool.description,
+              parameters: Schema.toJsonSchemaDocument(Schema.toType(tool.args)).schema,
+            },
+          },
+        ],
+  );
 
 const truthyEntries = (args: Record<string, unknown>) =>
   Object.entries(args).filter(([, value]) => Boolean(value));
+
+const pendingSourceEvent = (tool: QueryTool): QuerySourceData => {
+  switch (tool.name) {
+    case "read_document":
+    case "expand_context": {
+      const path = tool.args.path;
+      const type = path.startsWith("wiki/") ? "article" : "raw";
+      return tool.name === "expand_context"
+        ? {
+            type,
+            document_id: null,
+            path,
+            title: null,
+            ...fetchRange(tool.args.start, tool.args.end),
+          }
+        : { type, document_id: null, path, title: null };
+    }
+    case "search_content":
+      return { type: "search", query: tool.args.query, scope: "kb", title: null };
+    case "web_search":
+      return { type: "search", query: tool.args.query, scope: "web", title: null };
+    case "search_in_document":
+      return {
+        type: "search",
+        query: tool.args.query,
+        scope: "kb",
+        path: tool.args.path,
+        title: null,
+      };
+    case "query_documents":
+      return { type: "query", filters: Object.fromEntries(truthyEntries(tool.args)) };
+    case "list_articles":
+      return {
+        type: "query",
+        filters: Object.fromEntries(
+          truthyEntries({ contains: tool.args.contains, sort: tool.args.sort }),
+        ),
+      };
+    case "linked_articles":
+      return { type: "links", path: tool.args.path, title: null };
+  }
+};
 
 const WebFactExtraction = Schema.Struct({
   results: Schema.Array(
@@ -579,24 +590,9 @@ export const QueryServiceLive = Layer.effect(
       context: QueryExecutionState,
       tool: QueryTool,
       detail: SourceDetail = {},
-    ): Effect.Effect<QuerySourceData | undefined> =>
+    ): Effect.Effect<QuerySourceData> =>
       Effect.gen(function* () {
         const source = pendingSourceEvent(tool);
-        if (source === undefined) return undefined;
-        if (tool.name === "read_document" || tool.name === "expand_context") {
-          const path = tool.args.path;
-          if (path.startsWith("wiki/")) {
-            context.trace.articlesRead.push(path);
-          } else {
-            context.trace.sourcesRead.push(path);
-          }
-        } else if (tool.name === "search_content") {
-          context.trace.searches.push(tool.args.query);
-        } else if (tool.name === "web_search") {
-          context.trace.searches.push(`web: ${tool.args.query}`);
-        } else if (tool.name === "search_in_document") {
-          context.trace.searches.push(`${tool.args.query} · in ${tool.args.path}`);
-        }
         if (source.type === "article" || source.type === "raw") {
           return {
             ...source,
@@ -653,55 +649,6 @@ export const QueryServiceLive = Layer.effect(
           documentForPath(vaultId, path).pipe(Effect.map(({ title }) => ({ path, title, chunks }))),
         { concurrency: 4 },
       );
-    };
-
-    const pendingSourceEvent = (tool: QueryTool): QuerySourceData | undefined => {
-      if (tool.name === "read_document" || tool.name === "expand_context") {
-        const path = tool.args.path;
-        const type = path.startsWith("wiki/") ? "article" : "raw";
-        if (tool.name === "expand_context") {
-          return {
-            type,
-            document_id: null,
-            path,
-            title: null,
-            ...fetchRange(tool.args.start, tool.args.end),
-          };
-        }
-        return { type, document_id: null, path, title: null };
-      }
-      if (tool.name === "search_content") {
-        return { type: "search", query: tool.args.query, scope: "kb", title: null };
-      }
-      if (tool.name === "web_search") {
-        return { type: "search", query: tool.args.query, scope: "web", title: null };
-      }
-      if (tool.name === "search_in_document") {
-        return {
-          type: "search",
-          query: tool.args.query,
-          scope: "kb",
-          path: tool.args.path,
-          title: null,
-        };
-      }
-      if (tool.name === "query_documents") {
-        return { type: "query", filters: Object.fromEntries(truthyEntries(tool.args)) };
-      }
-      if (tool.name === "list_articles") {
-        const filters = Object.fromEntries(
-          truthyEntries({ contains: tool.args.contains, sort: tool.args.sort }),
-        );
-        return { type: "query", filters };
-      }
-      if (tool.name === "linked_articles") {
-        return {
-          type: "links",
-          path: tool.args.path,
-          title: null,
-        };
-      }
-      return undefined;
     };
 
     const sectionOutline = (vaultId: Uuid, path: string) =>
@@ -1349,7 +1296,7 @@ export const QueryServiceLive = Layer.effect(
         const source = yield* sourceEvent(context, { name: "web_search", args: { query } });
         return yield* Effect.gen(function* () {
           const results = yield* parallel.search({ question: context.typedQuestion, query });
-          const found = source?.type === "search" ? { ...source, results: results.length } : source;
+          const found = source.type === "search" ? { ...source, results: results.length } : source;
           if (results.length === 0) {
             return {
               content: `No web results for '${query}'.`,
@@ -1485,26 +1432,20 @@ export const QueryServiceLive = Layer.effect(
         yield* transient
           ? warnSafely("query.stream_retryable", fields)
           : errorSafely("query.stream_failed", fields);
-        const nextModelIndex = context.modelIndex + 1;
-        return transient && nextModelIndex < context.models.length
-          ? { kind: "retryable", state: { ...context, modelIndex: nextModelIndex } }
-          : { kind: "failed", state: context, error: sanitizedStreamError };
+        if (!transient || context.modelIndex + 1 >= context.models.length)
+          return { kind: "failed", error: sanitizedStreamError };
+        context.modelIndex += 1;
+        return { kind: "retryable" };
       });
 
     const executeModelAttempt = (
-      input: QueryExecutionState,
+      context: QueryExecutionState,
       onToken: (text: string) => Effect.Effect<void>,
     ): Effect.Effect<QueryModelAttemptResult> =>
       Effect.gen(function* () {
-        const context = input;
-        const model = input.models[input.modelIndex];
-        if (model === undefined) {
-          return {
-            kind: "failed",
-            state: input,
-            error: sanitizedStreamError,
-          } satisfies QueryModelAttemptResult;
-        }
+        const model = context.models[context.modelIndex];
+        if (model === undefined)
+          return { kind: "failed", error: sanitizedStreamError } satisfies QueryModelAttemptResult;
         const messages = context.messages;
         context.selectedModel = model;
         context.trace.llmRounds += 1;
@@ -1535,10 +1476,9 @@ export const QueryServiceLive = Layer.effect(
           const toolCalls: QueryPreparedToolCall[] = [];
           for (const toolCall of rawToolCalls) {
             const tool = yield* Effect.option(parseTool(toolCall));
-            const pendingSource = Option.isSome(tool) ? pendingSourceEvent(tool.value) : undefined;
             toolCalls.push({
               ...toolCall,
-              ...(pendingSource === undefined ? {} : { pendingSource }),
+              ...(Option.isSome(tool) ? { pendingSource: pendingSourceEvent(tool.value) } : {}),
             });
           }
           messages.push({
@@ -1560,14 +1500,12 @@ export const QueryServiceLive = Layer.effect(
           });
           return {
             kind: "tool_calls",
-            state: context,
             toolCalls,
           } satisfies QueryModelAttemptResult;
         }
         if (roundState.finishReason === "length" || roundState.content.length === 0)
           return {
             kind: "failed",
-            state: context,
             error:
               roundState.finishReason === "length" ? truncatedAnswerError : sanitizedStreamError,
           } satisfies QueryModelAttemptResult;
@@ -1578,7 +1516,6 @@ export const QueryServiceLive = Layer.effect(
         });
         return {
           kind: "done",
-          state: context,
         } satisfies QueryModelAttemptResult;
       });
 
@@ -1589,29 +1526,27 @@ export const QueryServiceLive = Layer.effect(
         ...logErrorFields(error),
       });
 
-    const executeTool = (input: QueryExecutionState, toolCall: QueryPreparedToolCall) =>
+    const executeTool = (context: QueryExecutionState, toolCall: QueryPreparedToolCall) =>
       Effect.gen(function* () {
-        const context = input;
-        const messages = context.messages;
         context.trace.toolCalls += 1;
-        const result = yield* Effect.gen(function* () {
-          return yield* dispatchTool(context, yield* parseTool(toolCall));
-        }).pipe(
+        const result = yield* Effect.flatMap(parseTool(toolCall), (tool) =>
+          dispatchTool(context, tool),
+        ).pipe(
           Effect.catchTag("ToolMiss", (error) =>
             Effect.succeed<ToolResult>({ content: error.message }),
           ),
           Effect.tapError((error) => logToolFailure(context, error)),
           Effect.tapDefect((defect) => logToolFailure(context, defect)),
         );
-        messages.push({
+        context.messages.push({
           role: "tool",
           tool_call_id: toolCall.id,
           content: result.content,
         });
-        return {
-          state: context,
-          ...(result.source === undefined ? {} : { source: result.source }),
-        } satisfies QueryToolExecutionResult;
+        if (result.source?.type === "article") context.trace.articlesRead += 1;
+        else if (result.source?.type === "raw") context.trace.sourcesRead += 1;
+        else if (result.source?.type === "search") context.trace.searches += 1;
+        return result.source;
       });
 
     const buildOriginMessages = (
@@ -1668,11 +1603,6 @@ export const QueryServiceLive = Layer.effect(
           { concurrency: "unbounded" },
         );
         const webSearchEnabled = vaultConfig.webSearch && parallel.hasApiKey;
-        const tools = [
-          ...baseTools,
-          queryDocumentsTool(tags, vaultConfig.enrichedFields),
-          ...(webSearchEnabled ? [webSearchTool] : []),
-        ];
         const systemPrompt = yield* buildSystemPrompt(
           vaultId,
           vaultLabel,
@@ -1690,13 +1620,13 @@ export const QueryServiceLive = Layer.effect(
           vaultLabel,
           mode: input.mode,
           correlationId,
-          tools,
+          tools: toolDefinitions(tags, vaultConfig.enrichedFields, webSearchEnabled),
           turnStart: 1 + prior.length,
           webSearchEnabled,
           trace: {
-            articlesRead: [],
-            sourcesRead: [],
-            searches: [],
+            articlesRead: 0,
+            sourcesRead: 0,
+            searches: 0,
             llmRounds: 0,
             toolCalls: 0,
           },
@@ -1759,9 +1689,9 @@ export const QueryServiceLive = Layer.effect(
           mode: context.mode,
           model: context.selectedModel,
           web_search: context.webSearchEnabled,
-          articles_read: context.trace.articlesRead.length,
-          sources_read: context.trace.sourcesRead.length,
-          searches: context.trace.searches.length,
+          articles_read: context.trace.articlesRead,
+          sources_read: context.trace.sourcesRead,
+          searches: context.trace.searches,
           llm_rounds: context.trace.llmRounds,
           tool_calls: context.trace.toolCalls,
           cost_usd: Number(context.costUsd.toFixed(6)),
