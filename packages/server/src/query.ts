@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  backlinks,
   Database,
   llmCostEvents,
   searchIndex,
@@ -13,6 +12,7 @@ import {
   FileFingerprint,
   ServiceUnavailable,
   type DraftHintResponse,
+  type LinkedArticles,
   type SearchHit,
   SourceQuery,
   type OriginScope,
@@ -23,7 +23,7 @@ import {
   QuerySourceData as QuerySourceDataSchema,
   Uuid,
 } from "@great-minds/domain";
-import { and, asc, desc, eq, gte, ilike, lte, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, sql, type SQL } from "drizzle-orm";
 import { Cause, Context, Data, Effect, Layer, Option, Schema, Stream } from "effect";
 
 import { ClockService } from "./clock.ts";
@@ -47,7 +47,10 @@ import { ParallelSearchService, type ParallelSearchResult } from "./parallel.ts"
 import { loadPrompt } from "./prompts.ts";
 import { ContentStorage, userOwner, vaultOwner } from "./storage.ts";
 import { readSourceSummary } from "./document-metadata.ts";
+import { articleLinks, chunkRange } from "./documents.ts";
 import { querySourceRows } from "./source-query.ts";
+import { articleOrder, listArticlePage, listedArticleConditions } from "./wiki.ts";
+import { liveArticleConditions } from "./wiki-articles.ts";
 import { withFootnoteNotes } from "./wiki-footnotes.ts";
 
 type QueryServiceShape = {
@@ -56,7 +59,7 @@ type QueryServiceShape = {
     vaultId: Uuid,
     input: QueryInput,
     prior: readonly LlmMessage[],
-  ) => Effect.Effect<QueryExecutionState, unknown>;
+  ) => Effect.Effect<QueryExecutionState>;
   readonly modelAttempt: (
     state: QueryExecutionState,
     onToken: (text: string) => Effect.Effect<void>,
@@ -274,8 +277,6 @@ type ToolResult = {
 type SourceDetail = Pick<QuerySourceArticle, "full" | "outline" | "chunks"> &
   Pick<QuerySourceSearch, "results" | "hits">;
 
-type SafeLogFields = Record<string, string | number | boolean | null | undefined>;
-
 class ToolMiss extends Data.TaggedError("ToolMiss")<{
   readonly message: string;
 }> {}
@@ -486,6 +487,11 @@ export const QueryServiceLive = Layer.effect(
     const appConfig = yield* AppConfig;
     const clock = yield* ClockService;
 
+    const vaultConfig = (vaultId: Uuid) =>
+      readVaultConfig(storage, vaultId).pipe(
+        Effect.catchTag("VaultConfigMalformed", () => Effect.succeed(defaultVaultConfigFile)),
+      );
+
     const documentForPath = (vaultId: Uuid, path: string) =>
       Effect.gen(function* () {
         if (path.startsWith("wiki/")) {
@@ -518,13 +524,7 @@ export const QueryServiceLive = Layer.effect(
               d
                 .select({ count: sql<number>`count(*)::int` })
                 .from(wikiArticles)
-                .where(
-                  and(
-                    eq(wikiArticles.vaultId, vaultId),
-                    eq(wikiArticles.archived, false),
-                    ne(wikiArticles.filePath, "wiki/_index.md"),
-                  ),
-                ),
+                .where(and(...liveArticleConditions(vaultId))),
             ),
             db.query((d) =>
               d
@@ -932,29 +932,7 @@ export const QueryServiceLive = Layer.effect(
     ) =>
       Effect.gen(function* () {
         const { start, end } = fetchRange(rawStart, rawEnd);
-        const chunks = yield* withFootnoteNotes(
-          storage,
-          context.vaultId,
-          yield* db.query((d) =>
-            d
-              .select({
-                path: searchIndex.path,
-                chunkIndex: searchIndex.chunkIndex,
-                heading: searchIndex.heading,
-                body: searchIndex.body,
-              })
-              .from(searchIndex)
-              .where(
-                and(
-                  eq(searchIndex.vaultId, context.vaultId),
-                  eq(searchIndex.path, path),
-                  gte(searchIndex.chunkIndex, start),
-                  lte(searchIndex.chunkIndex, end),
-                ),
-              )
-              .orderBy(asc(searchIndex.chunkIndex)),
-          ),
-        );
+        const chunks = yield* chunkRange(db, storage, context.vaultId, path, start, end);
         if (chunks.length === 0) {
           return yield* new ToolMiss({
             message: `No indexed paragraphs at ${path} for chunks ${start}-${end}. Check the path and range against a search hit or document outline.`,
@@ -990,54 +968,13 @@ export const QueryServiceLive = Layer.effect(
             message: `${path} is not a wiki article — the link graph only covers wiki articles. Use search_content to find related material.`,
           });
         }
-        const sourceRows = yield* db.query((d) =>
-          d
-            .select({ id: wikiArticles.id })
-            .from(wikiArticles)
-            .where(
-              and(
-                eq(wikiArticles.vaultId, context.vaultId),
-                eq(wikiArticles.filePath, path),
-                eq(wikiArticles.archived, false),
-              ),
-            )
-            .limit(1),
-        );
-        const source = first(sourceRows);
-        if (source === undefined) {
+        const links = yield* articleLinks(db, context.vaultId, path);
+        if (links === undefined) {
           return yield* new ToolMiss({ message: `Article not found: ${path}` });
         }
-        const outgoing = yield* db.query((d) =>
-          d
-            .select({ filePath: wikiArticles.filePath, title: wikiArticles.title })
-            .from(backlinks)
-            .innerJoin(wikiArticles, eq(wikiArticles.id, backlinks.targetArticleId))
-            .where(
-              and(
-                eq(backlinks.sourceArticleId, source.id),
-                eq(wikiArticles.vaultId, context.vaultId),
-                eq(wikiArticles.archived, false),
-              ),
-            )
-            .orderBy(asc(sql`lower(${wikiArticles.title})`)),
-        );
-        const incoming = yield* db.query((d) =>
-          d
-            .select({ filePath: wikiArticles.filePath, title: wikiArticles.title })
-            .from(backlinks)
-            .innerJoin(wikiArticles, eq(wikiArticles.id, backlinks.sourceArticleId))
-            .where(
-              and(
-                eq(backlinks.targetArticleId, source.id),
-                eq(wikiArticles.vaultId, context.vaultId),
-                eq(wikiArticles.archived, false),
-              ),
-            )
-            .orderBy(asc(sql`lower(${wikiArticles.title})`)),
-        );
-        const formatLinks = (
-          rows: readonly { readonly title: string; readonly filePath: string }[],
-        ) => rows.map((row) => `- [${row.title}](${row.filePath})`).join("\n") || "none";
+        const { outgoing, incoming } = links;
+        const formatLinks = (rows: LinkedArticles["outgoing"]) =>
+          rows.map((row) => `- [${row.title}](${row.file_path})`).join("\n") || "none";
         return {
           content:
             `# Links for ${path} [${context.vaultLabel}]\n\n` +
@@ -1046,7 +983,7 @@ export const QueryServiceLive = Layer.effect(
           source: yield* sourceEvent(
             context,
             { name: "linked_articles", args: { path } },
-            { results: new Set([...outgoing, ...incoming].map((row) => row.filePath)).size },
+            { results: new Set([...outgoing, ...incoming].map((row) => row.file_path)).size },
           ),
         } satisfies ToolResult;
       });
@@ -1056,9 +993,7 @@ export const QueryServiceLive = Layer.effect(
       args: Extract<QueryTool, { name: "query_documents" }>["args"],
     ) =>
       Effect.gen(function* () {
-        const config = yield* readVaultConfig(storage, context.vaultId).pipe(
-          Effect.catchTag("VaultConfigMalformed", () => Effect.succeed(defaultVaultConfigFile)),
-        );
+        const config = yield* vaultConfig(context.vaultId);
         const limit = Math.max(1, Math.min(50, args.limit ?? 20));
         const offset = Math.max(0, args.offset ?? 0);
         const page = yield* querySourceRows(
@@ -1118,47 +1053,15 @@ export const QueryServiceLive = Layer.effect(
       Effect.gen(function* () {
         const { contains, sort = "central" } = args;
         const page = Math.max(1, args.page ?? 1);
-        const conditions: SQL[] = [
-          eq(wikiArticles.vaultId, context.vaultId),
-          eq(wikiArticles.archived, false),
-          ne(wikiArticles.filePath, "wiki/_index.md"),
-        ];
-        if (contains) {
-          const pattern = `%${contains}%`;
-          conditions.push(
-            or(ilike(wikiArticles.title, pattern), ilike(wikiArticles.precis, pattern)) as SQL,
-          );
-        }
-        const countRows = yield* db.query((d) =>
-          d
-            .select({ count: sql<number>`count(*)::int` })
-            .from(wikiArticles)
-            .where(and(...conditions)),
-        );
-        const total = first(countRows)?.count ?? 0;
         const offset = (page - 1) * articlesPerPage;
-        const inboundCount = sql<number>`count(${backlinks.sourceArticleId})`;
-        const rows = yield* db.query((d) => {
-          const query = d
-            .select({
-              filePath: wikiArticles.filePath,
-              title: wikiArticles.title,
-              precis: wikiArticles.precis,
-              updatedAt: wikiArticles.updatedAt,
-              inboundCount,
-            })
-            .from(wikiArticles)
-            .leftJoin(backlinks, eq(backlinks.targetArticleId, wikiArticles.id))
-            .where(and(...conditions))
-            .groupBy(wikiArticles.id);
-          const ordered =
-            sort === "recent"
-              ? query.orderBy(desc(wikiArticles.updatedAt))
-              : sort === "alpha"
-                ? query.orderBy(asc(sql`lower(${wikiArticles.title})`))
-                : query.orderBy(desc(inboundCount), asc(sql`lower(${wikiArticles.title})`));
-          return ordered.limit(articlesPerPage).offset(offset);
-        });
+        const listed = yield* listArticlePage(
+          db,
+          { limit: articlesPerPage, offset },
+          listedArticleConditions(context.vaultId, contains ? { contains } : {}),
+          articleOrder[sort === "central" ? "linked" : sort === "alpha" ? "title" : "recent"],
+        );
+        const total = listed.pagination.total;
+        const rows = listed.items;
         const source = yield* sourceEvent(
           context,
           { name: "list_articles", args },
@@ -1174,7 +1077,7 @@ export const QueryServiceLive = Layer.effect(
         }
         const hi = offset + rows.length;
         const scope = contains ? ` matching '${contains}'` : "";
-        const lines = rows.map((row) => `- ${row.title} — ${row.filePath}\n  ${row.precis}`);
+        const lines = rows.map((row) => `- ${row.title} — ${row.file_path}\n  ${row.precis}`);
         const more =
           hi < total
             ? `\n\nMore available — call list_articles(page=${page + 1}) to continue.`
@@ -1201,12 +1104,6 @@ export const QueryServiceLive = Layer.effect(
       return true;
     };
 
-    const warnSafely = (event: string, fields: SafeLogFields) =>
-      logger.warn(event, fields).pipe(Effect.catchCause(() => Effect.void));
-
-    const errorSafely = (event: string, fields: SafeLogFields) =>
-      logger.error(event, fields).pipe(Effect.catchCause(() => Effect.void));
-
     const addFallbackGenerationCosts = (context: QueryExecutionState) =>
       Effect.forEach(
         context.fallbackGenerationIds,
@@ -1220,7 +1117,7 @@ export const QueryServiceLive = Layer.effect(
             Effect.catchCause((cause) =>
               Cause.hasInterruptsOnly(cause)
                 ? Effect.interrupt
-                : warnSafely("query.cost_lookup_failed", {
+                : logger.warn("query.cost_lookup_failed", {
                     correlation_id: context.correlationId,
                     generation_id: generationId,
                     ...logErrorFields(Cause.squash(cause)),
@@ -1430,8 +1327,8 @@ export const QueryServiceLive = Layer.effect(
         const transient = error._tag === "RetryableModelError" || error.transient === true;
         const fields = { correlation_id: context.correlationId, model, ...logErrorFields(error) };
         yield* transient
-          ? warnSafely("query.stream_retryable", fields)
-          : errorSafely("query.stream_failed", fields);
+          ? logger.warn("query.stream_retryable", fields)
+          : logger.error("query.stream_failed", fields);
         if (!transient || context.modelIndex + 1 >= context.models.length)
           return { kind: "failed", error: sanitizedStreamError };
         context.modelIndex += 1;
@@ -1457,7 +1354,7 @@ export const QueryServiceLive = Layer.effect(
         const round = yield* Effect.result(
           runModelRound(context, model, onToken).pipe(
             Effect.tapDefect((defect) =>
-              errorSafely("query.stream_failed", {
+              logger.error("query.stream_failed", {
                 correlation_id: context.correlationId,
                 model,
                 ...logErrorFields(defect),
@@ -1520,7 +1417,7 @@ export const QueryServiceLive = Layer.effect(
       });
 
     const logToolFailure = (context: QueryExecutionState, error: unknown) =>
-      errorSafely("query.stream_failed", {
+      logger.error("query.stream_failed", {
         correlation_id: context.correlationId,
         model: context.selectedModel,
         ...logErrorFields(error),
@@ -1593,20 +1490,14 @@ export const QueryServiceLive = Layer.effect(
     ) =>
       Effect.gen(function* () {
         const vaultLabel = input.vaultLabel;
-        const [vaultConfig, tags] = yield* Effect.all(
-          [
-            readVaultConfig(storage, vaultId).pipe(
-              Effect.catchTag("VaultConfigMalformed", () => Effect.succeed(defaultVaultConfigFile)),
-            ),
-            distinctTags(vaultId),
-          ],
-          { concurrency: "unbounded" },
-        );
-        const webSearchEnabled = vaultConfig.webSearch && parallel.hasApiKey;
+        const [config, tags] = yield* Effect.all([vaultConfig(vaultId), distinctTags(vaultId)], {
+          concurrency: "unbounded",
+        });
+        const webSearchEnabled = config.webSearch && parallel.hasApiKey;
         const systemPrompt = yield* buildSystemPrompt(
           vaultId,
           vaultLabel,
-          vaultConfig,
+          config,
           input.mode,
           webSearchEnabled,
         );
@@ -1620,7 +1511,7 @@ export const QueryServiceLive = Layer.effect(
           vaultLabel,
           mode: input.mode,
           correlationId,
-          tools: toolDefinitions(tags, vaultConfig.enrichedFields, webSearchEnabled),
+          tools: toolDefinitions(tags, config.enrichedFields, webSearchEnabled),
           turnStart: 1 + prior.length,
           webSearchEnabled,
           trace: {
@@ -1695,7 +1586,7 @@ export const QueryServiceLive = Layer.effect(
           llm_rounds: context.trace.llmRounds,
           tool_calls: context.trace.toolCalls,
           cost_usd: Number(context.costUsd.toFixed(6)),
-          duration_ms: Date.now() - context.startedAt,
+          duration_ms: (yield* clock.now).getTime() - context.startedAt,
         });
       });
 
@@ -1706,7 +1597,7 @@ export const QueryServiceLive = Layer.effect(
       prior: readonly LlmMessage[],
     ) =>
       Effect.gen(function* () {
-        const startedAt = Date.now();
+        const startedAt = (yield* clock.now).getTime();
         const correlationId = `q-${randomUUID()}`;
         return yield* Effect.gen(function* () {
           const context = yield* setupContext(
@@ -1730,12 +1621,14 @@ export const QueryServiceLive = Layer.effect(
           Effect.catchCause((cause) =>
             Cause.hasInterruptsOnly(cause)
               ? Effect.failCause(cause)
-              : errorSafely("query.stream_setup_failed", {
-                  correlation_id: correlationId,
-                  vault_id: vaultId,
-                  user_id: userId,
-                  ...logErrorFields(Cause.squash(cause)),
-                }).pipe(Effect.andThen(Effect.failCause(cause))),
+              : logger
+                  .error("query.stream_setup_failed", {
+                    correlation_id: correlationId,
+                    vault_id: vaultId,
+                    user_id: userId,
+                    ...logErrorFields(Cause.squash(cause)),
+                  })
+                  .pipe(Effect.andThen(Effect.failCause(cause))),
           ),
         );
       });
@@ -1752,7 +1645,7 @@ export const QueryServiceLive = Layer.effect(
           Effect.catchCause((cause) =>
             Cause.hasInterruptsOnly(cause)
               ? Effect.interrupt
-              : errorSafely("query.stream_finalize_failed", {
+              : logger.error("query.stream_finalize_failed", {
                   correlation_id: state.correlationId,
                   vault_id: state.vaultId,
                   user_id: state.userId,
@@ -1799,7 +1692,14 @@ export const QueryServiceLive = Layer.effect(
                 { role: "user", content: trimmed },
               ],
             })
-            .pipe(Effect.orDie);
+            .pipe(
+              Effect.mapError(
+                () =>
+                  new ServiceUnavailable({
+                    detail: "The model provider is unavailable. Try again in a minute.",
+                  }),
+              ),
+            );
           return { thematic_hint: completion.text } satisfies DraftHintResponse;
         }),
     } satisfies QueryServiceShape;
