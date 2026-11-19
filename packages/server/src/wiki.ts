@@ -40,7 +40,10 @@ const articleOverview = (row: typeof wikiArticles.$inferSelect): WikiArticleOver
   return wikiOverview(row);
 };
 
-const listedArticleConditions = (vaultId: Uuid, query: WikiListQuery) => {
+export const listedArticleConditions = (
+  vaultId: Uuid,
+  query: Pick<WikiListQuery, "run" | "contains" | "tag">,
+) => {
   const conditions = liveArticleConditions(vaultId);
   if (query.run !== undefined) {
     conditions.push(eq(wikiArticles.renderRunId, query.run));
@@ -63,52 +66,63 @@ const listedArticleConditions = (vaultId: Uuid, query: WikiListQuery) => {
   return conditions;
 };
 
+export const articleOrder = {
+  linked: sql`(select count(*) from ${backlinks} where ${backlinks.targetArticleId} = ${wikiArticles.id}) desc, lower(${wikiArticles.title})`,
+  title: asc(sql`lower(${wikiArticles.title})`),
+  recent: desc(wikiArticles.updatedAt),
+} satisfies Record<string, SQL>;
+
+export const listArticlePage = (
+  db: Database["Service"],
+  params: PageParams,
+  conditions: readonly SQL[],
+  orderBy: SQL,
+) =>
+  Effect.gen(function* () {
+    const where = and(...conditions);
+    const countRows = yield* db.query((d) =>
+      d
+        .select({ total: sql<number>`count(*)::int` })
+        .from(wikiArticles)
+        .where(where),
+    );
+    const rows = yield* db.query((d) =>
+      d
+        .select()
+        .from(wikiArticles)
+        .where(where)
+        .orderBy(orderBy, wikiArticles.id)
+        .limit(params.limit)
+        .offset(params.offset),
+    );
+    return pageEnvelope(rows.map(articleOverview), params, oneTotal(countRows));
+  });
+
 export const WikiServiceLive = Layer.effect(
   WikiService,
   Effect.gen(function* () {
     const db = yield* Database;
     const access = yield* VaultAccessService;
 
-    const listPage = (params: PageParams, conditions: readonly SQL[], orderBy: SQL) =>
-      Effect.gen(function* () {
-        const where = and(...conditions);
-        const countRows = yield* db.query((d) =>
-          d
-            .select({ total: sql<number>`count(*)::int` })
-            .from(wikiArticles)
-            .where(where),
-        );
-        const rows = yield* db.query((d) =>
-          d
-            .select()
-            .from(wikiArticles)
-            .where(where)
-            .orderBy(orderBy, wikiArticles.id)
-            .limit(params.limit)
-            .offset(params.offset),
-        );
-        return pageEnvelope(rows.map(articleOverview), params, oneTotal(countRows));
-      });
-
     return {
       listArticles: (userId, vaultId, query) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
-          return yield* listPage(
+          return yield* listArticlePage(
+            db,
             query,
             listedArticleConditions(vaultId, query),
-            query.sort === "linked"
-              ? sql`(select count(*) from ${backlinks} where ${backlinks.targetArticleId} = ${wikiArticles.id}) desc, lower(${wikiArticles.title})`
-              : asc(sql`lower(${wikiArticles.title})`),
+            articleOrder[query.sort ?? "title"],
           );
         }),
       listRecent: (userId, vaultId, params) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
-          return yield* listPage(
+          return yield* listArticlePage(
+            db,
             params,
             liveArticleConditions(vaultId),
-            desc(wikiArticles.updatedAt),
+            articleOrder.recent,
           );
         }),
     } satisfies WikiServiceShape;

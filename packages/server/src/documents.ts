@@ -111,6 +111,127 @@ const safeDocumentReadPath = (path: string) => {
 
 const first = <A>(rows: readonly A[]) => rows[0];
 
+export const chunkRange = (
+  db: Database["Service"],
+  storage: ContentStorage["Service"],
+  vaultId: Uuid,
+  path: string,
+  start: number,
+  end: number,
+) =>
+  Effect.gen(function* () {
+    const rows = yield* db.query((d) =>
+      d
+        .select({
+          path: searchIndex.path,
+          chunkIndex: searchIndex.chunkIndex,
+          heading: searchIndex.heading,
+          body: searchIndex.body,
+          contentHash: searchIndex.contentHash,
+        })
+        .from(searchIndex)
+        .where(
+          and(
+            eq(searchIndex.vaultId, vaultId),
+            eq(searchIndex.path, path),
+            gte(searchIndex.chunkIndex, start),
+            lte(searchIndex.chunkIndex, end),
+          ),
+        )
+        .orderBy(asc(searchIndex.chunkIndex)),
+    );
+    return yield* withFootnoteNotes(storage, vaultId, rows);
+  });
+
+export const articleLinks = (db: Database["Service"], vaultId: Uuid, path: string) =>
+  Effect.gen(function* () {
+    const sourceArticle = yield* db.query((d) =>
+      d
+        .select({ id: wikiArticles.id, topicId: wikiArticles.topicId })
+        .from(wikiArticles)
+        .where(
+          and(
+            eq(wikiArticles.vaultId, vaultId),
+            eq(wikiArticles.filePath, path),
+            eq(wikiArticles.archived, false),
+          ),
+        )
+        .limit(1),
+    );
+    const source = first(sourceArticle);
+    if (source === undefined) return undefined;
+
+    const outgoingArticle = alias(wikiArticles, "outgoing_article");
+    const incomingArticle = alias(wikiArticles, "incoming_article");
+    const outgoing = yield* db.query((d) =>
+      d
+        .select({
+          filePath: outgoingArticle.filePath,
+          title: outgoingArticle.title,
+          precis: outgoingArticle.precis,
+          updatedAt: outgoingArticle.updatedAt,
+        })
+        .from(backlinks)
+        .innerJoin(outgoingArticle, eq(outgoingArticle.id, backlinks.targetArticleId))
+        .where(
+          and(
+            eq(backlinks.sourceArticleId, source.id),
+            eq(outgoingArticle.vaultId, vaultId),
+            eq(outgoingArticle.archived, false),
+          ),
+        )
+        .orderBy(asc(sql`lower(${outgoingArticle.title})`)),
+    );
+    const incoming = yield* db.query((d) =>
+      d
+        .select({
+          filePath: incomingArticle.filePath,
+          title: incomingArticle.title,
+          precis: incomingArticle.precis,
+          updatedAt: incomingArticle.updatedAt,
+        })
+        .from(backlinks)
+        .innerJoin(incomingArticle, eq(incomingArticle.id, backlinks.sourceArticleId))
+        .where(
+          and(
+            eq(backlinks.targetArticleId, source.id),
+            eq(incomingArticle.vaultId, vaultId),
+            eq(incomingArticle.archived, false),
+          ),
+        )
+        .orderBy(asc(sql`lower(${incomingArticle.title})`)),
+    );
+
+    const relatedArticle = alias(wikiArticles, "related_article");
+    const related = yield* db.query((d) =>
+      d
+        .select({
+          filePath: relatedArticle.filePath,
+          title: relatedArticle.title,
+          precis: relatedArticle.precis,
+          updatedAt: relatedArticle.updatedAt,
+        })
+        .from(topicRelated)
+        .innerJoin(relatedArticle, eq(relatedArticle.topicId, topicRelated.relatedTopicId))
+        .where(
+          and(
+            eq(topicRelated.topicId, source.topicId),
+            gte(topicRelated.sharedDocuments, 2),
+            eq(relatedArticle.vaultId, vaultId),
+            eq(relatedArticle.archived, false),
+          ),
+        )
+        .orderBy(desc(topicRelated.jaccard), asc(sql`lower(${relatedArticle.title})`))
+        .limit(5),
+    );
+
+    return {
+      outgoing: outgoing.map(wikiOverview),
+      incoming: incoming.map(wikiOverview),
+      related: related.map(wikiOverview),
+    } satisfies LinkedArticles;
+  });
+
 export const DocumentsServiceLive = Layer.effect(
   DocumentsService,
   Effect.gen(function* () {
@@ -288,29 +409,15 @@ export const DocumentsServiceLive = Layer.effect(
     const readChunks = (userId: Uuid, vaultId: Uuid, query: ChunkRangeQuery) =>
       Effect.gen(function* () {
         yield* access.requireMember(userId, vaultId);
-        const end = Math.min(query.end, query.start + MAX_CHUNK_SPAN - 1);
-        const rows = yield* db.query((d) =>
-          d
-            .select({
-              path: searchIndex.path,
-              chunkIndex: searchIndex.chunkIndex,
-              heading: searchIndex.heading,
-              body: searchIndex.body,
-              contentHash: searchIndex.contentHash,
-            })
-            .from(searchIndex)
-            .where(
-              and(
-                eq(searchIndex.vaultId, vaultId),
-                eq(searchIndex.path, query.path),
-                gte(searchIndex.chunkIndex, Math.max(0, query.start)),
-                lte(searchIndex.chunkIndex, end),
-              ),
-            )
-            .orderBy(asc(searchIndex.chunkIndex)),
+        const rows = yield* chunkRange(
+          db,
+          storage,
+          vaultId,
+          query.path,
+          Math.max(0, query.start),
+          Math.min(query.end, query.start + MAX_CHUNK_SPAN - 1),
         );
-        const noted = yield* withFootnoteNotes(storage, vaultId, rows);
-        return noted.map((row) => ({
+        return rows.map((row) => ({
           path: row.path,
           chunk_index: row.chunkIndex,
           heading: row.heading,
@@ -322,93 +429,10 @@ export const DocumentsServiceLive = Layer.effect(
     const readLinks = (userId: Uuid, vaultId: Uuid, query: LinkQuery) =>
       Effect.gen(function* () {
         yield* access.requireMember(userId, vaultId);
-        const sourceArticle = yield* db.query((d) =>
-          d
-            .select({ id: wikiArticles.id, topicId: wikiArticles.topicId })
-            .from(wikiArticles)
-            .where(
-              and(
-                eq(wikiArticles.vaultId, vaultId),
-                eq(wikiArticles.filePath, query.path),
-                eq(wikiArticles.archived, false),
-              ),
-            )
-            .limit(1),
-        );
-        const source = first(sourceArticle);
-        if (source === undefined) {
+        const links = yield* articleLinks(db, vaultId, query.path);
+        if (links === undefined)
           return yield* new NotFound({ detail: `Not a wiki article: ${query.path}` });
-        }
-
-        const outgoingArticle = alias(wikiArticles, "outgoing_article");
-        const incomingArticle = alias(wikiArticles, "incoming_article");
-        const outgoing = yield* db.query((d) =>
-          d
-            .select({
-              filePath: outgoingArticle.filePath,
-              title: outgoingArticle.title,
-              precis: outgoingArticle.precis,
-              updatedAt: outgoingArticle.updatedAt,
-            })
-            .from(backlinks)
-            .innerJoin(outgoingArticle, eq(outgoingArticle.id, backlinks.targetArticleId))
-            .where(
-              and(
-                eq(backlinks.sourceArticleId, source.id),
-                eq(outgoingArticle.vaultId, vaultId),
-                eq(outgoingArticle.archived, false),
-              ),
-            )
-            .orderBy(asc(sql`lower(${outgoingArticle.title})`)),
-        );
-        const incoming = yield* db.query((d) =>
-          d
-            .select({
-              filePath: incomingArticle.filePath,
-              title: incomingArticle.title,
-              precis: incomingArticle.precis,
-              updatedAt: incomingArticle.updatedAt,
-            })
-            .from(backlinks)
-            .innerJoin(incomingArticle, eq(incomingArticle.id, backlinks.sourceArticleId))
-            .where(
-              and(
-                eq(backlinks.targetArticleId, source.id),
-                eq(incomingArticle.vaultId, vaultId),
-                eq(incomingArticle.archived, false),
-              ),
-            )
-            .orderBy(asc(sql`lower(${incomingArticle.title})`)),
-        );
-
-        const relatedArticle = alias(wikiArticles, "related_article");
-        const related = yield* db.query((d) =>
-          d
-            .select({
-              filePath: relatedArticle.filePath,
-              title: relatedArticle.title,
-              precis: relatedArticle.precis,
-              updatedAt: relatedArticle.updatedAt,
-            })
-            .from(topicRelated)
-            .innerJoin(relatedArticle, eq(relatedArticle.topicId, topicRelated.relatedTopicId))
-            .where(
-              and(
-                eq(topicRelated.topicId, source.topicId),
-                gte(topicRelated.sharedDocuments, 2),
-                eq(relatedArticle.vaultId, vaultId),
-                eq(relatedArticle.archived, false),
-              ),
-            )
-            .orderBy(desc(topicRelated.jaccard), asc(sql`lower(${relatedArticle.title})`))
-            .limit(5),
-        );
-
-        return {
-          outgoing: outgoing.map(wikiOverview),
-          incoming: incoming.map(wikiOverview),
-          related: related.map(wikiOverview),
-        } satisfies LinkedArticles;
+        return links;
       });
 
     return {
