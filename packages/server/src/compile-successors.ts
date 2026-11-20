@@ -66,7 +66,7 @@ export const pickSuccessors = (
           const candidates = shortlist
             .map(([id, count], index) => {
               const article = currentById.get(id);
-              return `${index + 1}. ${article?.title ?? ""} — ${article?.description ?? ""} (holds ${count} of the retired article's ${ideas.length} ideas)`;
+              return `${index + 1}. ${article?.title ?? ""} — ${article?.description ?? ""} (${count} of its ${ideas.length} ideas)`;
             })
             .join("\n");
           const answer = yield* runner

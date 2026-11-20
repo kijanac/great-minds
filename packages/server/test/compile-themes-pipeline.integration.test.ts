@@ -172,7 +172,7 @@ const reply = (input: CompleteInput): string => {
         : [],
     });
   if (content.startsWith("A wiki article mentions")) return JSON.stringify({ choice: 1 });
-  if (content.startsWith("You are maintaining a wiki")) return JSON.stringify({ choice: 1 });
+  if (content.startsWith("A wiki built from a library of documents retired")) return JSON.stringify({ choice: 1 });
   if (content.startsWith("A wiki article links")) return JSON.stringify({ verdict: "yes" });
   throw new Error(`unexpected compile call: ${content.slice(0, 80)}`);
 };

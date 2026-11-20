@@ -173,7 +173,7 @@ describe("default prompts", () => {
       "judge_same_entry.md": "dae66ffc8fecb4e71f3eeed42ad8a3bf4ba1028f7b5c51425bb6bbe72f00ee3e",
       "judge_same_topic.md": "7549d1683b3d55d02778bc391231cb1dd75f0f677ab753a30ccf84e0cc0ed4a4",
       "pick_link_target.md": "58ac245e4a62e13cc46db5ba7a8bdf1c437c4759f721afa3e8d96472bdd3b679",
-      "pick_successor.md": "9a3f19ec4b44f45167338e94f11133234527f7c9fa4aa1410bfe5590f718d63f",
+      "pick_successor.md": "369765e89dead645646031824cbf2796eecdbb5d2d47f9358f47f1551612d7dd",
       "place_in_article.md": "c7467eb781f0e545298ca85da6cfc8cd33fdea301d8597b79e342efa064d67fc",
       "propose_topics.md": "d906ea9a0c763f7747f56fc9dcb2e8524e85780e9279e4a5669344881d6c1e49",
       "query.md": "d02c29eb9d1367ef61e230741aee22feb3a2dea6564956ff2a433a34c876afee",

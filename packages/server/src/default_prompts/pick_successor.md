@@ -1,4 +1,4 @@
-You are maintaining a wiki built from a library of documents.{vault_focus} After an update, the article below was retired. Its material now sits in the current articles listed under it. Decide which one of them, if any, a reader who follows an old link to the retired article should be sent to: the current article that covers the retired article's subject, whether under a new name or as part of a broader article. Answer 0 if none does: an article that only shares some of its material, covers only a narrower part of its subject, or is about a different subject, period or scope does not count.
+A wiki built from a library of documents retired the article below.{vault_focus} Which current article, if any, should a reader following an old link to it be sent to: the one that best covers its subject, whether renamed or part of a broader article? Answer 0 if none is about its subject.
 
 Retired article:
 
