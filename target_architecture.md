@@ -81,7 +81,7 @@ One question per changed document: read the whole document and return its title,
 - **Articles** (`compile-articles.ts`):
   - A theme covering at least 5 documents can be an article. Big themes within 0.35 embedding distance of each other, plus each big theme's 3 nearest, are asked whether they are the same entry (`judge_same_entry`); same entries merge into one article, again without chaining.
   - A smaller theme is asked whether it belongs in one of its nearest articles (`place_in_article`, up to 3 candidates within 0.4 distance); if yes it joins that article, otherwise it is left out.
-- **Registry:** articles keep their existing topic id and slug where they continue an earlier article; new ones get a slug from their title. Articles that no longer exist are archived, with a pointer to the article that absorbed them when there is one.
+- **Registry:** an article keeps its topic id and slug when its leading topic is unchanged; new ones get a slug from their title. Articles that no longer exist are archived. Each archived article gets a pointer to its successor: the article its theme was merged into, or else the one the map model picks (`pick_successor`) from the three current articles holding most of its ideas, or none.
 
 ### 4. Derive: relating articles
 

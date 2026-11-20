@@ -13,6 +13,7 @@ import {
   type ValidatedTopic,
 } from "./compile-contract.ts";
 import { findLinks, withLinks } from "./compile-links.ts";
+import { pickSuccessors } from "./compile-successors.ts";
 import {
   groupThemes,
   loadBlocks,
@@ -208,7 +209,13 @@ export const makeThemesPipeline = (options: {
 
       const existing = yield* db.query((d) =>
         d
-          .select({ topicId: topics.topicId, slug: topics.slug, status: topics.articleStatus })
+          .select({
+            topicId: topics.topicId,
+            slug: topics.slug,
+            status: topics.articleStatus,
+            title: topics.title,
+            description: topics.description,
+          })
           .from(topics)
           .where(eq(topics.vaultId, vaultId)),
       );
@@ -229,16 +236,42 @@ export const makeThemesPipeline = (options: {
           article.themeIds.map((themeId) => [themeId, article.id] as const),
         ),
       );
+      const retiring = existing.filter(
+        (topic) => !kept.has(topic.topicId) && topic.status !== "archived",
+      );
+      const successors = yield* pickSuccessors(
+        { db, runner },
+        retiring
+          .filter((topic) => !articleOfTheme.has(topic.topicId))
+          .map((topic) => ({
+            id: topic.topicId,
+            title: topic.title,
+            description: topic.description,
+          })),
+        built.articles,
+        {
+          model: config.mapModel,
+          prompt: yield* prompt("pick_successor"),
+          temperature: Option.getOrUndefined(config.mapTemperature),
+          reasoningEffort: Option.getOrUndefined(config.mapReasoningEffort),
+          concurrency: config.compileEnrichConcurrency,
+        },
+      );
+      yield* warn(
+        runId,
+        "build_articles",
+        successors.failedQuestions,
+        "successor questions failed",
+      );
       yield* options.archiveTransitions(
         vaultId,
         runId,
-        existing
-          .filter((topic) => !kept.has(topic.topicId) && topic.status !== "archived")
-          .map((topic) => ({
-            topicId: topic.topicId,
-            slug: topic.slug,
-            supersededBy: articleOfTheme.get(topic.topicId) ?? null,
-          })),
+        retiring.map((topic) => ({
+          topicId: topic.topicId,
+          slug: topic.slug,
+          supersededBy:
+            articleOfTheme.get(topic.topicId) ?? successors.successorOf.get(topic.topicId) ?? null,
+        })),
       );
       const taken = new Set(validated.map((topic) => topic.slug));
       const vacated = existing

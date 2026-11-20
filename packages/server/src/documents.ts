@@ -318,16 +318,27 @@ export const DocumentsServiceLive = Layer.effect(
           return undefined;
         }
         let successorSlug: string | null = null;
-        if (topic.supersededBy !== null) {
-          const successorId = topic.supersededBy;
-          const successorRows = yield* db.query((d) =>
-            d
-              .select({ slug: topics.slug })
-              .from(topics)
-              .where(eq(topics.topicId, successorId))
-              .limit(1),
+        const followed = new Set([topic.topicId]);
+        let successorId = topic.supersededBy;
+        while (successorId !== null && !followed.has(successorId)) {
+          const id = successorId;
+          followed.add(id);
+          const successor = first(
+            yield* db.query((d) =>
+              d
+                .select({
+                  slug: topics.slug,
+                  status: topics.articleStatus,
+                  supersededBy: topics.supersededBy,
+                })
+                .from(topics)
+                .where(eq(topics.topicId, id))
+                .limit(1),
+            ),
           );
-          successorSlug = first(successorRows)?.slug ?? null;
+          if (successor === undefined) break;
+          successorSlug = successor.slug;
+          successorId = successor.status === "archived" ? successor.supersededBy : null;
         }
         return {
           article,

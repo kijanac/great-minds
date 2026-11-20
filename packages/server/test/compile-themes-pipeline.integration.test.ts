@@ -172,6 +172,7 @@ const reply = (input: CompleteInput): string => {
         : [],
     });
   if (content.startsWith("A wiki article mentions")) return JSON.stringify({ choice: 1 });
+  if (content.startsWith("You are maintaining a wiki")) return JSON.stringify({ choice: 1 });
   if (content.startsWith("A wiki article links")) return JSON.stringify({ verdict: "yes" });
   throw new Error(`unexpected compile call: ${content.slice(0, 80)}`);
 };
@@ -272,7 +273,12 @@ const rows = () =>
       return {
         topics: yield* db.query((d) =>
           d
-            .select({ id: topics.topicId, slug: topics.slug, status: topics.articleStatus })
+            .select({
+              id: topics.topicId,
+              slug: topics.slug,
+              status: topics.articleStatus,
+              supersededBy: topics.supersededBy,
+            })
             .from(topics),
         ),
         links: yield* db.query((d) => d.select().from(topicLinks)),
@@ -360,6 +366,12 @@ describe("the themes Update pipeline", () => {
               title: "Old topic",
               precis: "From the previous pipeline.",
             });
+            yield* tx.insert(topicMembership).values(
+              (subjects[0]?.documents ?? []).map((n) => ({
+                topicId: id.oldTopic,
+                ideaId: idea(n),
+              })),
+            );
           }),
         );
       }),
@@ -380,11 +392,20 @@ describe("the themes Update pipeline", () => {
     expect(files.has("wiki/old-topic.md")).toBe(false);
     expect(files.has(`archive/${id.oldTopic}/old-topic.md`)).toBe(true);
     const state = await rows();
-    expect(state.topics.find((topic) => topic.id === id.oldTopic)?.status).toBe("archived");
+    expect(state.topics.find((topic) => topic.id === id.oldTopic)).toMatchObject({
+      status: "archived",
+      supersededBy: validated.find((topic) => topic.slug === subjects[0]?.name.toLowerCase())
+        ?.topicId,
+    });
     expect(state.topics.filter((topic) => topic.status === "rendered")).toHaveLength(2);
     expect(state.links).toEqual([{ sourceTopicId: alpha?.topicId, targetTopicId: beta?.topicId }]);
     expect(state.backlinks).toHaveLength(1);
-    expect(state.memberships).toHaveLength(10);
+    expect(
+      state.memberships.filter((membership) => membership.topicId !== id.oldTopic),
+    ).toHaveLength(10);
+    expect(
+      state.memberships.filter((membership) => membership.topicId === id.oldTopic),
+    ).toHaveLength(5);
     expect(state.articles.find((article) => article.path === "wiki/alpha.md")?.precis).toBe(
       "Alpha grew beside the Beta movement.",
     );
