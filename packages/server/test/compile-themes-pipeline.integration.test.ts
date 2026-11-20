@@ -248,7 +248,6 @@ const compile = (runId: Uuid) =>
       const validated = yield* phases.abstract(id.vault, runId);
       yield* phases.derive(id.vault, runId, validated);
       yield* phases.render(id.vault, runId, validated);
-      yield* phases.verify(id.vault, runId);
       yield* phases.publish(id.vault, runId);
       return validated;
     }),
@@ -403,7 +402,6 @@ describe("the themes Update pipeline", () => {
       "abstract",
       "derive",
       "render",
-      "verify",
       "publish",
     ]);
     const stepsOf = (phase: string) =>

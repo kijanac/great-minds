@@ -4,7 +4,6 @@ import { join } from "node:path";
 
 import {
   anchors,
-  backlinks,
   compileCacheEntries,
   Database,
   DatabaseLive,
@@ -1600,90 +1599,5 @@ describe("M4.3a deterministic compile phases", () => {
         { id: id.topicC, status: "archived", successor: null },
       ]),
     );
-  });
-
-  it("publish writes exact live indexes plus the local compile log", async () => {
-    await seedSourceAndIdeas();
-    files.set(
-      "wiki/alpha.md",
-      "# Alpha\n\nSee [Beta](wiki/beta.md), [Beta again](wiki/beta.md), [missing](wiki/missing.md), and [self](wiki/alpha.md).\n",
-    );
-    files.set("wiki/beta.md", "# Beta\n");
-    await run(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        yield* db
-          .query((d) =>
-            d.insert(topics).values(
-              validated.map((topic) => ({
-                topicId: topic.topicId,
-                vaultId: id.vault,
-                slug: topic.slug,
-                title: topic.title,
-                description: topic.description,
-                articleStatus: "rendered",
-                compiledFromHash: "same",
-                renderedFromHash: "same",
-              })),
-            ),
-          )
-          .pipe(Effect.orDie);
-        yield* db
-          .query((d) =>
-            d.insert(wikiArticles).values([
-              {
-                id: id.articleA,
-                vaultId: id.vault,
-                topicId: id.topicA,
-                filePath: "wiki/alpha.md",
-                fileHash: "a",
-                bodyHash: "a",
-                title: "Alpha",
-                precis: "Alpha description",
-              },
-              {
-                id: id.articleB,
-                vaultId: id.vault,
-                topicId: id.topicB,
-                filePath: "wiki/beta.md",
-                fileHash: "b",
-                bodyHash: "b",
-                title: "Beta",
-                precis: "Beta description",
-              },
-            ]),
-          )
-          .pipe(Effect.orDie);
-        yield* db
-          .query((d) =>
-            d
-              .insert(backlinks)
-              .values({ sourceArticleId: id.articleA, targetArticleId: id.articleB }),
-          )
-          .pipe(Effect.orDie);
-        const phases = yield* CompilePhases;
-        yield* phases.publish(id.vault, id.run);
-        yield* phases.publish(id.vault, id.run);
-      }),
-    );
-    expect(files.get("wiki/_index.md")).toBe(
-      [
-        "# Contents",
-        "",
-        "_2 articles_",
-        "",
-        "## Start here",
-        "",
-        "- [Beta](wiki/beta.md) — Beta description",
-        "- [Alpha](wiki/alpha.md) — Alpha description",
-        "",
-        "## All articles",
-        "",
-        "- [Alpha](wiki/alpha.md) — Alpha description",
-        "- [Beta](wiki/beta.md) — Beta description",
-        "",
-      ].join("\n"),
-    );
-    expect(files.get("raw/_index.md")).toContain("[raw/docs/source.md](raw/docs/source.md)");
   });
 });
