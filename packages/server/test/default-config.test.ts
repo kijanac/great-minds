@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { PlacementAnswer } from "../src/compile-articles.ts";
 import { Check, MentionList, Pick } from "../src/compile-links.ts";
+import { SuccessorPick } from "../src/compile-successors.ts";
 import { ProposalAnswer, RelationAnswer, responseFormat } from "../src/compile-themes.ts";
 import { WrittenArticle } from "../src/compile-write.ts";
 import { AppConfig, AppConfigLive } from "../src/config.ts";
@@ -172,6 +173,7 @@ describe("default prompts", () => {
       "judge_same_entry.md": "dae66ffc8fecb4e71f3eeed42ad8a3bf4ba1028f7b5c51425bb6bbe72f00ee3e",
       "judge_same_topic.md": "7549d1683b3d55d02778bc391231cb1dd75f0f677ab753a30ccf84e0cc0ed4a4",
       "pick_link_target.md": "58ac245e4a62e13cc46db5ba7a8bdf1c437c4759f721afa3e8d96472bdd3b679",
+      "pick_successor.md": "369765e89dead645646031824cbf2796eecdbb5d2d47f9358f47f1551612d7dd",
       "place_in_article.md": "c7467eb781f0e545298ca85da6cfc8cd33fdea301d8597b79e342efa064d67fc",
       "propose_topics.md": "d906ea9a0c763f7747f56fc9dcb2e8524e85780e9279e4a5669344881d6c1e49",
       "query.md": "d02c29eb9d1367ef61e230741aee22feb3a2dea6564956ff2a433a34c876afee",
@@ -195,6 +197,7 @@ describe("model reply formats", () => {
       document_topics: responseFormat("document_topics", ProposalAnswer),
       link_check: responseFormat("link_check", Check),
       link_pick: responseFormat("link_pick", Pick),
+      successor_pick: responseFormat("successor_pick", SuccessorPick),
       theme_attach: responseFormat("theme_attach", PlacementAnswer),
       topic_relation: responseFormat("topic_relation", RelationAnswer),
     };
@@ -207,6 +210,7 @@ describe("model reply formats", () => {
       document_topics: "a370bb923c9c4756eacf6b901a2a9029aff4632b9972d6b72e4f025bf177604d",
       link_check: "5e029fe9e5cb4cdcc2cd12ba25d57ee2a81877659662268abbcb48660a74ea7a",
       link_pick: "19d1d2d25b94eb0ace0d4d9c45dc62cd1e2732155e006b47ee88f0074c4f8ed3",
+      successor_pick: "313ca52ace466a6f04b986c75d237a94e8a6011f0cd714c5df64529751bd7461",
       theme_attach: "c63bcbb8110a2905777dda3e752e172ffb0a4d33cf003a375e09ebd419dfe6be",
       topic_relation: "a336dea96570573a839e3e4cd989b429786cb245949a9f261684a106c41143d1",
     });
