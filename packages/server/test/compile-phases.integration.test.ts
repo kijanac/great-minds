@@ -1562,6 +1562,27 @@ describe("M4.3a deterministic compile phases", () => {
             d.insert(topicLinks).values({ sourceTopicId: id.topicB, targetTopicId: id.topicA }),
           )
           .pipe(Effect.orDie);
+        yield* db
+          .query((d) =>
+            d.insert(wikiArticles).values({
+              id: id.articleB,
+              vaultId: id.vault,
+              topicId: id.topicB,
+              filePath: "wiki/beta.md",
+              fileHash: "file",
+              bodyHash: "body",
+              title: "Beta",
+              precis: "B",
+            }),
+          )
+          .pipe(Effect.orDie);
+        yield* db
+          .query((d) =>
+            d
+              .insert(backlinks)
+              .values({ sourceArticleId: id.articleB, targetArticleId: id.articleA }),
+          )
+          .pipe(Effect.orDie);
         const phases = yield* CompilePhases;
         yield* phases.archiveTransitions(id.vault, id.run, [
           { topicId: id.topicA, slug: "alpha", supersededBy: id.topicB },
@@ -1571,6 +1592,7 @@ describe("M4.3a deterministic compile phases", () => {
           [],
         );
         expect(yield* db.query((d) => d.select().from(topicLinks)).pipe(Effect.orDie)).toEqual([]);
+        expect(yield* db.query((d) => d.select().from(backlinks)).pipe(Effect.orDie)).toEqual([]);
       }),
     );
     expect(files.has("wiki/alpha.md")).toBe(false);

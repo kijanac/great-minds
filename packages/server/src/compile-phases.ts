@@ -472,16 +472,7 @@ export const CompilePhasesLive = Layer.effect(
       output: { readonly body: string; readonly tags: readonly string[] },
     ) =>
       Effect.gen(function* () {
-        const tags: string[] = [];
-        const seen = new Set<string>();
-        for (const raw of output.tags) {
-          const tag = raw.trim().toLowerCase().replaceAll(" ", "-");
-          if (tag.length === 0) throw new Error("tag is empty after normalization");
-          if (!seen.has(tag)) {
-            seen.add(tag);
-            tags.push(tag);
-          }
-        }
+        const tags = [...output.tags];
         const path = `wiki/${topic.slug}.md`;
         const precis = openingSentence(output.body) || topic.description;
         const previousRows = yield* db.query((d) =>
@@ -576,6 +567,20 @@ export const CompilePhasesLive = Layer.effect(
         yield* db.query((d) =>
           d.delete(topicMembership).where(inUuidArray(topicMembership.topicId, archived)),
         );
+        yield* db.query((d) => {
+          const pages = d
+            .select({ id: wikiArticles.id })
+            .from(wikiArticles)
+            .where(inUuidArray(wikiArticles.topicId, archived));
+          return d
+            .delete(backlinks)
+            .where(
+              or(
+                inArray(backlinks.sourceArticleId, pages),
+                inArray(backlinks.targetArticleId, pages),
+              ),
+            );
+        });
         yield* db.query((d) =>
           d
             .delete(topicLinks)

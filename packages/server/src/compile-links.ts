@@ -96,7 +96,7 @@ export const withLinks = (
   const split = markdown.indexOf("\n\n---\n\n");
   const prose = split === -1 ? markdown : markdown.slice(0, split);
   const searchable = headingFree(prose);
-  const spans: { start: number; end: number; href: string }[] = [];
+  const spans: { start: number; end: number; href: string; target: Uuid }[] = [];
   for (const link of links) {
     const href = hrefOf(link.target);
     if (href === undefined) continue;
@@ -104,12 +104,15 @@ export const withLinks = (
     if (start === -1) continue;
     const end = start + link.phrase.length;
     if (spans.some((span) => start < span.end && span.start < end)) continue;
-    spans.push({ start, end, href });
+    spans.push({ start, end, href, target: link.target });
   }
   let linked = prose;
   for (const span of spans.toSorted((left, right) => right.start - left.start))
     linked = `${linked.slice(0, span.start)}[${linked.slice(span.start, span.end)}](${span.href})${linked.slice(span.end)}`;
-  return split === -1 ? linked : `${linked}${markdown.slice(split)}`;
+  return {
+    markdown: split === -1 ? linked : `${linked}${markdown.slice(split)}`,
+    placed: [...new Set(spans.map((span) => span.target))],
+  };
 };
 
 export const findLinks = (

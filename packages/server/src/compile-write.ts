@@ -103,7 +103,7 @@ export const withFootnotes = (body: string, numbered: readonly Numbered[]) => {
       anchor.source === undefined
         ? "unknown source"
         : `[${sourceLabel(anchor.source)}](${anchor.source.filePath}#${passageId(anchor.chunkIndex)})`;
-    return [`[^${index + 1}]: ${link} — "${anchor.quote.trim()}"`];
+    return [`[^${index + 1}]: ${link} — "${anchor.quote.replace(/\s+/g, " ").trim()}"`];
   });
   return `${text}\n\n---\n\n${notes.join("\n")}\n`;
 };
