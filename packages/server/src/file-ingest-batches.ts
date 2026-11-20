@@ -18,7 +18,7 @@ import {
   NotFound,
   type Uuid,
 } from "@great-minds/domain";
-import { and, asc, count, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNull, lt, ne, notExists, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Stream } from "effect";
 import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 
@@ -471,26 +471,74 @@ export const FileIngestBatchesLive = Layer.effect(
         return jobResponse(job);
       });
 
+    const releaseAdmissions = (batchId: Uuid) =>
+      db.transaction((tx) =>
+        Effect.gen(function* () {
+          const held = and(
+            inArray(
+              sourceIncarnations.id,
+              tx
+                .select({ id: fileIngestFiles.sourceIncarnationId })
+                .from(fileIngestFiles)
+                .where(eq(fileIngestFiles.batchId, batchId)),
+            ),
+            isNull(sourceIncarnations.deletedAt),
+          );
+          yield* tx
+            .select({ id: sourceIncarnations.id })
+            .from(sourceIncarnations)
+            .where(held)
+            .for("update");
+          yield* tx
+            .update(sourceIncarnations)
+            .set({ deletedAt: sql`now()`, completedAt: sql`now()`, updatedAt: sql`now()` })
+            .where(
+              and(
+                held,
+                notExists(
+                  tx
+                    .select({ id: sourceDocuments.id })
+                    .from(sourceDocuments)
+                    .where(eq(sourceDocuments.incarnationId, sourceIncarnations.id)),
+                ),
+                notExists(
+                  tx
+                    .select({ id: fileIngestBatches.id })
+                    .from(fileIngestFiles)
+                    .innerJoin(fileIngestBatches, eq(fileIngestBatches.id, fileIngestFiles.batchId))
+                    .where(
+                      and(
+                        eq(fileIngestFiles.sourceIncarnationId, sourceIncarnations.id),
+                        ne(fileIngestFiles.batchId, batchId),
+                        inArray(fileIngestBatches.status, ["uploading", "processing"]),
+                      ),
+                    ),
+                ),
+              ),
+            );
+        }),
+      );
+
     const cancel = (batchId: Uuid) =>
       Effect.gen(function* () {
         const batch = yield* loadBatch(batchId);
         if (batch === undefined) return;
-        yield* db.query((d) =>
-          d
-            .update(fileIngestBatches)
-            .set({
-              status: "cancelled",
-              error: "Update cancelled",
-              completedAt: sql`now()`,
-              updatedAt: sql`now()`,
-            })
-            .where(
-              and(
-                eq(fileIngestBatches.id, batchId),
-                inArray(fileIngestBatches.status, ["uploading", "processing"]),
-              ),
-            ),
-        );
+        const cancelBatch = (status: "uploading" | "processing") =>
+          db.query((d) =>
+            d
+              .update(fileIngestBatches)
+              .set({
+                status: "cancelled",
+                error: "Update cancelled",
+                completedAt: sql`now()`,
+                updatedAt: sql`now()`,
+              })
+              .where(and(eq(fileIngestBatches.id, batchId), eq(fileIngestBatches.status, status)))
+              .returning({ id: fileIngestBatches.id }),
+          );
+        const neverCommitted = (yield* cancelBatch("uploading")).length > 0;
+        if (neverCommitted) yield* releaseAdmissions(batchId);
+        else yield* cancelBatch("processing");
         yield* db.query((d) =>
           d
             .update(fileIngestFiles)
@@ -563,6 +611,7 @@ export const FileIngestBatchesLive = Layer.effect(
               ),
             ),
         );
+        yield* releaseAdmissions(row.id);
         yield* pipeline.updateProgress(
           row.id,
           "source_ingest",
