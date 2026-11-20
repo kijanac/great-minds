@@ -89,7 +89,7 @@ export const JobsServiceLive = Layer.effect(
     const pipeline = yield* PipelineRunsService;
     const fileIngestBatches = yield* FileIngestBatches;
     const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
-    const pollIntervalMs = 1000;
+    const pollIntervalMs = 100;
 
     const readRun = (vaultId: Uuid, jobId: Uuid) =>
       db
