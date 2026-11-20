@@ -229,12 +229,7 @@ export const CompilePhasesLive = Layer.effect(
 
           const stale: SearchDocument[] = [];
           for (const file of batch) {
-            if (
-              file.kind === "source" &&
-              file.etag !== null &&
-              file.source.etag === file.etag &&
-              existing.get(file.path)?.has(-1)
-            )
+            if (file.kind === "source" && file.etag !== null && file.source.etag === file.etag)
               indexedChunks += existing.get(file.path)?.size ?? 0;
             else stale.push(file);
           }
