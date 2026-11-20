@@ -89,7 +89,7 @@ export const JobsServiceLive = Layer.effect(
     const pipeline = yield* PipelineRunsService;
     const fileIngestBatches = yield* FileIngestBatches;
     const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
-    const pollIntervalMs = 100;
+    const pollIntervalMs = 1000;
 
     const readRun = (vaultId: Uuid, jobId: Uuid) =>
       db
@@ -130,7 +130,9 @@ export const JobsServiceLive = Layer.effect(
             .limit(1);
           const job = rows[0];
           if (job === undefined) {
-            throw new Error(`compile pipeline run missing for vault ${vaultId}, job ${jobId}`);
+            return yield* Effect.die(
+              new Error(`compile pipeline run missing for vault ${vaultId}, job ${jobId}`),
+            );
           }
           return jobResponse(job);
         }),

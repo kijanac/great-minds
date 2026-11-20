@@ -605,7 +605,7 @@ describe("job progress SSE", () => {
     expect(response.headers.get("content-type") ?? "").toContain("text/event-stream");
     expect(response.headers.get("cache-control")).toBe("no-cache");
     const body = response.text();
-    await wait(180);
+    await wait(1200);
     await run(
       Effect.flatMap(Database, (db) =>
         db
@@ -624,7 +624,7 @@ describe("job progress SSE", () => {
           .pipe(Effect.orDie),
       ),
     );
-    await wait(180);
+    await wait(1200);
     await run(
       Effect.flatMap(Database, (db) =>
         db

@@ -23,7 +23,7 @@ type PipelineRunsServiceShape = {
   ) => Effect.Effect<void>;
   readonly recordWarning: (runId: Uuid, warning: PipelineWarning) => Effect.Effect<void>;
   readonly failPreservingProgress: (runId: Uuid, error: string) => Effect.Effect<void>;
-  readonly fail: (runId: Uuid, error: string) => Effect.Effect<void>;
+  readonly complete: (runId: Uuid) => Effect.Effect<void>;
   readonly runOfIntent: (
     intentId: Uuid,
   ) => Effect.Effect<{ readonly id: Uuid; readonly vaultId: Uuid } | undefined>;
@@ -173,17 +173,9 @@ export const PipelineRunsServiceLive = Layer.effect(
             from jsonb_array_elements(${pipelineRuns.stages}) with ordinality as listed(stage, position)
             where stage ->> 'phase' <> ${phase}
           ) || jsonb_build_array(${JSON.stringify({ phase, steps })}::jsonb)`,
-              status:
-                phaseStatus === "failed"
-                  ? "failed"
-                  : phase === "publish" && phaseStatus === "completed"
-                    ? "completed"
-                    : "running",
+              status: phaseStatus === "failed" ? "failed" : "running",
               error,
-              completedAt:
-                phaseStatus === "failed" || (phase === "publish" && phaseStatus === "completed")
-                  ? sql`now()`
-                  : undefined,
+              completedAt: phaseStatus === "failed" ? sql`now()` : undefined,
               updatedAt: sql`now()`,
             })
             .where(
@@ -300,7 +292,17 @@ export const PipelineRunsServiceLive = Layer.effect(
               ),
           )
           .pipe(Effect.andThen(recordOutcome(runId))),
-      fail: (runId, error) => updateProgress(runId, "source_ingest", "failed", [], error),
+      complete: (runId) =>
+        db
+          .query((d) =>
+            d
+              .update(pipelineRuns)
+              .set({ status: "completed", completedAt: sql`now()`, updatedAt: sql`now()` })
+              .where(
+                and(runOrCompileGroup(runId), inArray(pipelineRuns.status, ["pending", "running"])),
+              ),
+          )
+          .pipe(Effect.asVoid),
       runOfIntent: (intentId) =>
         db
           .query((d) =>

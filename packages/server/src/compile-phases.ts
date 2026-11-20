@@ -802,6 +802,7 @@ export const CompilePhasesLive = Layer.effect(
               completed: new Set(Object.keys(PUBLISH_STEP_LABELS)),
             }),
           );
+          yield* pipeline.complete(runId);
         }),
     } satisfies CompilePhasesShape;
   }),

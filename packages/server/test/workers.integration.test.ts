@@ -887,14 +887,12 @@ describe("M4.2 durable workers", () => {
           status: "completed",
           currentPhase: "publish",
           phaseStatus: "completed",
-          compileTaskId: state.intents[0]!.id,
         }),
         expect.objectContaining({
           id: id.dedupeRun,
           status: "completed",
           currentPhase: "publish",
           phaseStatus: "completed",
-          compileTaskId: state.intents[0]!.id,
         }),
       ]),
     );
@@ -1172,7 +1170,10 @@ describe("M4.2 durable workers", () => {
       }),
     );
     expect(dedupeState.intents).toHaveLength(0);
-    expect(dedupeState.run[0]).toMatchObject({ status: "completed", currentPhase: "publish" });
+    expect(dedupeState.run[0]).toMatchObject({
+      status: "completed",
+      currentPhase: "source_ingest",
+    });
   }, 30_000);
 
   it("sets aside a staged file that cannot be read and still compiles the rest", async () => {
@@ -1467,11 +1468,11 @@ describe("M4.2 durable workers", () => {
     });
     expect(rows.pipeline[0]?.stages.at(-1)?.steps).toEqual([
       {
-        key: "phase",
-        label: "compile completed early: no validated topics",
+        key: "finalize_compile",
+        label: "Finalizing",
         status: "completed",
-        done: 1,
-        total: 1,
+        done: null,
+        total: null,
         detail: "",
       },
     ]);
@@ -1709,7 +1710,6 @@ describe("M4.2 durable workers", () => {
               vaultId: id.vault,
               pipelineRunId: id.maskedCompileRun,
               dispatchedAt: new Date(0),
-              dispatchedTaskId: id.maskedCompileIntent,
             }),
           )
           .pipe(Effect.orDie);
@@ -1814,7 +1814,6 @@ describe("M4.2 durable workers", () => {
               vaultId: id.vault,
               pipelineRunId: id.terminalRun,
               dispatchedAt: new Date(),
-              dispatchedTaskId: id.terminalIntent,
             }),
           )
           .pipe(Effect.orDie);

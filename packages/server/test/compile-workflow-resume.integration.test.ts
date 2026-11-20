@@ -131,8 +131,9 @@ describe("M4.3a compile workflow durability", () => {
       const failureJson = /COMPILE failure=(\{.*\})/.exec(resumed.output)?.[1];
       expect(failureJson).toBeDefined();
       expect(JSON.parse(failureJson ?? "{}") as unknown).toEqual({
-        _tag: "CompilePhaseNotPorted",
+        _tag: "CompilePhaseFailed",
         phase: "extract",
+        errorType: "ResumeSeam",
         message: "resume seam",
       });
       const rows = await runSql(
