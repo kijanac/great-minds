@@ -780,7 +780,7 @@ export const QueryServiceLive = Layer.effect(
         if (queryEmbedding === undefined) {
           return [];
         }
-        const distance = sql<number>`${searchIndex.embedding} <=> ${vectorLiteral(queryEmbedding)}::vector`;
+        const distance = sql<number>`${searchIndex.embedding}::halfvec(1024) <=> ${vectorLiteral(queryEmbedding)}::halfvec(1024)`;
         const [bm25Rows, vectorRows] = yield* Effect.all(
           [
             db.query((d) =>
