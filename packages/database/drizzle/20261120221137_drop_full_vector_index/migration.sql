@@ -1,0 +1,1 @@
+DROP INDEX "ix_search_index_embedding";

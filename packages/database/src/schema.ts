@@ -469,7 +469,6 @@ export const searchIndex = pgTable(
     ),
     index("ix_search_index_vault_id").on(table.vaultId),
     index("ix_search_index_tsv").using("gin", table.tsv),
-    index("ix_search_index_embedding").using("hnsw", table.embedding.op("vector_cosine_ops")),
     index("ix_search_index_embedding_half").using(
       "hnsw",
       sql`(${table.embedding}::halfvec(1024)) halfvec_cosine_ops`,
