@@ -1,4 +1,4 @@
-import { backlinks, Database, wikiArticles } from "@great-minds/database";
+import { Database, wikiArticles } from "@great-minds/database";
 import {
   Forbidden,
   type PageParams,
@@ -13,7 +13,7 @@ import { Context, Effect, Layer } from "effect";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { wikiOverview } from "./document-metadata.ts";
 import { VaultAccessService } from "./vaults.ts";
-import { liveArticleConditions } from "./wiki-articles.ts";
+import { liveArticleConditions, liveInboundLinks } from "./wiki-articles.ts";
 
 type WikiServiceShape = {
   readonly listArticles: (
@@ -67,7 +67,7 @@ export const listedArticleConditions = (
 };
 
 export const articleOrder = {
-  linked: sql`(select count(*) from ${backlinks} where ${backlinks.targetArticleId} = ${wikiArticles.id}) desc, lower(${wikiArticles.title})`,
+  linked: sql`${liveInboundLinks} desc, lower(${wikiArticles.title})`,
   title: asc(sql`lower(${wikiArticles.title})`),
   recent: desc(wikiArticles.updatedAt),
 } satisfies Record<string, SQL>;

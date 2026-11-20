@@ -180,9 +180,12 @@ describe("links between articles", () => {
       ],
       (target) => (target === id.peat ? undefined : `wiki/${target}.md`),
     );
-    expect(linked).toContain(`Years later [the liquidators](wiki/${id.liquidators}.md) [^1]`);
-    expect(linked).toContain("# The 1903 split\n");
-    expect(linked).toContain("peat cutters worked on");
-    expect(linked).toContain('— "the liquidators"');
+    expect(linked.markdown).toContain(
+      `Years later [the liquidators](wiki/${id.liquidators}.md) [^1]`,
+    );
+    expect(linked.markdown).toContain("# The 1903 split\n");
+    expect(linked.markdown).toContain("peat cutters worked on");
+    expect(linked.markdown).toContain('— "the liquidators"');
+    expect(linked.placed).toEqual([id.liquidators]);
   });
 });

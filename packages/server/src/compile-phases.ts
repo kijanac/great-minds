@@ -1,5 +1,4 @@
 import {
-  backlinks,
   Database,
   ideas,
   inUuidArray,
@@ -46,7 +45,7 @@ import {
 } from "./markdown.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
-import { liveArticleConditions } from "./wiki-articles.ts";
+import { liveArticleConditions, liveInboundLinks } from "./wiki-articles.ts";
 import { ContentStorage, READ_CONCURRENCY, vaultOwner } from "./storage.ts";
 import { append } from "./collections.ts";
 import { RandomBytesService } from "./random.ts";
@@ -472,16 +471,7 @@ export const CompilePhasesLive = Layer.effect(
       output: { readonly body: string; readonly tags: readonly string[] },
     ) =>
       Effect.gen(function* () {
-        const tags: string[] = [];
-        const seen = new Set<string>();
-        for (const raw of output.tags) {
-          const tag = raw.trim().toLowerCase().replaceAll(" ", "-");
-          if (tag.length === 0) throw new Error("tag is empty after normalization");
-          if (!seen.has(tag)) {
-            seen.add(tag);
-            tags.push(tag);
-          }
-        }
+        const tags = [...output.tags];
         const path = `wiki/${topic.slug}.md`;
         const precis = openingSentence(output.body) || topic.description;
         const previousRows = yield* db.query((d) =>
@@ -858,7 +848,7 @@ export const CompilePhasesLive = Layer.effect(
                 title: wikiArticles.title,
                 filePath: wikiArticles.filePath,
                 precis: wikiArticles.precis,
-                inbound: sql<number>`(select count(*)::int from ${backlinks} where ${backlinks.targetArticleId} = ${wikiArticles.id})`,
+                inbound: liveInboundLinks,
               })
               .from(wikiArticles)
               .where(and(...liveArticleConditions(vaultId))),

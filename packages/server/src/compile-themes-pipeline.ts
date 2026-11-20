@@ -341,13 +341,16 @@ export const makeThemesPipeline = (options: {
         const topic = topicById.get(target);
         return topic === undefined || !live.has(target) ? undefined : `wiki/${topic.slug}.md`;
       };
+      const placed: { sourceTopicId: Uuid; targetTopicId: Uuid }[] = [];
       for (const article of written.articles) {
         const topic = topicById.get(article.id);
         if (topic === undefined) continue;
+        const text = withLinks(article.markdown, linked.linksOf.get(article.id) ?? [], hrefOf);
+        for (const target of text.placed)
+          if (target !== article.id)
+            placed.push({ sourceTopicId: article.id, targetTopicId: target });
         yield* options.materializeArticle(vaultId, runId, topic, {
-          body: tightFootnotes(
-            withLinks(article.markdown, linked.linksOf.get(article.id) ?? [], hrefOf),
-          ),
+          body: tightFootnotes(text.markdown),
           tags: article.tags,
         });
       }
@@ -378,7 +381,7 @@ export const makeThemesPipeline = (options: {
         yield* db.query((d) =>
           d.delete(backlinks).where(inArray(backlinks.sourceArticleId, rewritten)),
         );
-      const pageEdges = [...edges.values()].flatMap((edge) => {
+      const pageEdges = placed.flatMap((edge) => {
         const sourceArticleId = pageOf.get(edge.sourceTopicId);
         const targetArticleId = pageOf.get(edge.targetTopicId);
         return sourceArticleId === undefined || targetArticleId === undefined
