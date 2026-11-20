@@ -13,11 +13,7 @@ import { assert, beforeEach, expect, it } from "vitest";
 import { fileContentHash } from "../src/crypto.ts";
 import { StructuredLogger } from "../src/logging.ts";
 import { SourceDocumentsService, SourceDocumentsServiceLive } from "../src/source-documents.ts";
-import {
-  encodeSourceControl,
-  identifySourceMarkdown,
-  readSourceControl,
-} from "../src/source-identity.ts";
+import { encodeSourceControl, readSourceControl } from "../src/source-identity.ts";
 import { ContentStorage, vaultOwner } from "../src/storage.ts";
 import { runHistoryDatabase } from "./fixtures/reply-history-database.ts";
 import { versionedSourceStorage } from "./fixtures/source-documents.ts";
@@ -270,41 +266,6 @@ it("repairs registration after an uncertain body PUT without repeating it", () =
       expect((yield* sources.getById(id.vault, id.source))?.incarnationId).toBe(
         admission.incarnationId,
       );
-    }),
-  ));
-
-it("defers legacy cleanup when live managed bytes lose their ownership header", () =>
-  run(
-    Effect.gen(function* () {
-      const sources = yield* SourceDocumentsService;
-      const db = yield* Database;
-      const current = yield* publish("# Managed replacement\n\nKeep this body.\n");
-      const owned = files.get(path);
-      assert(owned !== undefined);
-      yield* db.query((tx) =>
-        tx.insert(sourceIncarnations).values({
-          sourceId: id.source,
-          vaultId: id.vault,
-          filePath: path,
-          unversioned: true,
-          deletedAt: new Date(0),
-          createdAt: new Date(0),
-          updatedAt: new Date(0),
-        }),
-      );
-      const ambiguous = identifySourceMarkdown(owned, id.source);
-      files.set(path, ambiguous);
-      yield* sources.reconcileDeletionsOnce();
-      expect(files.get(path)).toBe(ambiguous);
-      expect(
-        (yield* lifetimes).find((row) => row.id !== current.incarnationId)?.completedAt,
-      ).toBeNull();
-      files.set(path, owned);
-      yield* sources.reconcileDeletionsOnce();
-      expect(files.get(path)).toBe(owned);
-      expect(
-        (yield* lifetimes).find((row) => row.id !== current.incarnationId)?.completedAt,
-      ).toBeInstanceOf(Date);
     }),
   ));
 

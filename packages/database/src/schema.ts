@@ -573,9 +573,7 @@ export const sourceIncarnations = pgTable(
     sourceId: uuidColumn("source_id").notNull(),
     vaultId: uuidColumn("vault_id").notNull(),
     filePath: text("file_path").notNull(),
-    unversioned: boolean("unversioned").default(false).notNull(),
     deletedAt: timestamptz("deleted_at"),
-    legacyCompletedAt: timestamptz("legacy_completed_at"),
     attemptCount: integer("attempt_count").default(0).notNull(),
     lastAttemptAt: timestamptz("last_attempt_at"),
     completedAt: timestamptz("completed_at"),
@@ -596,7 +594,7 @@ export const sourceIncarnations = pgTable(
       .where(sql`${table.deletedAt} IS NOT NULL AND ${table.completedAt} IS NULL`),
     check(
       "source_incarnations_cleanup_requires_deletion",
-      sql`${table.deletedAt} IS NOT NULL OR (${table.attemptCount} = 0 AND ${table.lastAttemptAt} IS NULL AND ${table.completedAt} IS NULL AND ${table.legacyCompletedAt} IS NULL)`,
+      sql`${table.deletedAt} IS NOT NULL OR (${table.attemptCount} = 0 AND ${table.lastAttemptAt} IS NULL AND ${table.completedAt} IS NULL)`,
     ),
   ],
 );

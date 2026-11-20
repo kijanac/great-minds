@@ -51,7 +51,7 @@ import {
   resetWorkflowQueue,
 } from "./fixtures/reply-history-database.ts";
 import { TestWorkflowEngineLive } from "./fixtures/workflow-engine.ts";
-import { seedLegacySources } from "./fixtures/source-documents.ts";
+import { seedSources } from "./fixtures/source-documents.ts";
 import { openMcp } from "./fixtures/mcp.ts";
 
 const initialTime = new Date("2026-07-09T12:00:00.000Z");
@@ -587,7 +587,7 @@ const seedFixtures = async (): Promise<Fixture> => {
         .pipe(Effect.orDie);
       yield* db
         .transaction((tx) =>
-          seedLegacySources(tx, [
+          seedSources(tx, [
             {
               id: id.sourceBook,
               vaultId: id.vaultAlpha,
@@ -2553,7 +2553,7 @@ describe("read-only HTTP integration", () => {
         yield* db.query((d) =>
           d.delete(sourceDocuments).where(eq(sourceDocuments.vaultId, id.vaultAlpha)),
         );
-        yield* db.transaction((tx) => seedLegacySources(tx, [...sources].reverse()));
+        yield* db.transaction((tx) => seedSources(tx, [...sources].reverse()));
       }),
     );
     for (const limit of [50, 37]) {
