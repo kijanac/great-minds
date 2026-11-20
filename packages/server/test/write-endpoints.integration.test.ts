@@ -2363,6 +2363,14 @@ describe("M3.1 write endpoint integration", () => {
     });
     expect(state.file).toMatchObject({ status: "failed" });
     expect(state.run).toMatchObject({ status: "failed", phaseStatus: "failed" });
+    const admissions = await runDb(
+      Effect.flatMap(Database, (db) =>
+        db.query((d) => d.select().from(sourceIncarnations)).pipe(Effect.orDie),
+      ),
+    );
+    expect(
+      admissions.find((admission) => admission.id === state.file?.sourceIncarnationId),
+    ).toMatchObject({ deletedAt: expect.any(Date), completedAt: expect.any(Date) });
   });
 
   it("creates, lists, reads, and deletes owner-scoped personal references", async () => {
