@@ -1419,7 +1419,7 @@ describe("M4.3a deterministic compile phases", () => {
     expect(new Set(state.search.map((row) => row.path))).toEqual(new Set([movedPath]));
   });
 
-  it("rejects two storage paths claiming the same source identity", async () => {
+  it("sets aside a second storage path claiming a registered source's identity", async () => {
     const originalPath = "raw/docs/original.md";
     const duplicatePath = "raw/docs/copied.md";
     const content = `---\nsource_id: ${id.source}\nsource_type: document\n---\n# Duplicate identity\n`;
@@ -1442,16 +1442,31 @@ describe("M4.3a deterministic compile phases", () => {
       ),
     );
 
-    await expect(
-      run(Effect.flatMap(CompilePhases, (phases) => phases.ingest(id.vault, id.run))),
-    ).rejects.toThrow(`Source ${id.source} appears at both ${duplicatePath} and ${originalPath}`);
-    const sources = await run(
-      Effect.flatMap(Database, (db) =>
-        db.query((d) => d.select().from(sourceDocuments)).pipe(Effect.orDie),
-      ),
+    await run(Effect.flatMap(CompilePhases, (phases) => phases.ingest(id.vault, id.run)));
+    const state = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        return {
+          sources: yield* db.query((d) => d.select().from(sourceDocuments)).pipe(Effect.orDie),
+          runs: yield* db
+            .query((d) =>
+              d
+                .select({ warnings: pipelineRuns.warnings })
+                .from(pipelineRuns)
+                .where(eq(pipelineRuns.id, id.run)),
+            )
+            .pipe(Effect.orDie),
+        };
+      }),
     );
-    expect(sources).toHaveLength(1);
-    expect(sources[0]?.filePath).toBe(originalPath);
+    expect(state.sources).toHaveLength(1);
+    expect(state.sources[0]?.filePath).toBe(originalPath);
+    expect(state.runs[0]?.warnings).toContainEqual({
+      phase: "ingest",
+      message: "source files could not be registered and were left out",
+      count: 1,
+      items: [`${duplicatePath}: it has the same source id as ${originalPath}`],
+    });
   });
 
   it("derive relates articles by the source documents they share and drops removed source memberships", async () => {
