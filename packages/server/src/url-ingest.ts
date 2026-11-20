@@ -70,7 +70,6 @@ export const UrlIngestServiceLive = Layer.effect(
             .update(urlIngestRequests)
             .set({
               dispatchedAt: sql`coalesce(${urlIngestRequests.dispatchedAt}, now())`,
-              dispatchedTaskId: request.id,
               updatedAt: sql`now()`,
             })
             .where(eq(urlIngestRequests.id, request.id)),
@@ -114,7 +113,6 @@ export const UrlIngestServiceLive = Layer.effect(
                   }),
                 },
               ],
-              ingestTaskId: jobId,
               activeTaskId: jobId,
               activeTaskType: URL_INGEST_TASK_TYPE,
             })

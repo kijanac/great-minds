@@ -32,17 +32,10 @@ export const CompilePhase = Schema.Literals([
 ] as const);
 export type CompilePhase = typeof CompilePhase.Type;
 
-export class CompilePhaseNotPorted extends Schema.TaggedError<CompilePhaseNotPorted>()(
-  "CompilePhaseNotPorted",
-  { phase: CompilePhase, message: Schema.String },
-) {}
-
 export class CompilePhaseFailed extends Schema.TaggedError<CompilePhaseFailed>()(
   "CompilePhaseFailed",
   { phase: CompilePhase, errorType: Schema.String, message: Schema.String },
 ) {}
-
-export const CompileWorkflowError = Schema.Union([CompilePhaseNotPorted, CompilePhaseFailed]);
 
 export const ValidatedTopic = Schema.Struct({
   topicId: Uuid,
@@ -65,7 +58,7 @@ export const topicContentHash = (topic: ValidatedTopic) =>
 const PHASE_FAILURE_MESSAGE_LIMIT = 500;
 
 export const phaseFailure = (phase: CompilePhase, cause: unknown) => {
-  if (cause instanceof CompilePhaseNotPorted || cause instanceof CompilePhaseFailed) return cause;
+  if (cause instanceof CompilePhaseFailed) return cause;
   const error = errorDetails(cause);
   return new CompilePhaseFailed({
     phase,

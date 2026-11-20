@@ -128,7 +128,9 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
               const source = yield* sourceDocumentsService.admission(vaultId, incarnationId);
               const bytes = yield* stagedStorage.readStagedBytes(vaultId, batchId, file.hash);
               if (bytes.byteLength !== file.size || rawFileHash(bytes) !== file.hash) {
-                throw new Error(`Staged file integrity check failed: ${file.name}`);
+                return yield* Effect.die(
+                  new Error(`Staged file integrity check failed: ${file.name}`),
+                );
               }
               const markdown = yield* Effect.tryPromise({
                 try: () => stagedFileToMarkdown(bytes, file.name, file.mimetype),
@@ -157,7 +159,9 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
           if (Cause.hasInterruptsOnly(result.cause)) return yield* Effect.interrupt;
           const file = payload.files[index];
           if (file === undefined) {
-            throw new Error(`Converted staged file ${index} has no input entry`);
+            return yield* Effect.die(
+              new Error(`Converted staged file ${index} has no input entry`),
+            );
           }
           const error = causeDetails(result.cause);
           const failure = result.cause.reasons.find(Cause.isFailReason)?.error;
@@ -323,13 +327,14 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
             }),
             error,
           );
-        } else if (ingested > 0) {
-          yield* db.transaction((tx) =>
-            Effect.gen(function* () {
-              const intent = yield* queueCompile(tx, vaultId, runId);
-              yield* linkRunToIntent(tx, runId, intent.id);
-            }),
-          );
+        } else {
+          if (ingested > 0)
+            yield* db.transaction((tx) =>
+              Effect.gen(function* () {
+                const intent = yield* queueCompile(tx, vaultId, runId);
+                yield* linkRunToIntent(tx, runId, intent.id);
+              }),
+            );
           yield* pipeline.updateProgress(
             runId,
             "source_ingest",
@@ -342,17 +347,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
               },
             }),
           );
-        } else {
-          yield* pipeline.updateProgress(runId, "publish", "completed", [
-            {
-              key: "publish",
-              label: "sources already up to date",
-              status: "completed",
-              done: 1,
-              total: 1,
-              detail: "",
-            },
-          ]);
+          if (ingested === 0) yield* pipeline.complete(runId);
         }
         yield* db.query((d) =>
           d

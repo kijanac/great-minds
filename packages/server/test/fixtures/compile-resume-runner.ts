@@ -12,7 +12,7 @@ import {
   CompileWorkflow,
   CompileWorkflowLive,
 } from "../../src/compile-intents.ts";
-import { CompilePhaseNotPorted, EXTRACT_STEP_LABELS } from "../../src/compile-contract.ts";
+import { CompilePhaseFailed, EXTRACT_STEP_LABELS } from "../../src/compile-contract.ts";
 import { CompilePhases } from "../../src/compile-phases.ts";
 import { PgClientLive } from "../../src/db.ts";
 import { StructuredLoggerLive } from "../../src/logging.ts";
@@ -60,8 +60,9 @@ const PhasesLive = Layer.effect(
           Effect.andThen(
             mode === "resume"
               ? Effect.gen(function* () {
-                  const failure = new CompilePhaseNotPorted({
+                  const failure = new CompilePhaseFailed({
                     phase: "extract",
+                    errorType: "ResumeSeam",
                     message: "resume seam",
                   });
                   yield* pipeline.updateProgress(

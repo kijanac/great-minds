@@ -64,7 +64,7 @@ export const UrlIngestWorkflowLive = UrlIngestWorkflow.toLayer((payload) =>
       );
       const request = rows[0];
       if (request === undefined) {
-        throw new Error(`URL ingest request ${runId} not found`);
+        return yield* Effect.die(new Error(`URL ingest request ${runId} not found`));
       }
       if (!(yield* pipeline.isActive(runId))) return yield* Effect.interrupt;
       if (request.sourceIncarnationId === null) {

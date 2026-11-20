@@ -440,7 +440,6 @@ export const FileIngestBatchesLive = Layer.effect(
               yield* tx
                 .update(pipelineRuns)
                 .set({
-                  ingestTaskId: batch.id,
                   activeTaskId: batch.id,
                   activeTaskType: STAGED_TASK_TYPE,
                   updatedAt: sql`now()`,

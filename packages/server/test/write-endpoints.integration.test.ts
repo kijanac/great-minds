@@ -2924,7 +2924,6 @@ describe("M3.1 write endpoint integration", () => {
           id: id.m32UrlSlowRun,
           createdBy: id.alice,
           canonicalUrl: slowUrl,
-          dispatchedTaskId: id.m32UrlSlowRun,
         });
         if (releaseSlowResponse === undefined) {
           throw new Error("slow URL request was not held");
@@ -3024,7 +3023,6 @@ describe("M3.1 write endpoint integration", () => {
           sourceIncarnationId: incarnationId,
           createdBy: id.alice,
           canonicalUrl,
-          dispatchedTaskId: id.m32UrlRun,
         });
         expect(successRows.requestRows[0]?.dispatchedAt).not.toBeNull();
 
@@ -3197,7 +3195,6 @@ describe("M3.1 write endpoint integration", () => {
                   status: "pending",
                   currentPhase: "source_ingest",
                   phaseStatus: "started",
-                  ingestTaskId: id.m32UrlReconcileRun,
                   activeTaskId: id.m32UrlReconcileRun,
                   activeTaskType: "url_ingest",
                 }),

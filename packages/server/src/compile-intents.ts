@@ -17,8 +17,6 @@ import { AppConfig } from "./config.ts";
 import { formatError } from "./error-details.ts";
 import {
   CompilePhaseFailed,
-  CompilePhaseNotPorted,
-  CompileWorkflowError,
   phaseFailure,
   ValidatedTopic,
   type CompilePhase,
@@ -38,7 +36,8 @@ export const queueCompile = (tx: TransactionClient, vaultId: Uuid, runId?: Uuid)
         set: { vaultId: sql`compile_intents.vault_id` },
       })
       .returning({ id: compileIntents.id, pipelineRunId: compileIntents.pipelineRunId });
-    if (intent === undefined) throw new Error("compile intent upsert returned no row");
+    if (intent === undefined)
+      return yield* Effect.die(new Error("compile intent upsert returned no row"));
     if (runId !== undefined && intent.pipelineRunId === null)
       yield* tx
         .update(compileIntents)
@@ -61,19 +60,12 @@ export const CompileWorkflow = Workflow.make("CompileTask", {
   },
   idempotencyKey: ({ intentId }) => intentId,
   success: Schema.Void,
-  error: CompileWorkflowError,
+  error: CompilePhaseFailed,
 });
 
-const causeFailure = (
-  phase: CompilePhase,
-  cause: Cause.Cause<unknown>,
-): CompilePhaseNotPorted | CompilePhaseFailed => {
+const causeFailure = (phase: CompilePhase, cause: Cause.Cause<unknown>) => {
   const reason = cause.reasons[0];
-  if (reason !== undefined && Cause.isFailReason(reason)) {
-    const error = reason.error;
-    if (error instanceof CompilePhaseNotPorted || error instanceof CompilePhaseFailed) return error;
-    return phaseFailure(phase, error);
-  }
+  if (reason !== undefined && Cause.isFailReason(reason)) return phaseFailure(phase, reason.error);
   if (reason !== undefined && Cause.isDieReason(reason)) {
     return phaseFailure(phase, reason.defect);
   }
@@ -89,7 +81,7 @@ export const CompileWorkflowLive = CompileWorkflow.toLayer((payload) => {
     Activity.make({
       name: `compile-phase-${phase}`,
       success,
-      error: CompileWorkflowError,
+      error: CompilePhaseFailed,
       // Cancellation guard before each phase's side effects: engine
       // interruption is cooperative, so a cancelled run must also stop at
       // the next phase boundary.
@@ -106,7 +98,6 @@ export const CompileWorkflowLive = CompileWorkflow.toLayer((payload) => {
           }
           const failure = causeFailure(phase, cause);
           return Effect.gen(function* () {
-            if (failure instanceof CompilePhaseNotPorted) return yield* Effect.fail(failure);
             const pipeline = yield* PipelineRunsService;
             const logger = yield* StructuredLogger;
             const formatted = formatError(failure);
@@ -136,28 +127,10 @@ export const CompileWorkflowLive = CompileWorkflow.toLayer((payload) => {
       Schema.Array(ValidatedTopic),
       service.abstract(vaultId, runId),
     );
-    if (validated.length === 0) {
-      yield* runPhase(
-        "publish",
-        Schema.Void,
-        Effect.gen(function* () {
-          const pipeline = yield* PipelineRunsService;
-          yield* pipeline.updateProgress(runId, "publish", "completed", [
-            {
-              key: "phase",
-              label: "compile completed early: no validated topics",
-              status: "completed",
-              done: 1,
-              total: 1,
-              detail: "",
-            },
-          ]);
-        }),
-      );
-      return;
+    if (validated.length > 0) {
+      yield* runPhase("derive", Schema.Void, service.derive(vaultId, runId, validated));
+      yield* runPhase("render", Schema.Void, service.render(vaultId, runId, validated));
     }
-    yield* runPhase("derive", Schema.Void, service.derive(vaultId, runId, validated));
-    yield* runPhase("render", Schema.Void, service.render(vaultId, runId, validated));
     yield* runPhase("publish", Schema.Void, service.publish(vaultId, runId));
   });
   return phases;
@@ -214,7 +187,6 @@ export const CompileIntentReconcilerLive = Layer.effect(
           .where(
             and(
               isNotNull(compileIntents.dispatchedAt),
-              isNotNull(compileIntents.dispatchedTaskId),
               isNull(compileIntents.satisfiedAt),
               inArray(pipelineRuns.status, ["completed", "failed", "cancelled"]),
             ),
@@ -323,14 +295,13 @@ export const CompileIntentReconcilerLive = Layer.effect(
         yield* db.query((d) =>
           d
             .update(compileIntents)
-            .set({ dispatchedAt: sql`now()`, dispatchedTaskId: item.intentId })
+            .set({ dispatchedAt: sql`now()` })
             .where(eq(compileIntents.id, item.intentId)),
         );
         yield* db.query((d) =>
           d
             .update(pipelineRuns)
             .set({
-              compileTaskId: item.intentId,
               activeTaskId: item.intentId,
               activeTaskType: "compile",
               updatedAt: sql`now()`,

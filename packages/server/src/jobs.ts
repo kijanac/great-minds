@@ -130,7 +130,9 @@ export const JobsServiceLive = Layer.effect(
             .limit(1);
           const job = rows[0];
           if (job === undefined) {
-            throw new Error(`compile pipeline run missing for vault ${vaultId}, job ${jobId}`);
+            return yield* Effect.die(
+              new Error(`compile pipeline run missing for vault ${vaultId}, job ${jobId}`),
+            );
           }
           return jobResponse(job);
         }),
