@@ -6,12 +6,9 @@ import { StorageFileMissing, type ContentStorage } from "../../src/storage.ts";
 import { ObjectVersionConflict } from "../../src/storage/object-store.ts";
 import { readSourceControl } from "../../src/source-identity.ts";
 
-type LegacySource = Omit<typeof sourceDocuments.$inferInsert, "incarnationId">;
+type SeededSource = Omit<typeof sourceDocuments.$inferInsert, "incarnationId">;
 
-export const seedLegacySources = (
-  tx: TransactionClient,
-  input: LegacySource | readonly LegacySource[],
-) =>
+export const seedSources = (tx: TransactionClient, input: SeededSource | readonly SeededSource[]) =>
   Effect.forEach(
     "id" in input ? [input] : input,
     (source) =>
@@ -19,10 +16,10 @@ export const seedLegacySources = (
         const incarnations = yield* tx
           .insert(sourceIncarnations)
           .values({
+            id: source.id,
             sourceId: source.id,
             vaultId: source.vaultId,
             filePath: source.filePath,
-            unversioned: true,
           })
           .returning({ id: sourceIncarnations.id });
         const incarnation = incarnations[0];

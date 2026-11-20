@@ -17,7 +17,7 @@ import { makeAskRunner } from "../src/compile-asks.ts";
 import { contentHash } from "../src/crypto.ts";
 import { loadBlocks, loadLibrary, type Theme } from "../src/compile-themes.ts";
 import type { CompleteInput, ModelCompletion } from "../src/llm.ts";
-import { seedLegacySources } from "./fixtures/source-documents.ts";
+import { seedSources } from "./fixtures/source-documents.ts";
 import { runHistoryDatabase } from "./fixtures/reply-history-database.ts";
 
 const uuid = Schema.decodeUnknownSync(Uuid);
@@ -136,7 +136,7 @@ beforeEach(async () => {
           const all = [...Object.values(specs), ...Object.values(facets)].flatMap((spec) =>
             spec.docs.map((n) => ({ n, spec })),
           );
-          yield* seedLegacySources(
+          yield* seedSources(
             tx,
             all.map(({ n }) => ({
               id: document(n),

@@ -47,7 +47,7 @@ import { PipelineRunsServiceLive } from "../src/pipeline-runs.ts";
 import { RandomBytesLive } from "../src/random.ts";
 import { SourceDocumentsService, SourceDocumentsServiceLive } from "../src/source-documents.ts";
 import { ContentStorage } from "../src/storage.ts";
-import { seedLegacySources, versionedSourceStorage } from "./fixtures/source-documents.ts";
+import { seedSources, versionedSourceStorage } from "./fixtures/source-documents.ts";
 import {
   replyHistoryTestDatabaseUrl,
   runHistoryDatabase,
@@ -274,7 +274,7 @@ const insertSource = async (
   if (original === undefined) throw new Error(`Source fixture has no file at ${filePath}`);
   const parsed = parseFrontmatter(original);
   const content = serializeFrontmatter(
-    { ...parsed.frontmatter, source_id: documentId },
+    { ...parsed.frontmatter, source_id: documentId, source_incarnation: documentId },
     parsed.body,
   );
   files.set(filePath, content);
@@ -283,7 +283,7 @@ const insertSource = async (
     Effect.gen(function* () {
       const db = yield* Database;
       yield* db.transaction((tx) =>
-        seedLegacySources(tx, {
+        seedSources(tx, {
           id: documentId,
           vaultId: id.vault,
           filePath,
@@ -377,7 +377,7 @@ describe("M4.3a deterministic compile phases", () => {
     const canonicalUrl = "https://example.com/source";
     files.set(
       "raw/docs/source.md",
-      `---\nsource_id: ${id.source}\ncanonical_url: ${canonicalUrl}\n---\n# Source\n\nBody\n`,
+      `---\nsource_id: ${id.source}\nsource_incarnation: ${id.source}\ncanonical_url: ${canonicalUrl}\n---\n# Source\n\nBody\n`,
     );
     await insertSource(id.source, "raw/docs/source.md", canonicalUrl);
     complete = async () => ({
@@ -438,7 +438,10 @@ describe("M4.3a deterministic compile phases", () => {
 
   it("repairs extract projections after a lost write acknowledgment without regenerating identities or embeddings", async () => {
     const path = "raw/docs/source.md";
-    files.set(path, `---\nsource_id: ${id.source}\n---\n# Source\n\nBody\n`);
+    files.set(
+      path,
+      `---\nsource_id: ${id.source}\nsource_incarnation: ${id.source}\n---\n# Source\n\nBody\n`,
+    );
     await seedSourceAndIdeas();
     let modelCalls = 0;
     complete = async () => {
@@ -669,7 +672,10 @@ describe("M4.3a deterministic compile phases", () => {
     },
   ])("rejects malformed or foreign extract cache without refetching the LLM: %j", async (card) => {
     const path = "raw/docs/source.md";
-    const content = serializeFrontmatter({ source_id: id.source }, "# Source\n\nBody\n");
+    const content = serializeFrontmatter(
+      { source_id: id.source, source_incarnation: id.source },
+      "# Source\n\nBody\n",
+    );
     files.set(path, content);
     const bodyHash = await insertSource(id.source, path);
     const template = (await defaultPrompt("extract"))
@@ -878,7 +884,7 @@ describe("M4.3a deterministic compile phases", () => {
   });
 
   it("ingest indexes path-sorted metadata/body chunks and skips an unchanged ETag replay", async () => {
-    const content = `---\nsource_id: ${id.source}\ntitle: Source title\nprecis: Source precis\nauthor: Author\n---\n# Heading\n\nFirst paragraph ^p0\n\nSecond paragraph ^p1\n`;
+    const content = `---\nsource_id: ${id.source}\nsource_incarnation: ${id.source}\ntitle: Source title\nprecis: Source precis\nauthor: Author\n---\n# Heading\n\nFirst paragraph ^p0\n\nSecond paragraph ^p1\n`;
     files.set("raw/docs/source.md", content);
     etags.set("raw/docs/source.md", "etag-one");
     await run(
@@ -886,7 +892,7 @@ describe("M4.3a deterministic compile phases", () => {
         const db = yield* Database;
         yield* db
           .transaction((tx) =>
-            seedLegacySources(tx, {
+            seedSources(tx, {
               id: id.source,
               vaultId: id.vault,
               filePath: "raw/docs/source.md",
@@ -955,7 +961,7 @@ describe("M4.3a deterministic compile phases", () => {
     );
     files.set(
       "raw/docs/long.md",
-      `---\nsource_id: ${id.source}\ntitle: Long\n---\n${paragraphs.join("\n\n")}\n`,
+      `---\nsource_id: ${id.source}\nsource_incarnation: ${id.source}\ntitle: Long\n---\n${paragraphs.join("\n\n")}\n`,
     );
     etags.set("raw/docs/long.md", "etag-long");
     let inFlight = 0;
@@ -979,7 +985,7 @@ describe("M4.3a deterministic compile phases", () => {
         const db = yield* Database;
         yield* db
           .transaction((tx) =>
-            seedLegacySources(tx, {
+            seedSources(tx, {
               id: id.source,
               vaultId: id.vault,
               filePath: "raw/docs/long.md",
@@ -1016,7 +1022,10 @@ describe("M4.3a deterministic compile phases", () => {
 
   it("extract keeps an unchanged source's ETag and date, so the next ingest reads nothing", async () => {
     const path = "raw/docs/source.md";
-    files.set(path, `---\nsource_id: ${id.source}\n---\n# Source\n\nBody\n`);
+    files.set(
+      path,
+      `---\nsource_id: ${id.source}\nsource_incarnation: ${id.source}\n---\n# Source\n\nBody\n`,
+    );
     etags.set(path, "etag-one");
     await insertSource(id.source, path);
     complete = async () => ({
@@ -1089,14 +1098,14 @@ describe("M4.3a deterministic compile phases", () => {
   });
 
   it("ingest withholds the ETag for a timed-out embedding batch so the next run re-indexes it", async () => {
-    const content = `---\nsource_id: ${id.source}\ntitle: Source title\n---\n# Heading\n\nBody\n`;
+    const content = `---\nsource_id: ${id.source}\nsource_incarnation: ${id.source}\ntitle: Source title\n---\n# Heading\n\nBody\n`;
     files.set("raw/docs/source.md", content);
     etags.set("raw/docs/source.md", "etag-one");
     await run(
       Effect.flatMap(Database, (db) =>
         db
           .transaction((tx) =>
-            seedLegacySources(tx, {
+            seedSources(tx, {
               id: id.source,
               vaultId: id.vault,
               filePath: "raw/docs/source.md",
@@ -1178,18 +1187,18 @@ describe("M4.3a deterministic compile phases", () => {
   it("ingest sets aside only the document whose embedding timed out", async () => {
     files.set(
       "raw/docs/slow.md",
-      `---\nsource_id: ${id.source}\ntitle: Slow essay\n---\n# Slow\n\nSlow body\n`,
+      `---\nsource_id: ${id.source}\nsource_incarnation: ${id.source}\ntitle: Slow essay\n---\n# Slow\n\nSlow body\n`,
     );
     files.set(
       "raw/docs/fast.md",
-      `---\nsource_id: ${id.sourceB}\ntitle: Fast note\n---\n# Fast\n\nFast body\n`,
+      `---\nsource_id: ${id.sourceB}\nsource_incarnation: ${id.sourceB}\ntitle: Fast note\n---\n# Fast\n\nFast body\n`,
     );
     await run(
       Effect.flatMap(Database, (db) =>
         db
           .transaction((tx) =>
             Effect.all([
-              seedLegacySources(tx, {
+              seedSources(tx, {
                 id: id.source,
                 vaultId: id.vault,
                 filePath: "raw/docs/slow.md",
@@ -1197,7 +1206,7 @@ describe("M4.3a deterministic compile phases", () => {
                 bodyHash: "body",
                 sourceType: "document",
               }),
-              seedLegacySources(tx, {
+              seedSources(tx, {
                 id: id.sourceB,
                 vaultId: id.vault,
                 filePath: "raw/docs/fast.md",
@@ -1250,13 +1259,16 @@ describe("M4.3a deterministic compile phases", () => {
 
   it("ingest sets aside a document whose embedding keeps timing out, until its passages change", async () => {
     const path = "raw/docs/source.md";
-    files.set(path, `---\nsource_id: ${id.source}\ntitle: Slow\n---\n# Heading\n\nBody\n`);
+    files.set(
+      path,
+      `---\nsource_id: ${id.source}\nsource_incarnation: ${id.source}\ntitle: Slow\n---\n# Heading\n\nBody\n`,
+    );
     etags.set(path, "etag-one");
     await run(
       Effect.flatMap(Database, (db) =>
         db
           .transaction((tx) =>
-            seedLegacySources(tx, {
+            seedSources(tx, {
               id: id.source,
               vaultId: id.vault,
               filePath: path,
@@ -1299,7 +1311,10 @@ describe("M4.3a deterministic compile phases", () => {
       }),
     );
 
-    files.set(path, `---\nsource_id: ${id.source}\ntitle: Slow\n---\n# Heading\n\nRevised body\n`);
+    files.set(
+      path,
+      `---\nsource_id: ${id.source}\nsource_incarnation: ${id.source}\ntitle: Slow\n---\n# Heading\n\nRevised body\n`,
+    );
     etags.set(path, "etag-two");
     embed = defaultEmbed;
     embeddingRequests.length = 0;
@@ -1308,12 +1323,15 @@ describe("M4.3a deterministic compile phases", () => {
   });
 
   it("ingest fails loudly on a non-timeout embedding error", async () => {
-    files.set("raw/docs/source.md", `---\nsource_id: ${id.source}\n---\n# Heading\n\nBody\n`);
+    files.set(
+      "raw/docs/source.md",
+      `---\nsource_id: ${id.source}\nsource_incarnation: ${id.source}\n---\n# Heading\n\nBody\n`,
+    );
     await run(
       Effect.flatMap(Database, (db) =>
         db
           .transaction((tx) =>
-            seedLegacySources(tx, {
+            seedSources(tx, {
               id: id.source,
               vaultId: id.vault,
               filePath: "raw/docs/source.md",
@@ -1338,7 +1356,7 @@ describe("M4.3a deterministic compile phases", () => {
     const oldPath = "raw/books/original.md";
     const movedPath = `raw/moved/${id.source}-renamed.md`;
     const body = "# Moved source\n\nThe source body remains attached to its identity. ^p0\n";
-    const content = `---\nsource_id: ${id.source}\nsource_type: book\n---\n${body}`;
+    const content = `---\nsource_id: ${id.source}\nsource_incarnation: ${id.source}\nsource_type: book\n---\n${body}`;
     files.set(movedPath, content);
     etags.set(movedPath, "etag-moved");
 
@@ -1347,7 +1365,7 @@ describe("M4.3a deterministic compile phases", () => {
         const db = yield* Database;
         yield* db
           .transaction((tx) =>
-            seedLegacySources(tx, {
+            seedSources(tx, {
               id: id.source,
               vaultId: id.vault,
               filePath: oldPath,
@@ -1422,14 +1440,14 @@ describe("M4.3a deterministic compile phases", () => {
   it("sets aside a second storage path claiming a registered source's identity", async () => {
     const originalPath = "raw/docs/original.md";
     const duplicatePath = "raw/docs/copied.md";
-    const content = `---\nsource_id: ${id.source}\nsource_type: document\n---\n# Duplicate identity\n`;
+    const content = `---\nsource_id: ${id.source}\nsource_incarnation: ${id.source}\nsource_type: document\n---\n# Duplicate identity\n`;
     files.set(originalPath, content);
     files.set(duplicatePath, content);
     await run(
       Effect.flatMap(Database, (db) =>
         db
           .transaction((tx) =>
-            seedLegacySources(tx, {
+            seedSources(tx, {
               id: id.source,
               vaultId: id.vault,
               filePath: originalPath,

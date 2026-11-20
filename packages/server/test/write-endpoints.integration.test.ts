@@ -68,7 +68,7 @@ import {
   resetWorkflowQueue,
 } from "./fixtures/reply-history-database.ts";
 import { TestWorkflowEngineLive } from "./fixtures/workflow-engine.ts";
-import { seedLegacySources } from "./fixtures/source-documents.ts";
+import { seedSources } from "./fixtures/source-documents.ts";
 import { openMcp } from "./fixtures/mcp.ts";
 
 const initialTime = new Date("2026-07-10T12:00:00.000Z");
@@ -534,14 +534,14 @@ const seedSourceGraph = async () => {
   await writeVaultFile(
     id.vault,
     "raw/books/capital.md",
-    `---\nsource_id: ${id.source}\nsource_type: book\ntitle: Capital\n---\nCapital body.\n`,
+    `---\nsource_id: ${id.source}\nsource_incarnation: ${id.source}\nsource_type: book\ntitle: Capital\n---\nCapital body.\n`,
   );
   await runDb(
     Effect.gen(function* () {
       const db = yield* Database;
       yield* db
         .transaction((tx) =>
-          seedLegacySources(tx, {
+          seedSources(tx, {
             id: id.source,
             vaultId: id.vault,
             filePath: "raw/books/capital.md",
@@ -2154,7 +2154,7 @@ describe("M3.1 write endpoint integration", () => {
         const db = yield* Database;
         yield* db
           .transaction((tx) =>
-            seedLegacySources(tx, [
+            seedSources(tx, [
               {
                 id: id.m32SourceA,
                 vaultId: id.vault,

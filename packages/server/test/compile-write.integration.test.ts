@@ -18,7 +18,7 @@ import type { Article } from "../src/compile-articles.ts";
 import { makeAskRunner } from "../src/compile-asks.ts";
 import { writeArticles } from "../src/compile-write.ts";
 import { type CompleteInput, type ModelCompletion, ModelProviderError } from "../src/llm.ts";
-import { seedLegacySources } from "./fixtures/source-documents.ts";
+import { seedSources } from "./fixtures/source-documents.ts";
 import { runHistoryDatabase } from "./fixtures/reply-history-database.ts";
 
 const uuid = Schema.decodeUnknownSync(Uuid);
@@ -101,7 +101,7 @@ beforeEach(async () => {
           yield* tx
             .insert(vaultMemberships)
             .values({ id: id.membership, vaultId: id.vault, userId: id.user, role: "EDITOR" });
-          yield* seedLegacySources(tx, {
+          yield* seedSources(tx, {
             id: id.document,
             vaultId: id.vault,
             filePath: "raw/liquidators.md",

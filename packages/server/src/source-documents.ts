@@ -391,30 +391,24 @@ const makeSourceDocuments = Effect.gen(function* () {
       ) {
         return yield* sourceChanged();
       }
-      if (
-        identity.incarnationId !== source.incarnationId &&
-        !(identity.incarnationId === null && current.unversioned)
-      ) {
+      if (identity.incarnationId !== source.incarnationId) {
+        const priorId = identity.incarnationId;
+        if (priorId === null) return yield* sourceChanged();
         const prior = yield* db.query((tx) =>
           tx
-            .select({ id: sourceIncarnations.id, unversioned: sourceIncarnations.unversioned })
+            .select({ id: sourceIncarnations.id })
             .from(sourceIncarnations)
             .where(
               and(
+                eq(sourceIncarnations.id, priorId),
                 eq(sourceIncarnations.sourceId, source.id),
                 eq(sourceIncarnations.vaultId, source.vaultId),
                 isNotNull(sourceIncarnations.deletedAt),
-                identity.incarnationId === null
-                  ? undefined
-                  : eq(sourceIncarnations.id, identity.incarnationId),
               ),
-            ),
+            )
+            .limit(1),
         );
-        const recognized =
-          identity.incarnationId === null
-            ? prior.length === 0 || prior.some((row) => row.unversioned)
-            : prior.length > 0;
-        if (!recognized) return yield* sourceChanged();
+        if (prior.length === 0) return yield* sourceChanged();
       }
       return file;
     });
@@ -455,10 +449,6 @@ const makeSourceDocuments = Effect.gen(function* () {
           ) {
             return yield* sourceChanged();
           }
-          yield* tx
-            .update(sourceIncarnations)
-            .set({ unversioned: false })
-            .where(eq(sourceIncarnations.id, source.incarnationId));
           const rows = yield* tx
             .insert(sourceDocuments)
             .values(owned.source)
@@ -491,11 +481,7 @@ const makeSourceDocuments = Effect.gen(function* () {
       const identity = sourceIdentityFromFrontmatter(parsed.frontmatter);
       if (identity.sourceId !== source.id || bodyContentHash(parsed.body) !== source.bodyHash)
         return;
-      if (
-        identity.incarnationId !== source.incarnationId &&
-        !(identity.incarnationId === null && current.unversioned)
-      )
-        return;
+      if (identity.incarnationId !== source.incarnationId) return;
       return { file, parsed };
     });
 
@@ -525,15 +511,6 @@ const makeSourceDocuments = Effect.gen(function* () {
       }
       return yield* withCurrent(source, (tx) =>
         Effect.gen(function* () {
-          yield* tx
-            .update(sourceIncarnations)
-            .set({ unversioned: false })
-            .where(
-              and(
-                eq(sourceIncarnations.id, source.incarnationId),
-                eq(sourceIncarnations.unversioned, true),
-              ),
-            );
           if (changed)
             yield* tx
               .update(sourceDocuments)
@@ -558,36 +535,12 @@ const makeSourceDocuments = Effect.gen(function* () {
           .from(sourceIncarnations)
           .where(eq(sourceIncarnations.sourceId, candidate.id))
           .for("update");
-        let live = history.find((row) => row.deletedAt === null);
+        const live = history.find((row) => row.deletedAt === null);
         if (history.some((row) => row.vaultId !== candidate.vaultId))
           return yield* new SourceRegistryConflict({
             message: "its source belongs to another vault",
           });
-        if (live === undefined) {
-          if (history.length > 0) return;
-          yield* tx
-            .insert(sourceIncarnations)
-            .values({
-              ...(candidate.incarnationId === null ? {} : { id: candidate.incarnationId }),
-              sourceId: candidate.id,
-              vaultId: candidate.vaultId,
-              filePath: candidate.filePath,
-              unversioned: candidate.incarnationId === null,
-            })
-            .onConflictDoNothing();
-          const rows = yield* tx
-            .select()
-            .from(sourceIncarnations)
-            .where(
-              and(
-                eq(sourceIncarnations.sourceId, candidate.id),
-                isNull(sourceIncarnations.deletedAt),
-              ),
-            )
-            .for("update");
-          live = rows[0];
-          if (live === undefined || live.vaultId !== candidate.vaultId) return;
-        }
+        if (live === undefined || candidate.incarnationId !== live.id) return;
         const existing = yield* tx
           .select()
           .from(sourceDocuments)
@@ -600,21 +553,6 @@ const makeSourceDocuments = Effect.gen(function* () {
           current?.filePath !== expected?.filePath
         )
           return;
-        if (
-          candidate.incarnationId !== live.id &&
-          !(candidate.incarnationId === null && live.unversioned)
-        ) {
-          if (
-            candidate.incarnationId !== null ||
-            current !== undefined ||
-            history.some((row) => row.deletedAt !== null)
-          )
-            return;
-          yield* tx
-            .update(sourceIncarnations)
-            .set({ unversioned: true })
-            .where(eq(sourceIncarnations.id, live.id));
-        }
         const registered = yield* tx
           .select({ id: sourceDocuments.id })
           .from(sourceDocuments)
@@ -635,19 +573,11 @@ const makeSourceDocuments = Effect.gen(function* () {
               and(eq(searchIndex.vaultId, candidate.vaultId), eq(searchIndex.path, live.filePath)),
             );
         }
-        if (
-          live.filePath !== candidate.filePath ||
-          (live.unversioned && candidate.incarnationId !== null)
-        ) {
+        if (live.filePath !== candidate.filePath)
           yield* tx
             .update(sourceIncarnations)
-            .set({
-              filePath: candidate.filePath,
-              ...(candidate.incarnationId === null ? {} : { unversioned: false }),
-              updatedAt: sql`now()`,
-            })
+            .set({ filePath: candidate.filePath, updatedAt: sql`now()` })
             .where(eq(sourceIncarnations.id, live.id));
-        }
         const rows = yield* tx
           .insert(sourceDocuments)
           .values({
@@ -676,18 +606,11 @@ const makeSourceDocuments = Effect.gen(function* () {
           .where(eq(sourceIncarnations.vaultId, vaultId)),
       );
       const history = new Map<Uuid, SourceIncarnationRow>();
-      const retired = new Set<Uuid>();
-      const retiredLegacyPaths = new Set<string>();
       const registered = new Map<string, SourceDocumentRow>();
       const registeredById = new Map<Uuid, SourceDocumentRow>();
       for (const row of state) {
         if (!history.has(row.incarnation.sourceId) || row.incarnation.deletedAt === null)
           history.set(row.incarnation.sourceId, row.incarnation);
-        if (row.incarnation.deletedAt !== null) {
-          retired.add(row.incarnation.sourceId);
-          if (row.incarnation.unversioned)
-            retiredLegacyPaths.add(`${row.incarnation.sourceId}\0${row.incarnation.filePath}`);
-        }
         if (row.source !== null && row.incarnation.deletedAt === null) {
           registered.set(row.source.filePath, row.source);
           registeredById.set(row.source.id, row.source);
@@ -741,21 +664,11 @@ const makeSourceDocuments = Effect.gen(function* () {
           const source = reads[index];
           if (source === undefined) continue;
           const incarnation = history.get(source.id);
-          if (incarnation !== undefined) {
-            if (incarnation.deletedAt !== null) continue;
-            if (
-              source.incarnationId === null &&
-              retiredLegacyPaths.has(`${source.id}\0${file.path}`) &&
-              incarnation.filePath !== file.path &&
-              registeredById.get(source.id)?.fileHash !== source.fileHash
-            )
-              continue;
-            const unversioned =
-              source.incarnationId === null &&
-              (incarnation.unversioned ||
-                (!retired.has(source.id) && !registeredById.has(source.id)));
-            if (source.incarnationId !== incarnation.id && !unversioned) continue;
+          if (incarnation === undefined) {
+            setAside.set(file.path, "it is not a registered source");
+            continue;
           }
+          if (incarnation.deletedAt !== null || source.incarnationId !== incarnation.id) continue;
           if (prior !== undefined && prior.id !== source.id) {
             setAside.set(file.path, "another source is registered at this path");
             continue;
@@ -814,43 +727,13 @@ const makeSourceDocuments = Effect.gen(function* () {
 
   const retireFile = (deletion: SourceIncarnationRow) =>
     Effect.gen(function* () {
-      if (deletion.unversioned) {
-        const live = yield* db.query((tx) =>
-          tx
-            .select({ id: sourceIncarnations.id })
-            .from(sourceIncarnations)
-            .where(
-              and(
-                eq(sourceIncarnations.sourceId, deletion.sourceId),
-                isNull(sourceIncarnations.deletedAt),
-              ),
-            )
-            .limit(1),
-        );
-        if (live.length > 0) {
-          const current = yield* getById(deletion.vaultId, deletion.sourceId);
-          if (current === undefined) return false;
-          if (
-            !(yield* rewrite(
-              current,
-              (markdown) => markdown,
-              () => Effect.void,
-            ))
-          )
-            return false;
-        }
-      }
       const file = yield* readVersioned(deletion.vaultId, deletion.filePath);
       if (file !== null) {
         const control = readSourceControl(file.content);
         const identity =
           control ?? sourceIdentityFromFrontmatter(parseFrontmatter(file.content).frontmatter);
         if (identity.sourceId !== deletion.sourceId) return true;
-        if (
-          identity.incarnationId !== deletion.id &&
-          !(identity.incarnationId === null && deletion.unversioned)
-        )
-          return true;
+        if (identity.incarnationId !== deletion.id) return true;
         if (control?.state === "deleted") return true;
       }
       const marker = encodeSourceControl({

@@ -33,7 +33,7 @@ import { PipelineRunsService, PipelineRunsServiceLive } from "../src/pipeline-ru
 import { RandomBytesLive } from "../src/random.ts";
 import { SourceDocumentsServiceLive } from "../src/source-documents.ts";
 import { ContentStorage } from "../src/storage.ts";
-import { seedLegacySources, versionedSourceStorage } from "./fixtures/source-documents.ts";
+import { seedSources, versionedSourceStorage } from "./fixtures/source-documents.ts";
 import {
   replyHistoryTestDatabaseUrl,
   runHistoryDatabase,
@@ -172,7 +172,8 @@ const reply = (input: CompleteInput): string => {
         : [],
     });
   if (content.startsWith("A wiki article mentions")) return JSON.stringify({ choice: 1 });
-  if (content.startsWith("A wiki built from a library of documents retired")) return JSON.stringify({ choice: 1 });
+  if (content.startsWith("A wiki built from a library of documents retired"))
+    return JSON.stringify({ choice: 1 });
   if (content.startsWith("A wiki article links")) return JSON.stringify({ verdict: "yes" });
   throw new Error(`unexpected compile call: ${content.slice(0, 80)}`);
 };
@@ -322,7 +323,7 @@ describe("the themes Update pipeline", () => {
               .values({ id: id.membership, vaultId: id.vault, userId: id.user, role: "EDITOR" });
             for (const subject of subjects)
               for (const n of subject.documents) {
-                yield* seedLegacySources(tx, {
+                yield* seedSources(tx, {
                   id: document(n),
                   vaultId: id.vault,
                   filePath: `raw/${subject.name.toLowerCase()}-${n}.md`,

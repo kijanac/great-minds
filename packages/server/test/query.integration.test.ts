@@ -58,7 +58,7 @@ import {
   resetWorkflowQueue,
 } from "./fixtures/reply-history-database.ts";
 import { TestWorkflowEngineLive } from "./fixtures/workflow-engine.ts";
-import { seedLegacySources } from "./fixtures/source-documents.ts";
+import { seedSources } from "./fixtures/source-documents.ts";
 import { TokenService } from "../src/tokens.ts";
 import {
   finishPart,
@@ -405,7 +405,7 @@ const seedFixtures = async (webSearch: boolean) => {
         .pipe(Effect.orDie);
       yield* db
         .transaction((tx) =>
-          seedLegacySources(tx, {
+          seedSources(tx, {
             id: id.source,
             vaultId: id.vault,
             filePath: "raw/texts/source.md",

@@ -25,7 +25,7 @@ import {
   proposeTopics,
 } from "../src/compile-themes.ts";
 import type { CompleteInput, ModelCompletion } from "../src/llm.ts";
-import { seedLegacySources } from "./fixtures/source-documents.ts";
+import { seedSources } from "./fixtures/source-documents.ts";
 import { runHistoryDatabase } from "./fixtures/reply-history-database.ts";
 
 const uuid = Schema.decodeUnknownSync(Uuid);
@@ -133,7 +133,7 @@ beforeEach(async () => {
           yield* tx
             .insert(vaultMemberships)
             .values({ id: id.membership, vaultId: id.vault, userId: id.user, role: "EDITOR" });
-          yield* seedLegacySources(
+          yield* seedSources(
             tx,
             documents.map((document) => ({
               id: document.id,
