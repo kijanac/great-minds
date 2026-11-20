@@ -1,5 +1,4 @@
 import {
-  backlinks,
   Database,
   ideas,
   inUuidArray,
@@ -46,7 +45,7 @@ import {
 } from "./markdown.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
-import { liveArticleConditions } from "./wiki-articles.ts";
+import { liveArticleConditions, liveInboundLinks } from "./wiki-articles.ts";
 import { ContentStorage, READ_CONCURRENCY, vaultOwner } from "./storage.ts";
 import { append } from "./collections.ts";
 import { RandomBytesService } from "./random.ts";
@@ -567,20 +566,6 @@ export const CompilePhasesLive = Layer.effect(
         yield* db.query((d) =>
           d.delete(topicMembership).where(inUuidArray(topicMembership.topicId, archived)),
         );
-        yield* db.query((d) => {
-          const pages = d
-            .select({ id: wikiArticles.id })
-            .from(wikiArticles)
-            .where(inUuidArray(wikiArticles.topicId, archived));
-          return d
-            .delete(backlinks)
-            .where(
-              or(
-                inArray(backlinks.sourceArticleId, pages),
-                inArray(backlinks.targetArticleId, pages),
-              ),
-            );
-        });
         yield* db.query((d) =>
           d
             .delete(topicLinks)
@@ -863,7 +848,7 @@ export const CompilePhasesLive = Layer.effect(
                 title: wikiArticles.title,
                 filePath: wikiArticles.filePath,
                 precis: wikiArticles.precis,
-                inbound: sql<number>`(select count(*)::int from ${backlinks} where ${backlinks.targetArticleId} = ${wikiArticles.id})`,
+                inbound: liveInboundLinks,
               })
               .from(wikiArticles)
               .where(and(...liveArticleConditions(vaultId))),
