@@ -1568,9 +1568,11 @@ describe("M4.3a deterministic compile phases", () => {
           { topicId: id.topicC, slug: "no-file", supersededBy: null },
         ]);
         expect(yield* db.query((d) => d.select().from(topicMembership)).pipe(Effect.orDie)).toEqual(
-          [],
+          [{ topicId: id.topicA, ideaId: id.ideaA }],
         );
-        expect(yield* db.query((d) => d.select().from(topicLinks)).pipe(Effect.orDie)).toEqual([]);
+        expect(yield* db.query((d) => d.select().from(topicLinks)).pipe(Effect.orDie)).toEqual([
+          { sourceTopicId: id.topicB, targetTopicId: id.topicA },
+        ]);
       }),
     );
     expect(files.has("wiki/alpha.md")).toBe(false);
