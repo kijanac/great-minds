@@ -52,7 +52,10 @@ type SourceDocumentsServiceShape = {
     content: string,
     clientHash: FileFingerprint | null,
   ) => Effect.Effect<Uuid, Conflict>;
-  readonly discover: (vaultId: Uuid) => Effect.Effect<readonly DiscoveredSource[]>;
+  readonly discover: (vaultId: Uuid) => Effect.Effect<{
+    readonly sources: readonly DiscoveredSource[];
+    readonly setAside: readonly string[];
+  }>;
   readonly readCurrent: (
     source: SourceSnapshot,
   ) => Effect.Effect<SourceMarkdown | undefined, StorageFileMissing>;
@@ -556,13 +559,10 @@ const makeSourceDocuments = Effect.gen(function* () {
           .where(eq(sourceIncarnations.sourceId, candidate.id))
           .for("update");
         let live = history.find((row) => row.deletedAt === null);
-        if (history.some((row) => row.vaultId !== candidate.vaultId)) {
-          return yield* Effect.die(
-            new SourceRegistryConflict({
-              message: `Source ${candidate.id} belongs to another vault`,
-            }),
-          );
-        }
+        if (history.some((row) => row.vaultId !== candidate.vaultId))
+          return yield* new SourceRegistryConflict({
+            message: "its source belongs to another vault",
+          });
         if (live === undefined) {
           if (history.length > 0) return;
           yield* tx
@@ -624,13 +624,10 @@ const makeSourceDocuments = Effect.gen(function* () {
               eq(sourceDocuments.filePath, candidate.filePath),
             ),
           );
-        if (registered.some((row) => row.id !== candidate.id)) {
-          return yield* Effect.die(
-            new SourceRegistryConflict({
-              message: `Source identity mismatch at ${candidate.filePath}`,
-            }),
-          );
-        }
+        if (registered.some((row) => row.id !== candidate.id))
+          return yield* new SourceRegistryConflict({
+            message: "another source is registered at this path",
+          });
         if (live.filePath !== candidate.filePath) {
           yield* tx
             .delete(searchIndex)
@@ -705,13 +702,25 @@ const makeSourceDocuments = Effect.gen(function* () {
           ? { kind: "cached" as const, etag: file.etag, source: prior }
           : undefined;
       };
+      const setAside = new Map<string, string>();
       const reads = yield* Effect.forEach(
         files,
         (file) =>
           cached(file) === undefined
             ? storage.readText(vaultOwner(vaultId), file.path).pipe(
-                Effect.map((content) => parseSourceDocument(vaultId, file.path, content)),
+                Effect.flatMap((content) =>
+                  Effect.try({
+                    try: () => parseSourceDocument(vaultId, file.path, content),
+                    catch: () => "its header has no valid source id",
+                  }),
+                ),
                 Effect.catchTag("StorageFileMissing", () => Effect.succeed(undefined)),
+                Effect.catch((reason) =>
+                  Effect.sync(() => {
+                    setAside.set(file.path, reason);
+                    return undefined;
+                  }),
+                ),
               )
             : Effect.succeed(undefined),
         { concurrency: READ_CONCURRENCY },
@@ -748,20 +757,22 @@ const makeSourceDocuments = Effect.gen(function* () {
             if (source.incarnationId !== incarnation.id && !unversioned) continue;
           }
           if (prior !== undefined && prior.id !== source.id) {
-            return yield* Effect.die(
-              new SourceRegistryConflict({
-                message: `Source identity mismatch at ${file.path}: registered ${prior.id}, stored ${source.id}`,
-              }),
-            );
+            setAside.set(file.path, "another source is registered at this path");
+            continue;
           }
           candidate = { kind: "read", etag: file.etag, source };
         }
         const earlier = seen.get(candidate.source.id);
         if (earlier !== undefined && earlier !== file.path) {
-          return yield* Effect.die(
-            new SourceRegistryConflict({
-              message: `Source ${candidate.source.id} appears at both ${earlier} and ${file.path}`,
-            }),
+          const sourceId = candidate.source.id;
+          if (registeredById.get(sourceId)?.filePath !== file.path) {
+            setAside.set(file.path, `it has the same source id as ${earlier}`);
+            continue;
+          }
+          setAside.set(earlier, `it has the same source id as ${file.path}`);
+          candidates.splice(
+            candidates.findIndex((kept) => kept.source.id === sourceId),
+            1,
           );
         }
         seen.set(candidate.source.id, file.path);
@@ -772,12 +783,22 @@ const makeSourceDocuments = Effect.gen(function* () {
         if (candidate.kind === "cached") {
           discovered.push({ source: candidate.source, etag: candidate.etag });
         } else {
-          const source = yield* refresh(candidate.source, registeredById.get(candidate.source.id));
+          const source = yield* refresh(
+            candidate.source,
+            registeredById.get(candidate.source.id),
+          ).pipe(
+            Effect.catchTag("SourceRegistryConflict", (conflict) =>
+              Effect.sync(() => {
+                setAside.set(candidate.source.filePath, conflict.message);
+                return undefined;
+              }),
+            ),
+          );
           if (source !== undefined) discovered.push({ source, etag: candidate.etag });
         }
       }
       for (const source of registered.values()) {
-        if (seen.get(source.id) === source.filePath) continue;
+        if (seen.get(source.id) === source.filePath || setAside.has(source.filePath)) continue;
         yield* withCurrent(source, (tx) =>
           tx
             .delete(searchIndex)
@@ -785,7 +806,10 @@ const makeSourceDocuments = Effect.gen(function* () {
             .pipe(Effect.asVoid),
         );
       }
-      return discovered;
+      return {
+        sources: discovered,
+        setAside: [...setAside].map(([path, reason]) => `${path}: ${reason}`).toSorted(),
+      };
     });
 
   const retireFile = (deletion: SourceIncarnationRow) =>

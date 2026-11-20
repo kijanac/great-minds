@@ -129,7 +129,7 @@ it("does not rediscover failed deletions or reuse their ownership on repeated im
           : Effect.void;
       expect(yield* sources.deleteSource(id.vault, id.source)).toBe(true);
       expect(files.get(path)).toContain("Original private body.");
-      expect(yield* sources.discover(id.vault)).toEqual([]);
+      expect(yield* sources.discover(id.vault)).toEqual({ sources: [], setAside: [] });
       expect(yield* sources.getById(id.vault, id.source)).toBeUndefined();
       beforeWrite = () => Effect.void;
 
@@ -169,7 +169,7 @@ it("does not rediscover failed deletions or reuse their ownership on repeated im
         }),
       );
       expect(yield* storage.exists(vaultOwner(id.vault), path)).toBe(false);
-      expect(yield* sources.discover(id.vault)).toEqual([]);
+      expect(yield* sources.discover(id.vault)).toEqual({ sources: [], setAside: [] });
     }),
   ));
 
@@ -305,5 +305,22 @@ it("defers legacy cleanup when live managed bytes lose their ownership header", 
       expect(
         (yield* lifetimes).find((row) => row.id !== current.incarnationId)?.completedAt,
       ).toBeInstanceOf(Date);
+    }),
+  ));
+
+it("sets aside a source file it cannot register and still discovers the rest", () =>
+  run(
+    Effect.gen(function* () {
+      const sources = yield* SourceDocumentsService;
+      const good = yield* publish("# Source\n\nA readable body.");
+      files.set("raw/docs/no-id.md", "---\ntitle: No id\n---\n# No id\n");
+      files.set("raw/docs/copy.md", files.get(path) ?? "");
+      const found = yield* sources.discover(id.vault);
+      expect(found.sources.map((entry) => entry.source.id)).toEqual([good.id]);
+      expect(found.setAside).toEqual([
+        `raw/docs/copy.md: it has the same source id as ${path}`,
+        "raw/docs/no-id.md: its header has no valid source id",
+      ]);
+      expect((yield* sources.getById(id.vault, id.source))?.filePath).toBe(path);
     }),
   ));

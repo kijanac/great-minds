@@ -157,9 +157,18 @@ export const CompilePhasesLive = Layer.effect(
     const rebuildSearchScope = (vaultId: Uuid, runId: Uuid, scope: "raw" | "wiki") =>
       Effect.gen(function* () {
         const prefix = `${scope}/`;
+        const found =
+          scope === "raw" ? yield* sourceRegistry.discover(vaultId) : { sources: [], setAside: [] };
+        if (found.setAside.length > 0)
+          yield* pipeline.recordWarning(runId, {
+            phase: "ingest",
+            message: "source files could not be registered and were left out",
+            count: found.setAside.length,
+            items: found.setAside,
+          });
         const files: SearchDocument[] =
           scope === "raw"
-            ? (yield* sourceRegistry.discover(vaultId)).map((document) => ({
+            ? found.sources.map((document) => ({
                 kind: "source",
                 path: document.source.filePath,
                 ...document,
