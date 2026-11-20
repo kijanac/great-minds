@@ -158,7 +158,6 @@ export const CompileWorkflowLive = CompileWorkflow.toLayer((payload) => {
     }
     yield* runPhase("derive", Schema.Void, service.derive(vaultId, runId, validated));
     yield* runPhase("render", Schema.Void, service.render(vaultId, runId, validated));
-    yield* runPhase("verify", Schema.Void, service.verify(vaultId, runId));
     yield* runPhase("publish", Schema.Void, service.publish(vaultId, runId));
   });
   return phases;

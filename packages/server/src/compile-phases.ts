@@ -23,7 +23,6 @@ import {
   INGEST_STEP_LABELS,
   PUBLISH_STEP_LABELS,
   topicContentHash,
-  VERIFY_STEP_LABELS,
   type ArchiveTransition,
   type ValidatedTopic,
 } from "./compile-contract.ts";
@@ -44,7 +43,6 @@ import {
 } from "./markdown.ts";
 import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
-import { liveArticleConditions, liveInboundLinks } from "./wiki-articles.ts";
 import { ContentStorage, READ_CONCURRENCY, vaultOwner } from "./storage.ts";
 import { append } from "./collections.ts";
 import { RandomBytesService } from "./random.ts";
@@ -56,7 +54,6 @@ import {
 } from "./failure-ledger.ts";
 
 const SEARCH_WRITE_BATCH = 200;
-const START_HERE = 8;
 
 const compareText = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 const metadataText = (frontmatter: Record<string, unknown>) => {
@@ -136,7 +133,6 @@ type CompilePhasesShape = {
     runId: Uuid,
     validated: readonly ValidatedTopic[],
   ) => Effect.Effect<void, unknown>;
-  readonly verify: (vaultId: Uuid, runId: Uuid) => Effect.Effect<void, unknown>;
   readonly publish: (vaultId: Uuid, runId: Uuid) => Effect.Effect<void, unknown>;
 };
 
@@ -789,109 +785,13 @@ export const CompilePhasesLive = Layer.effect(
           );
         }),
       render: themesPipeline.render,
-      verify: (_vaultId, runId) =>
-        pipeline.updateProgress(
-          runId,
-          "verify",
-          "completed",
-          progressSteps(VERIFY_STEP_LABELS, "check_links", {
-            completed: new Set(Object.keys(VERIFY_STEP_LABELS)),
-          }),
-        ),
-      publish: (vaultId, runId) =>
+      publish: (_vaultId, runId) =>
         Effect.gen(function* () {
           yield* pipeline.updateProgress(
             runId,
             "publish",
             "progress",
-            progressSteps(PUBLISH_STEP_LABELS, "publish_wiki"),
-          );
-          const documents = yield* db.query((d) =>
-            d.select().from(sourceDocuments).where(eq(sourceDocuments.vaultId, vaultId)),
-          );
-          yield* pipeline.updateProgress(
-            runId,
-            "publish",
-            "progress",
-            progressSteps(PUBLISH_STEP_LABELS, "publish_wiki", {
-              counts: { publish_wiki: [0, 2] },
-            }),
-          );
-          const listed = yield* db.query((d) =>
-            d
-              .select({
-                title: wikiArticles.title,
-                filePath: wikiArticles.filePath,
-                precis: wikiArticles.precis,
-                inbound: liveInboundLinks,
-              })
-              .from(wikiArticles)
-              .where(and(...liveArticleConditions(vaultId))),
-          );
-          const entry = (article: (typeof listed)[number]) =>
-            `- [${article.title}](${article.filePath}) — ${article.precis.trim().replaceAll("\n", " ")}`;
-          const byTitle = listed.toSorted((left, right) =>
-            compareText(left.title.toLowerCase(), right.title.toLowerCase()),
-          );
-          const wikiLines = [
-            "# Contents",
-            "",
-            `_${listed.length} article${listed.length === 1 ? "" : "s"}_`,
-            "",
-            "## Start here",
-            "",
-            ...byTitle
-              .toSorted((left, right) => right.inbound - left.inbound)
-              .slice(0, START_HERE)
-              .map(entry),
-            "",
-            "## All articles",
-            "",
-            ...byTitle.map(entry),
-            "",
-          ];
-          yield* storage.writeText(vaultOwner(vaultId), "wiki/_index.md", wikiLines.join("\n"));
-          yield* pipeline.updateProgress(
-            runId,
-            "publish",
-            "progress",
-            progressSteps(PUBLISH_STEP_LABELS, "publish_wiki", {
-              counts: { publish_wiki: [1, 2] },
-            }),
-          );
-          const rawLines = [
-            "# Raw Sources",
-            "",
-            `_${documents.length} document${documents.length === 1 ? "" : "s"}_`,
-            "",
-            ...documents
-              .toSorted((left, right) =>
-                (left.title ?? left.filePath).toLowerCase() <
-                (right.title ?? right.filePath).toLowerCase()
-                  ? -1
-                  : (left.title ?? left.filePath).toLowerCase() >
-                      (right.title ?? right.filePath).toLowerCase()
-                    ? 1
-                    : 0,
-              )
-              .map((document) => {
-                const metadata = [document.genre, document.publishedDate, document.author].filter(
-                  (value): value is string => value !== null && value.length > 0,
-                );
-                const precis = (document.precis ?? "").trim().replaceAll("\n", " ");
-                return `- [${document.title ?? document.filePath}](${document.filePath})${metadata.length === 0 ? "" : ` — ${metadata.join(", ")}`}${precis.length === 0 ? "" : `  \n  ${precis}`}`;
-              }),
-            "",
-          ];
-          yield* storage.writeText(vaultOwner(vaultId), "raw/_index.md", rawLines.join("\n"));
-          yield* pipeline.updateProgress(
-            runId,
-            "publish",
-            "progress",
-            progressSteps(PUBLISH_STEP_LABELS, "finalize_compile", {
-              completed: new Set(["publish_wiki"]),
-              counts: { publish_wiki: [2, 2] },
-            }),
+            progressSteps(PUBLISH_STEP_LABELS, "finalize_compile"),
           );
           yield* pipeline.recordOutcome(runId);
           yield* pipeline.updateProgress(
@@ -900,7 +800,6 @@ export const CompilePhasesLive = Layer.effect(
             "completed",
             progressSteps(PUBLISH_STEP_LABELS, "finalize_compile", {
               completed: new Set(Object.keys(PUBLISH_STEP_LABELS)),
-              counts: { publish_wiki: [2, 2] },
             }),
           );
         }),

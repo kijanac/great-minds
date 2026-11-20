@@ -20,11 +20,7 @@ export const THEMES_RENDER_STEP_LABELS = {
   index_articles: "Indexing articles",
 } as const;
 export const DERIVE_STEP_LABELS = { find_related: "Connecting related topics" } as const;
-export const VERIFY_STEP_LABELS = { check_links: "Checking references" } as const;
-export const PUBLISH_STEP_LABELS = {
-  publish_wiki: "Publishing wiki",
-  finalize_compile: "Finalizing",
-} as const;
+export const PUBLISH_STEP_LABELS = { finalize_compile: "Finalizing" } as const;
 
 export const CompilePhase = Schema.Literals([
   "ingest",
@@ -32,7 +28,6 @@ export const CompilePhase = Schema.Literals([
   "abstract",
   "derive",
   "render",
-  "verify",
   "publish",
 ] as const);
 export type CompilePhase = typeof CompilePhase.Type;

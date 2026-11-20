@@ -89,7 +89,7 @@ describe("run track", () => {
       ["topics", "completed", "completed"],
       ["articles", "completed", "completed,completed,completed"],
       ["writing", "running", "running"],
-      ["linking", "pending", "pending,pending,pending,pending,pending"],
+      ["linking", "pending", "pending,pending,pending"],
     ]);
     const track = runTrack(row);
     expect(track[4]?.steps[0]).toMatchObject({ label: "Writing articles", done: 212, total: 428 });

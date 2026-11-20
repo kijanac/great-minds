@@ -73,8 +73,6 @@ const COMPILE: readonly StageDefinition[] = [
     steps: [
       ["render", "link_articles", "Linking articles"],
       ["render", "index_articles", "Indexing articles for search"],
-      ["verify", "check_links", "Checking references"],
-      ["publish", "publish_wiki", "Publishing"],
       ["publish", "finalize_compile", "Finishing"],
     ],
   },

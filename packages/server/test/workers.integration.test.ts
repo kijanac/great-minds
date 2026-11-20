@@ -382,7 +382,6 @@ const RenderFailurePhasesLive = Layer.effect(
           );
           return yield* Effect.die(new Error("forced render seam"));
         }),
-      verify: () => Effect.die("verify unexpectedly reached"),
       publish: () => Effect.die("publish unexpectedly reached"),
     };
   }),

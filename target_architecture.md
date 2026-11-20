@@ -63,7 +63,7 @@ Articles are written to the vault's storage as `wiki/<slug>.md`, so the vault is
 
 ## Pipeline
 
-An Update runs seven phases as a durable workflow (`compile-intents.ts`); each phase is a resumable activity and checks for cancellation before it starts. Phases are in `compile-phases.ts`; the theme work is in `compile-themes-pipeline.ts` and the files it calls.
+An Update runs six phases as a durable workflow (`compile-intents.ts`); each phase is a resumable activity and checks for cancellation before it starts. Phases are in `compile-phases.ts`; the theme work is in `compile-themes-pipeline.ts` and the files it calls.
 
 ### 1. Ingest: making sources searchable (`ingest`)
 
@@ -93,13 +93,9 @@ One question per changed document: read the whole document and return its title,
 - **Linking:** for each article, the map model lists phrases that mention other subjects (`find_mentions`); each mention is matched to candidate articles by blended text and embedding search, the map model picks one (`pick_link_target`), and the reduce model checks it is the best place to read about that subject (`check_link`). Accepted links are written into the text and recorded in `topic_links`.
 - Articles are then indexed for search.
 
-### 6. Verify: checking references
+### 6. Publish
 
-Links actually present in article text are rebuilt into `backlinks`.
-
-### 7. Publish
-
-Writes `wiki/_index.md` (start here and the full list) and `raw/_index.md`, records the run's outcome (articles added, changed, removed, merged) and marks the run complete.
+Records the run's outcome (articles added, changed, removed, merged) and marks the run complete.
 
 ## Incremental Updates
 
