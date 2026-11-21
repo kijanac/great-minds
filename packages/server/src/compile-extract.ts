@@ -242,7 +242,7 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
   const jsonCall: JsonCall = (input) =>
     Effect.gen(function* () {
       const totalAttempts = (input.maxParseRetries ?? 1) + 1;
-      for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
+      for (let attempt = 1; ; attempt += 1) {
         const completion = yield* languageModel.complete({
           model: input.model,
           messages: input.messages,
@@ -294,7 +294,6 @@ export const makeCompileExtract = (options: CompileExtractOptions) => {
           ...input.logFields,
         });
       }
-      return yield* Effect.die(new Error("jsonCall retry loop exited without resolution"));
     });
 
   const putCache = (vaultId: Uuid, cacheKey: string, value: ExtractCacheValue) =>

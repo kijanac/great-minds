@@ -12,6 +12,8 @@ import { Context, Effect, Layer } from "effect";
 
 import { SET_ASIDE_MESSAGE } from "./failure-ledger.ts";
 
+export const isActiveRun = inArray(pipelineRuns.status, ["pending", "running"]);
+
 export const LEFT_OUT_MESSAGE = "source files could not be registered and were left out";
 export const UNSEARCHABLE_MESSAGE = `documents not searchable (embedding timed out): ${SET_ASIDE_MESSAGE}`;
 
@@ -183,9 +185,7 @@ export const PipelineRunsServiceLive = Layer.effect(
               completedAt: phaseStatus === "failed" ? sql`now()` : undefined,
               updatedAt: sql`now()`,
             })
-            .where(
-              and(runOrCompileGroup(runId), inArray(pipelineRuns.status, ["pending", "running"])),
-            ),
+            .where(and(runOrCompileGroup(runId), isActiveRun)),
         )
         .pipe(Effect.asVoid);
 
@@ -196,12 +196,7 @@ export const PipelineRunsServiceLive = Layer.effect(
             d
               .select({ id: pipelineRuns.id })
               .from(pipelineRuns)
-              .where(
-                and(
-                  eq(pipelineRuns.id, runId),
-                  inArray(pipelineRuns.status, ["pending", "running"]),
-                ),
-              )
+              .where(and(eq(pipelineRuns.id, runId), isActiveRun))
               .limit(1),
           )
           .pipe(Effect.map((rows) => rows.length === 1)),
@@ -217,12 +212,7 @@ export const PipelineRunsServiceLive = Layer.effect(
                 completedAt: sql`now()`,
                 updatedAt: sql`now()`,
               })
-              .where(
-                and(
-                  eq(pipelineRuns.id, runId),
-                  inArray(pipelineRuns.status, ["pending", "running"]),
-                ),
-              ),
+              .where(and(eq(pipelineRuns.id, runId), isActiveRun)),
           )
           .pipe(Effect.andThen(recordOutcome(runId))),
       cancelCompileIntent: (intentId) =>
@@ -238,12 +228,7 @@ export const PipelineRunsServiceLive = Layer.effect(
                   completedAt: sql`now()`,
                   updatedAt: sql`now()`,
                 })
-                .where(
-                  and(
-                    eq(pipelineRuns.compileIntentId, intentId),
-                    inArray(pipelineRuns.status, ["pending", "running"]),
-                  ),
-                );
+                .where(and(eq(pipelineRuns.compileIntentId, intentId), isActiveRun));
               yield* tx
                 .update(compileIntents)
                 .set({
@@ -275,9 +260,7 @@ export const PipelineRunsServiceLive = Layer.effect(
             ) || jsonb_build_array(${JSON.stringify(warning)}::jsonb)`,
                 updatedAt: sql`now()`,
               })
-              .where(
-                and(runOrCompileGroup(runId), inArray(pipelineRuns.status, ["pending", "running"])),
-              ),
+              .where(and(runOrCompileGroup(runId), isActiveRun)),
           )
           .pipe(Effect.asVoid),
       failPreservingProgress: (runId, error) =>
@@ -292,9 +275,7 @@ export const PipelineRunsServiceLive = Layer.effect(
                 completedAt: sql`now()`,
                 updatedAt: sql`now()`,
               })
-              .where(
-                and(runOrCompileGroup(runId), inArray(pipelineRuns.status, ["pending", "running"])),
-              ),
+              .where(and(runOrCompileGroup(runId), isActiveRun)),
           )
           .pipe(Effect.andThen(recordOutcome(runId))),
       complete: (runId) =>
@@ -303,9 +284,7 @@ export const PipelineRunsServiceLive = Layer.effect(
             d
               .update(pipelineRuns)
               .set({ status: "completed", completedAt: sql`now()`, updatedAt: sql`now()` })
-              .where(
-                and(runOrCompileGroup(runId), inArray(pipelineRuns.status, ["pending", "running"])),
-              ),
+              .where(and(runOrCompileGroup(runId), isActiveRun)),
           )
           .pipe(Effect.asVoid),
       runOfIntent: (intentId) =>

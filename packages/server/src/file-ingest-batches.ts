@@ -27,7 +27,7 @@ import { ClockService } from "./clock.ts";
 import { rawFileHash } from "./crypto.ts";
 import { jobResponse, selectJobs } from "./job-response.ts";
 import { StructuredLogger } from "./logging.ts";
-import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
+import { isActiveRun, PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
 import { admitSource, SourceDocumentsService } from "./source-documents.ts";
 import { sourceIdForKey } from "./source-identity.ts";
 import {
@@ -642,12 +642,7 @@ export const FileIngestBatchesLive = Layer.effect(
           .select({ id: fileIngestBatches.id })
           .from(fileIngestBatches)
           .innerJoin(pipelineRuns, eq(pipelineRuns.id, fileIngestBatches.id))
-          .where(
-            and(
-              eq(fileIngestBatches.status, "processing"),
-              inArray(pipelineRuns.status, ["pending", "running"]),
-            ),
-          )
+          .where(and(eq(fileIngestBatches.status, "processing"), isActiveRun))
           .orderBy(asc(fileIngestBatches.createdAt))
           .limit(100),
       );

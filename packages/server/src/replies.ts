@@ -229,19 +229,13 @@ export const ReplyWorkflow = Workflow.make("ReplyGeneration", {
   success: Schema.Void,
 });
 
-const dispatchReply = (
-  replyId: Uuid,
-  db: Database["Service"],
-  workflowEngine: WorkflowEngine.WorkflowEngine["Service"],
-) =>
+const dispatchReply = (replyId: Uuid, db: Database["Service"]) =>
   Effect.gen(function* () {
     const rows = yield* db.query((d) =>
       d.select({ status: replies.status }).from(replies).where(eq(replies.id, replyId)),
     );
     if (rows[0]?.status !== "running") return;
-    yield* ReplyWorkflow.execute({ replyId }, { discard: true }).pipe(
-      Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine),
-    );
+    yield* ReplyWorkflow.execute({ replyId }, { discard: true });
     yield* db.query((d) =>
       d
         .update(replies)
@@ -822,7 +816,8 @@ export const RepliesServiceLive = Layer.effect(
       }).pipe(Effect.catchCause(deferFailure("reply_finalization_deferred", replyId)));
 
     const dispatchBestEffort = (replyId: Uuid) =>
-      dispatchReply(replyId, db, workflowEngine).pipe(
+      dispatchReply(replyId, db).pipe(
+        withEngine,
         Effect.catchCause(deferFailure("reply_dispatch_deferred", replyId)),
       );
 

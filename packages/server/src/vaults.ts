@@ -51,6 +51,7 @@ import { AppConfig } from "./config.ts";
 import { StructuredLogger } from "./logging.ts";
 import { Mailer } from "./mailer.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
+import { isActiveRun } from "./pipeline-runs.ts";
 import { ContentStorage, StagedStorage, userOwner, vaultOwner } from "./storage.ts";
 import { readVaultConfig, VAULT_CONFIG_PATH } from "./vault-config.ts";
 import { liveArticleConditions } from "./wiki-articles.ts";
@@ -423,7 +424,7 @@ export const VaultsServiceLive = Layer.effect(
           completedAt: sql`now()`,
           updatedAt: sql`now()`,
         })
-        .where(and(inVaults, inArray(pipelineRuns.status, ["pending", "running"])));
+        .where(and(inVaults, isActiveRun));
 
     const finishVaultDeletion = (vaultId: Uuid) =>
       Effect.gen(function* () {

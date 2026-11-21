@@ -11,7 +11,7 @@ import {
   type JobSseEvent,
   type Uuid,
 } from "@great-minds/domain";
-import { and, count, desc, eq, inArray, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer, Schema, Stream } from "effect";
 import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 
@@ -20,7 +20,7 @@ import { AppConfig, missingModelKey, notConfiguredDetail } from "./config.ts";
 import { FileIngestBatches } from "./file-ingest-batches.ts";
 import { jobResponse, selectJobs } from "./job-response.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
-import { PipelineRunsService } from "./pipeline-runs.ts";
+import { isActiveRun, PipelineRunsService } from "./pipeline-runs.ts";
 import { pollingSse } from "./polling-sse.ts";
 import { runTrack } from "./run-track.ts";
 import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
@@ -168,11 +168,7 @@ export const JobsServiceLive = Layer.effect(
               })
               .from(pipelineRuns)
               .where(
-                and(
-                  eq(pipelineRuns.id, runId),
-                  eq(pipelineRuns.vaultId, vaultId),
-                  inArray(pipelineRuns.status, ["pending", "running"]),
-                ),
+                and(eq(pipelineRuns.id, runId), eq(pipelineRuns.vaultId, vaultId), isActiveRun),
               )
               .limit(1),
           );
@@ -212,7 +208,7 @@ export const JobsServiceLive = Layer.effect(
           yield* access.requireMember(userId, vaultId);
           const conditions: SQL[] = [eq(pipelineRuns.vaultId, vaultId)];
           if (query.status === "active") {
-            conditions.push(inArray(pipelineRuns.status, ["pending", "running"]));
+            conditions.push(isActiveRun);
           } else if (query.status !== undefined) {
             conditions.push(eq(pipelineRuns.status, query.status));
           }
