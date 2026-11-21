@@ -6,7 +6,6 @@ import type {
   SessionId,
   Uuid,
 } from "@great-minds/domain";
-import type { UnmentionedLink } from "#lib/api/lint.ts";
 import type { SessionSummary } from "#lib/api/sessions.ts";
 import type { SourceDocumentSummary, SourceTypeFacet } from "#lib/api/sources.ts";
 import type { WikiArticleOverview } from "#lib/api/wiki.ts";
@@ -18,7 +17,6 @@ export type {
   SessionSummary,
   SourceDocumentSummary,
   SourceTypeFacet,
-  UnmentionedLink,
   WikiArticleOverview,
 };
 

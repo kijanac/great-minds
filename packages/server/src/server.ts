@@ -33,6 +33,7 @@ import { HttpApiBuilder } from "effect/http-api";
 import { HttpApiSchemaError } from "effect/http-api/HttpApiError";
 
 import { AppLayerLive, type AppLayerServices } from "./app-layer.ts";
+import { AttentionService } from "./attention.ts";
 import { AuthService, keyRefusal, modelRefusal } from "./auth.ts";
 import { CliLogins } from "./cli-logins.ts";
 import { Mailer } from "./mailer.ts";
@@ -43,7 +44,6 @@ import { domainErrorResponse } from "./http-errors.ts";
 import { FileIngestBatches } from "./file-ingest-batches.ts";
 import { IngestService } from "./ingest.ts";
 import { JobsService } from "./jobs.ts";
-import { LintService } from "./lint.ts";
 import { StructuredLogger } from "./logging.ts";
 import { McpRoutesLive } from "./mcp.ts";
 import { PasskeysService } from "./passkeys.ts";
@@ -615,12 +615,12 @@ const CompileHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "compile"
     ),
 );
 
-const LintHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "lint", (handlers) =>
-  handlers.handle("getLint", ({ params }) =>
+const AttentionHandlersLive = HttpApiBuilder.group(MountedGreatMindsApi, "attention", (handlers) =>
+  handlers.handle("getAttention", ({ params }) =>
     Effect.gen(function* () {
-      const lint = yield* LintService;
+      const attention = yield* AttentionService;
       const current = yield* CurrentAuth;
-      return yield* lint.report(current.user_id, params.vault_id);
+      return yield* attention.report(current.user_id, params.vault_id);
     }),
   ),
 );
@@ -829,7 +829,7 @@ const ApiGroupsLive = Layer.mergeAll(
   IngestHandlersLive,
   JobsHandlersLive,
   CompileHandlersLive,
-  LintHandlersLive,
+  AttentionHandlersLive,
   CostsHandlersLive,
   DocumentsHandlersLive,
   SessionsHandlersLive,

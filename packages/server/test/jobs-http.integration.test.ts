@@ -457,22 +457,17 @@ describe("compile and job HTTP routes", () => {
   });
 });
 
-describe("lint and cost HTTP routes", () => {
-  it("returns the exact lint response shapes", async () => {
-    const response = await request(`/v1/vaults/${ids.vault}/lint`, current().aliceToken);
+describe("attention and cost HTTP routes", () => {
+  it("returns the exact attention response shape", async () => {
+    const response = await request(`/v1/vaults/${ids.vault}/attention`, current().aliceToken);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      orphans: [
-        {
-          file_path: "wiki/alpha.md",
-          title: "Alpha",
-          precis: "Alpha precis",
-          updated_at: now.toISOString(),
-          slug: "alpha",
-        },
-      ],
-      dirty_topics: [ids.topicAlpha],
-      unmentioned_links: [
+      unwritten_articles: [],
+      new_sources: 0,
+      unread_sources: [],
+      left_out_files: [],
+      unsearchable_sources: [],
+      unplaced_links: [
         { source_slug: "beta", source_title: "Beta", target_slug: "alpha", target_title: "Alpha" },
       ],
     });

@@ -199,11 +199,11 @@
             variant="ghost"
             onclick={() => {
               switchVault(vaultId!);
-              void goto("/health");
+              void goto("/attention");
             }}
             class="h-auto rounded-sm px-0 py-2 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-gold-muted hover:bg-transparent hover:text-gold"
           >
-            vault health →
+            needs attention →
           </Button>
         </div>
 
