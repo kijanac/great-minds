@@ -860,16 +860,17 @@ export const QueryServiceLive = Layer.effect(
             return leftKey.localeCompare(rightKey);
           })
           .slice(0, maxSearchResults)
-          .map(([key, score]) => {
+          .flatMap(([key, score]) => {
             const row = metadata.get(key);
-            if (row === undefined) {
-              throw new Error(`missing search metadata for ${key}`);
-            }
-            return {
-              ...row,
-              body: row.body.length > 500 ? row.body.slice(0, 500) : row.body,
-              score,
-            };
+            return row === undefined
+              ? []
+              : [
+                  {
+                    ...row,
+                    body: row.body.length > 500 ? row.body.slice(0, 500) : row.body,
+                    score,
+                  },
+                ];
           });
       });
 

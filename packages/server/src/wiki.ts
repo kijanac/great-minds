@@ -3,7 +3,6 @@ import {
   Forbidden,
   type PageParams,
   type Uuid,
-  type WikiArticleOverview,
   type WikiArticlePage,
   type WikiListQuery,
 } from "@great-minds/domain";
@@ -31,14 +30,6 @@ type WikiServiceShape = {
 export class WikiService extends Context.Service<WikiService, WikiServiceShape>()(
   "@great-minds/server/WikiService",
 ) {}
-
-const articleOverview = (row: typeof wikiArticles.$inferSelect): WikiArticleOverview => {
-  const filePath = row.filePath;
-  if (!filePath.startsWith("wiki/") || !filePath.endsWith(".md")) {
-    throw new Error(`invalid wiki article path: ${filePath}`);
-  }
-  return wikiOverview(row);
-};
 
 export const listedArticleConditions = (
   vaultId: Uuid,
@@ -95,7 +86,7 @@ export const listArticlePage = (
         .limit(params.limit)
         .offset(params.offset),
     );
-    return pageEnvelope(rows.map(articleOverview), params, oneTotal(countRows));
+    return pageEnvelope(rows.map(wikiOverview), params, oneTotal(countRows));
   });
 
 export const WikiServiceLive = Layer.effect(
