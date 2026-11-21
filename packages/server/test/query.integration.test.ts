@@ -41,7 +41,12 @@ import {
   type LlmMessage,
 } from "../src/llm.ts";
 import { ParallelSearchService } from "../src/parallel.ts";
-import { sanitizedStreamError, searchWords, truncatedAnswerError } from "../src/query.ts";
+import {
+  sanitizedStreamError,
+  searchQueryInput,
+  searchWords,
+  truncatedAnswerError,
+} from "../src/query.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { RepliesService, ReplyWorkflow } from "../src/replies.ts";
 import { startServer } from "../src/server.ts";
@@ -258,8 +263,8 @@ const startHarness = async (options: HarnessOptions) => {
     options.embeddings ??
     makeEmbeddings(
       new Map([
-        ["capital", vector1024([1, 0, 0])],
-        ["value", vector1024([1, 0, 0])],
+        [searchQueryInput("capital"), vector1024([1, 0, 0])],
+        [searchQueryInput("value"), vector1024([1, 0, 0])],
       ]),
     );
   const decorateHistory = options.historyStore;
@@ -2144,7 +2149,9 @@ describe("query stream", () => {
         { kind: "parts", parts: [tokenPart("Hybrid"), finishPart("stop", "hybrid-final")] },
       ],
     });
-    const embeddings = makeEmbeddings(new Map([["dual power", vector1024([1, 0, 0])]]));
+    const embeddings = makeEmbeddings(
+      new Map([[searchQueryInput("dual power"), vector1024([1, 0, 0])]]),
+    );
     await startHarness({ language, embeddings });
     await runDb(
       Effect.gen(function* () {
@@ -2192,7 +2199,11 @@ describe("query stream", () => {
     expect(snapshots.at(-1)?.sources).toContainEqual(
       expect.objectContaining({ type: "search", label: "dual power", scope: "kb" }),
     );
-    expect(embeddings.calls).toEqual([["dual power"]]);
+    expect(embeddings.calls).toEqual([
+      [
+        "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:dual power",
+      ],
+    ]);
     const toolMessage = language.streamCalls[1].messages.find(
       (message) => message.role === "tool" && message.tool_call_id === "tc-search",
     );
