@@ -8,7 +8,12 @@ import * as Workflow from "effect/workflow/Workflow";
 import { causeDetails, formatError } from "./error-details.ts";
 import { IngestService } from "./ingest.ts";
 import { StructuredLogger } from "./logging.ts";
-import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
+import {
+  endedByRunNotActive,
+  PipelineRunsService,
+  progressSteps,
+  RunNotActive,
+} from "./pipeline-runs.ts";
 import { parseCanonicalSourceUrl } from "./source-identity.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
 
@@ -27,7 +32,7 @@ export const UrlIngestWorkflow = Workflow.make("UrlIngest", {
   payload: { pipelineRunId: Uuid },
   idempotencyKey: ({ pipelineRunId }) => pipelineRunId,
   success: Schema.Void,
-  error: UrlIngestWorkflowError,
+  error: Schema.Union([UrlIngestWorkflowError, RunNotActive]),
 });
 
 const failureMessage = (cause: Cause.Cause<unknown>) => {
@@ -42,7 +47,7 @@ export const UrlIngestWorkflowLive = UrlIngestWorkflow.toLayer((payload) =>
   Activity.make({
     name: "url-ingest-persist",
     success: Schema.Void,
-    error: UrlIngestWorkflowError,
+    error: Schema.Union([UrlIngestWorkflowError, RunNotActive]),
     execute: Effect.gen(function* () {
       const db = yield* Database;
       const ingest = yield* IngestService;
@@ -66,7 +71,7 @@ export const UrlIngestWorkflowLive = UrlIngestWorkflow.toLayer((payload) =>
       if (request === undefined) {
         return yield* Effect.die(new Error(`URL ingest request ${runId} not found`));
       }
-      if (!(yield* pipeline.isActive(runId))) return yield* Effect.interrupt;
+      yield* pipeline.requireActive(runId);
       if (request.sourceIncarnationId === null) {
         return yield* new UrlIngestWorkflowError({
           message: "This URL import predates source ownership tracking. Retry it as a new import.",
@@ -94,12 +99,12 @@ export const UrlIngestWorkflowLive = UrlIngestWorkflow.toLayer((payload) =>
         }),
       );
     }).pipe(
-      Effect.catchCause((cause) => {
-        if (cause.reasons.length > 0 && cause.reasons.every(Cause.isInterruptReason)) {
-          return Effect.interrupt;
-        }
-        const message = failureMessage(cause);
-        return Effect.gen(function* () {
+      Effect.catchCause((cause) =>
+        Effect.gen(function* () {
+          if (Cause.hasInterruptsOnly(cause)) return yield* Effect.interrupt;
+          if (endedByRunNotActive(cause))
+            return yield* new RunNotActive({ runId: payload.pipelineRunId });
+          const message = failureMessage(cause);
           const pipeline = yield* PipelineRunsService;
           const logger = yield* StructuredLogger;
           yield* pipeline.updateProgress(
@@ -117,8 +122,8 @@ export const UrlIngestWorkflowLive = UrlIngestWorkflow.toLayer((payload) =>
             error_message: message,
           });
           return yield* new UrlIngestWorkflowError({ message });
-        });
-      }),
+        }),
+      ),
     ),
   }),
 );
