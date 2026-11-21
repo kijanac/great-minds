@@ -800,7 +800,7 @@ export const QueryServiceLive = Layer.effect(
                 })
                 .from(searchIndex)
                 .where(and(...bm25Conditions))
-                .orderBy(desc(rank))
+                .orderBy(desc(rank), searchIndex.path, searchIndex.chunkIndex)
                 .limit(armLimit),
             ),
             db.query((d) =>
@@ -815,7 +815,7 @@ export const QueryServiceLive = Layer.effect(
                 })
                 .from(searchIndex)
                 .where(and(...vectorConditions))
-                .orderBy(distance)
+                .orderBy(distance, searchIndex.path, searchIndex.chunkIndex)
                 .limit(armLimit),
             ),
           ],
