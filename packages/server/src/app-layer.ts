@@ -2,6 +2,7 @@ import { Database, DatabaseLive } from "@great-minds/database";
 import { Effect, Layer } from "effect";
 import type { WorkflowEngine } from "effect/workflow/WorkflowEngine";
 
+import { AttentionService, AttentionServiceLive } from "./attention.ts";
 import { AuthService, AuthServiceLive, SignInCodeRetentionLoopLive } from "./auth.ts";
 import { CliLoginRetentionLoopLive, CliLogins, CliLoginsLive } from "./cli-logins.ts";
 import { RunSettlementLoopLive } from "./run-settlement.ts";
@@ -29,7 +30,6 @@ import {
 } from "./file-ingest-batches.ts";
 import { IngestService, IngestServiceLive } from "./ingest.ts";
 import { JobsService, JobsServiceLive } from "./jobs.ts";
-import { LintService, LintServiceLive } from "./lint.ts";
 import { CostLookupLive, CostLookupService } from "./llm-costs.ts";
 import { LanguageModel, LanguageModelLive } from "./llm.ts";
 import { StructuredLogger, StructuredLoggerLive } from "./logging.ts";
@@ -111,7 +111,7 @@ export type AppLayerServices =
   | UrlIngestService
   | FileIngestBatches
   | JobsService
-  | LintService
+  | AttentionService
   | CostsService
   | DocumentsService
   | SessionsService
@@ -200,7 +200,7 @@ export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
         ProposalsServiceLive,
         VaultsServiceLive,
         WikiServiceLive,
-        LintServiceLive,
+        AttentionServiceLive,
         CostsServiceLive,
         DocumentsServiceLive,
         FileIngestBatchesLive,

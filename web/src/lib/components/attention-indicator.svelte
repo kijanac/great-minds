@@ -12,7 +12,7 @@
   } = $props();
 
   const issueLabel = $derived(
-    count === 1 ? "1 item needs attention" : `${count} items need attention`,
+    count === 1 ? "1 problem needs an admin" : `${count} problems need an admin`,
   );
 </script>
 
@@ -21,8 +21,8 @@
     variant="ghost"
     size="xs"
     onclick={onOpen}
-    title="Health unavailable"
-    aria-label="Health unavailable; open health"
+    title="Could not check"
+    aria-label="Could not check; open needs attention"
     class="h-[18px] min-w-[18px] rounded-full border border-red-400/30 bg-red-400/10 px-1 font-mono text-[10px] leading-none text-red-300 hover:bg-red-400/15 hover:text-red-200"
   >
     ?
@@ -33,7 +33,7 @@
     size="xs"
     onclick={onOpen}
     title={issueLabel}
-    aria-label={`${issueLabel}; open health`}
+    aria-label={`${issueLabel}; open needs attention`}
     class="h-[18px] min-w-[18px] rounded-full bg-gold/5 px-1 font-mono text-[10px] leading-none text-gold hover:bg-gold/10 hover:text-gold dark:bg-gold/20 dark:hover:bg-gold/30"
   >
     {count}
