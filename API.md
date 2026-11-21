@@ -31,7 +31,7 @@ server-sent event (SSE) streams used for long-running work.
   - [Ingest](#ingest)
   - [Jobs](#jobs)
   - [Compile](#compile)
-  - [Lint](#lint)
+  - [Attention](#attention)
   - [Costs](#costs)
   - [Documents](#documents)
   - [Sessions](#sessions)
@@ -1815,24 +1815,27 @@ Response: `204 No Content`.
 
 Errors: `403 Forbidden`, `422 Validation`.
 
-### Lint
+### Attention
 
-#### GET /v1/vaults/:vault_id/lint
+#### GET /v1/vaults/:vault_id/attention
 
 Auth: required.
 
-Returns the vault's wiki lint report: orphaned articles, dirty topics, and
-unmentioned links.
+Returns what in the vault needs attention. The first two fields are fixed by
+the next Update; the rest need an admin.
 
 Path parameters: `vault_id` (`Uuid`).
 
-Response: `200` with a `LintReport`:
+Response: `200` with an `AttentionReport`:
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `orphans` | array | `WikiArticleOverview` entries that are not linked from any other article. |
-| `dirty_topics` | array of `Uuid` | Topic ids flagged as dirty (needing recompilation). |
-| `unmentioned_links` | array | `{source_slug, source_title, target_slug, target_title}` entries: links that exist in article bodies but are not registered in the link graph. |
+| `unwritten_articles` | array of string | Titles of topics whose article has not been written. |
+| `new_sources` | number | Sources added since the last completed Update. |
+| `unread_sources` | array | `{id, title}` of sources the last completed Update had but could not read. |
+| `left_out_files` | array of string | Source files the last completed Update could not register. |
+| `unsearchable_sources` | array of string | Paths of sources set aside from the search index. |
+| `unplaced_links` | array | `{source_slug, source_title, target_slug, target_title}` entries: links chosen for an article but absent from its text. |
 
 Errors: `403 Forbidden`, `422 Validation`.
 
@@ -2753,7 +2756,7 @@ Every error body has the same shape:
 | GET | `/v1/vaults/:vault_id/jobs/:job_id/stream` | required | jobs |
 | POST | `/v1/vaults/:vault_id/compile` | required (owner) | compile |
 | POST | `/v1/vaults/:vault_id/compile/:run_id/cancel` | required (owner) | compile |
-| GET | `/v1/vaults/:vault_id/lint` | required | lint |
+| GET | `/v1/vaults/:vault_id/attention` | required | attention |
 | GET | `/v1/costs` | required | costs |
 | GET | `/v1/vaults/:vault_id/costs` | required | costs |
 | GET | `/v1/vaults/:vault_id/doc` | required | documents |

@@ -41,17 +41,17 @@ import {
   withoutFootnoteDefinitions,
   serializeFrontmatter,
 } from "./markdown.ts";
-import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
+import {
+  LEFT_OUT_MESSAGE,
+  PipelineRunsService,
+  progressSteps,
+  UNSEARCHABLE_MESSAGE,
+} from "./pipeline-runs.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
 import { ContentStorage, READ_CONCURRENCY, vaultOwner } from "./storage.ts";
 import { append } from "./collections.ts";
 import { RandomBytesService } from "./random.ts";
-import {
-  failedAttempts,
-  recordFailure,
-  SET_ASIDE_AFTER,
-  SET_ASIDE_MESSAGE,
-} from "./failure-ledger.ts";
+import { failedAttempts, recordFailure, SET_ASIDE_AFTER } from "./failure-ledger.ts";
 
 const SEARCH_WRITE_BATCH = 200;
 
@@ -162,7 +162,7 @@ export const CompilePhasesLive = Layer.effect(
         if (found.setAside.length > 0)
           yield* pipeline.recordWarning(runId, {
             phase: "ingest",
-            message: "source files could not be registered and were left out",
+            message: LEFT_OUT_MESSAGE,
             count: found.setAside.length,
             items: found.setAside,
           });
@@ -456,7 +456,7 @@ export const CompilePhasesLive = Layer.effect(
         if (setAsideSearch.length > 0)
           yield* pipeline.recordWarning(runId, {
             phase: scope === "raw" ? "ingest" : "publish",
-            message: `documents not searchable (embedding timed out): ${SET_ASIDE_MESSAGE}`,
+            message: UNSEARCHABLE_MESSAGE,
             count: setAsideSearch.length,
             items: setAsideSearch.toSorted(),
           });

@@ -11,7 +11,7 @@
 
   import { auth } from "#lib/auth.svelte.ts";
   import ArticlePanel from "#lib/components/article-panel.svelte";
-  import HealthIndicator from "#lib/components/health-indicator.svelte";
+  import AttentionIndicator from "#lib/components/attention-indicator.svelte";
   import IngestionFlow from "#lib/components/ingestion-flow.svelte";
   import PanelHost from "#lib/components/panel-host.svelte";
   import VaultSwitcher from "#lib/components/vault-switcher.svelte";
@@ -23,7 +23,7 @@
   import { Button } from "#lib/components/ui/button/index.ts";
   import { useActiveJob } from "#lib/hooks/use-active-job.svelte.ts";
   import { unsponsoredNotice, useMe } from "#lib/hooks/use-me.svelte.ts";
-  import { useHealthReport } from "#lib/hooks/use-health-report.svelte.ts";
+  import { useAttention } from "#lib/hooks/use-attention.svelte.ts";
   import { usePanelCard } from "#lib/hooks/use-panel-card.svelte.ts";
   import { usePanelContent } from "#lib/hooks/use-panel-content.svelte.ts";
   import { useSessions } from "#lib/hooks/use-sessions.svelte.ts";
@@ -43,7 +43,7 @@
 
   const sessions = useSessions();
   const vaults = useVaults();
-  const health = useHealthReport();
+  const attention = useAttention();
   const activeJob = useActiveJob();
   const me = useMe();
   const initial = untrack(() => ({
@@ -212,10 +212,10 @@
                   >
                     <span class="min-w-0 [overflow-wrap:anywhere]">{currentVault.name}</span>
                   </Button>
-                  <HealthIndicator
-                    status={health.status}
-                    count={health.count}
-                    onOpen={() => void goto("/health")}
+                  <AttentionIndicator
+                    status={attention.status}
+                    count={attention.adminGroups.length}
+                    onOpen={() => void goto("/attention")}
                   />
                 {/if}
                 <VaultSwitcher />

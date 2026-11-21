@@ -10,6 +10,11 @@ import type { PipelineProgressStep, PipelineWarning, Uuid } from "@great-minds/d
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
+import { SET_ASIDE_MESSAGE } from "./failure-ledger.ts";
+
+export const LEFT_OUT_MESSAGE = "source files could not be registered and were left out";
+export const UNSEARCHABLE_MESSAGE = `documents not searchable (embedding timed out): ${SET_ASIDE_MESSAGE}`;
+
 type PipelineRunsServiceShape = {
   readonly cancel: (runId: Uuid) => Effect.Effect<void>;
   readonly cancelCompileIntent: (intentId: Uuid) => Effect.Effect<void>;

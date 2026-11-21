@@ -767,20 +767,23 @@ export const WikiArticleOverview = Schema.Struct({
 });
 export type WikiArticleOverview = typeof WikiArticleOverview.Type;
 
-export const UnmentionedLink = Schema.Struct({
+export const UnplacedLink = Schema.Struct({
   source_slug: Schema.String,
   source_title: Schema.String,
   target_slug: Schema.String,
   target_title: Schema.String,
 });
-export type UnmentionedLink = typeof UnmentionedLink.Type;
+export type UnplacedLink = typeof UnplacedLink.Type;
 
-export const LintReport = Schema.Struct({
-  orphans: Schema.Array(WikiArticleOverview),
-  dirty_topics: Schema.Array(Uuid),
-  unmentioned_links: Schema.Array(UnmentionedLink),
+export const AttentionReport = Schema.Struct({
+  unwritten_articles: Schema.Array(Schema.String),
+  new_sources: Schema.Number,
+  unread_sources: Schema.Array(Schema.Struct({ id: Uuid, title: Schema.String })),
+  left_out_files: Schema.Array(Schema.String),
+  unsearchable_sources: Schema.Array(Schema.String),
+  unplaced_links: Schema.Array(UnplacedLink),
 });
-export type LintReport = typeof LintReport.Type;
+export type AttentionReport = typeof AttentionReport.Type;
 
 export const WikiArticlePage = pageOf(WikiArticleOverview);
 export type WikiArticlePage = typeof WikiArticlePage.Type;
@@ -2094,10 +2097,10 @@ const CompileApiGroup = HttpApiGroup.make("compile")
     }).middleware(AuthMiddleware),
   );
 
-const LintApiGroup = HttpApiGroup.make("lint").add(
-  HttpApiEndpoint.get("getLint", "/vaults/:vault_id/lint", {
+const AttentionApiGroup = HttpApiGroup.make("attention").add(
+  HttpApiEndpoint.get("getAttention", "/vaults/:vault_id/attention", {
     params: VaultIdParams,
-    success: LintReport,
+    success: AttentionReport,
     error: ForbiddenValidationErrors,
   }).middleware(AuthMiddleware),
 );
@@ -2277,7 +2280,7 @@ export const GreatMindsApi = HttpApi.make("great-minds").add(
   IngestApiGroup,
   JobsApiGroup,
   CompileApiGroup,
-  LintApiGroup,
+  AttentionApiGroup,
   CostsApiGroup,
   DocumentsApiGroup,
   SessionsApiGroup,
@@ -2382,7 +2385,7 @@ export const endpointPermissions: { readonly [Name in EndpointName]: Permission 
   streamJob: "read",
   requestCompile: "change",
   cancelCompile: "change",
-  getLint: "read",
+  getAttention: "read",
   getVaultCosts: "read",
   resolveDocument: "read",
   readChunks: "read",
