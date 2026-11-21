@@ -4,15 +4,9 @@ import { and, asc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { Context, Effect, Layer } from "effect";
 
+import { wikiOverview } from "./document-metadata.ts";
 import { VaultAccessService } from "./vaults.ts";
 import { liveArticleConditions, liveInboundLinks } from "./wiki-articles.ts";
-
-const wikiSlug = (path: string) => {
-  if (!path.startsWith("wiki/") || !path.endsWith(".md")) {
-    throw new Error(`invalid wiki article path: ${path}`);
-  }
-  return path.slice("wiki/".length, -".md".length);
-};
 
 type LintServiceShape = {
   readonly report: (userId: Uuid, vaultId: Uuid) => Effect.Effect<LintReport, Forbidden>;
@@ -96,13 +90,7 @@ export const LintServiceLive = Layer.effect(
           );
 
           return {
-            orphans: orphans.map((row) => ({
-              file_path: row.filePath,
-              title: row.title,
-              precis: row.precis,
-              updated_at: row.updatedAt,
-              slug: wikiSlug(row.filePath),
-            })),
+            orphans: orphans.map(wikiOverview),
             dirty_topics: dirty.map((row) => row.topicId),
             unmentioned_links: unmentioned.map((row) => ({
               source_slug: row.sourceSlug,

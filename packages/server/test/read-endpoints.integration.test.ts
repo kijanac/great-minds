@@ -1513,9 +1513,9 @@ describe("read-only HTTP integration", () => {
       `/vaults/${id.vaultAlpha}/doc?path=wiki/orphan-on-disk.md`,
       aliceToken,
     );
-    expect(fileWithoutRow.status).toBe(500);
+    expect(fileWithoutRow.status).toBe(404);
     expect(fileWithoutRow.body).toMatchObject({
-      detail: "Document on disk lacks a registry row: wiki/orphan-on-disk.md",
+      detail: "Document not found: wiki/orphan-on-disk.md",
     });
 
     const invalid = await api(
