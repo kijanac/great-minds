@@ -9,7 +9,7 @@ import { type AskFailed, type AskRunner, orNoted, type Progress } from "./compil
 import { contentHash } from "./crypto.ts";
 import type { ArticleContent } from "./compile-write.ts";
 import { responseFormat } from "./compile-themes.ts";
-import type { EmbeddingsService } from "./embeddings.ts";
+import { type EmbeddingsService, searchQueryInput } from "./embeddings.ts";
 import { noFailures, sortedFailures } from "./failure-ledger.ts";
 
 const CANDIDATES = 5;
@@ -216,7 +216,7 @@ export const findLinks = (
       catalogue.map((article, index) => [article.id, catalogueVectors[index]] as const),
     );
     const mentionVectors = yield* embedAll(
-      mentioned.map((mention) => `${mention.phrase}: ${mention.about}`),
+      mentioned.map((mention) => searchQueryInput(`${mention.phrase}: ${mention.about}`)),
     );
     const documentTokens = new Map(
       catalogue.map((article) => [article.id, words(`${article.title} ${article.description}`)]),
