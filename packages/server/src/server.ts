@@ -38,7 +38,7 @@ import { CliLogins } from "./cli-logins.ts";
 import { Mailer } from "./mailer.ts";
 import { AppConfig } from "./config.ts";
 import { CostsService } from "./costs.ts";
-import { DocumentRegistryMismatch, DocumentsService } from "./documents.ts";
+import { DocumentsService } from "./documents.ts";
 import { domainErrorResponse } from "./http-errors.ts";
 import { FileIngestBatches } from "./file-ingest-batches.ts";
 import { IngestService } from "./ingest.ts";
@@ -165,19 +165,6 @@ const handleHttpCause = (cause: Cause.Cause<unknown>) =>
     const schemaError = schemaErrorFromCause(cause);
     if (schemaError !== undefined) {
       return yield* schemaErrorResponse(schemaError);
-    }
-
-    const defect = firstDefect(cause);
-    if (defect instanceof DocumentRegistryMismatch) {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      const logger = yield* StructuredLogger;
-      yield* logger.error("document_registry_mismatch", {
-        method: request.method,
-        path: request.url,
-        document_path: defect.path,
-        status: 500,
-      });
-      return yield* jsonResponse(500, { detail: defect.message });
     }
 
     const [response] = yield* HttpServerError.causeResponse(cause);

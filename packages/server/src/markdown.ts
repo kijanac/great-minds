@@ -76,6 +76,8 @@ const decodeFrontmatterRecord = Schema.decodeUnknownOption(
   Schema.Record(Schema.String, Schema.Unknown),
 );
 
+export const stripFrontmatter = (content: string) => content.replace(FRONTMATTER_RE, "");
+
 export const parseFrontmatter = (
   content: string,
 ): {

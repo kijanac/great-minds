@@ -73,10 +73,6 @@ type SourceDocumentsServiceShape = {
     clientHashes: readonly FileFingerprint[],
   ) => Effect.Effect<readonly FileFingerprint[]>;
   readonly getById: (vaultId: Uuid, sourceId: Uuid) => Effect.Effect<SourceDocumentRow | undefined>;
-  readonly getByPath: (
-    vaultId: Uuid,
-    filePath: string,
-  ) => Effect.Effect<SourceDocumentRow | undefined>;
   readonly titlesByPath: (
     vaultId: Uuid,
     filePaths: readonly string[],
@@ -862,21 +858,6 @@ const makeSourceDocuments = Effect.gen(function* () {
                 );
               }),
             ),
-    getByPath: (vaultId, filePath) =>
-      db
-        .query((tx) =>
-          tx
-            .select()
-            .from(sourceDocuments)
-            .where(
-              and(
-                eq(sourceDocuments.vaultId, vaultId),
-                eq(sourceDocuments.filePath, posix.normalize(filePath)),
-              ),
-            )
-            .limit(1),
-        )
-        .pipe(Effect.map((rows) => rows[0])),
     deleteSource: (vaultId, sourceId, incarnationId) =>
       Effect.gen(function* () {
         const deletion = yield* db.transaction((tx) =>

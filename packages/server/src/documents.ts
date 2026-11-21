@@ -22,20 +22,16 @@ import {
   type WikiArticle,
 } from "@great-minds/domain";
 import { alias } from "drizzle-orm/pg-core";
-import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
-import { Context, Data, Effect, Layer } from "effect";
+import { and, asc, desc, eq, gte, lte, sql, type SQL } from "drizzle-orm";
+import { Context, Effect, Layer } from "effect";
 
+import { stripFrontmatter } from "./markdown.ts";
 import { ContentStorage, vaultOwner } from "./storage.ts";
 import { withFootnoteNotes } from "./wiki-footnotes.ts";
 import { readSourceDocument, wikiOverview, wikiSlug } from "./document-metadata.ts";
 import { VaultAccessService } from "./vaults.ts";
 
 const MAX_CHUNK_SPAN = 100;
-
-export class DocumentRegistryMismatch extends Data.TaggedError("DocumentRegistryMismatch")<{
-  readonly path: string;
-  readonly message: string;
-}> {}
 
 type DocumentsServiceShape = {
   readonly readDocument: (
@@ -78,11 +74,6 @@ const wikiArticle = (row: typeof wikiArticles.$inferSelect): WikiArticle => ({
   updated_at: row.updatedAt,
   slug: wikiSlug(row.filePath),
 });
-
-const stripFrontmatter = (content: string) => {
-  const match = /^---\n(.+?)\n---\n/s.exec(content);
-  return match === null ? content : content.slice(match[0].length);
-};
 
 const safeDocumentReadPath = (path: string) => {
   if (path.includes("\\")) {
@@ -239,54 +230,29 @@ export const DocumentsServiceLive = Layer.effect(
     const access = yield* VaultAccessService;
     const storage = yield* ContentStorage;
 
-    const getWikiByPath = (vaultId: Uuid, filePath: string) =>
-      Effect.gen(function* () {
-        const rows = yield* db.query((d) =>
+    const findWiki = (vaultId: Uuid, match: SQL) =>
+      db
+        .query((d) =>
           d
             .select()
             .from(wikiArticles)
-            .where(and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.filePath, filePath)))
+            .where(and(eq(wikiArticles.vaultId, vaultId), match))
             .limit(1),
+        )
+        .pipe(
+          Effect.map((rows) => {
+            const row = first(rows);
+            return row === undefined ? undefined : wikiArticle(row);
+          }),
         );
-        const row = first(rows);
-        return row === undefined ? undefined : wikiArticle(row);
-      });
 
-    const getWikiByTopic = (vaultId: Uuid, topicId: Uuid) =>
-      Effect.gen(function* () {
-        const rows = yield* db.query((d) =>
-          d
-            .select()
-            .from(wikiArticles)
-            .where(and(eq(wikiArticles.vaultId, vaultId), eq(wikiArticles.topicId, topicId)))
-            .limit(1),
-        );
-        const row = first(rows);
-        return row === undefined ? undefined : wikiArticle(row);
-      });
-
-    const getSourceByPath = (vaultId: Uuid, filePath: string) =>
+    const findSource = (vaultId: Uuid, match: SQL) =>
       Effect.gen(function* () {
         const rows = yield* db.query((d) =>
           d
             .select()
             .from(sourceDocuments)
-            .where(
-              and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.filePath, filePath)),
-            )
-            .limit(1),
-        );
-        const row = first(rows);
-        return row === undefined ? undefined : yield* readSourceDocument(row);
-      });
-
-    const getSourceById = (vaultId: Uuid, sourceId: Uuid) =>
-      Effect.gen(function* () {
-        const rows = yield* db.query((d) =>
-          d
-            .select()
-            .from(sourceDocuments)
-            .where(and(eq(sourceDocuments.vaultId, vaultId), eq(sourceDocuments.id, sourceId)))
+            .where(and(eq(sourceDocuments.vaultId, vaultId), match))
             .limit(1),
         );
         const row = first(rows);
@@ -307,7 +273,7 @@ export const DocumentsServiceLive = Layer.effect(
         if (topic === undefined || topic.articleStatus !== "archived") {
           return undefined;
         }
-        const article = yield* getWikiByTopic(vaultId, topic.topicId);
+        const article = yield* findWiki(vaultId, eq(wikiArticles.topicId, topic.topicId));
         if (article === undefined) {
           return undefined;
         }
@@ -369,7 +335,7 @@ export const DocumentsServiceLive = Layer.effect(
 
         const body = stripFrontmatter(content.success);
         if (safePath.startsWith("wiki/")) {
-          const article = yield* getWikiByPath(vaultId, safePath);
+          const article = yield* findWiki(vaultId, eq(wikiArticles.filePath, safePath));
           if (article !== undefined) {
             return {
               article,
@@ -379,7 +345,7 @@ export const DocumentsServiceLive = Layer.effect(
             } satisfies DocResponse;
           }
         } else {
-          const article = yield* getSourceByPath(vaultId, safePath);
+          const article = yield* findSource(vaultId, eq(sourceDocuments.filePath, safePath));
           if (article !== undefined) {
             return {
               article,
@@ -390,16 +356,13 @@ export const DocumentsServiceLive = Layer.effect(
           }
         }
 
-        throw new DocumentRegistryMismatch({
-          path: safePath,
-          message: `Document on disk lacks a registry row: ${safePath}`,
-        });
+        return yield* new NotFound({ detail: `Document not found: ${safePath}` });
       });
 
     const readSource = (userId: Uuid, vaultId: Uuid, sourceId: Uuid) =>
       Effect.gen(function* () {
         yield* access.requireMember(userId, vaultId);
-        const article = yield* getSourceById(vaultId, sourceId);
+        const article = yield* findSource(vaultId, eq(sourceDocuments.id, sourceId));
         if (article === undefined) {
           return yield* new NotFound({ detail: "Source not found" });
         }
