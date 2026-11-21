@@ -317,6 +317,7 @@ const rrfK = 60;
 const maxSearchResults = 20;
 const maxSourceHits = 8;
 const searchArmMultiplier = 2;
+const vectorEfSearch = 200;
 
 const fetchRange = (rawStart: number, rawEnd: number) => {
   const start = Math.max(0, Math.min(rawStart, rawEnd));
@@ -803,20 +804,26 @@ export const QueryServiceLive = Layer.effect(
                 .orderBy(desc(rank), searchIndex.path, searchIndex.chunkIndex)
                 .limit(armLimit),
             ),
-            db.query((d) =>
-              d
-                .select({
-                  vaultId: searchIndex.vaultId,
-                  path: searchIndex.path,
-                  chunkIndex: searchIndex.chunkIndex,
-                  heading: searchIndex.heading,
-                  body: searchIndex.body,
-                  score: sql<number>`1 - (${distance})`,
-                })
-                .from(searchIndex)
-                .where(and(...vectorConditions))
-                .orderBy(distance, searchIndex.path, searchIndex.chunkIndex)
-                .limit(armLimit),
+            db.transaction((tx) =>
+              Effect.gen(function* () {
+                yield* tx.execute(
+                  sql`set local hnsw.ef_search = ${sql.raw(String(vectorEfSearch))}`,
+                );
+                yield* tx.execute(sql`set local hnsw.iterative_scan = strict_order`);
+                return yield* tx
+                  .select({
+                    vaultId: searchIndex.vaultId,
+                    path: searchIndex.path,
+                    chunkIndex: searchIndex.chunkIndex,
+                    heading: searchIndex.heading,
+                    body: searchIndex.body,
+                    score: sql<number>`1 - (${distance})`,
+                  })
+                  .from(searchIndex)
+                  .where(and(...vectorConditions))
+                  .orderBy(distance, searchIndex.path, searchIndex.chunkIndex)
+                  .limit(armLimit);
+              }),
             ),
           ],
           { concurrency: "unbounded" },
