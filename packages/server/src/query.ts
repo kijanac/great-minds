@@ -31,7 +31,12 @@ import { AppConfig, missingModelKey, notConfiguredDetail } from "./config.ts";
 import { existingUser } from "./cost-ledger.ts";
 import { defaultVaultConfigFile, readVaultConfig, type VaultConfigFile } from "./vault-config.ts";
 import { promptContentHash } from "./crypto.ts";
-import { type EmbeddingBatchFailed, EmbeddingsService, vectorLiteral } from "./embeddings.ts";
+import {
+  type EmbeddingBatchFailed,
+  EmbeddingsService,
+  searchQueryInput,
+  vectorLiteral,
+} from "./embeddings.ts";
 import { CostLookupService, recordPrompt } from "./llm-costs.ts";
 import {
   LanguageModel,
@@ -312,9 +317,6 @@ const rrfK = 60;
 const maxSearchResults = 20;
 const maxSourceHits = 8;
 const searchArmMultiplier = 2;
-
-export const searchQueryInput = (query: string) =>
-  `Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:${query}`;
 
 const fetchRange = (rawStart: number, rawEnd: number) => {
   const start = Math.max(0, Math.min(rawStart, rawEnd));

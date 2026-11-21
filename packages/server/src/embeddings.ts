@@ -41,6 +41,9 @@ export const isTimeoutError = (error: unknown): boolean => {
 
 export const vectorLiteral = (embedding: readonly number[]) => `[${embedding.join(",")}]`;
 
+export const searchQueryInput = (query: string) =>
+  `Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:${query}`;
+
 const truncateAndNormalize = (embedding: readonly number[]) => {
   const truncated = embedding.slice(0, embeddingDimensions);
   const norm = Math.hypot(...truncated);

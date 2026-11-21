@@ -40,13 +40,9 @@ import {
   type LlmAssistantToolCall,
   type LlmMessage,
 } from "../src/llm.ts";
+import { searchQueryInput } from "../src/embeddings.ts";
 import { ParallelSearchService } from "../src/parallel.ts";
-import {
-  sanitizedStreamError,
-  searchQueryInput,
-  searchWords,
-  truncatedAnswerError,
-} from "../src/query.ts";
+import { sanitizedStreamError, searchWords, truncatedAnswerError } from "../src/query.ts";
 import { makeTestMailer } from "../src/mailer.ts";
 import { RepliesService, ReplyWorkflow } from "../src/replies.ts";
 import { startServer } from "../src/server.ts";
