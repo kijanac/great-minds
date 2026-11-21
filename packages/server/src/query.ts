@@ -52,7 +52,7 @@ import { StructuredLogger } from "./logging.ts";
 import { ParallelSearchService, type ParallelSearchResult } from "./parallel.ts";
 import { loadPrompt } from "./prompts.ts";
 import { ContentStorage, userOwner, vaultOwner } from "./storage.ts";
-import { readSourceSummary } from "./document-metadata.ts";
+import { sourceSummary } from "./document-metadata.ts";
 import { articleLinks, chunkRange } from "./documents.ts";
 import { querySourceRows } from "./source-query.ts";
 import { articleOrder, listArticlePage, listedArticleConditions } from "./wiki.ts";
@@ -1028,7 +1028,7 @@ export const QueryServiceLive = Layer.effect(
           } satisfies ToolResult;
         }
         const declared = config.enrichedFields.map((field) => field.name);
-        const summaries = yield* Effect.forEach(page.rows, readSourceSummary);
+        const summaries = page.rows.map(sourceSummary);
         const parts = summaries.map((row) => {
           const lines = [`### ${row.title ?? row.file_path}`, `  [raw] ${row.file_path}`];
           if (row.author !== null) lines[1] += ` by ${row.author}`;

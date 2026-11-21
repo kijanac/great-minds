@@ -14,7 +14,7 @@ import {
 import { and, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
-import { readSourceSummary } from "./document-metadata.ts";
+import { sourceSummary } from "./document-metadata.ts";
 import { querySourceRows, tagCondition } from "./source-query.ts";
 import { ContentStorage } from "./storage.ts";
 import { defaultVaultConfigFile, readVaultConfig } from "./vault-config.ts";
@@ -117,11 +117,7 @@ export const SourcesServiceLive = Layer.effect(
           );
 
           return {
-            ...pageEnvelope(
-              yield* Effect.forEach(rows, readSourceSummary),
-              query,
-              oneTotal(countRows),
-            ),
+            ...pageEnvelope(rows.map(sourceSummary), query, oneTotal(countRows)),
             facets: {
               source_types: facetRows,
             },
@@ -135,7 +131,7 @@ export const SourcesServiceLive = Layer.effect(
           );
           const page = yield* querySourceRows(db, vaultId, config, query, 50);
           return pageEnvelope(
-            yield* Effect.forEach(page.rows, readSourceSummary),
+            page.rows.map(sourceSummary),
             { limit: page.limit, offset: page.offset },
             page.total,
           );

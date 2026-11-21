@@ -1,0 +1,1 @@
+ALTER TABLE "source_documents" ADD CONSTRAINT "ck_source_documents_derived_extras_object" CHECK (jsonb_typeof("derived_extras") = 'object');

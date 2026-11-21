@@ -28,7 +28,7 @@ import { Context, Effect, Layer } from "effect";
 import { stripFrontmatter } from "./markdown.ts";
 import { ContentStorage, vaultOwner } from "./storage.ts";
 import { withFootnoteNotes } from "./wiki-footnotes.ts";
-import { readSourceDocument, wikiOverview, wikiSlug } from "./document-metadata.ts";
+import { sourceDocument, wikiOverview, wikiSlug } from "./document-metadata.ts";
 import { VaultAccessService } from "./vaults.ts";
 
 const MAX_CHUNK_SPAN = 100;
@@ -256,7 +256,7 @@ export const DocumentsServiceLive = Layer.effect(
             .limit(1),
         );
         const row = first(rows);
-        return row === undefined ? undefined : yield* readSourceDocument(row);
+        return row === undefined ? undefined : sourceDocument(row);
       });
 
     const readArchivedWiki = (vaultId: Uuid, filePath: string) =>
