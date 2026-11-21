@@ -313,6 +313,9 @@ const maxSearchResults = 20;
 const maxSourceHits = 8;
 const searchArmMultiplier = 2;
 
+export const searchQueryInput = (query: string) =>
+  `Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:${query}`;
+
 const fetchRange = (rawStart: number, rawEnd: number) => {
   const start = Math.max(0, Math.min(rawStart, rawEnd));
   return { start, end: Math.min(Math.max(rawStart, rawEnd, start), start + maxRangeChunks - 1) };
@@ -769,7 +772,7 @@ export const QueryServiceLive = Layer.effect(
           vectorConditions.push(eq(searchIndex.path, path));
         }
         const rank = sql<number>`ts_rank(${searchIndex.tsv}, ${tsquery})`;
-        const embedded = yield* embeddings.embed([query], {
+        const embedded = yield* embeddings.embed([searchQueryInput(query)], {
           vaultId,
           userId: context.userId,
           eventType: "query.embed",
