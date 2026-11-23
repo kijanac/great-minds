@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   acceptedRequestFor,
-  type AcceptedReplyRequest,
+  AcceptedReplyRequest,
   acceptedWrites,
 } from "../src/conversation-history/admission.ts";
 import {
@@ -275,7 +275,8 @@ describe("native conversation history", () => {
         },
       },
     } satisfies AcceptedReplyRequest;
-    const row = { id: replyId, userId: header().author_id, sessionId, request };
+    const stored = Schema.encodeSync(AcceptedReplyRequest)(request);
+    const row = { id: replyId, userId: header().author_id, sessionId, request: stored };
     expect(await Effect.runPromise(acceptedRequestFor(row))).toEqual(request);
     expect(acceptedWrites(row, request)).toEqual([
       { ...header(), origin: null },
@@ -283,10 +284,10 @@ describe("native conversation history", () => {
     ]);
     expect(acceptedWrites(row, { ...request, conversation: null })).toHaveLength(1);
     for (const invalid of [
-      { ...request, extra: true },
-      { ...request, mode: null },
-      { ...request, accepted_at: null },
-      { ...request, command: { ...request.command, model: "any/model" } },
+      { ...stored, extra: true },
+      { ...stored, mode: null },
+      { ...stored, accepted_at: null },
+      { ...stored, command: { ...stored.command, model: "any/model" } },
     ])
       expect(
         failure(

@@ -14,7 +14,7 @@ import {
   storageBackendError,
 } from "./object-store.ts";
 
-export class LocalHistoryWriterBusy extends Data.TaggedError("LocalHistoryWriterBusy")<{
+export class LocalStoreWriterBusy extends Data.TaggedError("LocalStoreWriterBusy")<{
   readonly directory: string;
 }> {
   override get message() {
@@ -43,15 +43,11 @@ const syncDirectory = async (directory: string) => {
 };
 
 const versionOf = (bytes: Uint8Array) => `sha256:${rawFileHash(bytes)}`;
-const writerLockName = ".conversation-history.lock";
+const writerLockName = ".local-store.lock";
 
 export const openLocalConditionalObjectStore = (
   directory: string,
-): Effect.Effect<
-  ConditionalObjectStore,
-  LocalHistoryWriterBusy | StorageBackendError,
-  Scope.Scope
-> =>
+): Effect.Effect<ConditionalObjectStore, LocalStoreWriterBusy | StorageBackendError, Scope.Scope> =>
   Effect.gen(function* () {
     const mutex = yield* Semaphore.make(1);
     const owner = yield* Effect.acquireRelease(
@@ -65,8 +61,8 @@ export const openLocalConditionalObjectStore = (
             0o600,
           );
           try {
-            if (!(await lock.stat()).isFile()) throw new Error("Invalid history lock file");
-            if (!tryLock(lock.fd)) throw new LocalHistoryWriterBusy({ directory: root });
+            if (!(await lock.stat()).isFile()) throw new Error("Invalid local store lock file");
+            if (!tryLock(lock.fd)) throw new LocalStoreWriterBusy({ directory: root });
             return { root, lock, closed: false };
           } catch (error) {
             await lock.close();
@@ -74,7 +70,7 @@ export const openLocalConditionalObjectStore = (
           }
         },
         catch: (error) =>
-          error instanceof LocalHistoryWriterBusy
+          error instanceof LocalStoreWriterBusy
             ? error
             : storageBackendError("prepare", directory, error),
       }),
@@ -93,13 +89,13 @@ export const openLocalConditionalObjectStore = (
     );
 
     const objectPath = async (key: string, createParents: boolean) => {
-      if (owner.closed) throw new Error("Local history writer is closed");
+      if (owner.closed) throw new Error("Local store writer is closed");
       const parts = key.split("/");
       if (
         parts.some((part) => part === "" || part === "." || part === ".." || part.includes("\\")) ||
         parts[0] === writerLockName
       ) {
-        throw new Error("Invalid local history object key");
+        throw new Error("Invalid local store object key");
       }
       let parent = owner.root;
       for (const part of parts.slice(0, -1)) {
@@ -114,7 +110,7 @@ export const openLocalConditionalObjectStore = (
         }
         const details = await lstat(child);
         if (!details.isDirectory() || details.isSymbolicLink())
-          throw new Error("Invalid local history directory");
+          throw new Error("Invalid local store directory");
         parent = child;
       }
       return join(parent, parts.at(-1)!);
@@ -124,7 +120,7 @@ export const openLocalConditionalObjectStore = (
       try {
         const details = await lstat(path);
         if (!details.isFile() || details.isSymbolicLink())
-          throw new Error("Invalid local history object");
+          throw new Error("Invalid local store object");
         return await readFile(path);
       } catch (error) {
         if (hasCode(error, "ENOENT")) return null;

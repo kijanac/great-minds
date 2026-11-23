@@ -323,7 +323,7 @@ describe("share links", () => {
     current.mailer.sent.length = 0;
     await resetDatabase();
     for (const entry of await readdir(current.storageRoot)) {
-      if (entry !== ".conversation-history.lock")
+      if (entry !== ".local-store.lock")
         await rm(join(current.storageRoot, entry), { recursive: true, force: true });
     }
     fixture = await seedBase();

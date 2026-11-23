@@ -6,7 +6,7 @@ import {
   ThinkingSource,
   Uuid,
 } from "@great-minds/domain";
-import { Schema } from "effect";
+import { Schema, SchemaTransformation } from "effect";
 
 import { LlmMessageSchema } from "../llm.ts";
 
@@ -17,7 +17,7 @@ export const HistoryTimestamp = Schema.String.pipe(
       return Number.isFinite(time) && new Date(time).toISOString() === value;
     }),
   ),
-  Schema.brand("HistoryTimestamp"),
+  Schema.decodeTo(Schema.Date, SchemaTransformation.dateFromString),
 );
 
 const Sequence = Schema.Number.pipe(

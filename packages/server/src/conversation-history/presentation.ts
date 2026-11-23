@@ -15,7 +15,7 @@ export const projectSession = (history: ConversationHistory): readonly SessionEx
       sources: settlement?.sources ?? [],
       answer: settlement?.answer ?? "",
       citations: citationsOf(settlement?.answer ?? ""),
-      ts: timestamp === null ? null : new Date(timestamp),
+      ts: timestamp,
     };
   });
 

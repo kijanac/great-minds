@@ -48,15 +48,15 @@ describe("local history writer ownership", () => {
     withLocal((_objects, directory) =>
       Effect.gen(function* () {
         yield* Effect.promise(() =>
-          fs.utimes(join(directory, ".conversation-history.lock"), new Date(0), new Date(0)),
+          fs.utimes(join(directory, ".local-store.lock"), new Date(0), new Date(0)),
         );
         expect(
           failure(yield* Effect.exit(openLocalConditionalObjectStore(directory))),
-        ).toMatchObject({ _tag: "LocalHistoryWriterBusy" });
+        ).toMatchObject({ _tag: "LocalStoreWriterBusy" });
         const alias = join(directory, "alias");
         yield* Effect.promise(() => fs.symlink(directory, alias, "dir"));
         expect(failure(yield* Effect.exit(openLocalConditionalObjectStore(alias)))).toMatchObject({
-          _tag: "LocalHistoryWriterBusy",
+          _tag: "LocalStoreWriterBusy",
         });
       }),
     ));
@@ -68,9 +68,7 @@ describe("local history writer ownership", () => {
           const directory = yield* temporaryDirectory;
           const target = join(directory, "not-a-lock");
           yield* Effect.promise(() => fs.writeFile(target, "unchanged"));
-          yield* Effect.promise(() =>
-            fs.symlink(target, join(directory, ".conversation-history.lock")),
-          );
+          yield* Effect.promise(() => fs.symlink(target, join(directory, ".local-store.lock")));
           expect(
             failure(yield* Effect.exit(openLocalConditionalObjectStore(directory))),
           ).toMatchObject({ _tag: "StorageBackendError" });
@@ -90,7 +88,7 @@ describe("local history writer ownership", () => {
           const objects = yield* openLocalConditionalObjectStore(directory).pipe(
             Effect.provideService(Scope.Scope, ownedScope),
           );
-          const lock = join(directory, ".conversation-history.lock");
+          const lock = join(directory, ".local-store.lock");
           const inode = (yield* Effect.promise(() => fs.stat(lock))).ino;
           yield* objects.putIfVersion(key, null, encode("old\n"));
           const old = yield* objects.getVersioned(key);
@@ -114,7 +112,7 @@ describe("local history writer ownership", () => {
             );
             expect(
               failure(yield* Effect.exit(openLocalConditionalObjectStore(directory))),
-            ).toMatchObject({ _tag: "LocalHistoryWriterBusy" });
+            ).toMatchObject({ _tag: "LocalStoreWriterBusy" });
           } finally {
             yield* Deferred.succeed(release, undefined);
           }
@@ -243,7 +241,7 @@ describe("local history file replacement", () => {
     "nested/../../escape",
     "",
     "a\\b",
-    ".conversation-history.lock",
+    ".local-store.lock",
   ])("rejects unsafe object key %s", (unsafeKey) =>
     withLocal((objects) =>
       Effect.gen(function* () {

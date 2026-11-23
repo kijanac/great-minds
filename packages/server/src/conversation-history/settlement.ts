@@ -151,7 +151,7 @@ export const makeReplySettlement = (
           updatedAt:
             payload.settled_at === null
               ? sql`${sessions.updatedAt}`
-              : sql`greatest(${sessions.updatedAt}, ${new Date(payload.settled_at)})`,
+              : sql`greatest(${sessions.updatedAt}, ${payload.settled_at})`,
         })
         .where(and(eq(sessions.id, row.sessionId), eq(sessions.vaultId, row.vaultId)));
       yield* tx
@@ -225,7 +225,7 @@ export const makeReplySettlement = (
           const payload = {
             type: "settlement",
             reply_id: row.id,
-            settled_at: HistoryTimestamp.make(now.toISOString()),
+            settled_at: now,
             outcome: stopped
               ? { status: "stopped" }
               : result.status === "failed"

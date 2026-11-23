@@ -100,11 +100,7 @@ export const makeHistoryStore = (objects: ConditionalObjectStore): HistoryStoreS
       const { history, changed } = planned.success;
       if (!changed) return { history, written: false };
       return yield* objects
-        .putIfVersion(
-          objectKey(address),
-          current?.version ?? null,
-          new TextEncoder().encode(history.jsonl),
-        )
+        .putIfVersion(objectKey(address), current?.version ?? null, history.bytes)
         .pipe(
           Effect.as({ history, written: true }),
           Effect.catchTag("ObjectVersionConflict", (conflict) =>

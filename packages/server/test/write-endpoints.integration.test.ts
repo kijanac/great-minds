@@ -292,7 +292,7 @@ const resetDatabase = () =>
 const resetStorage = async () => {
   const root = currentState().storageRoot;
   for (const entry of await readdir(root)) {
-    if (entry !== ".conversation-history.lock")
+    if (entry !== ".local-store.lock")
       await rm(join(root, entry), { recursive: true, force: true });
   }
 };
