@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { citationsOf } from "@great-minds/domain";
 
-import { conversationOutline, numberCitations, outlineOf } from "./citations";
+import { answerForClipboard, conversationOutline, numberCitations, outlineOf } from "./citations";
 import { parseMarkdown } from "./markdown";
 import type { HastNode } from "./markdown-plugins";
 
@@ -49,6 +49,13 @@ describe("answer citations", () => {
       "1",
       "3",
     ]);
+  });
+
+  it("copies an answer with library citations as links into the app", () => {
+    expect(answerForClipboard(answer, "https://gm.example").split("\n")[0]).toBe(
+      "Intro citing [Letter to Martov, 1903](https://gm.example/doc/raw/docs/a.md#%5Ep4) and [the RSDLP article](https://gm.example/doc/wiki/rsdlp.md).",
+    );
+    expect(answerForClipboard(answer, "https://gm.example")).toContain("(https://example.com)");
   });
 
   it("outlines a conversation's follow-ups and headings once there are three entries", () => {

@@ -7,6 +7,7 @@
 
   import AnswerBlock from "#lib/components/answer-block.svelte";
   import ConversationAbout from "#lib/components/conversation-about.svelte";
+  import CopyAnswer from "#lib/components/copy-answer.svelte";
   import ConversationOutline from "#lib/components/conversation-outline.svelte";
   import { conversationOutline } from "#lib/citations.ts";
   import FollowUpBar from "#lib/components/follow-up-bar.svelte";
@@ -320,27 +321,25 @@
 
         {#if exchange.answer && !streaming && (exchange.status === "completed" || exchange.status === "stopped")}
           {@const more = readMore(exchange)}
-          {@const canPromote =
-            !!session.sessionId && (vaultRole === "owner" || vaultRole === "editor")}
-          {#if more.length > 0 || canPromote}
-            <div
-              class="mt-5 flex flex-wrap items-baseline justify-between gap-x-5 gap-y-2 border-t border-dashed border-ink-subtle pt-3"
-            >
-              {#if more.length > 0}
-                <div class="font-serif text-[length:var(--text-small)] leading-[1.7]">
-                  <span
-                    class="mr-2 font-mono text-[10px] tracking-[0.14em] text-gold-muted uppercase"
-                    >Read more</span
-                  >{#each more as source, position (source.label)}{#if position > 0}<span
-                        class="mx-1.5 text-ink-border">·</span
-                      >{/if}<button
-                      type="button"
-                      onclick={() => opener.openSource(exchange, source)}
-                      class={`underline decoration-gold-dim underline-offset-[3px] hover:text-gold ${activeCard === source.label ? "text-gold" : "text-gold-muted"}`}
-                      >{source.title ?? source.label}</button
-                    >{/each}
-                </div>
-              {/if}
+          <div
+            class="mt-5 flex flex-wrap items-center justify-between gap-x-5 gap-y-2 border-t border-dashed border-ink-subtle pt-3"
+          >
+            {#if more.length > 0}
+              <div class="font-serif text-[length:var(--text-small)] leading-[1.7]">
+                <span class="mr-2 font-mono text-[10px] tracking-[0.14em] text-gold-muted uppercase"
+                  >Read more</span
+                >{#each more as source, position (source.label)}{#if position > 0}<span
+                      class="mx-1.5 text-ink-border">·</span
+                    >{/if}<button
+                    type="button"
+                    onclick={() => opener.openSource(exchange, source)}
+                    class={`underline decoration-gold-dim underline-offset-[3px] hover:text-gold ${activeCard === source.label ? "text-gold" : "text-gold-muted"}`}
+                    >{source.title ?? source.label}</button
+                  >{/each}
+              </div>
+            {/if}
+            <div class="ml-auto flex items-center gap-2">
+              <CopyAnswer answer={exchange.answer} />
               {#if session.sessionId && (vaultRole === "owner" || vaultRole === "editor")}
                 <PromoteButton
                   sessionId={session.sessionId}
@@ -350,7 +349,7 @@
                 />
               {/if}
             </div>
-          {/if}
+          </div>
         {/if}
       </section>
     {/each}
