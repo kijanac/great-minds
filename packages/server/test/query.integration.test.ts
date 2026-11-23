@@ -2586,14 +2586,16 @@ describe("query stream", () => {
 
     expect(snapshots.at(-1)).toMatchObject({ status: "completed", answer: "Lookup" });
     expect(costs.lookups).toEqual(["lookup-gen"]);
-    const rows = await runDb(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        return yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie);
-      }),
-    );
-    expect(rows).toHaveLength(1);
-    expect(rows[0].costUsd).toBe("0.042000");
+    await expect
+      .poll(() =>
+        runDb(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            return yield* db.query((d) => d.select().from(llmCostEvents)).pipe(Effect.orDie);
+          }),
+        ),
+      )
+      .toMatchObject([{ costUsd: "0.042000" }]);
   });
 
   it("does not write a cost row or lookup fallback for zero streamed cost", async () => {

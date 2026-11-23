@@ -2,7 +2,7 @@ import { posix } from "node:path";
 
 import { Database, pipelineRuns, urlIngestRequests } from "@great-minds/database";
 import { BadRequest, Forbidden, type JobResponse, NotFound, type Uuid } from "@great-minds/domain";
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer } from "effect";
 import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 
@@ -10,7 +10,7 @@ import { backgroundLoop } from "./background-loop.ts";
 import { AppConfig } from "./config.ts";
 import { jobResponse, selectJobs } from "./job-response.ts";
 import { StructuredLogger } from "./logging.ts";
-import { progressSteps } from "./pipeline-runs.ts";
+import { isActiveRun, progressSteps } from "./pipeline-runs.ts";
 import {
   type CanonicalSourceUrl,
   parseCanonicalSourceUrl,
@@ -249,12 +249,7 @@ export const UrlIngestServiceLive = Layer.effect(
               })
               .from(urlIngestRequests)
               .innerJoin(pipelineRuns, eq(pipelineRuns.id, urlIngestRequests.id))
-              .where(
-                and(
-                  isNull(urlIngestRequests.dispatchedAt),
-                  inArray(pipelineRuns.status, ["pending", "running"]),
-                ),
-              )
+              .where(and(isNull(urlIngestRequests.dispatchedAt), isActiveRun))
               .orderBy(asc(urlIngestRequests.createdAt))
               .limit(100),
           );

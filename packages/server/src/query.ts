@@ -800,7 +800,7 @@ export const QueryServiceLive = Layer.effect(
                 })
                 .from(searchIndex)
                 .where(and(...bm25Conditions))
-                .orderBy(desc(rank))
+                .orderBy(desc(rank), searchIndex.path, searchIndex.chunkIndex)
                 .limit(armLimit),
             ),
             db.query((d) =>
@@ -815,7 +815,7 @@ export const QueryServiceLive = Layer.effect(
                 })
                 .from(searchIndex)
                 .where(and(...vectorConditions))
-                .orderBy(distance)
+                .orderBy(distance, searchIndex.path, searchIndex.chunkIndex)
                 .limit(armLimit),
             ),
           ],
@@ -825,40 +825,19 @@ export const QueryServiceLive = Layer.effect(
         type SearchKey = `${string}:${string}:${number}`;
         const scores = new Map<SearchKey, number>();
         const metadata = new Map<SearchKey, SearchRow>();
-        const vectorRanks = new Map<SearchKey, number>();
-        const bm25Ranks = new Map<SearchKey, number>();
         const keyFor = (row: SearchRow): SearchKey =>
           `${row.vaultId}:${row.path}:${row.chunkIndex}`;
-        const addRows = (rows: readonly SearchRow[], ranks: Map<SearchKey, number>) => {
+        const addRows = (rows: readonly SearchRow[]) => {
           rows.forEach((row, rankIndex) => {
             const key = keyFor(row);
-            if (!scores.has(key)) {
-              scores.set(key, 0);
-              metadata.set(key, row);
-            }
-            ranks.set(key, rankIndex + 1);
+            if (!metadata.has(key)) metadata.set(key, row);
             scores.set(key, (scores.get(key) ?? 0) + 1 / (rrfK + rankIndex + 1));
           });
         };
-        addRows(bm25Rows, bm25Ranks);
-        addRows(vectorRows, vectorRanks);
+        addRows(vectorRows);
+        addRows(bm25Rows);
         return [...scores.entries()]
-          .sort(([leftKey, leftScore], [rightKey, rightScore]) => {
-            if (rightScore !== leftScore) {
-              return rightScore - leftScore;
-            }
-            const leftVectorRank = vectorRanks.get(leftKey) ?? Number.POSITIVE_INFINITY;
-            const rightVectorRank = vectorRanks.get(rightKey) ?? Number.POSITIVE_INFINITY;
-            if (leftVectorRank !== rightVectorRank) {
-              return leftVectorRank - rightVectorRank;
-            }
-            const leftBm25Rank = bm25Ranks.get(leftKey) ?? Number.POSITIVE_INFINITY;
-            const rightBm25Rank = bm25Ranks.get(rightKey) ?? Number.POSITIVE_INFINITY;
-            if (leftBm25Rank !== rightBm25Rank) {
-              return leftBm25Rank - rightBm25Rank;
-            }
-            return leftKey.localeCompare(rightKey);
-          })
+          .sort(([, leftScore], [, rightScore]) => rightScore - leftScore)
           .slice(0, maxSearchResults)
           .flatMap(([key, score]) => {
             const row = metadata.get(key);

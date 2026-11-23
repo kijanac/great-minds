@@ -23,7 +23,7 @@ import {
 } from "./compile-contract.ts";
 import { CompilePhases } from "./compile-phases.ts";
 import { StructuredLogger } from "./logging.ts";
-import { PipelineRunsService } from "./pipeline-runs.ts";
+import { isActiveRun, PipelineRunsService } from "./pipeline-runs.ts";
 
 export const queueCompile = (tx: TransactionClient, vaultId: Uuid, runId?: Uuid) =>
   Effect.gen(function* () {
@@ -246,7 +246,7 @@ export const CompileIntentReconcilerLive = Layer.effect(
               and(
                 eq(pipelineRuns.vaultId, intent.vaultId),
                 eq(pipelineRuns.activeTaskType, "compile"),
-                inArray(pipelineRuns.status, ["pending", "running"]),
+                isActiveRun,
               ),
             )
             .limit(1);

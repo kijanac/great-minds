@@ -14,7 +14,7 @@ import { backgroundLoop } from "./background-loop.ts";
 import { CompileWorkflow } from "./compile-intents.ts";
 import { causeDetails, formatError } from "./error-details.ts";
 import { StructuredLogger } from "./logging.ts";
-import { PipelineRunsService } from "./pipeline-runs.ts";
+import { isActiveRun, PipelineRunsService } from "./pipeline-runs.ts";
 import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
 import { UrlIngestWorkflow } from "./url-ingest-workflow.ts";
 
@@ -71,7 +71,7 @@ export const settleRuns = Effect.gen(function* () {
         compileIntentId: pipelineRuns.compileIntentId,
       })
       .from(pipelineRuns)
-      .where(inArray(pipelineRuns.status, ["pending", "running"]))
+      .where(isActiveRun)
       .limit(500),
   );
   const exists = (rows: readonly unknown[]) => rows.length > 0;

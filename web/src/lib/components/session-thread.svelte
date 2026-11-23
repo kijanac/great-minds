@@ -47,7 +47,7 @@
     onOpenTrail: (trail: ReadingTrail) => void;
     onOpenPath: (path: string, chunk: number | null) => void;
     onLinkClick?: (event: MouseEvent) => void;
-    receive?: ReturnType<typeof crossfade>[1];
+    receive: ReturnType<typeof crossfade>[1];
     contentsOpen?: boolean;
   } = $props();
 
@@ -259,20 +259,12 @@
       {@const streaming = exchange.status === "running" && session.phase !== "finalizing"}
       <section id={`exchange-${exchange.id}`} class="scroll-mt-6">
         {#if index === 0}
-          {#if receive}
-            <h1
-              in:receive={{ key: "search-bar" }}
-              class="mb-3 font-serif text-[length:var(--text-title)] leading-[1.3] text-warm whitespace-pre-wrap [overflow-wrap:anywhere]"
-            >
-              {title(exchange.query)}
-            </h1>
-          {:else}
-            <h1
-              class="mb-3 font-serif text-[length:var(--text-title)] leading-[1.3] text-warm whitespace-pre-wrap [overflow-wrap:anywhere]"
-            >
-              {title(exchange.query)}
-            </h1>
-          {/if}
+          <h1
+            in:receive={{ key: "search-bar" }}
+            class="mb-3 font-serif text-[length:var(--text-title)] leading-[1.3] text-warm whitespace-pre-wrap [overflow-wrap:anywhere]"
+          >
+            {title(exchange.query)}
+          </h1>
         {:else}
           <h2
             class="mt-14 mb-3 border-t border-ink-subtle pt-7 font-serif text-[length:var(--text-heading)] leading-[1.4] text-warm italic whitespace-pre-wrap [overflow-wrap:anywhere]"
