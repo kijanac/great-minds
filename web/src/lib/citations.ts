@@ -22,6 +22,12 @@ export function numberCitations(tree: HastNode, citations: readonly Citation[]):
   return tree;
 }
 
+export const answerForClipboard = (markdown: string, origin: string) =>
+  markdown.replace(
+    /\]\(((?:raw|wiki)\/[^)\s]+)\)/g,
+    (_, href: string) => `](${new URL(`/doc/${href}`, origin).href})`,
+  );
+
 export function outlineOf(markdown: string): string[] {
   return [...markdown.matchAll(/^#{2,3}\s+(.+)$/gm)].map((match) =>
     (match[1] ?? "")
