@@ -126,6 +126,71 @@ const encodeReplyCheckpoint = Schema.encodeSync(Schema.fromJsonString(ReplyCheck
 const checkpointPath = (replyId: Uuid) => `operations/replies/${replyId}.json`;
 const terminalControl = (control: ReplyStepControl): control is ReplyStepControl & ReplyEnd =>
   control.outcome !== "ready" && control.outcome !== "tool_calls";
+const removeSource = (accumulator: ReplyAccumulator, index: number) => {
+  accumulator.sources.splice(index, 1);
+  for (const [callId, pendingIndex] of accumulator.pendingCalls) {
+    if (pendingIndex !== null && pendingIndex > index)
+      accumulator.pendingCalls.set(callId, pendingIndex - 1);
+  }
+};
+
+const addPendingSource = (
+  accumulator: ReplyAccumulator,
+  callId: string,
+  data: QuerySourceData,
+  round: number,
+) => {
+  accumulator.pendingCalls.set(callId, accumulator.sources.length);
+  accumulator.sources.push(sourceRef(data, accumulator.answer, round, true));
+  accumulator.clearOnNextToken = true;
+};
+
+const addResolvedSource = (
+  accumulator: ReplyAccumulator,
+  data: QuerySourceData,
+  pendingIndex: number | null,
+  round: number,
+) => {
+  if (data.type === "article" || data.type === "raw") {
+    if (pendingIndex !== null) removeSource(accumulator, pendingIndex);
+    const isExpand = data.start !== undefined && data.end !== undefined;
+    const range = isExpand ? { start: data.start, end: data.end } : null;
+    const index = accumulator.sources.findIndex(
+      (source) =>
+        source.pending !== true &&
+        source.label === data.path &&
+        (source.type === "article" || source.type === "raw"),
+    );
+    if (index >= 0) {
+      const previous = accumulator.sources[index];
+      const chunks = data.chunks ?? previous.chunks;
+      accumulator.sources[index] = {
+        ...previous,
+        ranges: range ? [...(previous.ranges ?? []), range] : previous.ranges,
+        full: previous.full === true || data.full === true,
+        ...(previous.outline === true || data.outline === true ? { outline: true } : {}),
+        ...(chunks === undefined ? {} : { chunks }),
+      };
+    } else accumulator.sources.push(sourceRef(data, accumulator.answer, round));
+    accumulator.clearOnNextToken = true;
+    return;
+  }
+  if (data.type === "links") {
+    const existingIndex = accumulator.sources.findIndex(
+      (source, index) =>
+        index !== pendingIndex && source.type === "links" && source.label === data.path,
+    );
+    if (existingIndex >= 0) {
+      if (pendingIndex !== null) removeSource(accumulator, pendingIndex);
+      return;
+    }
+  }
+  const resolved = sourceRef(data, accumulator.answer, round);
+  if (pendingIndex === null) accumulator.sources.push(resolved);
+  else accumulator.sources.splice(pendingIndex, 1, resolved);
+  accumulator.clearOnNextToken = true;
+};
+
 const failureFields = (cause: Cause.Cause<unknown>) => {
   const reason = cause.reasons.find((reason) => !Cause.isInterruptReason(reason));
   const error =
@@ -372,71 +437,6 @@ export const RepliesServiceLive = Layer.effect(
                 .pipe(Effect.as(undefined)),
         ),
       );
-
-    const removeSource = (accumulator: ReplyAccumulator, index: number) => {
-      accumulator.sources.splice(index, 1);
-      for (const [callId, pendingIndex] of accumulator.pendingCalls) {
-        if (pendingIndex !== null && pendingIndex > index)
-          accumulator.pendingCalls.set(callId, pendingIndex - 1);
-      }
-    };
-
-    const addPendingSource = (
-      accumulator: ReplyAccumulator,
-      callId: string,
-      data: QuerySourceData,
-      round: number,
-    ) => {
-      accumulator.pendingCalls.set(callId, accumulator.sources.length);
-      accumulator.sources.push(sourceRef(data, accumulator.answer, round, true));
-      accumulator.clearOnNextToken = true;
-    };
-
-    const addResolvedSource = (
-      accumulator: ReplyAccumulator,
-      data: QuerySourceData,
-      pendingIndex: number | null,
-      round: number,
-    ) => {
-      if (data.type === "article" || data.type === "raw") {
-        if (pendingIndex !== null) removeSource(accumulator, pendingIndex);
-        const isExpand = data.start !== undefined && data.end !== undefined;
-        const range = isExpand ? { start: data.start, end: data.end } : null;
-        const index = accumulator.sources.findIndex(
-          (source) =>
-            source.pending !== true &&
-            source.label === data.path &&
-            (source.type === "article" || source.type === "raw"),
-        );
-        if (index >= 0) {
-          const previous = accumulator.sources[index];
-          const chunks = data.chunks ?? previous.chunks;
-          accumulator.sources[index] = {
-            ...previous,
-            ranges: range ? [...(previous.ranges ?? []), range] : previous.ranges,
-            full: previous.full === true || data.full === true,
-            ...(previous.outline === true || data.outline === true ? { outline: true } : {}),
-            ...(chunks === undefined ? {} : { chunks }),
-          };
-        } else accumulator.sources.push(sourceRef(data, accumulator.answer, round));
-        accumulator.clearOnNextToken = true;
-        return;
-      }
-      if (data.type === "links") {
-        const existingIndex = accumulator.sources.findIndex(
-          (source, index) =>
-            index !== pendingIndex && source.type === "links" && source.label === data.path,
-        );
-        if (existingIndex >= 0) {
-          if (pendingIndex !== null) removeSource(accumulator, pendingIndex);
-          return;
-        }
-      }
-      const resolved = sourceRef(data, accumulator.answer, round);
-      if (pendingIndex === null) accumulator.sources.push(resolved);
-      else accumulator.sources.splice(pendingIndex, 1, resolved);
-      accumulator.clearOnNextToken = true;
-    };
 
     const flushAccumulator = (replyId: Uuid, accumulator: ReplyAccumulator) =>
       updateSnapshot(replyId, accumulator.answer, accumulator.sources);
