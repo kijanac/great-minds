@@ -635,6 +635,7 @@ export const sourceDocuments = pgTable(
       .default(sql`ARRAY[]::text[]`)
       .notNull(),
     derivedExtras: jsonb("derived_extras")
+      .$type<Readonly<Record<string, unknown>>>()
       .default(sql`'{}'::jsonb`)
       .notNull(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
@@ -659,6 +660,10 @@ export const sourceDocuments = pgTable(
       .on(table.vaultId, table.clientHash)
       .where(sql`${table.clientHash} IS NOT NULL`),
     index("ix_source_documents_vault_id").on(table.vaultId),
+    check(
+      "ck_source_documents_derived_extras_object",
+      sql`jsonb_typeof(${table.derivedExtras}) = 'object'`,
+    ),
   ],
 );
 
