@@ -248,7 +248,7 @@ export const makeReplyAdmission = (
         if (parentReplyId !== null) context = { session_id: parent.id, reply_id: parentReplyId };
       }
       return {
-        created_at: HistoryTimestamp.make((yield* clock.now).toISOString()),
+        created_at: yield* clock.now,
         anchor_reply_id: anchorReplyId,
         context,
       } satisfies NewConversation;
@@ -318,7 +318,7 @@ export const makeReplyAdmission = (
         Effect.gen(function* () {
           let sessionId: SessionId;
           if (target.kind === "new") {
-            const createdAt = new Date(target.conversation.created_at);
+            const createdAt = target.conversation.created_at;
             const [created] = yield* tx
               .insert(sessions)
               .values({
@@ -415,7 +415,7 @@ export const makeReplyAdmission = (
           const request = {
             command,
             mode: command.inline === true ? "btw" : "query",
-            accepted_at: HistoryTimestamp.make(now.toISOString()),
+            accepted_at: now,
             previous_attempt_id: previousReplyId,
             parent_reply_id: parentReplyId,
             conversation: target.kind === "new" ? target.conversation : null,
@@ -491,7 +491,7 @@ export const makeReplyAdmission = (
             .set({
               historySeq: committed.history.revision.last_seq,
               historySha256: committed.history.revision.sha256,
-              updatedAt: sql`greatest(${sessions.updatedAt}, ${new Date(request.accepted_at)})`,
+              updatedAt: sql`greatest(${sessions.updatedAt}, ${request.accepted_at})`,
             })
             .where(and(eq(sessions.id, session.id), eq(sessions.vaultId, session.vaultId)));
           yield* tx

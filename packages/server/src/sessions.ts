@@ -297,7 +297,7 @@ const makeSessions = Effect.gen(function* () {
         answer: "",
         citations: [],
         sources: [],
-        ts: new Date(request.accepted_at),
+        ts: request.accepted_at,
       };
       const previous = exchanges.find((exchange) => exchange.exchange_id === pending.exchange_id);
       return {

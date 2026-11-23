@@ -81,7 +81,7 @@ describe("local history process-crash boundaries", () => {
             const beforeKill = await Effect.runPromise(
               Effect.scoped(Effect.exit(openLocalConditionalObjectStore(directory))),
             );
-            expect(failure(beforeKill)).toMatchObject({ _tag: "LocalHistoryWriterBusy" });
+            expect(failure(beforeKill)).toMatchObject({ _tag: "LocalStoreWriterBusy" });
             await writer.kill();
             await Effect.runPromise(Effect.scoped(openLocalConditionalObjectStore(directory)));
             if (mode === "first" && phase === "before-rename") {

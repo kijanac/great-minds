@@ -126,7 +126,7 @@ describe("production process lifetime", () => {
         "--email",
         "operator-made@example.com",
       ]);
-      expect(created.stderr).not.toContain("LocalHistoryWriterBusy");
+      expect(created.stderr).not.toContain("LocalStoreWriterBusy");
       expect(created.code).toBe(0);
       const key = created.stdout.trim();
       expect(key).toMatch(/^gm_/);
@@ -159,7 +159,7 @@ describe("production process lifetime", () => {
       const whileServing = await Effect.runPromise(
         Effect.scoped(Effect.exit(openLocalConditionalObjectStore(dataDir))),
       );
-      expect(failure(whileServing)).toMatchObject({ _tag: "LocalHistoryWriterBusy" });
+      expect(failure(whileServing)).toMatchObject({ _tag: "LocalStoreWriterBusy" });
 
       const exited = once(main.child, "exit");
       main.child.kill("SIGTERM");

@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 
 import { makeReplyAdmission } from "../src/conversation-history/admission.ts";
 import { parseHistory } from "../src/conversation-history/history.ts";
+import { HistorySettlement } from "../src/conversation-history/schema.ts";
 import { makeHistoryStore } from "../src/conversation-history/store.ts";
 import { openLocalConditionalObjectStore } from "../src/storage/local-conditional-object-store.ts";
 import { VaultAccessService, VaultAccessServiceLive } from "../src/vaults.ts";
@@ -301,7 +302,9 @@ describe("native reply workflow restart recovery", () => {
         });
         const history = historyOf(await f.history());
         expect(history.records).toHaveLength(3);
-        expect(history.turns[0].attempts[0].settlement).toMatchObject(frozen!.settlement!);
+        expect(
+          Schema.encodeSync(HistorySettlement)(history.turns[0].attempts[0].settlement!),
+        ).toMatchObject(frozen!.settlement!);
         expect(history.turns[0].attempts[0].settlement?.context_messages).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ role: "tool", tool_call_id: "durable-search" }),

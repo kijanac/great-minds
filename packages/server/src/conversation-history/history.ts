@@ -77,7 +77,7 @@ export type ConversationHistory = {
   readonly records: readonly HistoryRecord[];
   readonly turns: readonly HistoryTurn[];
   readonly revision: HistoryRevision;
-  readonly jsonl: string;
+  readonly bytes: Uint8Array;
 };
 
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -102,7 +102,7 @@ const withoutSequence = ({ seq: _seq, ...write }: HistoryRecord): HistoryWrite =
 const reduceRecords = (
   sessionId: SessionId,
   records: readonly HistoryRecord[],
-  jsonl: string,
+  bytes: Uint8Array,
 ): Result.Result<ConversationHistory, HistoryInvalid> => {
   const invalid = (reason: HistoryInvalid["reason"], line: number | null) =>
     Result.fail(new HistoryInvalid({ session_id: sessionId, line, reason }));
@@ -169,8 +169,8 @@ const reduceRecords = (
     header,
     records,
     turns: [...turns.values()],
-    revision: { last_seq: records.length, sha256: rawFileHash(encoder.encode(jsonl)) },
-    jsonl,
+    revision: { last_seq: records.length, sha256: rawFileHash(bytes) },
+    bytes,
   });
 };
 
@@ -203,7 +203,7 @@ export const parseHistory = (
     if (Result.isFailure(record)) return invalid("invalid_record", index + 1);
     records.push(record.success);
   }
-  return reduceRecords(sessionId, records, text);
+  return reduceRecords(sessionId, records, bytes);
 };
 
 export const planHistoryAppend = (
@@ -222,7 +222,7 @@ export const planHistoryAppend = (
   }
   const records = [...(current?.records ?? [])];
   const identities = new Map(records.map((record) => [recordKey(record), withoutSequence(record)]));
-  let jsonl = current?.jsonl ?? "";
+  let appended = "";
   for (const write of writes) {
     const key = recordKey(write);
     const previous = identities.get(key);
@@ -236,15 +236,27 @@ export const planHistoryAppend = (
       write.type === "conversation" ? { ...write, seq: 1 } : { ...write, seq: records.length + 1 };
     records.push(record);
     identities.set(key, write);
-    jsonl += `${JSON.stringify(encodeRecord(record))}\n`;
+    appended += `${JSON.stringify(encodeRecord(record))}\n`;
   }
   if (current !== null && records.length === current.records.length) {
     return Result.succeed({ history: current, changed: false });
   }
-  return Result.map(reduceRecords(sessionId, records, jsonl), (history) => ({
+  const tail = encoder.encode(appended);
+  const bytes = new Uint8Array((current?.bytes.length ?? 0) + tail.length);
+  bytes.set(current?.bytes ?? new Uint8Array());
+  bytes.set(tail, current?.bytes.length ?? 0);
+  return Result.map(reduceRecords(sessionId, records, bytes), (history) => ({
     history,
     changed: true,
   }));
+};
+
+const newline = 0x0a;
+
+const lineEnd = (bytes: Uint8Array, lines: number) => {
+  let end = 0;
+  for (let line = 0; line < lines; line += 1) end = bytes.indexOf(newline, end) + 1;
+  return end;
 };
 
 export const verifyHistoryReceipt = (
@@ -257,9 +269,8 @@ export const verifyHistoryReceipt = (
     receipt.last_seq > history.revision.last_seq ||
     (receipt.last_seq === history.revision.last_seq
       ? history.revision.sha256
-      : rawFileHash(
-          encoder.encode(history.jsonl.split("\n").slice(0, receipt.last_seq).join("\n") + "\n"),
-        )) !== receipt.sha256
+      : rawFileHash(history.bytes.subarray(0, lineEnd(history.bytes, receipt.last_seq)))) !==
+      receipt.sha256
   ) {
     return Result.fail(
       new HistoryInvalid({
