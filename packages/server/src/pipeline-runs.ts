@@ -6,13 +6,22 @@ import {
   topics,
   wikiArticles,
 } from "@great-minds/database";
-import type { PipelineProgressStep, PipelineWarning, Uuid } from "@great-minds/domain";
+import { type PipelineProgressStep, type PipelineWarning, Uuid } from "@great-minds/domain";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { Context, Effect, Layer } from "effect";
+import { Cause, Context, Effect, Layer, Schema } from "effect";
 
 import { SET_ASIDE_MESSAGE } from "./failure-ledger.ts";
 
 export const isActiveRun = inArray(pipelineRuns.status, ["pending", "running"]);
+
+export class RunNotActive extends Schema.TaggedError<RunNotActive>()("RunNotActive", {
+  runId: Uuid,
+}) {}
+
+export const endedByRunNotActive = (cause: Cause.Cause<unknown>) =>
+  cause.reasons.some(
+    (reason) => Cause.isFailReason(reason) && reason.error instanceof RunNotActive,
+  );
 
 export const LEFT_OUT_MESSAGE = "source files could not be registered and were left out";
 export const UNSEARCHABLE_MESSAGE = `documents not searchable (embedding timed out): ${SET_ASIDE_MESSAGE}`;
@@ -20,7 +29,7 @@ export const UNSEARCHABLE_MESSAGE = `documents not searchable (embedding timed o
 type PipelineRunsServiceShape = {
   readonly cancel: (runId: Uuid) => Effect.Effect<void>;
   readonly cancelCompileIntent: (intentId: Uuid) => Effect.Effect<void>;
-  readonly isActive: (runId: Uuid) => Effect.Effect<boolean>;
+  readonly requireActive: (runId: Uuid) => Effect.Effect<void, RunNotActive>;
   readonly updateProgress: (
     runId: Uuid,
     phase: string,
@@ -190,7 +199,7 @@ export const PipelineRunsServiceLive = Layer.effect(
         .pipe(Effect.asVoid);
 
     return {
-      isActive: (runId) =>
+      requireActive: (runId) =>
         db
           .query((d) =>
             d
@@ -199,7 +208,11 @@ export const PipelineRunsServiceLive = Layer.effect(
               .where(and(eq(pipelineRuns.id, runId), isActiveRun))
               .limit(1),
           )
-          .pipe(Effect.map((rows) => rows.length === 1)),
+          .pipe(
+            Effect.flatMap((rows) =>
+              rows.length === 1 ? Effect.void : Effect.fail(new RunNotActive({ runId })),
+            ),
+          ),
       cancel: (runId) =>
         db
           .query((d) =>

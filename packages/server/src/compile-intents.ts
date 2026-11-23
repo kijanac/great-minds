@@ -23,7 +23,12 @@ import {
 } from "./compile-contract.ts";
 import { CompilePhases } from "./compile-phases.ts";
 import { StructuredLogger } from "./logging.ts";
-import { isActiveRun, PipelineRunsService } from "./pipeline-runs.ts";
+import {
+  endedByRunNotActive,
+  isActiveRun,
+  PipelineRunsService,
+  RunNotActive,
+} from "./pipeline-runs.ts";
 
 export const queueCompile = (tx: TransactionClient, vaultId: Uuid, runId?: Uuid) =>
   Effect.gen(function* () {
@@ -60,7 +65,7 @@ export const CompileWorkflow = Workflow.make("CompileTask", {
   },
   idempotencyKey: ({ intentId }) => intentId,
   success: Schema.Void,
-  error: CompilePhaseFailed,
+  error: Schema.Union([CompilePhaseFailed, RunNotActive]),
 });
 
 const causeFailure = (phase: CompilePhase, cause: Cause.Cause<unknown>) => {
@@ -81,23 +86,21 @@ export const CompileWorkflowLive = CompileWorkflow.toLayer((payload) => {
     Activity.make({
       name: `compile-phase-${phase}`,
       success,
-      error: CompilePhaseFailed,
+      error: Schema.Union([CompilePhaseFailed, RunNotActive]),
       // Cancellation guard before each phase's side effects: engine
       // interruption is cooperative, so a cancelled run must also stop at
       // the next phase boundary.
       execute: Effect.gen(function* () {
         const pipeline = yield* PipelineRunsService;
-        if (!(yield* pipeline.isActive(payload.pipelineRunId))) {
-          return yield* Effect.interrupt;
-        }
+        yield* pipeline.requireActive(payload.pipelineRunId);
         return yield* execute;
       }).pipe(
-        Effect.catchCause((cause) => {
-          if (cause.reasons.length > 0 && cause.reasons.every(Cause.isInterruptReason)) {
-            return Effect.interrupt;
-          }
-          const failure = causeFailure(phase, cause);
-          return Effect.gen(function* () {
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            if (Cause.hasInterruptsOnly(cause)) return yield* Effect.interrupt;
+            if (endedByRunNotActive(cause))
+              return yield* new RunNotActive({ runId: payload.pipelineRunId });
+            const failure = causeFailure(phase, cause);
             const pipeline = yield* PipelineRunsService;
             const logger = yield* StructuredLogger;
             const formatted = formatError(failure);
@@ -110,9 +113,9 @@ export const CompileWorkflowLive = CompileWorkflow.toLayer((payload) => {
               error_message: failure.message,
             });
             yield* pipeline.failPreservingProgress(payload.pipelineRunId, formatted);
-            return yield* Effect.fail(failure);
-          });
-        }),
+            return yield* failure;
+          }),
+        ),
       ),
     });
 

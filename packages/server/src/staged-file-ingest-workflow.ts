@@ -16,7 +16,12 @@ import { fileContentHash, rawFileHash } from "./crypto.ts";
 import { causeDetails, formatError } from "./error-details.ts";
 import { buildDocument } from "./markdown.ts";
 import { StructuredLogger } from "./logging.ts";
-import { PipelineRunsService, progressSteps } from "./pipeline-runs.ts";
+import {
+  endedByRunNotActive,
+  PipelineRunsService,
+  progressSteps,
+  RunNotActive,
+} from "./pipeline-runs.ts";
 import { identifySourceMarkdown } from "./source-identity.ts";
 import { SourceDocumentsService } from "./source-documents.ts";
 import { StagedStorage } from "./storage.ts";
@@ -48,6 +53,7 @@ export const StagedFileIngestWorkflow = Workflow.make("StagedFileIngest", {
     skipped: Schema.Number,
     failed: Schema.Number,
   }),
+  error: RunNotActive,
 });
 
 const StagedFileFailure = Schema.Struct({
@@ -67,6 +73,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
   const persist = Activity.make({
     name: "staged-file-ingest-persist",
     success: StagedFileIngestPersistResult,
+    error: RunNotActive,
     execute: Effect.gen(function* () {
       const db = yield* Database;
       const stagedStorage = yield* StagedStorage;
@@ -183,7 +190,7 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
           continue;
         }
         const { content, file, source } = result.value;
-        if (!(yield* pipeline.isActive(runId))) return yield* Effect.interrupt;
+        yield* pipeline.requireActive(runId);
         const written = yield* Effect.result(
           sourceDocumentsService.write(source, content, file.hash),
         );
@@ -426,14 +433,16 @@ export const StagedFileIngestWorkflowLive = StagedFileIngestWorkflow.toLayer((pa
     });
 
   const recoverTerminal = <E>(step: "persist" | "finalize", cause: Cause.Cause<E>) => {
-    if (cause.reasons.length > 0 && cause.reasons.every(Cause.isInterruptReason)) {
+    if (Cause.hasInterruptsOnly(cause) || endedByRunNotActive(cause))
       return Effect.failCause(cause);
-    }
     return failRun(step, cause);
   };
 
   return Effect.gen(function* () {
-    const persisted = yield* Activity.retry(Effect.sandbox(persist), { times: 1 }).pipe(
+    const persisted = yield* Activity.retry(Effect.sandbox(persist), {
+      times: 1,
+      while: (cause) => !endedByRunNotActive(cause),
+    }).pipe(
       Effect.catch((cause) => Effect.failCause(cause)),
       Effect.catchCause((cause) => recoverTerminal("persist", cause)),
     );

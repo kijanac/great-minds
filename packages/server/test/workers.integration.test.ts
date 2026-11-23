@@ -189,6 +189,7 @@ const stageBytes = (bytes: Uint8Array) => {
 
 const testFingerprint = (character: string) => character.repeat(64) as FileFingerprint;
 
+let stagedReads = 0;
 let readPause:
   | {
       readonly hash: FileFingerprint;
@@ -238,6 +239,7 @@ const StorageLive = Layer.succeed(ContentStorage, {
 
 const StagedStorageLive = Layer.succeed(StagedStorage, {
   readStagedBytes: (_vaultId, _batchId, hash) => {
+    stagedReads += 1;
     if (readPause?.hash === hash) {
       const pause = readPause;
       pause.signalStarted();
@@ -579,6 +581,7 @@ describe("M4.2 durable workers", () => {
     deleteDefects.clear();
     writeDefects.clear();
     readPause = undefined;
+    stagedReads = 0;
     logEvents.length = 0;
     await seed();
   });
@@ -1044,6 +1047,63 @@ describe("M4.2 durable workers", () => {
     expect(state.documents).toHaveLength(0);
     expect(written.size).toBe(0);
   }, 30_000);
+
+  it("ends a staged ingest cancelled only in the database without retrying", async () => {
+    const hash = stageBytes(Buffer.from("# Cancelled in the database\n\nNo retries."));
+    const pause = pauseStagedRead(hash);
+    const payload = {
+      vaultId: id.vault,
+      batchId: id.cancelIngestRun,
+      pipelineRunId: id.cancelIngestRun,
+      files: [
+        {
+          name: "db-cancel.md",
+          size: staged.get(hash)!.length,
+          hash,
+          mimetype: "text/markdown",
+          needsCompile: true,
+        },
+      ],
+    };
+    const result = await run(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db
+          .query((d) =>
+            d.insert(pipelineRuns).values({
+              id: id.cancelIngestRun,
+              vaultId: id.vault,
+              trigger: "staged_files",
+              status: "running",
+              currentPhase: "source_ingest",
+              phaseStatus: "started",
+            }),
+          )
+          .pipe(Effect.orDie);
+        yield* executeStaged(payload, { discard: true });
+        yield* Effect.promise(() => pause.started);
+        yield* db
+          .query((d) =>
+            d
+              .update(pipelineRuns)
+              .set({ status: "cancelled" })
+              .where(eq(pipelineRuns.id, id.cancelIngestRun)),
+          )
+          .pipe(Effect.orDie);
+        yield* Effect.sync(pause.release);
+        const executionId = yield* StagedFileIngestWorkflow.executionId(payload);
+        for (;;) {
+          const polled = yield* StagedFileIngestWorkflow.poll(executionId);
+          if (Option.isSome(polled)) return polled.value;
+          yield* Effect.sleep("25 millis");
+        }
+      }).pipe(Effect.timeout("5 seconds")),
+    );
+    expect(result).toMatchObject({ _tag: "Complete", exit: { _tag: "Failure" } });
+    expect(stagedReads).toBe(1);
+    expect(written.size).toBe(0);
+    expect(logEvents.map((event) => event.event)).not.toContain("staged_file_ingest.failed");
+  });
 
   it("keeps and compiles valid staged files and names the file that cannot convert", async () => {
     const docxHash = stageBytes(Buffer.from(docxBase64, "base64"));

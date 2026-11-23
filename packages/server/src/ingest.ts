@@ -23,7 +23,7 @@ import { AppConfig } from "./config.ts";
 import { htmlToMarkdown, markdownWithTitle } from "./conversion.ts";
 import { errorDetails } from "./error-details.ts";
 import { buildDocument, sessionExchangeDocumentInput } from "./markdown.ts";
-import { PipelineRunsService } from "./pipeline-runs.ts";
+import { PipelineRunsService, type RunNotActive } from "./pipeline-runs.ts";
 import { ProposalsService } from "./proposals.ts";
 import { fetchAnyUrl, fetchPublicUrl, responseTextCapped } from "./public-fetch.ts";
 import { scopedAbortSignal } from "./scoped-abort-signal.ts";
@@ -62,7 +62,7 @@ type IngestServiceShape = {
     canonicalUrl: CanonicalSourceUrl,
     origin: string | undefined,
     pipelineRunId: Uuid,
-  ) => Effect.Effect<IngestedDocument, BadRequest | Conflict>;
+  ) => Effect.Effect<IngestedDocument, BadRequest | Conflict | RunNotActive>;
   readonly ingestSessionExchange: (
     source: SourceAdmission,
     sessionId: SessionId,
@@ -194,7 +194,7 @@ export const IngestServiceLive = Layer.effect(
     ) =>
       Effect.gen(function* () {
         const fetched = yield* fetchUrlMarkdown(canonicalUrl, config.allowPrivateUrlFetch);
-        if (!(yield* pipeline.isActive(pipelineRunId))) return yield* Effect.interrupt;
+        yield* pipeline.requireActive(pipelineRunId);
         const parsed = new URL(canonicalUrl);
         return yield* publishSource(
           source,
