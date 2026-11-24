@@ -37,6 +37,7 @@ import { Mailer, MailerLive } from "./mailer.ts";
 import { ParallelSearchLive, ParallelSearchService } from "./parallel.ts";
 import { PasskeysService, PasskeysServiceLive } from "./passkeys.ts";
 import { PipelineRunsServiceLive } from "./pipeline-runs.ts";
+import { ProgressChangesLive } from "./progress-changes.ts";
 import {
   ProposalReviewReconcilerLoopLive,
   ProposalsService,
@@ -154,14 +155,17 @@ export type AppLayerOverrides = {
 export const makeAppLayers = (overrides: AppLayerOverrides = {}) => {
   const PostgresLive = Layer.mergeAll(
     DatabaseLive,
+    ProgressChangesLive,
     overrides.workflowEngine ?? WorkflowEngineLive,
   ).pipe(Layer.provide(PgClientLive));
   const InfrastructureLive = Layer.mergeAll(
     PostgresLive,
     overrides.clock ?? ClockLive,
     overrides.randomBytes ?? RandomBytesLive,
-    overrides.logger ?? StructuredLoggerLive,
-  ).pipe(Layer.provideMerge(overrides.config ?? AppConfigLive));
+  ).pipe(
+    Layer.provideMerge(overrides.logger ?? StructuredLoggerLive),
+    Layer.provideMerge(overrides.config ?? AppConfigLive),
+  );
 
   const HistoriesLive = Layer.effect(
     HistoryStore,

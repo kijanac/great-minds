@@ -18,15 +18,15 @@ import {
 } from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
 import { eq } from "drizzle-orm";
-import { Cause, Effect, Exit, Layer, Option, Redacted, Schema, Stream } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Queue, Redacted, Schema, Stream } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { makeAppLayer } from "../src/app-layer.ts";
 import { ClockService, makeTestClock } from "../src/clock.ts";
 import { AppConfig, type AppConfigShape } from "../src/config.ts";
-import { pollingSse } from "../src/polling-sse.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { makeTestMailer } from "../src/mailer.ts";
+import { snapshotSse } from "../src/snapshot-sse.ts";
 import { startServer } from "../src/server.ts";
 import { TokenService } from "../src/tokens.ts";
 import { resetWorkflowQueue } from "./fixtures/reply-history-database.ts";
@@ -409,12 +409,25 @@ describe("compile and job HTTP routes", () => {
           .pipe(Effect.orDie),
       ),
     );
+    const progress = await request(
+      `/v1/vaults/${ids.vault}/jobs/${ids.run}/stream`,
+      current().aliceToken,
+      {
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
     const cancel = await request(
       `/v1/vaults/${ids.vault}/compile/${ids.run}/cancel`,
       current().aliceToken,
       { method: "POST" },
     );
     expect(cancel.status).toBe(204);
+    const events = parseSse(await progress.text());
+    expect(events.at(-2)).toMatchObject({
+      event: "message",
+      data: { job_status: "cancelled", outcome: { unchanged: 2 } },
+    });
+    expect(events.at(-1)?.event).toBe("done");
     const again = await request(
       `/v1/vaults/${ids.vault}/compile/${ids.run}/cancel`,
       current().aliceToken,
@@ -517,18 +530,13 @@ const parseSse = (text: string): readonly ParsedEvent[] =>
     });
 
 describe("job progress SSE", () => {
-  it("preserves polling database defects", async () => {
+  it("preserves snapshot read defects", async () => {
     const defect = new Error("mid-stream database defect");
-    const events = pollingSse(
-      "test",
-      Effect.die(defect),
-      () => ({
-        version: 1,
-        data: () => "",
-        terminal: false,
-      }),
-      100,
-    );
+    const events = snapshotSse("test", Queue.dropping<void>(1), Effect.die(defect), () => ({
+      version: 1,
+      data: () => "",
+      terminal: false,
+    }));
     const exit = await Effect.runPromiseExit(Stream.runCollect(events));
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
@@ -651,7 +659,7 @@ describe("job progress SSE", () => {
     });
   });
 
-  it("ends a member's stream without later progress once membership is revoked", async () => {
+  it("ends a member's stream on revocation even without later progress", async () => {
     const bobMembership = uuid("00000000-0000-4000-8000-000000060503");
     await run(
       Effect.gen(function* () {
@@ -684,34 +692,19 @@ describe("job progress SSE", () => {
     const response = await request(
       `/v1/vaults/${ids.vault}/jobs/${ids.run}/stream`,
       current().bobToken,
+      {
+        signal: AbortSignal.timeout(5_000),
+      },
     );
     expect(response.status).toBe(200);
     const body = response.text();
     await wait(180);
     await run(
-      Effect.gen(function* () {
-        const db = yield* Database;
-        yield* db
-          .query((d) => d.delete(vaultMemberships).where(eq(vaultMemberships.id, bobMembership)))
-          .pipe(Effect.orDie);
-        yield* db
-          .query((d) =>
-            d
-              .update(pipelineRuns)
-              .set({
-                status: "failed",
-                phaseStatus: "failed",
-                error: "private failure detail",
-                updatedAt: new Date("2026-07-12T12:00:01Z"),
-              })
-              .where(eq(pipelineRuns.id, ids.run)),
-          )
-          .pipe(Effect.orDie);
-      }),
+      Effect.flatMap(Database, (db) =>
+        db.query((d) => d.delete(vaultMemberships).where(eq(vaultMemberships.id, bobMembership))),
+      ),
     );
-    const text = await body;
-    expect(parseSse(text).map((event) => event.event)).toEqual(["connected", "message"]);
-    expect(text).not.toContain("private failure detail");
+    expect(parseSse(await body).map((event) => event.event)).toEqual(["connected", "message"]);
   });
 
   it("returns 403 and 404 as JSON before opening the stream", async () => {

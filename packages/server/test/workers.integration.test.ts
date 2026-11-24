@@ -43,6 +43,7 @@ import {
   PipelineRunsServiceLive,
   progressSteps,
 } from "../src/pipeline-runs.ts";
+import { ProgressChangesLive } from "../src/progress-changes.ts";
 import { RandomBytesLive } from "../src/random.ts";
 import { sourceIdForKey } from "../src/source-identity.ts";
 import {
@@ -338,6 +339,7 @@ const ReconcilerLive = CompileIntentReconcilerLive.pipe(
   Layer.provideMerge(BaseLive),
 );
 const JobsLive = JobsServiceLive.pipe(
+  Layer.provide(ProgressChangesLive),
   Layer.provideMerge(FileIngestBatchesLiveLayer),
   Layer.provideMerge(PipelineLive),
   Layer.provideMerge(VaultAccessLive),

@@ -36,7 +36,7 @@ import { ReplySettlement, type ReplySettlementResult } from "./conversation-hist
 import type { LlmMessage } from "./llm.ts";
 import { errorDetails } from "./error-details.ts";
 import { StructuredLogger } from "./logging.ts";
-import { pollingSse } from "./polling-sse.ts";
+import { ProgressChanges } from "./progress-changes.ts";
 import {
   QueryExecutionState,
   type QueryPreparedToolCall as QueryPreparedToolCallType,
@@ -45,8 +45,9 @@ import {
   sanitizedStreamError,
 } from "./query.ts";
 import { SessionsService } from "./sessions.ts";
+import { snapshotSse } from "./snapshot-sse.ts";
 import { ContentStorage, vaultOwner } from "./storage.ts";
-import { VaultAccessService } from "./vaults.ts";
+import { liveVaultMember, VaultAccessService } from "./vaults.ts";
 
 const generationFailed = (message: string = sanitizedStreamError): ReplyFailure => ({
   code: "generation_failed",
@@ -336,16 +337,24 @@ export const RepliesServiceLive = Layer.effect(
     const settlement = yield* ReplySettlement;
     const storage = yield* ContentStorage;
     const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
+    const changes = yield* ProgressChanges;
     const withEngine = Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine);
-    const pollIntervalMs = 100;
 
-    const readReply = (vaultId: Uuid, replyId: Uuid) =>
+    const readReply = (vaultId: Uuid, replyId: Uuid, viewer?: Uuid) =>
       db
         .query((d) =>
           d
             .select()
             .from(replies)
-            .where(and(eq(replies.id, replyId), eq(replies.vaultId, vaultId)))
+            .where(
+              and(
+                eq(replies.id, replyId),
+                eq(replies.vaultId, vaultId),
+                viewer === undefined
+                  ? undefined
+                  : and(eq(replies.userId, viewer), liveVaultMember(d, viewer, vaultId)),
+              ),
+            )
             .limit(1),
         )
         .pipe(Effect.map((rows) => rows[0]));
@@ -855,24 +864,19 @@ export const RepliesServiceLive = Layer.effect(
         }),
       stream: (userId, vaultId, replyId) =>
         Effect.gen(function* () {
-          yield* access.requireMember(userId, vaultId);
-          const initial = yield* readReply(vaultId, replyId);
-          if (initial === undefined || initial.userId !== userId)
+          const member = yield* access.requireMember(userId, vaultId);
+          const read = readReply(vaultId, replyId, userId);
+          if ((yield* read) === undefined)
             return yield* new NotFound({ detail: "Reply not found" });
-          const visibleReply = Effect.gen(function* () {
-            yield* access.requireMember(userId, vaultId);
-            const row = yield* readReply(vaultId, replyId);
-            return row?.userId === userId ? row : undefined;
-          }).pipe(Effect.catchTag("Forbidden", () => Effect.succeed(undefined)));
-          return pollingSse(
+          return snapshotSse(
             replyId,
-            visibleReply,
+            changes.subscribe("replies", member, replyId),
+            read,
             (row) => ({
               version: row.version,
               data: () => encodeReplySnapshot(replySnapshot(row)),
               terminal: !isReplyPending(row.status),
             }),
-            pollIntervalMs,
           );
         }),
       settled: (userId, vaultId, replyId) =>
@@ -884,7 +888,7 @@ export const RepliesServiceLive = Layer.effect(
               return yield* new NotFound({ detail: "Reply not found" });
             const snapshot = replySnapshot(row);
             if (!isReplyPending(snapshot.status)) return snapshot;
-            yield* Effect.sleep(pollIntervalMs);
+            yield* Effect.sleep("100 millis");
           }
         }),
       prepareStep,
