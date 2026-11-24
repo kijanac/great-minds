@@ -21,11 +21,12 @@ import { FileIngestBatches } from "./file-ingest-batches.ts";
 import { jobResponse, selectJobs } from "./job-response.ts";
 import { pageEnvelope, oneTotal } from "./pagination.ts";
 import { isActiveRun, PipelineRunsService } from "./pipeline-runs.ts";
-import { pollingSse } from "./polling-sse.ts";
+import { ProgressChanges } from "./progress-changes.ts";
 import { runTrack } from "./run-track.ts";
+import { snapshotSse } from "./snapshot-sse.ts";
 import { StagedFileIngestWorkflow } from "./staged-file-ingest-workflow.ts";
 import { UrlIngestWorkflow } from "./url-ingest-workflow.ts";
-import { VaultAccessService } from "./vaults.ts";
+import { liveVaultMember, VaultAccessService } from "./vaults.ts";
 
 const terminalStatuses = new Set(["completed", "failed", "cancelled"]);
 
@@ -89,15 +90,21 @@ export const JobsServiceLive = Layer.effect(
     const pipeline = yield* PipelineRunsService;
     const fileIngestBatches = yield* FileIngestBatches;
     const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
-    const pollIntervalMs = 100;
+    const changes = yield* ProgressChanges;
 
-    const readRun = (vaultId: Uuid, jobId: Uuid) =>
+    const readRun = (userId: Uuid, vaultId: Uuid, jobId: Uuid) =>
       db
         .query((d) =>
           d
             .select()
             .from(pipelineRuns)
-            .where(and(eq(pipelineRuns.id, jobId), eq(pipelineRuns.vaultId, vaultId)))
+            .where(
+              and(
+                eq(pipelineRuns.id, jobId),
+                eq(pipelineRuns.vaultId, vaultId),
+                liveVaultMember(d, userId, vaultId),
+              ),
+            )
             .limit(1),
         )
         .pipe(Effect.map((rows) => rows[0]));
@@ -239,18 +246,13 @@ export const JobsServiceLive = Layer.effect(
         }),
       stream: (userId, vaultId, jobId) =>
         Effect.gen(function* () {
-          yield* access.requireMember(userId, vaultId);
-          const initial = yield* readRun(vaultId, jobId);
-          if (initial === undefined) return yield* new NotFound({ detail: "Job not found" });
-
-          const visibleRun = Effect.gen(function* () {
-            yield* access.requireMember(userId, vaultId);
-            return yield* readRun(vaultId, jobId);
-          }).pipe(Effect.catchTag("Forbidden", () => Effect.succeed(undefined)));
-
-          return pollingSse(
+          const member = yield* access.requireMember(userId, vaultId);
+          const read = readRun(userId, vaultId, jobId);
+          if ((yield* read) === undefined) return yield* new NotFound({ detail: "Job not found" });
+          return snapshotSse(
             jobId,
-            visibleRun,
+            changes.subscribe("pipeline_runs", member, jobId),
+            read,
             (row) => {
               const snapshot = progressSnapshot(row);
               const data = encodeProgressSnapshot(snapshot);
@@ -260,7 +262,6 @@ export const JobsServiceLive = Layer.effect(
                 terminal: terminalStatuses.has(snapshot.job_status),
               };
             },
-            pollIntervalMs,
           );
         }),
     } satisfies JobsServiceShape;

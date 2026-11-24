@@ -2369,7 +2369,7 @@ Example message:
 }
 ```
 
-The stream observes the DB operation projection. Native writers project terminal state only after canonical history publication; the stream does not reread history on every poll. If a private session response already supplied recorded terminal content, retain that content over a lagging stream projection and show finalizing until terminal operation confirmation. Ignore nonincreasing versions within the same reply ID and observations for a different selected reply. A connection ending without terminal confirmation is a connection failure: reconnect the same reply, not the generation retry endpoint.
+The stream observes the DB operation projection, not the conversation history. Native writers project terminal state only after canonical history publication. If a private session response already supplied recorded terminal content, retain that content over a lagging stream projection and show finalizing until terminal operation confirmation. Ignore nonincreasing versions within the same reply ID and observations for a different selected reply. A connection ending without terminal confirmation is a connection failure: reconnect the same reply, not the generation retry endpoint.
 
 Errors: `403 Forbidden`, `404 NotFound`, `422 Validation`.
 

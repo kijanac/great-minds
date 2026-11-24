@@ -2,12 +2,14 @@ import {
   compileCacheEntries,
   compileIntents,
   Database,
+  type DrizzleClient,
   pipelineRuns,
   topics,
+  type TransactionClient,
   wikiArticles,
 } from "@great-minds/database";
 import { type PipelineProgressStep, type PipelineWarning, Uuid } from "@great-minds/domain";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, type SQL, sql } from "drizzle-orm";
 import { Cause, Context, Effect, Layer, Schema } from "effect";
 
 import { SET_ASIDE_MESSAGE } from "./failure-ledger.ts";
@@ -91,49 +93,44 @@ export const PipelineRunsServiceLive = Layer.effect(
         WHERE anchor.id = ${runId}
       )
     )`;
-    const recordOutcome = (runId: Uuid) =>
+    const recordOutcome = (database: DrizzleClient | TransactionClient, runId: Uuid, guard?: SQL) =>
       Effect.gen(function* () {
-        const [run] = yield* db.query((d) =>
-          d
-            .select({ vaultId: pipelineRuns.vaultId, createdAt: pipelineRuns.createdAt })
-            .from(pipelineRuns)
-            .where(eq(pipelineRuns.id, runId)),
-        );
+        const target = and(eq(pipelineRuns.id, runId), guard);
+        const [run] = yield* database
+          .select({ vaultId: pipelineRuns.vaultId, createdAt: pipelineRuns.createdAt })
+          .from(pipelineRuns)
+          .where(target);
         if (run === undefined) return;
-        const articles = yield* db.query((d) =>
-          d
-            .select({
-              topicId: wikiArticles.topicId,
-              title: wikiArticles.title,
-              filePath: wikiArticles.filePath,
-              archived: wikiArticles.archived,
-              addedRunId: wikiArticles.addedRunId,
-              changedRunId: wikiArticles.changedRunId,
-              archivedRunId: wikiArticles.archivedRunId,
-              supersededBy: topics.supersededBy,
-            })
-            .from(wikiArticles)
-            .innerJoin(topics, eq(topics.topicId, wikiArticles.topicId))
-            .where(
-              and(
-                eq(wikiArticles.vaultId, run.vaultId),
-                sql`${wikiArticles.filePath} <> 'wiki/_index.md'`,
-              ),
-            )
-            .orderBy(asc(sql`lower(${wikiArticles.title})`)),
-        );
-        const [sources] = yield* db.query((d) =>
-          d
-            .select({ count: sql<number>`count(*)::int` })
-            .from(compileCacheEntries)
-            .where(
-              and(
-                eq(compileCacheEntries.vaultId, run.vaultId),
-                eq(compileCacheEntries.phase, "extract"),
-                sql`${compileCacheEntries.createdAt} >= ${run.createdAt}`,
-              ),
+        const articles = yield* database
+          .select({
+            topicId: wikiArticles.topicId,
+            title: wikiArticles.title,
+            filePath: wikiArticles.filePath,
+            archived: wikiArticles.archived,
+            addedRunId: wikiArticles.addedRunId,
+            changedRunId: wikiArticles.changedRunId,
+            archivedRunId: wikiArticles.archivedRunId,
+            supersededBy: topics.supersededBy,
+          })
+          .from(wikiArticles)
+          .innerJoin(topics, eq(topics.topicId, wikiArticles.topicId))
+          .where(
+            and(
+              eq(wikiArticles.vaultId, run.vaultId),
+              sql`${wikiArticles.filePath} <> 'wiki/_index.md'`,
             ),
-        );
+          )
+          .orderBy(asc(sql`lower(${wikiArticles.title})`));
+        const [sources] = yield* database
+          .select({ count: sql<number>`count(*)::int` })
+          .from(compileCacheEntries)
+          .where(
+            and(
+              eq(compileCacheEntries.vaultId, run.vaultId),
+              eq(compileCacheEntries.phase, "extract"),
+              sql`${compileCacheEntries.createdAt} >= ${run.createdAt}`,
+            ),
+          );
         const entry = (article: (typeof articles)[number]) => ({
           title: article.title,
           file_path: article.filePath,
@@ -154,21 +151,50 @@ export const PipelineRunsServiceLive = Layer.effect(
         const removed = articles.filter(
           (article) => article.archived && article.archivedRunId === runId,
         );
-        yield* db.query((d) =>
-          d
-            .update(pipelineRuns)
-            .set({
-              outcome: {
-                sources: sources?.count ?? 0,
-                added: added.map(entry),
-                changed: changed.map(entry),
-                removed: removed.map(removedEntry),
-                unchanged: live.length - added.length - changed.length,
-              },
-            })
-            .where(eq(pipelineRuns.id, runId)),
-        );
+        yield* database
+          .update(pipelineRuns)
+          .set({
+            outcome: {
+              sources: sources?.count ?? 0,
+              added: added.map(entry),
+              changed: changed.map(entry),
+              removed: removed.map(removedEntry),
+              unchanged: live.length - added.length - changed.length,
+            },
+          })
+          .where(target);
       });
+
+    const endActive = (
+      tx: TransactionClient,
+      where: SQL,
+      status: "cancelled" | "failed",
+      error: string,
+    ) =>
+      tx
+        .update(pipelineRuns)
+        .set({
+          status,
+          phaseStatus: "failed",
+          error,
+          completedAt: sql`now()`,
+          updatedAt: sql`now()`,
+        })
+        .where(and(where, isActiveRun))
+        .returning({ id: pipelineRuns.id });
+
+    const endWithOutcome = (
+      runId: Uuid,
+      where: SQL,
+      status: "cancelled" | "failed",
+      error: string,
+    ) =>
+      db.transaction((tx) =>
+        Effect.gen(function* () {
+          const ended = yield* endActive(tx, where, status, error);
+          if (ended.some((run) => run.id === runId)) yield* recordOutcome(tx, runId);
+        }),
+      );
 
     const updateProgress: PipelineRunsServiceShape["updateProgress"] = (
       runId,
@@ -214,51 +240,26 @@ export const PipelineRunsServiceLive = Layer.effect(
             ),
           ),
       cancel: (runId) =>
-        db
-          .query((d) =>
-            d
-              .update(pipelineRuns)
-              .set({
-                status: "cancelled",
-                phaseStatus: "failed",
-                error: "Update cancelled",
-                completedAt: sql`now()`,
-                updatedAt: sql`now()`,
-              })
-              .where(and(eq(pipelineRuns.id, runId), isActiveRun)),
-          )
-          .pipe(Effect.andThen(recordOutcome(runId))),
+        endWithOutcome(runId, eq(pipelineRuns.id, runId), "cancelled", "Update cancelled"),
       cancelCompileIntent: (intentId) =>
-        db
-          .transaction((tx) =>
-            Effect.gen(function* () {
-              yield* tx
-                .update(pipelineRuns)
-                .set({
-                  status: "cancelled",
-                  phaseStatus: "failed",
-                  error: "Update cancelled",
-                  completedAt: sql`now()`,
-                  updatedAt: sql`now()`,
-                })
-                .where(and(eq(pipelineRuns.compileIntentId, intentId), isActiveRun));
-              yield* tx
-                .update(compileIntents)
-                .set({
-                  dispatchedAt: sql`coalesce(${compileIntents.dispatchedAt}, now())`,
-                  satisfiedAt: sql`coalesce(${compileIntents.satisfiedAt}, now())`,
-                })
-                .where(eq(compileIntents.id, intentId));
-              return yield* tx
-                .select({ id: pipelineRuns.id })
-                .from(pipelineRuns)
-                .where(eq(pipelineRuns.compileIntentId, intentId));
-            }),
-          )
-          .pipe(
-            Effect.flatMap((runs) => Effect.forEach(runs, (run) => recordOutcome(run.id))),
-            Effect.asVoid,
-          ),
+        db.transaction((tx) =>
+          Effect.gen(function* () {
+            const ended = yield* endActive(
+              tx,
+              eq(pipelineRuns.compileIntentId, intentId),
+              "cancelled",
+              "Update cancelled",
+            );
+            yield* tx
+              .update(compileIntents)
+              .set({
+                dispatchedAt: sql`coalesce(${compileIntents.dispatchedAt}, now())`,
+                satisfiedAt: sql`coalesce(${compileIntents.satisfiedAt}, now())`,
+              })
+              .where(eq(compileIntents.id, intentId));
+            yield* Effect.forEach(ended, (run) => recordOutcome(tx, run.id), { discard: true });
+          }),
+        ),
       updateProgress,
       recordWarning: (runId, warning) =>
         db
@@ -277,20 +278,7 @@ export const PipelineRunsServiceLive = Layer.effect(
           )
           .pipe(Effect.asVoid),
       failPreservingProgress: (runId, error) =>
-        db
-          .query((d) =>
-            d
-              .update(pipelineRuns)
-              .set({
-                status: "failed",
-                phaseStatus: "failed",
-                error,
-                completedAt: sql`now()`,
-                updatedAt: sql`now()`,
-              })
-              .where(and(runOrCompileGroup(runId), isActiveRun)),
-          )
-          .pipe(Effect.andThen(recordOutcome(runId))),
+        endWithOutcome(runId, runOrCompileGroup(runId), "failed", error),
       complete: (runId) =>
         db
           .query((d) =>
@@ -311,7 +299,7 @@ export const PipelineRunsServiceLive = Layer.effect(
               .limit(1),
           )
           .pipe(Effect.map((rows) => rows[0])),
-      recordOutcome,
+      recordOutcome: (runId) => db.query((d) => recordOutcome(d, runId, isActiveRun)),
     } satisfies PipelineRunsServiceShape;
   }),
 );

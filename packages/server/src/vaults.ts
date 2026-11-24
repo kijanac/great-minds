@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   Database,
+  type DrizzleClient,
   pipelineRuns,
   sessions,
   shares,
@@ -36,6 +37,7 @@ import {
   asc,
   desc,
   eq,
+  exists,
   inArray,
   isNotNull,
   isNull,
@@ -302,6 +304,17 @@ const keyVaultIds = Effect.map(Effect.serviceOption(CurrentAuth), (current) =>
     : null,
 );
 
+const vaultMember = (db: DrizzleClient, userId: Uuid, vaultId: Uuid, guard?: SQL) =>
+  db
+    .select({ role: vaultMemberships.role, ownerId: vaults.ownerId, deletedAt: vaults.deletedAt })
+    .from(vaultMemberships)
+    .innerJoin(vaults, eq(vaults.id, vaultMemberships.vaultId))
+    .where(and(eq(vaultMemberships.userId, userId), eq(vaultMemberships.vaultId, vaultId), guard))
+    .limit(1);
+
+export const liveVaultMember = (db: DrizzleClient, userId: Uuid, vaultId: Uuid) =>
+  exists(vaultMember(db, userId, vaultId, isNull(vaults.deletedAt)));
+
 export const VaultAccessServiceLive = Layer.effect(
   VaultAccessService,
   Effect.gen(function* () {
@@ -316,19 +329,7 @@ export const VaultAccessServiceLive = Layer.effect(
         const keyVaults = yield* keyVaultIds;
         if (keyVaults !== null && !keyVaults.includes(vaultId))
           return yield* new Forbidden({ detail: "This API key can't reach this vault." });
-        const rows = yield* db.query((d) =>
-          d
-            .select({
-              role: vaultMemberships.role,
-              ownerId: vaults.ownerId,
-              deletedAt: vaults.deletedAt,
-            })
-            .from(vaultMemberships)
-            .innerJoin(vaults, eq(vaults.id, vaultMemberships.vaultId))
-            .where(and(eq(vaultMemberships.userId, userId), eq(vaultMemberships.vaultId, vaultId)))
-            .limit(1),
-        );
-        const row = rows[0];
+        const [row] = yield* db.query((d) => vaultMember(d, userId, vaultId));
         if (row === undefined) {
           return yield* new Forbidden({ detail });
         }

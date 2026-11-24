@@ -1,8 +1,9 @@
 import * as Sse from "effect/encoding/Sse";
-import { Effect, Exit, Stream } from "effect";
-import { describe, expect, it, vi } from "vitest";
+import { Effect, Exit, Fiber, Queue, Stream } from "effect";
+import { TestClock } from "effect/testing";
+import { describe, expect, it } from "vitest";
 
-import { pollingSse } from "../src/polling-sse.ts";
+import { snapshotSse } from "../src/snapshot-sse.ts";
 
 describe("Effect SSE decoder", () => {
   it("preserves a named multiline event when CRLF is split across chunks", () => {
@@ -23,56 +24,45 @@ describe("Effect SSE decoder", () => {
   });
 });
 
-describe("snapshot polling", () => {
-  it("deduplicates snapshots and emits the terminal snapshot before done", async () => {
-    const rows = [1, 1, 2];
-    const events = pollingSse(
-      "reply",
-      Effect.sync(() => rows.shift()),
-      (version) => ({
-        version,
-        data: () => String(version),
-        terminal: version === 2,
-      }),
-      1,
+describe("snapshot SSE", () => {
+  it("reads on wakes and at the idle heartbeat, with a terminal snapshot before done", async () => {
+    const events = await Effect.runPromise(
+      Effect.gen(function* () {
+        const wakes = yield* Queue.dropping<void>(1);
+        let version = 1;
+        let reads = 0;
+        const read = Effect.sync(() => {
+          reads++;
+          return version;
+        });
+        const stream = snapshotSse("reply", Effect.succeed(wakes), read, (value) => ({
+          version: value,
+          data: () => String(value),
+          terminal: value === 3,
+        }));
+        const consuming = yield* Effect.forkChild(Stream.runCollect(stream));
+        yield* TestClock.adjust("10 seconds");
+        expect(reads).toBe(1);
+        version = 2;
+        yield* Queue.offer(wakes, undefined);
+        yield* TestClock.adjust("29999 millis");
+        expect(reads).toBe(2);
+        yield* TestClock.adjust("1 millis");
+        expect(reads).toBe(3);
+        version = 3;
+        yield* Queue.offer(wakes, undefined);
+        yield* TestClock.adjust("100 millis");
+        return yield* Fiber.join(consuming);
+      }).pipe(Effect.provide(TestClock.layer())),
     );
-    expect(await Effect.runPromise(Stream.runCollect(events))).toEqual([
+    expect(events).toEqual([
       { event: "connected", data: '{"id":"reply"}' },
       { event: "message", data: "1" },
       { event: "message", data: "2" },
+      { event: "heartbeat", data: "{}" },
+      { event: "message", data: "3" },
       { event: "done", data: '{"id":"reply"}' },
     ]);
-  });
-
-  it("sends heartbeats while unchanged and closes without a trailing heartbeat", async () => {
-    let now = 0;
-    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
-    try {
-      const read = Effect.sync(() => {
-        now += 15_000;
-        return now >= 75_000 ? 3 : now >= 30_000 ? 2 : 1;
-      });
-      const events = pollingSse(
-        "reply",
-        read,
-        (version) => ({
-          version,
-          data: () => String(version),
-          terminal: version === 3,
-        }),
-        1,
-      );
-      expect(await Effect.runPromise(Stream.runCollect(events))).toEqual([
-        { event: "connected", data: '{"id":"reply"}' },
-        { event: "message", data: "1" },
-        { event: "message", data: "2" },
-        { event: "heartbeat", data: "{}" },
-        { event: "message", data: "3" },
-        { event: "done", data: '{"id":"reply"}' },
-      ]);
-    } finally {
-      clock.mockRestore();
-    }
   });
 
   it("interrupts an in-flight read when the stream consumer disconnects", async () => {
@@ -92,12 +82,11 @@ describe("snapshot polling", () => {
         }),
       ),
     );
-    const events = pollingSse(
-      "reply",
-      read,
-      () => ({ version: 1, data: () => "", terminal: false }),
-      100,
-    );
+    const events = snapshotSse("reply", Queue.dropping<void>(1), read, () => ({
+      version: 1,
+      data: () => "",
+      terminal: false,
+    }));
     const completed = Effect.runPromiseExit(Stream.runCollect(events), {
       signal: controller.signal,
     });
