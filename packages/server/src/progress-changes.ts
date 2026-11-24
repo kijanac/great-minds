@@ -1,6 +1,6 @@
 import { PgClient } from "@effect/sql-pg/PgClient";
 import type { Uuid } from "@great-minds/domain";
-import { Context, Duration, Effect, Layer, Queue, Schedule, type Scope } from "effect";
+import { Context, Effect, Layer, Queue, Schedule, type Scope } from "effect";
 
 import { StructuredLogger } from "./logging.ts";
 
@@ -16,31 +16,23 @@ export class ProgressChanges extends Context.Service<ProgressChanges, ProgressCh
   "@great-minds/server/ProgressChanges",
 ) {}
 
-const reconnect = Schedule.exponential("1 second").pipe(
-  Schedule.modifyDelay(({ duration }) =>
-    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
-  ),
-);
+const reconnect = Schedule.min([Schedule.exponential("1 second"), Schedule.spaced("30 seconds")]);
 
 const makeProgressChanges = Effect.gen(function* () {
   const pg = yield* PgClient;
   const logger = yield* StructuredLogger;
-  const subscribers = new Map<string, Set<Queue.Enqueue<void>>>();
-  const wake = (queues: Iterable<Queue.Enqueue<void>>) => {
-    for (const queue of queues) Queue.offerUnsafe(queue, undefined);
+  const subscribers = new Map<Queue.Enqueue<void>, readonly string[]>();
+  const wake = (key?: string) => {
+    for (const [queue, keys] of subscribers) {
+      if (key === undefined || keys.includes(key)) Queue.offerUnsafe(queue, undefined);
+    }
   };
 
-  const listen = Effect.scoped(
-    Effect.gen(function* () {
-      const notifications = yield* pg.listen("great_minds_progress");
-      for (const queues of subscribers.values()) wake(queues);
-      while (true) {
-        const { payload } = yield* Queue.take(notifications);
-        const queues = subscribers.get(payload);
-        if (queues !== undefined) wake(queues);
-      }
-    }),
-  );
+  const listen = Effect.gen(function* () {
+    const notifications = yield* pg.listen("great_minds_progress");
+    wake();
+    while (true) wake((yield* Queue.take(notifications)).payload);
+  }).pipe(Effect.scoped);
   yield* listen.pipe(
     Effect.tapError((error) =>
       logger.warn("progress_listener_disconnected", { error_type: error.reason._tag }),
@@ -50,31 +42,18 @@ const makeProgressChanges = Effect.gen(function* () {
   );
 
   return {
-    subscribe: (table, { userId, vaultId }, id) => {
-      const keys = [
-        `${table}:${id}`,
-        `vaults:${vaultId}`,
-        `vault_memberships:${vaultId}:${userId}`,
-      ];
-      return Effect.acquireRelease(
+    subscribe: (table, { userId, vaultId }, id) =>
+      Effect.acquireRelease(
         Effect.map(Queue.dropping<void>(1), (queue) => {
-          for (const key of keys) {
-            const queues = subscribers.get(key);
-            if (queues === undefined) subscribers.set(key, new Set([queue]));
-            else queues.add(queue);
-          }
+          subscribers.set(queue, [
+            `${table}:${id}`,
+            `vaults:${vaultId}`,
+            `vault_memberships:${vaultId}:${userId}`,
+          ]);
           return queue;
         }),
-        (queue) =>
-          Effect.sync(() => {
-            for (const key of keys) {
-              const queues = subscribers.get(key);
-              queues?.delete(queue);
-              if (queues?.size === 0) subscribers.delete(key);
-            }
-          }),
-      );
-    },
+        (queue) => Effect.sync(() => subscribers.delete(queue)),
+      ),
   } satisfies ProgressChangesShape;
 });
 

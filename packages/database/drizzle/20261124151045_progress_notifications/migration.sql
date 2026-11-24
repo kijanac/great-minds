@@ -4,10 +4,8 @@ DECLARE
 BEGIN
   IF TG_TABLE_NAME = 'vault_memberships' THEN
     wake_key := OLD.vault_id::text || ':' || OLD.user_id::text;
-  ELSIF TG_OP = 'DELETE' THEN
-    wake_key := OLD.id::text;
   ELSE
-    wake_key := NEW.id::text;
+    wake_key := coalesce(NEW.id, OLD.id)::text;
   END IF;
   PERFORM pg_notify('great_minds_progress', TG_TABLE_NAME || ':' || wake_key);
   RETURN NULL;
