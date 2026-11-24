@@ -13,12 +13,7 @@ import type { Conversation } from "#lib/conversation.svelte.ts";
 
 export type SourceRef = ReplySource;
 
-export type {
-  SessionSummary,
-  SourceDocumentSummary,
-  SourceTypeFacet,
-  WikiArticleOverview,
-};
+export type { SessionSummary, SourceDocumentSummary, SourceTypeFacet, WikiArticleOverview };
 
 export interface Exchange {
   id: Uuid;
