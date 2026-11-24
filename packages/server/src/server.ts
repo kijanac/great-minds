@@ -26,7 +26,6 @@ import {
   HttpServerResponse,
 } from "effect/http";
 import { NetAddress } from "effect/net";
-import * as HttpBody from "effect/http/HttpBody";
 import * as Multipart from "effect/http/Multipart";
 import * as HttpServerError from "effect/http/HttpServerError";
 import { HttpApiBuilder } from "effect/http-api";
@@ -90,15 +89,6 @@ const jsonResponse = (status: number, body: unknown) =>
   HttpServerResponse.json(body, { status }).pipe(Effect.orDie);
 
 const healthResponse = jsonResponse(200, { status: "ok" });
-const textEncoder = new TextEncoder();
-const emptyMessageBytes = textEncoder.encode("data: \n\n");
-const heartbeatBytes = textEncoder.encode(": heartbeat\n\n");
-
-export const jobSseHeartbeatChunk = (chunk: Uint8Array) =>
-  chunk.length === emptyMessageBytes.length &&
-  chunk.every((byte, index) => byte === emptyMessageBytes[index])
-    ? heartbeatBytes
-    : chunk;
 
 const clean500Response = jsonResponse(500, { detail: "Internal Server Error" });
 
@@ -770,21 +760,11 @@ const StreamHeadersLive = HttpRouter.middleware(
         request.method === "GET" &&
         pathname.endsWith("/stream")
       ) {
-        const withHeaders = HttpServerResponse.setHeaders(response, {
+        return HttpServerResponse.setHeaders(response, {
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
           "X-Accel-Buffering": "no",
         });
-        if (response.body._tag === "Stream") {
-          return HttpServerResponse.setBody(
-            withHeaders,
-            HttpBody.stream(
-              response.body.stream.pipe(Stream.map(jobSseHeartbeatChunk)),
-              "text/event-stream",
-            ),
-          );
-        }
-        return withHeaders;
       }
       return response;
     }),

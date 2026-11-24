@@ -65,7 +65,7 @@ New Reading Room imports write to immutable reference-UUID paths. A SQL-only per
 - Progress and failure updates only change `pending`/`running` runs, so late progress or cooperative teardown cannot overwrite `completed`, `failed` or `cancelled`. Zombie recovery fails a stale active run only when `cluster_messages` holds no matching workflow request; a run queued behind an unsatisfied compile intent is waiting, not a zombie.
 - Cancellation commits the guarded `cancelled` state first, then calls `interruptUnsafe` on the in-process engine. The routed `Workflow.interrupt` client path can wait in sharding when no separate healthy runner exists.
 - Only the production entrypoint (`main.ts`) composes the reconciler loops; HTTP-only roots used by tests never dispatch background work. Stable workflow idempotency keys deduplicated in `cluster_messages`, not row locks, prevent double dispatch across reconciler passes and processes.
-- Job progress streams poll the run row and send only changed snapshots, with comment heartbeats every 30 seconds.
+- Job and reply streams poll the operation row and send only changed snapshots. After 30 seconds without a frame, the stream sends a named `heartbeat` event.
 
 ## Retry semantics
 
