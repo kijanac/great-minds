@@ -650,7 +650,7 @@ describe("makeApi streams", () => {
 
   it("keeps following a job through a dropped connection and a gateway outage", async () => {
     const droppedAfterFirstSnapshot = () => {
-      const frames = ['data: {"n":1}\n\n'];
+      const frames = ['data: {"n":1}\n\n', "event: heartbeat\ndata: {}\n\n"];
       return new Response(
         new ReadableStream<Uint8Array>(
           {

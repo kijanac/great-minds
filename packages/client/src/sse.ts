@@ -42,7 +42,7 @@ export const followSnapshots = <A>(
     return connect.pipe(
       Stream.concat(Stream.fail(new Disconnected())),
       Stream.takeWhile((event) => event.event !== "done"),
-      Stream.filter((event) => event.event === "message" && event.data.length > 0),
+      Stream.filter((event) => event.event === "message"),
       Stream.mapEffect((event) => decode(event.data)),
       Stream.tap(() =>
         Effect.sync(() => {

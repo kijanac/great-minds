@@ -11,15 +11,15 @@ import {
   type QuerySourceData,
   ReplySnapshot as ReplySnapshotSchema,
   type ReplySource,
-  ReplySource as ReplySourceSchema,
   type ReplySnapshot,
   type ReplySseEvent,
   ServiceUnavailable,
   SessionActivity,
+  ThinkingSource,
   Uuid,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
-import { Cause, Context, Data, Effect, Layer, Option, Schema, SchemaGetter, Stream } from "effect";
+import { Cause, Context, Data, Effect, Layer, Option, Schema, Stream } from "effect";
 import * as Activity from "effect/workflow/Activity";
 import * as Workflow from "effect/workflow/Workflow";
 import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
@@ -93,25 +93,18 @@ type ReplyStepControl = typeof ReplyStepControl.Type;
 
 const ReplyAccumulator = Schema.Struct({
   answer: Schema.mutableKey(Schema.String),
-  sources: Schema.mutable(Schema.Array(ReplySourceSchema)),
-  pendingCalls: Schema.Array(
-    Schema.Struct({ callId: Schema.String, index: Schema.NullOr(Schema.Number) }),
-  ).pipe(
-    Schema.decodeTo(Schema.instanceOf(Map<string, number | null>), {
-      decode: SchemaGetter.transform(
-        (entries) => new Map(entries.map(({ callId, index }) => [callId, index])),
-      ),
-      encode: SchemaGetter.transform((entries) =>
-        [...entries].map(([callId, index]) => ({ callId, index })),
-      ),
-    }),
+  sources: Schema.mutable(
+    Schema.Array(
+      Schema.Struct({ source: ThinkingSource, pendingCallId: Schema.optionalKey(Schema.String) }),
+    ),
   ),
   clearOnNextToken: Schema.mutableKey(Schema.Boolean),
 });
 type ReplyAccumulator = typeof ReplyAccumulator.Type;
 
+const checkpointVersion = 2;
 const ReplyCheckpoint = Schema.Struct({
-  version: Schema.Literal(1),
+  version: Schema.Literal(checkpointVersion),
   cursor: Schema.Number,
   query: QueryExecutionState,
   accumulator: ReplyAccumulator,
@@ -126,70 +119,6 @@ const encodeReplyCheckpoint = Schema.encodeSync(Schema.fromJsonString(ReplyCheck
 const checkpointPath = (replyId: Uuid) => `operations/replies/${replyId}.json`;
 const terminalControl = (control: ReplyStepControl): control is ReplyStepControl & ReplyEnd =>
   control.outcome !== "ready" && control.outcome !== "tool_calls";
-const removeSource = (accumulator: ReplyAccumulator, index: number) => {
-  accumulator.sources.splice(index, 1);
-  for (const [callId, pendingIndex] of accumulator.pendingCalls) {
-    if (pendingIndex !== null && pendingIndex > index)
-      accumulator.pendingCalls.set(callId, pendingIndex - 1);
-  }
-};
-
-const addPendingSource = (
-  accumulator: ReplyAccumulator,
-  callId: string,
-  data: QuerySourceData,
-  round: number,
-) => {
-  accumulator.pendingCalls.set(callId, accumulator.sources.length);
-  accumulator.sources.push(sourceRef(data, accumulator.answer, round, true));
-  accumulator.clearOnNextToken = true;
-};
-
-const addResolvedSource = (
-  accumulator: ReplyAccumulator,
-  data: QuerySourceData,
-  pendingIndex: number | null,
-  round: number,
-) => {
-  if (data.type === "article" || data.type === "raw") {
-    if (pendingIndex !== null) removeSource(accumulator, pendingIndex);
-    const isExpand = data.start !== undefined && data.end !== undefined;
-    const range = isExpand ? { start: data.start, end: data.end } : null;
-    const index = accumulator.sources.findIndex(
-      (source) =>
-        source.pending !== true &&
-        source.label === data.path &&
-        (source.type === "article" || source.type === "raw"),
-    );
-    if (index >= 0) {
-      const previous = accumulator.sources[index];
-      const chunks = data.chunks ?? previous.chunks;
-      accumulator.sources[index] = {
-        ...previous,
-        ranges: range ? [...(previous.ranges ?? []), range] : previous.ranges,
-        full: previous.full === true || data.full === true,
-        ...(previous.outline === true || data.outline === true ? { outline: true } : {}),
-        ...(chunks === undefined ? {} : { chunks }),
-      };
-    } else accumulator.sources.push(sourceRef(data, accumulator.answer, round));
-    accumulator.clearOnNextToken = true;
-    return;
-  }
-  if (data.type === "links") {
-    const existingIndex = accumulator.sources.findIndex(
-      (source, index) =>
-        index !== pendingIndex && source.type === "links" && source.label === data.path,
-    );
-    if (existingIndex >= 0) {
-      if (pendingIndex !== null) removeSource(accumulator, pendingIndex);
-      return;
-    }
-  }
-  const resolved = sourceRef(data, accumulator.answer, round);
-  if (pendingIndex === null) accumulator.sources.push(resolved);
-  else accumulator.sources.splice(pendingIndex, 1, resolved);
-  accumulator.clearOnNextToken = true;
-};
 
 const failureFields = (cause: Cause.Cause<unknown>) => {
   const reason = cause.reasons.find((reason) => !Cause.isInterruptReason(reason));
@@ -219,13 +148,8 @@ const failedControl = (cursor: number, failure: ReplyFailure) =>
 const doneControl = (cursor: number) => ({ cursor, outcome: "done" }) as const;
 const stoppedControl = (cursor: number) => ({ cursor, outcome: "stopped" }) as const;
 
-const sourceRef = (
-  data: QuerySourceData,
-  thinking: string,
-  round: number,
-  pending = false,
-): ReplySource => {
-  const source: ReplySource = {
+const sourceRef = (data: QuerySourceData, thinking: string, round: number): ThinkingSource => {
+  const source: ThinkingSource = {
     label:
       data.type === "search"
         ? data.query
@@ -241,7 +165,6 @@ const sourceRef = (
     path: data.type === "search" ? (data.path ?? null) : null,
     thinking: thinking.length === 0 ? null : thinking,
     round,
-    ...(pending ? { pending: true } : {}),
   };
   switch (data.type) {
     case "article":
@@ -264,6 +187,54 @@ const sourceRef = (
     default:
       return data.results === undefined ? source : { ...source, results: data.results };
   }
+};
+
+const resolveSource = (
+  accumulator: ReplyAccumulator,
+  callId: string,
+  data: QuerySourceData | undefined,
+  round: number,
+) => {
+  const { sources } = accumulator;
+  const pendingIndex = sources.findIndex((entry) => entry.pendingCallId === callId);
+  if (
+    data === undefined ||
+    (data.type === "links" &&
+      sources.some(
+        ({ source, pendingCallId }) =>
+          pendingCallId === undefined && source.type === "links" && source.label === data.path,
+      ))
+  ) {
+    if (pendingIndex >= 0) sources.splice(pendingIndex, 1);
+    return;
+  }
+
+  const resolved = sourceRef(data, accumulator.answer, round);
+  if (resolved.type === "article" || resolved.type === "raw") {
+    if (pendingIndex >= 0) sources.splice(pendingIndex, 1);
+    const index = sources.findIndex(
+      ({ source, pendingCallId }) =>
+        pendingCallId === undefined &&
+        source.label === resolved.label &&
+        (source.type === "article" || source.type === "raw"),
+    );
+    const previous = sources[index]?.source;
+    if (previous === undefined) sources.push({ source: resolved });
+    else {
+      const ranges = resolved.ranges ?? [];
+      sources[index] = {
+        source: {
+          ...previous,
+          ranges: ranges.length === 0 ? previous.ranges : [...(previous.ranges ?? []), ...ranges],
+          full: previous.full === true || resolved.full === true,
+          ...(resolved.outline === true ? { outline: true } : {}),
+          ...(resolved.chunks === undefined ? {} : { chunks: resolved.chunks }),
+        },
+      };
+    }
+  } else if (pendingIndex < 0) sources.push({ source: resolved });
+  else sources[pendingIndex] = { source: resolved };
+  accumulator.clearOnNextToken = true;
 };
 
 const requestError = (error: ReplyAdmissionError): ReplyRequestError => {
@@ -439,7 +410,13 @@ export const RepliesServiceLive = Layer.effect(
       );
 
     const flushAccumulator = (replyId: Uuid, accumulator: ReplyAccumulator) =>
-      updateSnapshot(replyId, accumulator.answer, accumulator.sources);
+      updateSnapshot(
+        replyId,
+        accumulator.answer,
+        accumulator.sources.map(({ source, pendingCallId }) =>
+          pendingCallId === undefined ? source : { ...source, pending: true },
+        ),
+      );
 
     const freezeOutcome = (row: ReplyRow, checkpoint: ReplyCheckpoint | undefined, end: ReplyEnd) =>
       Effect.gen(function* () {
@@ -478,9 +455,9 @@ export const RepliesServiceLive = Layer.effect(
           result = {
             status: "completed",
             answer: checkpoint.accumulator.answer,
-            sources: checkpoint.accumulator.sources
-              .filter((source) => source.pending !== true)
-              .map(({ pending: _pending, ...source }) => source),
+            sources: checkpoint.accumulator.sources.flatMap(({ source, pendingCallId }) =>
+              pendingCallId === undefined ? [source] : [],
+            ),
             context_messages: messages,
             generation,
           };
@@ -653,15 +630,10 @@ export const RepliesServiceLive = Layer.effect(
         );
         const control = readyControl(row.generationCursor);
         const checkpoint: ReplyCheckpoint = {
-          version: 1,
+          version: checkpointVersion,
           cursor: row.generationCursor,
           query: queryState,
-          accumulator: {
-            answer: "",
-            sources: [],
-            pendingCalls: new Map(),
-            clearOnNextToken: false,
-          },
+          accumulator: { answer: "", sources: [], clearOnNextToken: false },
           pendingTools: [],
           nextToolIndex: 0,
           lastControl: control,
@@ -703,14 +675,17 @@ export const RepliesServiceLive = Layer.effect(
           let control: ReplyStepControl;
           let pendingTools: readonly QueryPreparedToolCallType[] = [];
           if (outcome.kind === "tool_calls") {
-            for (const toolCall of outcome.toolCalls) {
-              if (toolCall.pendingSource !== undefined)
-                addPendingSource(
-                  accumulator,
-                  toolCall.id,
-                  toolCall.pendingSource,
+            for (const { id, pendingSource } of outcome.toolCalls) {
+              if (pendingSource === undefined) continue;
+              accumulator.sources.push({
+                source: sourceRef(
+                  pendingSource,
+                  accumulator.answer,
                   checkpoint.query.trace.llmRounds,
-                );
+                ),
+                pendingCallId: id,
+              });
+              accumulator.clearOnNextToken = true;
             }
             pendingTools = outcome.toolCalls;
             control = { cursor: expectedCursor + 1, outcome: "tool_calls" };
@@ -721,10 +696,8 @@ export const RepliesServiceLive = Layer.effect(
           else control = failedControl(expectedCursor + 1, generationFailed(outcome.error));
           yield* flushAccumulator(replyId, accumulator);
           const nextCheckpoint: ReplyCheckpoint = {
-            version: 1,
+            ...checkpoint,
             cursor: expectedCursor + 1,
-            query: checkpoint.query,
-            accumulator,
             pendingTools,
             nextToolIndex: 0,
             lastControl: control,
@@ -764,12 +737,7 @@ export const RepliesServiceLive = Layer.effect(
             yield* freezeOutcome(row, checkpoint, { outcome: "stopped" });
             return stoppedControl(expectedCursor);
           }
-          const source = attempt.value;
-          const pendingIndex = accumulator.pendingCalls.get(toolCall.id) ?? null;
-          accumulator.pendingCalls.delete(toolCall.id);
-          if (source !== undefined)
-            addResolvedSource(accumulator, source, pendingIndex, checkpoint.query.trace.llmRounds);
-          else if (pendingIndex !== null) removeSource(accumulator, pendingIndex);
+          resolveSource(accumulator, toolCall.id, attempt.value, checkpoint.query.trace.llmRounds);
           yield* flushAccumulator(replyId, accumulator);
           const nextToolIndex = checkpoint.nextToolIndex + 1;
           const remaining = checkpoint.pendingTools.length - nextToolIndex;
@@ -778,10 +746,8 @@ export const RepliesServiceLive = Layer.effect(
               ? { cursor: expectedCursor + 1, outcome: "tool_calls" }
               : readyControl(expectedCursor + 1);
           const nextCheckpoint: ReplyCheckpoint = {
-            version: 1,
+            ...checkpoint,
             cursor: expectedCursor + 1,
-            query: checkpoint.query,
-            accumulator,
             pendingTools: remaining > 0 ? checkpoint.pendingTools : [],
             nextToolIndex: remaining > 0 ? nextToolIndex : 0,
             lastControl: control,

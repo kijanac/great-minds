@@ -1735,7 +1735,8 @@ Events:
 | Event | `data` | Description |
 | --- | --- | --- |
 | `connected` | `{"id": "<job_id>"}` | Sent once when the stream opens. |
-| `message` | JSON `JobProgressSnapshot` | Sent whenever the job's progress changes. |
+| `message` | JSON `JobProgressSnapshot` | Unnamed SSE event, sent whenever the job's progress changes. |
+| `heartbeat` | `{}` | Keepalive after about 30 seconds without a frame; ignore. |
 | `done` | `{"id": "<job_id>"}` | Sent once when the job reaches `completed`, `failed` or `cancelled`; the stream then closes. |
 
 The `message` payload is a `JobProgressSnapshot`:
@@ -1759,16 +1760,11 @@ Raw wire format:
 event: connected
 data: {"id":"3fa85f64-5717-4562-b3fc-2c963f66afa6"}
 
-event: message
 data: {"id":"3fa85f64-...","vault_id":"...","trigger":"url","job_status":"running","phase":"fetch","phase_status":"running","steps":[...],"updated_at":"...","completed_at":null}
 
 event: done
 data: {"id":"3fa85f64-5717-4562-b3fc-2c963f66afa6"}
 ```
-
-Keepalives: when nothing has changed for 30 seconds the server emits a
-keepalive frame. On the wire it appears as an SSE comment line
-(`: heartbeat`). Clients must ignore lines beginning with `:`.
 
 Errors: `403 Forbidden`, `404 NotFound`, `422 Validation`.
 
@@ -2327,7 +2323,8 @@ Events:
 | Event | `data` | Description |
 | --- | --- | --- |
 | `connected` | `{"id": "<reply_id>"}` | Sent once when the stream opens. |
-| `message` | JSON `ReplySnapshot` | Sent whenever the reply's state changes. |
+| `message` | JSON `ReplySnapshot` | Unnamed SSE event, sent whenever the reply's state changes. |
+| `heartbeat` | `{}` | Keepalive after about 30 seconds without a frame; ignore. |
 | `done` | `{"id": "<reply_id>"}` | Sent once after `completed`, `stopped`, or `failed`; the stream then closes. |
 
 The `message` payload is a `ReplySnapshot`:
@@ -2373,10 +2370,6 @@ Example message:
 ```
 
 The stream observes the DB operation projection. Native writers project terminal state only after canonical history publication; the stream does not reread history on every poll. If a private session response already supplied recorded terminal content, retain that content over a lagging stream projection and show finalizing until terminal operation confirmation. Ignore nonincreasing versions within the same reply ID and observations for a different selected reply. A connection ending without terminal confirmation is a connection failure: reconnect the same reply, not the generation retry endpoint.
-
-Keepalives: as with job streams, when the reply state has not changed for 30
-seconds the server emits a keepalive frame that appears on the wire as an SSE
-comment (`: heartbeat`). Ignore lines beginning with `:`.
 
 Errors: `403 Forbidden`, `404 NotFound`, `422 Validation`.
 
@@ -2583,26 +2576,24 @@ curl -N "$BASE/v1/vaults/$VAULT/replies/$REPLY_ID/stream" \
   -H "Authorization: Bearer $API_KEY"
 ```
 
-Example output (with the keepalive comment visible):
+Example output (including a keepalive):
 
 ```
 event: connected
 data: {"id":"3fa85f64-5717-4562-b3fc-2c963f66afa6"}
 
-event: message
 data: {"reply_id":"3fa85f64-5717-4562-b3fc-2c963f66afa6","session_id":"session_42","kind":"exchange","status":"running","answer":"","sources":[],"error":null,"version":1,"created_at":"...","updated_at":"..."}
 
-: heartbeat
+event: heartbeat
+data: {}
 
-event: message
 data: {"reply_id":"3fa85f64-5717-4562-b3fc-2c963f66afa6",...,"status":"completed","answer":"The vault covers...","sources":[...],"version":3,...}
 
 event: done
 data: {"id":"3fa85f64-5717-4562-b3fc-2c963f66afa6"}
 ```
 
-Python client that handles `connected`/`message`/`done` and ignores comment
-lines:
+Python client that handles `connected`/`message`/`done` and ignores keepalives:
 
 ```python
 import json
@@ -2620,13 +2611,11 @@ with requests.get(
 ) as response:
     response.raise_for_status()
 
-    event = None
+    event = "message"
     data_lines = []
 
     def flush():
         global event, data_lines
-        if event is None:
-            return
         data = "\n".join(data_lines)
         if event == "connected":
             print("stream connected:", data)
@@ -2637,17 +2626,13 @@ with requests.get(
                 print("answer:", snapshot["answer"])
         elif event == "done":
             print("stream done:", data)
-        event = None
+        event = "message"
         data_lines = []
 
     for line in response.iter_lines(decode_unicode=True):
-        if line is None:
-            continue
-        if line.startswith(":"):
-            # SSE comment (heartbeat); ignore.
+        if line is None or line.startswith(":"):
             continue
         if line.startswith("event:"):
-            flush()
             event = line[len("event:"):].strip()
         elif line.startswith("data:"):
             data_lines.append(line[len("data:"):].strip())

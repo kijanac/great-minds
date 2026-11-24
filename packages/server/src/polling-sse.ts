@@ -7,6 +7,8 @@ type Snapshot = {
   readonly terminal: boolean;
 };
 
+const heartbeatIntervalMs = 30_000;
+
 export const pollingSse = <A>(
   id: string,
   read: Effect.Effect<A | undefined>,
@@ -16,7 +18,7 @@ export const pollingSse = <A>(
   Stream.suspend(() => {
     const identity = JSON.stringify({ id });
     let previousVersion: string | number | undefined;
-    let heartbeatAt = Date.now() + 30_000;
+    let lastSentAt = Date.now();
     let first = true;
 
     const poll = Effect.gen(function* () {
@@ -24,28 +26,21 @@ export const pollingSse = <A>(
       first = false;
       const row = yield* read;
       if (row === undefined) return yield* Cause.done();
-      const events: EventEncoded[] = [];
       const current = snapshot(row);
-      if (current.version !== previousVersion) {
-        previousVersion = current.version;
-        events.push({ event: "message", data: current.data() });
-        if (current.terminal) {
-          events.push({ event: "done", data: identity });
-          return events;
-        }
+      const now = Date.now();
+      if (current.version === previousVersion) {
+        if (now - lastSentAt < heartbeatIntervalMs) return [];
+        lastSentAt = now;
+        return [{ event: "heartbeat", data: "{}" }];
       }
-      if (Date.now() >= heartbeatAt) {
-        events.push({ event: "message", data: "" });
-        heartbeatAt = Date.now() + 30_000;
-      }
-      return events;
+      previousVersion = current.version;
+      lastSentAt = now;
+      const message = { event: "message", data: current.data() };
+      return current.terminal ? [message, { event: "done", data: identity }] : [message];
     });
 
     return Stream.concat(
       Stream.fromIterable<EventEncoded>([{ event: "connected", data: identity }]),
       Stream.fromIterableEffectRepeat(poll),
-    ).pipe(
-      Stream.takeUntil((event) => event.event === "done"),
-      Stream.rechunk(1),
-    );
+    ).pipe(Stream.takeUntil((event) => event.event === "done"));
   });

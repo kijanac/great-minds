@@ -50,7 +50,7 @@ describe("snapshot polling", () => {
     try {
       const read = Effect.sync(() => {
         now += 15_000;
-        return now >= 60_000 ? 2 : 1;
+        return now >= 75_000 ? 3 : now >= 30_000 ? 2 : 1;
       });
       const events = pollingSse(
         "reply",
@@ -58,15 +58,16 @@ describe("snapshot polling", () => {
         (version) => ({
           version,
           data: () => String(version),
-          terminal: version === 2,
+          terminal: version === 3,
         }),
         1,
       );
       expect(await Effect.runPromise(Stream.runCollect(events))).toEqual([
         { event: "connected", data: '{"id":"reply"}' },
         { event: "message", data: "1" },
-        { event: "message", data: "" },
         { event: "message", data: "2" },
+        { event: "heartbeat", data: "{}" },
+        { event: "message", data: "3" },
         { event: "done", data: '{"id":"reply"}' },
       ]);
     } finally {

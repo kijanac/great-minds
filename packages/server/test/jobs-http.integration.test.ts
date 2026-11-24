@@ -18,8 +18,7 @@ import {
 } from "@great-minds/database";
 import { Uuid } from "@great-minds/domain";
 import { eq } from "drizzle-orm";
-import { Cause, Channel, Effect, Exit, Layer, Option, Redacted, Schema, Stream } from "effect";
-import * as Sse from "effect/encoding/Sse";
+import { Cause, Effect, Exit, Layer, Option, Redacted, Schema, Stream } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { makeAppLayer } from "../src/app-layer.ts";
@@ -28,7 +27,7 @@ import { AppConfig, type AppConfigShape } from "../src/config.ts";
 import { pollingSse } from "../src/polling-sse.ts";
 import { StructuredLogger, StructuredLoggerLive } from "../src/logging.ts";
 import { makeTestMailer } from "../src/mailer.ts";
-import { jobSseHeartbeatChunk, startServer } from "../src/server.ts";
+import { startServer } from "../src/server.ts";
 import { TokenService } from "../src/tokens.ts";
 import { resetWorkflowQueue } from "./fixtures/reply-history-database.ts";
 import { TestWorkflowEngineLive } from "./fixtures/workflow-engine.ts";
@@ -518,40 +517,6 @@ const parseSse = (text: string): readonly ParsedEvent[] =>
     });
 
 describe("job progress SSE", () => {
-  it("pins Effect's empty-message encoding and singleton chunks for heartbeat rewriting", async () => {
-    const empty = { _tag: "Event" as const, id: undefined, event: "message", data: "" };
-    const encodedEmpty = Sse.encoder.write(empty);
-    expect(encodedEmpty).toBe("data: \n\n");
-    expect(
-      new TextDecoder().decode(jobSseHeartbeatChunk(new TextEncoder().encode(encodedEmpty))),
-    ).toBe(": heartbeat\n\n");
-
-    const events = pollingSse(
-      "test",
-      Effect.succeed("one"),
-      (data) => ({
-        version: 1,
-        data: () => data,
-        terminal: true,
-      }),
-      100,
-    );
-    const encoded = Stream.fromChannel(
-      Channel.pipeTo(
-        Stream.toChannel(
-          events.pipe(Stream.map((event) => ({ ...event, id: event.id, _tag: "Event" as const }))),
-        ),
-        Sse.encode<never, void>(),
-      ),
-    );
-    const chunks = await Effect.runPromise(Stream.runCollect(Stream.chunks(encoded)));
-    expect(chunks).toEqual([
-      ['event: connected\ndata: {"id":"test"}\n\n'],
-      ["data: one\n\n"],
-      ['event: done\ndata: {"id":"test"}\n\n'],
-    ]);
-  });
-
   it("preserves polling database defects", async () => {
     const defect = new Error("mid-stream database defect");
     const events = pollingSse(
