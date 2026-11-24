@@ -4,32 +4,29 @@ import type { Exchange } from "#lib/types.ts";
 export const applyReplySnapshot = (
   exchange: Exchange,
   snapshot: ReplySnapshot,
-): Exchange | null => {
+): { exchange: Exchange; activity: SessionActivity | null } | null => {
   if (
     snapshot.reply_id !== exchange.replyId ||
     (exchange.version !== null && snapshot.version <= exchange.version)
   )
     return null;
-  if (exchange.status !== "running") return { ...exchange, version: snapshot.version };
+  const recorded = exchange.status !== "running";
+  const pending = isReplyPending(snapshot.status);
   return {
-    ...exchange,
-    answer: snapshot.answer,
-    citations: snapshot.citations,
-    sources: snapshot.sources,
-    startedAt: snapshot.created_at,
-    status: isReplyPending(snapshot.status) ? "running" : snapshot.status,
-    error: snapshot.error,
-    version: snapshot.version,
-  };
-};
-
-export const replyActivity = (
-  snapshot: ReplySnapshot,
-  exchange: Exchange,
-): SessionActivity | null => {
-  if (!isReplyPending(snapshot.status)) return null;
-  return {
-    reply_id: snapshot.reply_id,
-    status: exchange.status === "running" ? snapshot.status : "settling",
+    exchange: recorded
+      ? { ...exchange, version: snapshot.version }
+      : {
+          ...exchange,
+          answer: snapshot.answer,
+          citations: snapshot.citations,
+          sources: snapshot.sources,
+          startedAt: snapshot.created_at,
+          status: pending ? "running" : snapshot.status,
+          error: snapshot.error,
+          version: snapshot.version,
+        },
+    activity: pending
+      ? { reply_id: snapshot.reply_id, status: recorded ? "settling" : snapshot.status }
+      : null,
   };
 };

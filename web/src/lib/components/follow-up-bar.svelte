@@ -6,14 +6,14 @@
   import ReplySubmissionError from "#lib/components/reply-submission-error.svelte";
   import { Badge } from "#lib/components/ui/badge/index.ts";
   import { Button } from "#lib/components/ui/button/index.ts";
+  import type { StopStatus } from "#lib/types.ts";
 
   let {
     value = $bindable(),
     chips,
     disabled = false,
     submissionFailed = false,
-    stopping = false,
-    stopFailed = false,
+    stopStatus,
     finalizing = false,
     onStop,
     onValueChange,
@@ -24,8 +24,7 @@
     chips: string[];
     disabled?: boolean;
     submissionFailed?: boolean;
-    stopping?: boolean;
-    stopFailed?: boolean;
+    stopStatus: StopStatus | null;
     finalizing?: boolean;
     onStop?: () => void;
     onValueChange?: () => void;
@@ -39,7 +38,7 @@
       ? "Send follow-up"
       : finalizing
         ? "Saving response"
-        : stopping
+        : stopStatus === "requested"
           ? "Stopping response"
           : "Stop generating",
   );
@@ -109,7 +108,7 @@
         size="icon"
         aria-label={actionLabel}
         title={actionLabel}
-        disabled={disabled ? !onStop || stopping : !canSubmit}
+        disabled={disabled ? !onStop : !canSubmit}
         onclick={disabled ? onStop : undefined}
         class="shrink-0 border-gold-dim text-gold hover:bg-transparent hover:text-warm"
       >
@@ -124,7 +123,7 @@
     {#if submissionFailed}
       <ReplySubmissionError onRetry={onSubmit} />
     {/if}
-    {#if stopFailed}
+    {#if stopStatus === "failed"}
       <p role="alert" class="font-mono text-[length:var(--text-chrome)] text-destructive">
         Couldn’t stop the response. Try again.
       </p>

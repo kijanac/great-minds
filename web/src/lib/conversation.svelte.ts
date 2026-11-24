@@ -1,5 +1,7 @@
 import { browser } from "$app/env";
+import { newUuid, replyRequest } from "@great-minds/client";
 import type {
+  CreateReplyRequest,
   Passage,
   SessionActivity,
   SessionDetail,
@@ -9,18 +11,10 @@ import type {
   Uuid,
 } from "@great-minds/domain";
 
-import { createReply, retryReply, stopReply, type CreateReplyPayload } from "#lib/api/replies.ts";
-import { newUuid, replyRequest } from "@great-minds/client";
-import { LIVE_UPDATES_UNAVAILABLE, tailReply } from "#lib/reply-tail.ts";
-import type { Exchange, Phase, SelectionInfo, ThreadLike } from "#lib/types.ts";
+import { createReply, retryReply, stopReply, streamReply } from "#lib/api/replies.ts";
+import { applyReplySnapshot } from "#lib/reply-turn.ts";
+import type { Exchange, Phase, SelectionInfo, StopStatus, ThreadLike } from "#lib/types.ts";
 import { genId, isAbortError } from "#lib/utils.ts";
-
-type ReplyAttempt = {
-  exchangeId: Uuid;
-  payload: CreateReplyPayload;
-};
-
-type SubmissionState = { status: "ready" } | { status: "failed"; attempt: ReplyAttempt };
 
 export interface ConversationOptions {
   saved?: SessionDetail | SessionResponse;
@@ -34,9 +28,8 @@ export class Conversation implements ThreadLike {
   connectionError = $state<string | null>(null);
   exchanges = $state<Exchange[]>([]);
   sessionId = $state<SessionId | null>(null);
-  submission = $state<SubmissionState>({ status: "ready" });
-  stopping = $state(false);
-  stopFailed = $state(false);
+  #failedSubmission = $state.raw<CreateReplyRequest | null>(null);
+  #stopAction = $state.raw<{ readonly status: StopStatus } | null>(null);
   readonly id: string;
   readonly origin: SessionOrigin | null;
   readonly originTitle: string | null;
@@ -119,13 +112,33 @@ export class Conversation implements ThreadLike {
     return this.unavailable === null && (this.phase === "idle" || this.phase === "done");
   }
 
+  get stopStatus(): StopStatus | null {
+    return this.#stopAction?.status ?? null;
+  }
+
   get canStop(): boolean {
-    return this.activity !== null && this.activity.status !== "settling" && !this.stopping;
+    return (
+      this.activity !== null &&
+      this.activity.status !== "settling" &&
+      this.stopStatus !== "requested"
+    );
+  }
+
+  get submissionFailed(): boolean {
+    return this.#failedSubmission !== null;
+  }
+
+  get retryTarget() {
+    const exchange = this.exchanges.at(-1);
+    return exchange?.status === "failed" && exchange.replyId !== undefined && this.phase === "done"
+      ? { exchange, replyId: exchange.replyId }
+      : null;
   }
 
   destroy = (): void => {
     this.#destroyed = true;
     this.#retry = null;
+    this.#stopAction = null;
     this.#abortController?.abort();
     for (const exchange of this.exchanges) {
       for (const btw of exchange.btws) btw.destroy();
@@ -138,33 +151,33 @@ export class Conversation implements ThreadLike {
     );
   };
 
-  #tailExchange = async (
-    exchangeId: Uuid,
-    replyId: Uuid,
-    controller: AbortController,
-  ): Promise<void> => {
-    const outcome = await tailReply(replyId, controller.signal, {
-      conversationId: () => this.sessionId,
-      turn: () => this.exchanges.find((exchange) => exchange.id === exchangeId),
-      apply: (updated, activity) => {
-        this.#updateExchange(exchangeId, updated);
-        this.activity = activity;
-        if (activity === null || activity.status === "settling") {
-          this.stopping = false;
-          this.stopFailed = false;
-        }
-      },
-    });
-    if (outcome === "ended" && this.activity?.reply_id === replyId) {
-      this.connectionError = LIVE_UPDATES_UNAVAILABLE;
-      this.stopping = false;
+  #tailExchange = async (exchangeId: Uuid, replyId: Uuid, signal: AbortSignal): Promise<void> => {
+    try {
+      for await (const snapshot of streamReply(replyId, signal)) {
+        if (signal.aborted || snapshot.session_id !== this.sessionId) return;
+        const current = this.exchanges.find((exchange) => exchange.id === exchangeId);
+        if (current?.replyId !== replyId) return;
+        const updated = applyReplySnapshot(current, snapshot);
+        if (updated === null) continue;
+        this.#updateExchange(exchangeId, updated.exchange);
+        this.activity = updated.activity;
+        if (updated.activity === null || updated.activity.status === "settling")
+          this.#stopAction = null;
+      }
+    } catch (error) {
+      if (isAbortError(error) || signal.aborted) return;
+      console.error("Failed to resume reply:", error);
+    }
+    if (!signal.aborted && this.activity?.reply_id === replyId) {
+      this.connectionError = "Live updates are unavailable. Reconnect to check this response.";
+      if (this.stopStatus === "requested") this.#stopAction = null;
     }
   };
 
   reconnect = (): void => {
     if (this.#destroyed) return;
     this.#abortController?.abort();
-    this.stopping = false;
+    if (this.stopStatus === "requested") this.#stopAction = null;
     this.connectionError = null;
     this.#resumePendingReplies();
   };
@@ -176,18 +189,15 @@ export class Conversation implements ThreadLike {
     if (pendingExchange?.replyId) {
       const controller = new AbortController();
       this.#abortController = controller;
-      void this.#tailExchange(pendingExchange.id, pendingExchange.replyId, controller);
+      void this.#tailExchange(pendingExchange.id, pendingExchange.replyId, controller.signal);
     }
   };
 
-  #makeAttempt = (question: string, inline: boolean): ReplyAttempt => {
-    const exchangeId = newUuid();
-    this.#idempotencyKey ??= newUuid();
+  #makeRequest = (question: string, inline: boolean): CreateReplyRequest => {
     const origin = this.origin;
-
-    const payload: CreateReplyPayload = replyRequest({
+    return replyRequest({
       question,
-      exchangeId,
+      exchangeId: newUuid(),
       inline,
       originScope: origin?.kind === "document" ? origin.origin_scope : "vault",
       ...(this.sessionId === null && origin?.kind === "document" && origin.passage === null
@@ -198,26 +208,25 @@ export class Conversation implements ThreadLike {
           ? { kind: "existing", id: this.sessionId }
           : {
               kind: "new",
-              idempotencyKey: this.#idempotencyKey,
+              idempotencyKey: (this.#idempotencyKey ??= newUuid()),
               ...(origin ? { origin } : {}),
             },
     });
-    return { exchangeId, payload };
   };
 
   #runExchange = async (question: string, inline: boolean): Promise<boolean> => {
-    this.stopFailed = false;
-    const attempt =
-      this.submission.status === "failed" && this.submission.attempt.payload.question === question
-        ? this.submission.attempt
-        : this.#makeAttempt(question, inline);
-    this.submission = { status: "ready" };
+    const payload =
+      this.#failedSubmission?.question === question
+        ? this.#failedSubmission
+        : this.#makeRequest(question, inline);
+    const exchangeId = payload.exchange_id;
+    this.#failedSubmission = null;
     this.connectionError = null;
     this.exchanges = [
       ...this.exchanges,
       {
-        id: attempt.exchangeId,
-        query: attempt.payload.question,
+        id: exchangeId,
+        query: payload.question,
         sources: [],
         answer: "",
         citations: [],
@@ -233,23 +242,23 @@ export class Conversation implements ThreadLike {
 
     let created;
     try {
-      created = await createReply(attempt.payload, controller.signal);
+      created = await createReply(payload, controller.signal);
     } catch (error) {
-      this.exchanges = this.exchanges.filter((exchange) => exchange.id !== attempt.exchangeId);
+      this.exchanges = this.exchanges.filter((exchange) => exchange.id !== exchangeId);
       if (isAbortError(error) || controller.signal.aborted) return false;
       console.error("Query failed:", error);
-      this.submission = { status: "failed", attempt };
+      this.#failedSubmission = payload;
       return false;
     }
 
     if (controller.signal.aborted) return false;
-    this.#updateExchange(attempt.exchangeId, { replyId: created.reply_id });
+    this.#updateExchange(exchangeId, { replyId: created.reply_id });
     this.activity = { reply_id: created.reply_id, status: "running" };
     if (this.sessionId === null) {
       this.sessionId = created.session_id;
       this.#onCreated?.(created.session_id);
     }
-    void this.#tailExchange(attempt.exchangeId, created.reply_id, controller);
+    void this.#tailExchange(exchangeId, created.reply_id, controller.signal);
     return true;
   };
 
@@ -259,22 +268,14 @@ export class Conversation implements ThreadLike {
   };
 
   retry = (exchangeId: Uuid): void => {
-    if (this.#destroyed || this.phase !== "done") return;
-    const index = this.exchanges.findIndex((exchange) => exchange.id === exchangeId);
-    const previous = this.exchanges[index];
-    if (
-      previous === undefined ||
-      index !== this.exchanges.length - 1 ||
-      previous.status !== "failed" ||
-      previous.replyId === undefined
-    ) {
-      return;
-    }
-
+    if (this.#destroyed) return;
+    const target = this.retryTarget;
+    if (target?.exchange.id !== exchangeId) return;
+    const { exchange: previous, replyId } = target;
     const attempt =
-      this.#retry?.previousReplyId === previous.replyId
+      this.#retry?.previousReplyId === replyId
         ? this.#retry
-        : { previousReplyId: previous.replyId, replyId: newUuid() };
+        : { previousReplyId: replyId, replyId: newUuid() };
     this.#retry = attempt;
     this.#updateExchange(exchangeId, {
       sources: [],
@@ -285,7 +286,6 @@ export class Conversation implements ThreadLike {
       error: null,
     });
     this.connectionError = null;
-    this.stopFailed = false;
     this.#abortController?.abort();
     const controller = new AbortController();
     this.#abortController = controller;
@@ -301,7 +301,7 @@ export class Conversation implements ThreadLike {
         this.#retry = null;
         this.#updateExchange(exchangeId, { replyId: created.reply_id });
         this.activity = { reply_id: created.reply_id, status: "running" };
-        await this.#tailExchange(exchangeId, created.reply_id, controller);
+        await this.#tailExchange(exchangeId, created.reply_id, controller.signal);
       } catch (error) {
         if (isAbortError(error) || controller.signal.aborted) return;
         console.error("Reply retry failed:", error);
@@ -314,20 +314,19 @@ export class Conversation implements ThreadLike {
 
   stop = async (): Promise<void> => {
     const replyId = this.activity?.reply_id;
-    if (replyId === undefined || !this.canStop) return;
-    this.stopping = true;
-    this.stopFailed = false;
+    if (this.#destroyed || replyId === undefined || !this.canStop) return;
+    const action = { status: "requested" } as const;
+    this.#stopAction = action;
     try {
       await stopReply(replyId, this.#abortController?.signal);
     } catch (error) {
-      if (isAbortError(error) || this.#destroyed || this.activity?.reply_id !== replyId) return;
-      this.stopping = false;
-      this.stopFailed = true;
+      if (isAbortError(error) || this.#stopAction !== action) return;
+      this.#stopAction = { status: "failed" };
     }
   };
 
   clearSubmissionFailure = (): void => {
-    this.submission = { status: "ready" };
+    this.#failedSubmission = null;
   };
 
   startBtw = (info: SelectionInfo): void => {

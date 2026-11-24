@@ -46,6 +46,7 @@ export interface SelectionInfo {
 }
 
 export type Phase = "idle" | "searching" | "streaming" | "finalizing" | "done";
+export type StopStatus = "requested" | "failed";
 
 export interface DroppedFile {
   file: File;
