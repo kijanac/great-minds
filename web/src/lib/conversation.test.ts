@@ -2,6 +2,7 @@ import {
   CreateReplyRequest,
   SessionId,
   Uuid,
+  type ReplySnapshot,
   type SessionDetail,
   type SessionExchange,
   type SessionOrigin,
@@ -10,13 +11,7 @@ import {
 import { Schema } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  createReply,
-  retryReply,
-  stopReply,
-  streamReply,
-  type ReplySnapshot,
-} from "#lib/api/replies.ts";
+import { createReply, retryReply, stopReply, streamReply } from "#lib/api/replies.ts";
 import { Conversation, type ConversationOptions } from "#lib/conversation.svelte.ts";
 
 vi.mock("$app/env", () => ({ browser: true }));
@@ -139,7 +134,7 @@ it.each(origins)(
     vi.mocked(createReply).mockRejectedValueOnce(new Error("connection lost"));
     const btw = make({ origin });
     expect(await btw.ask("First question", true)).toBe(false);
-    expect(btw.submission.status).toBe("failed");
+    expect(btw.submissionFailed).toBe(true);
     expect(btw.exchanges).toEqual([]);
     const first = vi.mocked(createReply).mock.calls[0][0];
     expect(first).toMatchObject({
@@ -289,9 +284,12 @@ it.each([undefined, "wiki/test.md"])(
 it.each(["stopped", "completed"] as const)(
   "retains failed Stop as retryable, waits for %s confirmation and unlocks follow-up",
   async (status) => {
+    const settling = Promise.withResolvers<void>();
     const terminal = Promise.withResolvers<void>();
     vi.mocked(streamReply).mockImplementationOnce(async function* (id) {
       yield snapshot("Partial answer", "running", id);
+      await settling.promise;
+      yield snapshot("Partial answer", "settling", id);
       await terminal.promise;
       yield snapshot("Partial answer", status, id);
     });
@@ -301,24 +299,34 @@ it.each(["stopped", "completed"] as const)(
     expect(session.canStop).toBe(false);
     await vi.waitFor(() => expect(session.canStop).toBe(true));
     await session.stop();
-    expect(session.stopFailed).toBe(true);
+    expect(session.stopStatus).toBe("failed");
     expect(session.canStop).toBe(true);
+    const receipt = Promise.withResolvers<void>();
+    vi.mocked(stopReply).mockReturnValueOnce(receipt.promise);
+    const renewedStop = session.stop();
+    await session.stop();
+    expect(stopReply).toHaveBeenCalledTimes(2);
+    expect(stopReply).toHaveBeenLastCalledWith(
+      session.exchanges[0].replyId,
+      expect.any(AbortSignal),
+    );
     if (status === "stopped") {
-      await Promise.all([session.stop(), session.stop()]);
-      expect(stopReply).toHaveBeenCalledTimes(2);
-      expect(stopReply).toHaveBeenLastCalledWith(
-        session.exchanges[0].replyId,
-        expect.any(AbortSignal),
-      );
-      expect(session.stopping).toBe(true);
+      receipt.resolve();
+      await renewedStop;
     }
+    expect(session.stopStatus).toBe("requested");
     expect(session.phase).toBe("streaming");
     expect(session.exchanges[0].answer).toBe("Partial answer");
+    settling.resolve();
+    await vi.waitFor(() => expect(session.phase).toBe("finalizing"));
+    if (status === "completed") {
+      receipt.reject(new Error("Late Stop failure"));
+      await renewedStop;
+    }
+    expect(session.stopStatus).toBeNull();
+    expect(session.canStop).toBe(false);
     terminal.resolve();
     await vi.waitFor(() => expect(session.phase).toBe("done"));
-    expect(session.stopping).toBe(false);
-    expect(session.stopFailed).toBe(false);
-    expect(session.canStop).toBe(false);
     expect(session.exchanges[0]).toMatchObject({
       status,
       answer: "Partial answer",
@@ -454,7 +462,7 @@ it("allows Stop again when reconnect cancels an unconfirmed Stop request", async
   const view = make({ saved: sessionData(saved(origins[0])) });
   await vi.waitFor(() => expect(view.connectionError).toBeTruthy());
   const stopping = view.stop();
-  expect(view.stopping).toBe(true);
+  expect(view.stopStatus).toBe("requested");
   view.reconnect();
   await resumed.promise;
   await stopping;

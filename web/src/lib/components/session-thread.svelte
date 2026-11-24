@@ -211,7 +211,7 @@
     !onboardingHintSeen() &&
       !origin?.passage &&
       session.phase === "done" &&
-      session.submission.status !== "failed" &&
+      !session.submissionFailed &&
       session.exchanges.length === 1 &&
       (session.exchanges[0]?.error === null || session.exchanges[0]?.error === undefined),
   );
@@ -298,10 +298,7 @@
           <ReplyInterrupted
             partial={exchange.answer.length > 0}
             stopped={exchange.status === "stopped"}
-            onRetry={exchange.status === "failed" &&
-            session.phase === "done" &&
-            index === session.exchanges.length - 1 &&
-            exchange.replyId
+            onRetry={session.retryTarget?.exchange.id === exchange.id
               ? () => session.retry(exchange.id)
               : undefined}
           />
@@ -311,7 +308,7 @@
           </p>
         {/if}
 
-        {#if exchange.answer && !streaming && (exchange.status === "completed" || exchange.status === "stopped")}
+        {#if exchange.answer && (exchange.status === "completed" || exchange.status === "stopped")}
           {@const more = readMore(exchange)}
           <div
             class="mt-5 flex flex-wrap items-center justify-between gap-x-5 gap-y-2 border-t border-dashed border-ink-subtle pt-3"
@@ -382,9 +379,8 @@
     bind:value={followUpDraft}
     {chips}
     disabled={session.phase !== "done" || !me.canUseModels}
-    submissionFailed={session.submission.status === "failed"}
-    stopping={session.stopping}
-    stopFailed={session.stopFailed}
+    submissionFailed={session.submissionFailed}
+    stopStatus={session.stopStatus}
     finalizing={session.phase === "finalizing"}
     onStop={session.canStop ? session.stop : undefined}
     onValueChange={session.clearSubmissionFailure}

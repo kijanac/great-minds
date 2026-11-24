@@ -43,7 +43,7 @@
   const stopLabel = $derived(
     live?.phase === "finalizing"
       ? "Saving response"
-      : live?.stopping
+      : live?.stopStatus === "requested"
         ? "Stopping response"
         : "Stop generating",
   );
@@ -112,7 +112,7 @@
       </Collapsible.Trigger>
 
       <Collapsible.Content>
-        {#each btw.exchanges as exchange, index (exchange.id)}
+        {#each btw.exchanges as exchange (exchange.id)}
           {@const answer = answerText(exchange)}
           <div class="mt-4">
             <ThreadTurn query={exchange.query}>
@@ -156,10 +156,7 @@
                   <ReplyInterrupted
                     stopped={exchange.status === "stopped"}
                     partial={exchange.answer.length > 0}
-                    onRetry={exchange.status === "failed" &&
-                    live?.phase === "done" &&
-                    index === btw.exchanges.length - 1 &&
-                    exchange.replyId
+                    onRetry={live?.retryTarget?.exchange.id === exchange.id
                       ? () => live.retry(exchange.id)
                       : undefined}
                   />
@@ -254,10 +251,10 @@
                 </Button>
               {/if}
             </div>
-            {#if live.submission.status === "failed"}
+            {#if live.submissionFailed}
               <ReplySubmissionError class="mt-2" onRetry={() => void submit()} />
             {/if}
-            {#if live.stopFailed}
+            {#if live.stopStatus === "failed"}
               <p
                 role="alert"
                 class="mt-2 font-mono text-[length:var(--text-chrome)] text-destructive"

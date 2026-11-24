@@ -9,11 +9,8 @@ import { api, run, stream } from "./app";
 import { selectedVault } from "./selected-vault";
 import { followReply } from "@great-minds/client";
 
-export type CreateReplyPayload = CreateReplyRequest;
-export type { CreateReplyResponse, ReplySnapshot };
-
 export function createReply(
-  payload: CreateReplyPayload,
+  payload: CreateReplyRequest,
   signal?: AbortSignal,
 ): Promise<CreateReplyResponse> {
   return run(api.replies.createReply({ params: { vault_id: selectedVault() }, payload }), {

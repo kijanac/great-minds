@@ -1,6 +1,6 @@
 import { SessionId, Uuid, type ReplySnapshot } from "@great-minds/domain";
 import { describe, expect, it } from "vitest";
-import { applyReplySnapshot, replyActivity } from "#lib/reply-turn.ts";
+import { applyReplySnapshot } from "#lib/reply-turn.ts";
 import type { Exchange } from "#lib/types.ts";
 
 const replyId = Uuid.make("00000000-0000-4000-8000-000000000001");
@@ -41,9 +41,7 @@ describe("reply observation merge", () => {
     const retry = exchange({ replyId: retryId, version: null, answer: "" });
     expect(applyReplySnapshot(retry, snapshot({ version: 900 }))).toBeNull();
     expect(applyReplySnapshot(retry, snapshot({ reply_id: retryId, version: 1 }))).toMatchObject({
-      replyId: retryId,
-      version: 1,
-      answer: "New partial",
+      exchange: { replyId: retryId, version: 1, answer: "New partial" },
     });
   });
 
@@ -59,25 +57,18 @@ describe("reply observation merge", () => {
       const progress = snapshot({ version: 99, answer: "Stale DB partial" });
       const merged = applyReplySnapshot(saved, progress)!;
       expect(merged).toMatchObject({
-        status,
-        answer: "Recorded answer",
-        error: saved.error,
-        version: 99,
-      });
-      expect(replyActivity(progress, merged)).toEqual({
-        reply_id: replyId,
-        status: "settling",
+        exchange: { status, answer: "Recorded answer", error: saved.error, version: 99 },
+        activity: { reply_id: replyId, status: "settling" },
       });
       const terminal = snapshot({
         status: "completed",
         version: 100,
         answer: "Different cache",
       });
-      expect(applyReplySnapshot(merged, terminal)).toMatchObject({
-        status,
-        answer: "Recorded answer",
+      expect(applyReplySnapshot(merged.exchange, terminal)).toMatchObject({
+        exchange: { status, answer: "Recorded answer" },
+        activity: null,
       });
-      expect(replyActivity(terminal, merged)).toBeNull();
     },
   );
 
@@ -85,19 +76,13 @@ describe("reply observation merge", () => {
     const progress = snapshot({ status: "settling" });
     const merged = applyReplySnapshot(exchange(), progress)!;
     expect(merged).toMatchObject({
-      status: "running",
-      answer: "New partial",
-      version: 8,
-    });
-    expect(replyActivity(progress, merged)).toEqual({
-      reply_id: replyId,
-      status: "settling",
+      exchange: { status: "running", answer: "New partial", version: 8 },
+      activity: { reply_id: replyId, status: "settling" },
     });
     const terminal = snapshot({ status: "completed", version: 9, answer: "" });
-    expect(applyReplySnapshot(merged, terminal)).toMatchObject({
-      status: "completed",
-      answer: "",
+    expect(applyReplySnapshot(merged.exchange, terminal)).toMatchObject({
+      exchange: { status: "completed", answer: "" },
+      activity: null,
     });
-    expect(replyActivity(terminal, merged)).toBeNull();
   });
 });

@@ -232,7 +232,7 @@
                     onSubmit={submit}
                     recentSessions={sessions.data?.items ?? []}
                     sessionsLoading={sessions.isLoading}
-                    submissionFailed={session.submission.status === "failed"}
+                    submissionFailed={session.submissionFailed}
                     locked={!me.canUseModels}
                     onQueryChange={session.clearSubmissionFailure}
                     onSessionClick={(id) => void goto(`/sessions/${id}`)}
