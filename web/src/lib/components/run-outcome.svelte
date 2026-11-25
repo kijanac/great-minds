@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { RemovedArticle, RunOutcome } from "@great-minds/domain";
+  import type { OutcomeArticle, RemovedArticle, RunOutcome } from "@great-minds/domain";
   import {
     changedNothing,
     isFirstBuild,
@@ -7,18 +7,17 @@
     plural,
     stoppedHeadline,
   } from "@great-minds/client";
-  import { createQuery } from "@tanstack/svelte-query";
   import type { Snippet } from "svelte";
-
-  import { fetchWikiArticles } from "#lib/api/wiki.ts";
 
   let {
     outcome,
+    startHere = [],
     onOpen,
     stopped = null,
     actions,
   }: {
     outcome: RunOutcome | null;
+    startHere?: readonly OutcomeArticle[];
     onOpen: (filePath: string) => void;
     stopped?: {
       readonly kind: "failed" | "cancelled";
@@ -32,12 +31,6 @@
 
   const firstBuild = $derived(stopped === null && outcome !== null && isFirstBuild(outcome));
   const nothing = $derived(outcome !== null && changedNothing(outcome));
-  const startHere = createQuery(() => ({
-    queryKey: ["run-outcome-start-here"],
-    queryFn: () => fetchWikiArticles({ sort: "linked", limit: 3 }),
-    enabled: firstBuild,
-  }));
-
   const title = $derived.by(() => {
     if (stopped !== null) return stoppedHeadline(stopped.kind, stopped.stage);
     if (outcome === null) return "Update finished";
@@ -109,14 +102,7 @@
 
 {#if outcome}
   {#if firstBuild}
-    {@render group(
-      "start",
-      "Start with",
-      (startHere.data?.items ?? []).map((article) => ({
-        title: article.title,
-        file_path: article.file_path,
-      })),
-    )}
+    {@render group("start", "Start with", startHere)}
   {:else}
     {@render group("added", "New", outcome.added)}
     {@render group("changed", "Updated", outcome.changed)}

@@ -3,14 +3,15 @@
   import { page } from "$app/state";
   import type { Uuid } from "@great-minds/domain";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
-  import { useQueryClient } from "@tanstack/svelte-query";
+  import { createQuery, skipToken, useQueryClient } from "@tanstack/svelte-query";
   import { onDestroy, tick } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { fly } from "svelte/transition";
 
-  import { errorMessage, newUuid } from "@great-minds/client";
+  import { errorMessage, isFirstBuild, newUuid } from "@great-minds/client";
   import { hashFiles, type FileIngestBatch, type HashedFile } from "#lib/api/ingest.ts";
   import { cancelJob, listJobs, requestCompile, retryUrlJob, startUrlJob } from "#lib/api/jobs.ts";
+  import { fetchWikiArticles } from "#lib/api/wiki.ts";
   import { auth } from "#lib/auth.svelte.ts";
   import RunOutcome from "#lib/components/run-outcome.svelte";
   import RunProgress from "#lib/components/run-progress.svelte";
@@ -76,6 +77,18 @@
     () => jobId,
     () => jobVaultId,
   );
+  const startHere = createQuery(() => {
+    const vaultId = progress.vaultId;
+    const outcome = progress.outcome;
+    return {
+      queryKey: ["vault", vaultId, "run-outcome-start-here"],
+      queryFn:
+        vaultId && progress.overallDone && outcome && isFirstBuild(outcome)
+          ? ({ signal }) =>
+              fetchWikiArticles(vaultId, { sort: "linked", limit: 3, offset: 0 }, signal)
+          : skipToken,
+    };
+  });
   const firstErrored = $derived(progress.track.find((stage) => stage.status === "failed"));
   const receivedFileCount = $derived(
     fileBatch?.files.filter((file) => file.status !== "pending").length ?? 0,
@@ -89,6 +102,11 @@
   const isRunning = $derived(
     !noJobFound && !progress.overallDone && !progress.overallError && !progress.overallCancelled,
   );
+
+  function openOutcomeArticle(filePath: string) {
+    const vaultId = progress.vaultId;
+    if (vaultId) void goto(`/doc/${filePath}?vault=${vaultId}`);
+  }
 
   function captureRouteOwnership(predicate: () => boolean): () => boolean {
     const epoch = navigationEpoch;
@@ -386,7 +404,7 @@
           {:else}
             <RunOutcome
               outcome={progress.outcome}
-              onOpen={(filePath) => void goto(`/doc/${filePath}`)}
+              onOpen={openOutcomeArticle}
               stopped={{ kind: "failed", stage: firstErrored?.title ?? null }}
               actions={failedActions}
             />
@@ -435,7 +453,7 @@
         <div class="mb-10">
           <RunOutcome
             outcome={progress.outcome}
-            onOpen={(filePath) => void goto(`/doc/${filePath}`)}
+            onOpen={openOutcomeArticle}
             stopped={{ kind: "cancelled", stage: null }}
             actions={cancelledActions}
           />
@@ -446,7 +464,8 @@
         <div in:fly={{ y: 8, duration: 300, easing: cubicOut }}>
           <RunOutcome
             outcome={progress.outcome}
-            onOpen={(filePath) => void goto(`/doc/${filePath}`)}
+            startHere={startHere.data?.items}
+            onOpen={openOutcomeArticle}
           />
           <Button
             variant="outline"

@@ -5,13 +5,13 @@ import {
   createInfiniteQuery,
   createMutation,
   createQuery,
+  skipToken,
   useQueryClient,
   type QueryClient,
 } from "@tanstack/svelte-query";
 import { untrack } from "svelte";
 
-import { errorMessage } from "@great-minds/client";
-import { nextPageOffset } from "@great-minds/client";
+import { errorMessage, nextPageOffset } from "@great-minds/client";
 import {
   deleteSourceDocument,
   fetchSourceDocuments,
@@ -92,17 +92,26 @@ export function useLibrary(
     enabled: !!activeVault.id,
   }));
 
-  const contents = createQuery(() => ({
-    queryKey: ["vault", activeVault.id, "library-contents"],
-    queryFn: async () => {
-      const [all, linked] = await Promise.all([
-        fetchAllWikiArticles(),
-        fetchWikiArticles({ sort: "linked", limit: START_HERE }),
-      ]);
-      return { all, startHere: linked.items };
-    },
-    enabled: !!activeVault.id && showContents,
-  }));
+  const contents = createQuery(() => {
+    const vaultId = activeVault.id;
+    return {
+      queryKey: ["vault", vaultId, "library-contents"],
+      queryFn:
+        vaultId && showContents
+          ? async ({ signal }) => {
+              const [all, linked] = await Promise.all([
+                fetchAllWikiArticles(vaultId, signal),
+                fetchWikiArticles(
+                  vaultId,
+                  { sort: "linked", limit: START_HERE, offset: 0 },
+                  signal,
+                ),
+              ]);
+              return { all, startHere: linked.items };
+            }
+          : skipToken,
+    };
+  });
 
   const update = createMutation(() => ({
     mutationFn: () => requestCompile(),
@@ -114,19 +123,23 @@ export function useLibrary(
     },
   }));
 
-  const articles = createInfiniteQuery(() => ({
-    queryKey: ["vault", activeVault.id, "library-articles", searchQuery, activeTag],
-    queryFn: ({ pageParam }) =>
-      fetchWikiArticles({
-        contains: searchQuery || undefined,
-        tag: activeTag || undefined,
-        limit: PAGE_SIZE,
-        offset: pageParam,
-      }),
-    initialPageParam: 0,
-    getNextPageParam: (lastPage) => nextPageOffset(lastPage),
-    enabled: !!activeVault.id && !showContents && activeType !== LIBRARY_SOURCES,
-  }));
+  const articles = createInfiniteQuery(() => {
+    const vaultId = activeVault.id;
+    const filter = {
+      ...(searchQuery ? { contains: searchQuery } : {}),
+      ...(activeTag ? { tag: activeTag } : {}),
+    };
+    return {
+      queryKey: ["vault", vaultId, "library-articles", filter],
+      queryFn:
+        vaultId && !showContents && activeType !== LIBRARY_SOURCES
+          ? ({ pageParam, signal }) =>
+              fetchWikiArticles(vaultId, { ...filter, limit: PAGE_SIZE, offset: pageParam }, signal)
+          : skipToken,
+      initialPageParam: 0,
+      getNextPageParam: nextPageOffset,
+    };
+  });
 
   const sources = createInfiniteQuery(() => ({
     queryKey: [

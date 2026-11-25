@@ -66,6 +66,9 @@ export function useJobSSE(
   });
 
   return {
+    get vaultId() {
+      return snapshot?.vault_id ?? null;
+    },
     get track() {
       return snapshot?.track ?? [];
     },
