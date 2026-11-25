@@ -629,6 +629,34 @@ const briefCue = (question: string) =>
   `${question}\n\n(Keep the answer brief: one or two short paragraphs.)`;
 
 describe("query stream", () => {
+  it("returns the saved answer and citations through MCP ask", async () => {
+    const answer = "See [Alpha](wiki/alpha.md).";
+    const language = makeScriptedLanguageModel({
+      streams: [{ kind: "parts", parts: [tokenPart(answer), finishPart("stop")] }],
+    });
+    await startHarness({ language });
+    const mcp = await openMcp(currentState().started.url, currentState().token);
+    const asked = await mcp.call("ask", { vault_id: id.vault, question: "What is here?" });
+    const [row] = await runDb(
+      Effect.flatMap(Database, (db) => db.query((d) => d.select().from(replies))),
+    );
+    assert(row?.status === "completed");
+    expect(asked.result).toMatchObject({
+      structuredContent: {
+        session_id: row.sessionId,
+        answer,
+        citations: [
+          { n: 1, label: "Alpha", href: "wiki/alpha.md", path: "wiki/alpha.md", kind: "article" },
+        ],
+      },
+    });
+    expect((await readSessionEvents(row.sessionId)).at(-1)).toMatchObject({
+      type: "settlement",
+      outcome: { status: "completed" },
+      answer,
+    });
+  });
+
   it("persists a stop before preparation without starting a model request", async () => {
     const language = makeScriptedLanguageModel({ streams: [] });
     await startHarness({ language });
