@@ -1,8 +1,32 @@
 import { PgClient } from "@effect/sql-pg/PgClient";
 import type { Uuid } from "@great-minds/domain";
-import { Context, Effect, Layer, Queue, Schedule, type Scope } from "effect";
+import { Clock, Context, Effect, Layer, Queue, Schedule, type Scope } from "effect";
 
 import { StructuredLogger } from "./logging.ts";
+
+export const progressBackstopMs = 30_000;
+const minReadIntervalMs = 100;
+export const monotonicMillis = Effect.map(Clock.monotonicTimeNanos, (nanos) =>
+  Number(nanos / 1_000_000n),
+);
+
+export const progressReader = <A>(
+  subscribe: Effect.Effect<Queue.Dequeue<void>, never, Scope.Scope>,
+  read: Effect.Effect<A>,
+) =>
+  Effect.gen(function* () {
+    const wakes = yield* subscribe;
+    let nextReadAt = yield* monotonicMillis;
+    return (waitMs = progressBackstopMs) =>
+      Effect.gen(function* () {
+        if (waitMs > 0) yield* Effect.raceFirst(Queue.peek(wakes), Effect.sleep(waitMs));
+        const untilReadable = nextReadAt - (yield* monotonicMillis);
+        if (untilReadable > 0) yield* Effect.sleep(untilReadable);
+        yield* Queue.poll(wakes);
+        nextReadAt = (yield* monotonicMillis) + minReadIntervalMs;
+        return yield* read;
+      });
+  });
 
 type ProgressChangesShape = {
   readonly subscribe: (

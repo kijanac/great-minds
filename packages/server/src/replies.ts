@@ -36,7 +36,7 @@ import { ReplySettlement, type ReplySettlementResult } from "./conversation-hist
 import type { LlmMessage } from "./llm.ts";
 import { errorDetails } from "./error-details.ts";
 import { StructuredLogger } from "./logging.ts";
-import { ProgressChanges } from "./progress-changes.ts";
+import { ProgressChanges, progressReader } from "./progress-changes.ts";
 import {
   QueryExecutionState,
   type QueryPreparedToolCall as QueryPreparedToolCallType,
@@ -64,6 +64,10 @@ const flushIntervalMs = 125;
 const encodeReplySnapshot = Schema.encodeSync(Schema.fromJsonString(ReplySnapshotSchema));
 
 type ReplyRow = typeof replies.$inferSelect;
+
+const replyNotFound = () => new NotFound({ detail: "Reply not found" });
+const runningUnstoppedReply = (replyId: Uuid) =>
+  and(eq(replies.id, replyId), eq(replies.status, "running"), eq(replies.stopRequested, false));
 
 const replySnapshot = (row: ReplyRow): ReplySnapshot => ({
   reply_id: row.id,
@@ -340,7 +344,7 @@ export const RepliesServiceLive = Layer.effect(
     const changes = yield* ProgressChanges;
     const withEngine = Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine);
 
-    const readReply = (vaultId: Uuid, replyId: Uuid, viewer?: Uuid) =>
+    const readReply = (userId: Uuid, vaultId: Uuid, replyId: Uuid) =>
       db
         .query((d) =>
           d
@@ -350,9 +354,8 @@ export const RepliesServiceLive = Layer.effect(
               and(
                 eq(replies.id, replyId),
                 eq(replies.vaultId, vaultId),
-                viewer === undefined
-                  ? undefined
-                  : and(eq(replies.userId, viewer), liveVaultMember(d, viewer, vaultId)),
+                eq(replies.userId, userId),
+                liveVaultMember(d, userId, vaultId),
               ),
             )
             .limit(1),
@@ -383,12 +386,11 @@ export const RepliesServiceLive = Layer.effect(
       Effect.raceFirst(
         work.pipe(Effect.map(Option.some)),
         Effect.gen(function* () {
-          while (true) {
-            const row = yield* readReplyById(replyId);
-            if (row === undefined || row.status !== "running" || row.stopRequested)
-              return Option.none<A>();
-            yield* Effect.sleep("100 millis");
-          }
+          const running = db.query((d) =>
+            d.select({ id: replies.id }).from(replies).where(runningUnstoppedReply(replyId)),
+          );
+          while ((yield* running).length > 0) yield* Effect.sleep("100 millis");
+          return Option.none<A>();
         }),
       );
 
@@ -545,9 +547,7 @@ export const RepliesServiceLive = Layer.effect(
             })
             .where(
               and(
-                eq(replies.id, row.id),
-                eq(replies.status, "running"),
-                eq(replies.stopRequested, false),
+                runningUnstoppedReply(row.id),
                 eq(replies.generationCursor, expectedCursor),
                 isNull(replies.activeGenerationStep),
               ),
@@ -850,9 +850,8 @@ export const RepliesServiceLive = Layer.effect(
       stop: (userId, vaultId, replyId) =>
         Effect.gen(function* () {
           yield* access.requireMember(userId, vaultId);
-          const row = yield* readReply(vaultId, replyId);
-          if (row === undefined || row.userId !== userId)
-            return yield* new NotFound({ detail: "Reply not found" });
+          if ((yield* readReply(userId, vaultId, replyId)) === undefined)
+            return yield* replyNotFound();
           yield* db.query((d) =>
             d
               .update(replies)
@@ -865,9 +864,8 @@ export const RepliesServiceLive = Layer.effect(
       stream: (userId, vaultId, replyId) =>
         Effect.gen(function* () {
           const member = yield* access.requireMember(userId, vaultId);
-          const read = readReply(vaultId, replyId, userId);
-          if ((yield* read) === undefined)
-            return yield* new NotFound({ detail: "Reply not found" });
+          const read = readReply(userId, vaultId, replyId);
+          if ((yield* read) === undefined) return yield* replyNotFound();
           return snapshotSse(
             replyId,
             changes.subscribe("replies", member, replyId),
@@ -881,16 +879,16 @@ export const RepliesServiceLive = Layer.effect(
         }),
       settled: (userId, vaultId, replyId) =>
         Effect.gen(function* () {
-          yield* access.requireMember(userId, vaultId);
-          while (true) {
-            const row = yield* readReply(vaultId, replyId);
-            if (row === undefined || row.userId !== userId)
-              return yield* new NotFound({ detail: "Reply not found" });
-            const snapshot = replySnapshot(row);
-            if (!isReplyPending(snapshot.status)) return snapshot;
-            yield* Effect.sleep("100 millis");
-          }
-        }),
+          const member = yield* access.requireMember(userId, vaultId);
+          const readNext = yield* progressReader(
+            changes.subscribe("replies", member, replyId),
+            readReply(userId, vaultId, replyId),
+          );
+          let row = yield* readNext(0);
+          while (row !== undefined && isReplyPending(row.status)) row = yield* readNext();
+          if (row === undefined) return yield* replyNotFound();
+          return replySnapshot(row);
+        }).pipe(Effect.scoped),
       prepareStep,
       modelStep,
       toolStep,
