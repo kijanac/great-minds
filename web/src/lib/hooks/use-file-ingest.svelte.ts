@@ -1,64 +1,86 @@
-import type { Uuid } from "@great-minds/domain";
+import type { FileIngestBatch, Uuid } from "@great-minds/domain";
 import {
   createMutation,
   createQuery,
   useMutationState,
   useQueryClient,
   type MutationState,
-  type QueryClient,
 } from "@tanstack/svelte-query";
+import { Effect } from "effect";
 
 import { errorMessage } from "@great-minds/client";
+import { run } from "#lib/api/app.ts";
 import {
-  continueFileIngest,
+  commitFileIngestBatch,
+  createFileIngestBatch,
+  fileIngestManifest,
   getFileIngestBatch,
   resumeFileIngestBatch,
-  type FileIngestBatch,
+  sendFileIngestFiles,
   type HashedFile,
-  type UploadFailure,
 } from "#lib/api/ingest.ts";
 import { auth } from "#lib/auth.svelte.ts";
+import { forgetUpload, rememberUpload, type UploadDraft } from "./file-ingest-drafts.svelte";
 
-interface UploadInput {
-  readonly batch: FileIngestBatch;
+type UploadCommand = Pick<UploadDraft, "batchId" | "vaultId"> & {
   readonly files: readonly HashedFile[];
-}
+} & (
+    | { readonly action: "create"; readonly manifest: UploadDraft["manifest"] }
+    | { readonly action: "resume" | "finish" }
+  );
+type UploadInput = UploadCommand & { readonly userId: string };
+type Transfers = Effect.Success<ReturnType<typeof sendFileIngestFiles>>;
 
-class UploadIncomplete extends Error {
-  constructor(
-    message: string,
-    readonly failures: readonly UploadFailure[],
-  ) {
-    super(message);
-  }
-}
-
-export const fileIngestKey = (batchId: Uuid | null) => ["file-ingest", batchId];
+export const fileIngestKey = (batchId: Uuid | null, userId = auth.userId) =>
+  ["file-ingest", userId, batchId] as const;
 const uploadKey = ["file-ingest", "upload"];
 
-const isUploading = (queryClient: QueryClient, batchId: Uuid | null) =>
-  queryClient.isMutating({
-    mutationKey: uploadKey,
-    predicate: (mutation) => (mutation.state.variables as UploadInput)?.batch.id === batchId,
-  }) > 0;
+export const missingUploadFiles = (batch: FileIngestBatch) =>
+  batch.files.filter((file) => file.status === "pending");
 
-const loadBatch = async (batchId: Uuid) => {
-  const batch = await getFileIngestBatch(batchId);
-  return batch?.status === "uploading" && batch.created_by === auth.userId
-    ? resumeFileIngestBatch(batchId)
-    : batch;
-};
+function acknowledgeDraft(batch: FileIngestBatch, userId: string | null) {
+  if (userId && batch.created_by === userId) forgetUpload(userId, batch.id);
+}
 
-export function useFileIngestBatch(batchId: () => Uuid | null) {
+export function useFileIngestBatch(
+  batchId: () => Uuid | null,
+  enabled: () => boolean,
+  canResume: (batch: FileIngestBatch) => boolean,
+) {
   const queryClient = useQueryClient();
   return createQuery(() => {
     const id = batchId();
+    const userId = auth.userId;
+    const queryKey = fileIngestKey(id, userId);
     return {
-      queryKey: fileIngestKey(id),
-      queryFn: () => (id ? loadBatch(id) : null),
-      enabled: id !== null,
-      staleTime: () => (isUploading(queryClient, id) ? Infinity : 0),
+      queryKey,
+      queryFn: ({ signal }) =>
+        run(
+          Effect.gen(function* () {
+            if (!id) return null;
+            const batch = yield* getFileIngestBatch(id);
+            if (!batch || auth.userId !== userId) return batch;
+            acknowledgeDraft(batch, userId);
+            if (
+              batch.status !== "uploading" ||
+              !canResume(batch) ||
+              missingUploadFiles(batch).length === 0
+            )
+              return batch;
+            return yield* resumeFileIngestBatch(id).pipe(
+              Effect.tapError(() =>
+                Effect.sync(() => {
+                  if (!signal.aborted && auth.userId === userId)
+                    queryClient.setQueryData(queryKey, batch);
+                }),
+              ),
+            );
+          }),
+          { signal },
+        ),
+      enabled: id !== null && enabled(),
       refetchOnWindowFocus: false,
+      refetchOnMount: "always",
     };
   });
 }
@@ -67,40 +89,105 @@ export function useFileUpload() {
   const queryClient = useQueryClient();
   const mutation = createMutation(() => ({
     mutationKey: uploadKey,
-    mutationFn: async ({ batch, files }: UploadInput) => {
-      for await (const event of continueFileIngest(batch, files)) {
-        if (event.batch) queryClient.setQueryData(fileIngestKey(batch.id), event.batch);
-        if (event.phase === "error") {
-          throw new UploadIncomplete(event.error ?? "Upload failed", event.failures ?? []);
+    mutationFn: (input: UploadInput) => {
+      const { action, batchId, vaultId, userId, files } = input;
+      const queryKey = fileIngestKey(batchId, userId);
+      const sameAccount = () => auth.userId === userId;
+      const observe = (receipt: FileIngestBatch | null) => {
+        if (!sameAccount()) return;
+        if (receipt) acknowledgeDraft(receipt, userId);
+        queryClient.setQueryData(queryKey, receipt);
+      };
+      const refresh = Effect.gen(function* () {
+        if (sameAccount()) observe(yield* getFileIngestBatch(batchId));
+      });
+      const upload = Effect.gen(function* () {
+        yield* Effect.promise(() => queryClient.cancelQueries({ queryKey }));
+        if (!sameAccount()) return [];
+
+        let transfers: Transfers = [];
+        if (action !== "finish") {
+          const batch = yield* action === "create"
+            ? createFileIngestBatch(vaultId, { batch_id: batchId, files: input.manifest })
+            : resumeFileIngestBatch(batchId);
+          observe(batch);
+          if (!sameAccount() || batch.status !== "uploading") return [];
+
+          transfers = yield* sendFileIngestFiles(batch, files);
+          if (!sameAccount()) return [];
+          if (
+            transfers.length !== missingUploadFiles(batch).length ||
+            transfers.some(({ error }) => error !== null)
+          ) {
+            if (transfers.length === 0) return transfers;
+            const receipt = yield* resumeFileIngestBatch(batchId);
+            observe(receipt);
+            if (receipt.status !== "uploading" || missingUploadFiles(receipt).length > 0)
+              return transfers;
+          }
         }
-        if (event.phase === "processing") {
-          await queryClient.invalidateQueries({
-            queryKey: ["vault", event.batch?.vault_id ?? batch.vault_id, "active-job"],
-          });
-          return;
-        }
-      }
+        if (sameAccount()) yield* commitFileIngestBatch(batchId);
+        yield* refresh;
+        return transfers;
+      });
+      return run(upload.pipe(Effect.tapError(() => Effect.ignore(refresh))));
     },
-    onError: async (error, { batch }) => {
-      if (!(error instanceof UploadIncomplete)) {
-        await queryClient.invalidateQueries({ queryKey: fileIngestKey(batch.id) });
-      }
+    onSettled: (_data, _error, { vaultId }) => {
+      void queryClient.invalidateQueries({ queryKey: ["vault", vaultId, "active-job"] });
     },
   }));
 
-  return (batch: FileIngestBatch, files: readonly HashedFile[]) => {
-    if (batch.status !== "uploading" || isUploading(queryClient, batch.id)) return;
-    queryClient.setQueryData(fileIngestKey(batch.id), batch);
-    mutation.mutate({ batch, files });
+  const send = (command: UploadCommand) => {
+    const userId = auth.userId;
+    if (
+      !userId ||
+      queryClient.isMutating({
+        mutationKey: uploadKey,
+        exact: true,
+        predicate: ({ state: { variables } }) =>
+          typeof variables === "object" &&
+          variables !== null &&
+          "batchId" in variables &&
+          variables.batchId === command.batchId,
+      })
+    )
+      return;
+    mutation.mutate({ ...command, userId });
+  };
+
+  const create = (draft: UploadDraft, files: readonly HashedFile[]) =>
+    send({ ...draft, action: "create", files });
+
+  return {
+    begin(vaultId: Uuid, files: readonly HashedFile[]) {
+      const userId = auth.userId;
+      if (!userId) throw new Error("Sign in to start an upload.");
+      const draft = rememberUpload(userId, vaultId, fileIngestManifest(files));
+      create(draft, files);
+      return draft.batchId;
+    },
+    retryStart: create,
+    advance(batch: FileIngestBatch, files: readonly HashedFile[]) {
+      if (batch.status !== "uploading" || batch.created_by !== auth.userId) return;
+      send({
+        batchId: batch.id,
+        vaultId: batch.vault_id,
+        action: missingUploadFiles(batch).length > 0 ? "resume" : "finish",
+        files,
+      });
+    },
   };
 }
 
 export function useUploadState(batchId: () => Uuid | null) {
-  const states = useMutationState({
-    filters: { mutationKey: uploadKey },
-    select: (mutation) => mutation.state as MutationState<void, Error, UploadInput>,
+  const states = useMutationState<MutationState<Transfers, Error, UploadInput>>({
+    filters: { mutationKey: uploadKey, exact: true },
   });
-  const latest = $derived(states.findLast((state) => state.variables?.batch.id === batchId()));
+  const latest = $derived(
+    states.findLast(
+      (state) => state.variables?.batchId === batchId() && state.variables?.userId === auth.userId,
+    ),
+  );
 
   return {
     get running() {
@@ -110,10 +197,10 @@ export function useUploadState(batchId: () => Uuid | null) {
       return latest?.variables?.files ?? [];
     },
     get failures() {
-      return latest?.error instanceof UploadIncomplete ? latest.error.failures : [];
+      return latest?.data ?? [];
     },
     get error() {
-      return latest?.error ? errorMessage(latest.error, "Upload unavailable") : null;
+      return latest?.error ? errorMessage(latest.error, "Couldn’t continue this upload.") : null;
     },
   };
 }

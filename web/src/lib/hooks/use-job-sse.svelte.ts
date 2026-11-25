@@ -14,13 +14,17 @@ export function useJobSSE(
   let streamError = $state<string | null>(null);
   let connection = $state(0);
   let followed: Uuid | null = null;
-  const status = $derived(snapshot?.job_status);
-  const failed = $derived(status === "failed" || snapshot?.phase_status === "failed");
-  const done = $derived(
-    status === "completed" ||
-      (snapshot?.phase === "publish" && snapshot.phase_status === "completed"),
-  );
-  const terminal = $derived(failed || done || status === "cancelled");
+  const terminal = $derived.by(() => {
+    const status = snapshot?.job_status;
+    if (status === "cancelled") return status;
+    if (status === "failed" || snapshot?.phase_status === "failed") return "failed";
+    if (
+      status === "completed" ||
+      (snapshot?.phase === "publish" && snapshot.phase_status === "completed")
+    )
+      return "completed";
+    return null;
+  });
 
   $effect(() => {
     const id = jobId();
@@ -47,7 +51,7 @@ export function useJobSSE(
         streamError = errorMessage(error, "Progress stream unavailable");
       }
       if (controller.signal.aborted) return;
-      if (ended && !terminal) streamError = "Progress stream ended before the run finished";
+      if (ended && terminal === null) streamError = "Progress stream ended before the run finished";
       void queryClient.invalidateQueries({
         queryKey: ["vault", vaultKey, "active-job"],
       });
@@ -59,7 +63,7 @@ export function useJobSSE(
 
   $effect(() => {
     const onVisible = () => {
-      if (document.visibilityState === "visible" && !terminal) connection += 1;
+      if (document.visibilityState === "visible" && terminal === null) connection += 1;
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
@@ -73,7 +77,7 @@ export function useJobSSE(
       return snapshot?.outcome ?? null;
     },
     get running() {
-      return snapshot !== null && !terminal;
+      return snapshot !== null && terminal === null;
     },
     get startedAt() {
       return snapshot?.created_at ?? null;
@@ -85,13 +89,13 @@ export function useJobSSE(
       return (snapshot?.warnings.length ?? 0) > 0;
     },
     get overallDone() {
-      return done && !failed;
+      return terminal === "completed";
     },
     get overallError() {
-      return failed ? (snapshot?.error ?? "Pipeline failed") : null;
+      return terminal === "failed" ? (snapshot?.error ?? "Pipeline failed") : null;
     },
     get overallCancelled() {
-      return status === "cancelled";
+      return terminal === "cancelled";
     },
     get streamError() {
       return streamError;

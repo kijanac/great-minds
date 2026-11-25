@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { beforeNavigate, goto } from "$app/navigation";
+  import { goto } from "$app/navigation";
   import { uploadKind, type Uuid } from "@great-minds/domain";
   import { Effect } from "effect";
   import { onMount } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { fade, slide } from "svelte/transition";
 
-  import { checkDupes, createFileIngestBatch, hashFile, type HashedFile } from "#lib/api/ingest.ts";
+  import { checkDupes, hashFile, type HashedFile } from "#lib/api/ingest.ts";
   import { run } from "#lib/api/app.ts";
   import { Button } from "#lib/components/ui/button/index.ts";
   import { Input } from "#lib/components/ui/input/index.ts";
@@ -15,7 +15,7 @@
   import type { DroppedFile } from "#lib/types.ts";
 
   const HASH_CONCURRENCY = 4;
-  const startUpload = useFileUpload();
+  const upload = useFileUpload();
 
   interface FileBase {
     id: Uuid;
@@ -54,11 +54,13 @@
   }
 
   let {
-    hasActivePipeline,
+    pipelineHref,
+    vaultId,
     vaultName,
     locked = false,
   }: {
-    hasActivePipeline: boolean;
+    pipelineHref: string | null;
+    vaultId: Uuid;
     vaultName: string;
     locked?: boolean;
   } = $props();
@@ -78,20 +80,7 @@
   let importError = $state<string | null>(null);
   let showInVault = $state(false);
   let zone: HTMLDivElement;
-  let componentActive = true;
-  let navigationEpoch = 0;
-
-  beforeNavigate(({ shallow, type }) => {
-    if (shallow && type === "goto") return;
-
-    navigationEpoch += 1;
-  });
-
-  function captureNavigationOwnership(): () => boolean {
-    const epoch = navigationEpoch;
-    return () => componentActive && navigationEpoch === epoch;
-  }
-
+  const canOpen = $derived(pipelineHref !== null || !locked);
   const hasFiles = $derived(files.length > 0);
   const selectedFiles = $derived(
     files.filter((file): file is HashedIngestableFile => isSelectableFile(file) && file.selected),
@@ -214,7 +203,7 @@
     const handleDragEnter = (event: DragEvent) => {
       event.preventDefault();
       dragDepth += 1;
-      if (dragDepth > 0 && !expanded) expanded = true;
+      if (dragDepth > 0 && !expanded && !locked) expanded = true;
     };
     const handleDragLeave = (event: DragEvent) => {
       event.preventDefault();
@@ -235,7 +224,6 @@
     document.addEventListener("dragover", handleDragOver);
     document.addEventListener("drop", handleDocumentDrop);
     return () => {
-      componentActive = false;
       hashRunId += 1;
       document.removeEventListener("mousedown", handleMouseDown);
       window.removeEventListener("keydown", handleKeydown);
@@ -266,7 +254,7 @@
     );
   }
 
-  async function runHashingPipeline(initial: IngestableFile[]) {
+  async function runHashingPipeline(initial: IngestableFile[], selectedVaultId: Uuid) {
     hashRunId += 1;
     const runId = hashRunId;
 
@@ -303,7 +291,7 @@
     if (hashes.length === 0) return;
     checkingVault = true;
     try {
-      const existing = await checkDupes(Array.from(new Set(hashes)));
+      const existing = await checkDupes(selectedVaultId, Array.from(new Set(hashes)));
       if (hashRunId !== runId || existing.size === 0) return;
       files = files.map((file) =>
         isHashedFile(file) && existing.has(file.hash)
@@ -321,7 +309,7 @@
     importError = null;
     const initial = initialIngestable(dropped);
     files = initial;
-    void runHashingPipeline(initial);
+    void runHashingPipeline(initial, vaultId);
   }
 
   async function handleDrop(event: DragEvent) {
@@ -374,27 +362,22 @@
       file: item.file,
       hash: item.hash,
     }));
-    if (uploadFiles.length === 0 || creatingBatch) return;
+    if (uploadFiles.length === 0 || creatingBatch || locked) return;
 
-    const ownsNavigation = captureNavigationOwnership();
     creatingBatch = true;
     importError = null;
     try {
-      const batch = await createFileIngestBatch(uploadFiles);
-      if (!ownsNavigation()) return;
-      files = [];
-      startUpload(batch, uploadFiles);
-      await goto(`/pipeline/runs/${batch.id}`);
-    } catch (error) {
-      if (!ownsNavigation()) return;
-      importError = error instanceof Error ? error.message : "Unable to start file upload";
+      const batchId = upload.begin(vaultId, uploadFiles);
+      await goto(`/pipeline/runs/${batchId}`);
+    } catch {
+      importError = "Couldn’t open this upload. Try again.";
     } finally {
-      if (componentActive) creatingBatch = false;
+      creatingBatch = false;
     }
   }
 
   function handleCircleClick() {
-    if (hasActivePipeline) void goto("/pipeline");
+    if (pipelineHref) void goto(pipelineHref);
     else expanded = true;
   }
 
@@ -443,16 +426,16 @@
   <!-- svelte-ignore a11y_no_noninteractive_tabindex - the shell is a keyboard button only while collapsed -->
   <div
     role={expanded ? undefined : "button"}
-    tabindex={expanded ? undefined : locked ? -1 : 0}
-    aria-disabled={!expanded && locked ? true : undefined}
+    tabindex={expanded ? undefined : canOpen ? 0 : -1}
+    aria-disabled={!expanded && !canOpen ? true : undefined}
     aria-label={expanded
       ? "source ingestion"
-      : hasActivePipeline
+      : pipelineHref
         ? "view active pipeline"
         : "add sources"}
-    onclick={expanded || locked ? undefined : handleCircleClick}
+    onclick={expanded || !canOpen ? undefined : handleCircleClick}
     onkeydown={(event) => {
-      if (!expanded && !locked && (event.key === "Enter" || event.key === " ")) {
+      if (!expanded && canOpen && (event.key === "Enter" || event.key === " ")) {
         event.preventDefault();
         handleCircleClick();
       }
@@ -460,7 +443,7 @@
     class={`relative h-12 overflow-hidden border border-solid transition-[width,border-radius,border-color,background-color] ease-[cubic-bezier(0.22,1,0.36,1)] duration-[280ms] ${
       expanded
         ? `w-[min(640px,100%)] rounded-sm ${isDragOver ? "border-gold" : "border-gold-dim"} bg-ink-raised`
-        : `w-12 rounded-[1.5rem] border-transparent bg-transparent delay-[80ms] ${locked ? "cursor-default opacity-45" : "cursor-pointer"}`
+        : `w-12 rounded-[1.5rem] border-transparent bg-transparent delay-[80ms] ${canOpen ? "cursor-pointer" : "cursor-default opacity-45"}`
     }`}
   >
     <!-- dashed ring crossfades instead of border-style flipping (not animatable) -->
@@ -476,7 +459,7 @@
         out:fade={{ duration: 80 }}
       >
         +
-        {#if hasActivePipeline}
+        {#if pipelineHref}
           <span
             class="absolute -top-1 -right-1 h-3 w-3 animate-[pulse-fade_1.6s_ease-in-out_infinite] rounded-full bg-gold"
           ></span>
@@ -641,13 +624,9 @@
     </p>
   {/if}
 
-  {#if hasActivePipeline && !expanded}
+  {#if pipelineHref && !expanded}
     <a
-      href="/pipeline"
-      onclick={(event) => {
-        event.preventDefault();
-        void goto("/pipeline");
-      }}
+      href={pipelineHref}
       class="mt-3 font-mono text-[length:var(--text-chrome)] tracking-[0.08em] text-gold-muted transition-colors hover:text-gold"
     >
       pipeline active · view progress →
