@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { requestCode } from "./auth";
 import { streamReply } from "./replies";
+import { fetchAllWikiArticles } from "./wiki";
 import { ApiError } from "@great-minds/client";
 
 const id = Uuid.make("00000000-0000-4000-8000-000000000001");
@@ -51,6 +52,39 @@ describe("browser API boundaries", () => {
     const pending = requestCode("invalid");
     await expect(pending).rejects.toMatchObject({ _tag: "ApiError", message: "Invalid request" });
     expect(fetchRequest).not.toHaveBeenCalled();
+  });
+
+  it("keeps reading the requested wiki after the selected vault changes", async () => {
+    const items = Array.from({ length: 201 }, (_, index) => ({
+      slug: `article-${index}`,
+      file_path: `wiki/article-${index}.md`,
+      title: `Article ${index}`,
+      precis: "",
+      updated_at: null,
+    }));
+    const page = (offset: number) =>
+      Response.json({
+        items: items.slice(offset, offset + 200),
+        pagination: { limit: 200, offset, total: items.length },
+      });
+    fetchRequest
+      .mockImplementationOnce(async () => {
+        localStorage.setItem("vault_id", "00000000-0000-4000-8000-000000000002");
+        return page(0);
+      })
+      .mockResolvedValueOnce(page(200));
+
+    expect(await fetchAllWikiArticles(id)).toEqual(items);
+    const pages = fetchRequest.mock.calls.map(([request]) => {
+      const { pathname, searchParams } = new URL(
+        request instanceof Request ? request.url : request,
+      );
+      return [pathname.split("/").at(-2), searchParams.get("offset")];
+    });
+    expect(pages).toEqual([
+      [id, "0"],
+      [id, "200"],
+    ]);
   });
 
   it("rejects malformed messages rather than silently skipping or retrying them", async () => {

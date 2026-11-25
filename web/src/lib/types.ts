@@ -5,10 +5,10 @@ import type {
   SessionExchange,
   SessionId,
   Uuid,
+  WikiArticleOverview,
 } from "@great-minds/domain";
 import type { SessionSummary } from "#lib/api/sessions.ts";
 import type { SourceDocumentSummary, SourceTypeFacet } from "#lib/api/sources.ts";
-import type { WikiArticleOverview } from "#lib/api/wiki.ts";
 import type { Conversation } from "#lib/conversation.svelte.ts";
 
 export type SourceRef = ReplySource;

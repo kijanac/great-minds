@@ -2,7 +2,7 @@ import type { RunOutcome } from "@great-minds/domain";
 import { flushSync, mount, unmount } from "svelte";
 import { expect, it } from "vitest";
 
-import Fixture from "./run-outcome-fixture.svelte";
+import RunOutcomeView from "./run-outcome.svelte";
 
 const article = (n: number) => ({ title: `Article ${n}`, file_path: `wiki/article-${n}.md` });
 
@@ -15,7 +15,7 @@ const render = (outcome: RunOutcome | null, stopped: Stopped | null = null) => {
   const opened: string[] = [];
   const target = document.createElement("div");
   document.body.append(target);
-  const component = mount(Fixture, {
+  const component = mount(RunOutcomeView, {
     target,
     props: { outcome, stopped, onOpen: (path: string) => opened.push(path) },
   });
