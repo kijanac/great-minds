@@ -19,7 +19,7 @@ import {
   Uuid,
 } from "@great-minds/domain";
 import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
-import { Cause, Context, Data, Effect, Layer, Option, Schema, Stream } from "effect";
+import { Cause, Context, Data, Effect, Layer, Option, Queue, Schema, Stream } from "effect";
 import * as Activity from "effect/workflow/Activity";
 import * as Workflow from "effect/workflow/Workflow";
 import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
@@ -36,7 +36,7 @@ import { ReplySettlement, type ReplySettlementResult } from "./conversation-hist
 import type { LlmMessage } from "./llm.ts";
 import { errorDetails } from "./error-details.ts";
 import { StructuredLogger } from "./logging.ts";
-import { ProgressChanges, progressReader } from "./progress-changes.ts";
+import { ProgressChanges } from "./progress-changes.ts";
 import {
   QueryExecutionState,
   type QueryPreparedToolCall as QueryPreparedToolCallType,
@@ -880,14 +880,18 @@ export const RepliesServiceLive = Layer.effect(
       settled: (userId, vaultId, replyId) =>
         Effect.gen(function* () {
           const member = yield* access.requireMember(userId, vaultId);
-          const readNext = yield* progressReader(
-            changes.subscribe("replies", member, replyId),
-            readReply(userId, vaultId, replyId),
+          const wakes = yield* changes.subscribe("replies", member, replyId);
+          const read = readReply(userId, vaultId, replyId);
+          const waitForChange = Queue.take(wakes).pipe(
+            Effect.delay("100 millis"),
+            Effect.timeoutOption("30 seconds"),
           );
-          let row = yield* readNext(0);
-          while (row !== undefined && isReplyPending(row.status)) row = yield* readNext();
-          if (row === undefined) return yield* replyNotFound();
-          return replySnapshot(row);
+          while (true) {
+            const row = yield* read;
+            if (row === undefined) return yield* replyNotFound();
+            if (!isReplyPending(row.status)) return replySnapshot(row);
+            yield* waitForChange;
+          }
         }).pipe(Effect.scoped),
       prepareStep,
       modelStep,
