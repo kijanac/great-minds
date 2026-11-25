@@ -1,6 +1,7 @@
 import { citationPath, citedPassage } from "@great-minds/domain";
 import { getContext, setContext } from "svelte";
 
+import { clickedMarkdownLink } from "#lib/markdown-links.ts";
 import { readingTrail, type ReadingTrail } from "#lib/research-steps.ts";
 import type { Exchange, SourceRef } from "#lib/types.ts";
 
@@ -36,8 +37,7 @@ export const provideSourceOpener = (panel: {
 
 export const useSourceOpener = () => getContext<SourceOpener | undefined>(key);
 
-export const rawSourceHref = (event: Event) => {
-  const href =
-    event.target instanceof Element ? event.target.closest("a")?.getAttribute("href") : null;
-  return href?.startsWith("raw/") ? href : null;
+export const rawSourceHref = (event: MouseEvent) => {
+  const link = clickedMarkdownLink(event);
+  return link?.kind === "raw" ? link.href : null;
 };

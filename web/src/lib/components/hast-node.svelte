@@ -1,6 +1,7 @@
 <script lang="ts">
   import * as Popover from "#lib/components/ui/popover/index.ts";
   import type { FootnoteDefinitions } from "#lib/footnote-notes.ts";
+  import { linkDestination, webHref } from "#lib/markdown-links.ts";
   import type { HastNode } from "#lib/markdown-plugins.ts";
   import { cn } from "#lib/utils.ts";
   import HastNodeView from "./hast-node.svelte";
@@ -118,7 +119,7 @@
   function attributes(properties: Record<string, unknown> | undefined) {
     const output: Record<string, string | number | boolean | undefined> = {};
     for (const [name, value] of Object.entries(properties ?? {})) {
-      if (name === "className" || value == null) continue;
+      if (name === "className" || name === "href" || name === "src" || value == null) continue;
       const key = attributeName(name);
       if (Array.isArray(value)) output[key] = value.join(" ");
       else if (["string", "number", "boolean"].includes(typeof value)) {
@@ -143,14 +144,12 @@
   const footnoteId = $derived(
     typeof node.properties?.dataMarginNoteId === "string" ? node.properties.dataMarginNoteId : null,
   );
-  const href = $derived(
-    typeof node.properties?.href === "string" ? node.properties.href : undefined,
-  );
+  const link = $derived(tag === "a" ? linkDestination(node.properties?.href) : undefined);
+  const imageSrc = $derived(tag === "img" ? webHref(node.properties?.src) : undefined);
   const citation = $derived(
     typeof node.properties?.dataCitation === "string" ? node.properties.dataCitation : null,
   );
   const elementId = $derived(typeof node.properties?.id === "string" ? node.properties.id : null);
-  const external = $derived(href?.startsWith("http") ?? false);
   const footnoteContent = $derived(footnoteId ? (footnoteDefinitions?.[footnoteId] ?? null) : null);
 </script>
 
@@ -175,7 +174,9 @@
 {:else if node.type === "text"}
   {node.value ?? ""}
 {:else if node.type === "element" && tag === "a"}
-  {#if footnoteContent && footnoteMode === "popover"}
+  {#if !link}
+    {@render childNodes()}
+  {:else if footnoteContent && footnoteMode === "popover"}
     {#if elementId}<span id={elementId} class="sr-only" aria-hidden="true"></span>{/if}<Popover.Root
     >
       <Popover.Trigger>
@@ -183,7 +184,7 @@
           <a
             {...popoverAttrs}
             {...props}
-            {href}
+            href={link.href}
             onclick={(event) => {
               event.preventDefault();
               (props.onclick as ((event: MouseEvent) => void) | undefined)?.(event);
@@ -212,9 +213,9 @@
     >{:else}
     <a
       {...attrs}
-      {href}
-      target={external ? "_blank" : undefined}
-      rel={external ? "noopener noreferrer" : undefined}
+      href={link.href}
+      target={link.kind === "web" ? "_blank" : undefined}
+      rel={link.kind === "web" ? "noopener noreferrer" : undefined}
       onclick={(event) => {
         if (footnoteId && onFootnoteOpen) {
           event.preventDefault();
@@ -243,6 +244,13 @@
           >{citation}</button
         ></sup
       >{/if}
+  {/if}
+{:else if node.type === "element" && tag === "img"}
+  {@const alt = typeof node.properties?.alt === "string" ? node.properties.alt : ""}
+  {#if imageSrc}
+    <img {...attrs} src={imageSrc} {alt} class={className || undefined} />
+  {:else}
+    {alt}
   {/if}
 {:else if node.type === "element"}
   <svelte:element

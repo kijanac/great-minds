@@ -1,5 +1,6 @@
 import { goto } from "$app/navigation";
 import { citationPath, citedPassage } from "@great-minds/domain";
+import { clickedMarkdownLink } from "#lib/markdown-links.ts";
 
 export interface RawCitation {
   path: string;
@@ -14,28 +15,13 @@ export interface RawCitation {
  */
 export function createLinkInterceptor(onRawOpen: (citation: RawCitation) => void) {
   return (event: MouseEvent): void => {
-    const anchor =
-      event.currentTarget instanceof HTMLAnchorElement
-        ? event.currentTarget
-        : event.target instanceof Element
-          ? event.target.closest("a")
-          : null;
-    const href = anchor?.getAttribute("href");
-    if (!href) return;
-
-    if (href.startsWith("http://") || href.startsWith("https://") || href.startsWith("#")) {
-      return;
-    }
-
-    if (href.startsWith("wiki/")) {
+    const link = clickedMarkdownLink(event);
+    if (link?.kind === "wiki") {
       event.preventDefault();
-      void goto(`/doc/${href}`);
-      return;
-    }
-
-    if (href.startsWith("raw/")) {
+      void goto(`/doc/${link.href}`);
+    } else if (link?.kind === "raw") {
       event.preventDefault();
-      onRawOpen({ path: citationPath(href), chunk: citedPassage(href) });
+      onRawOpen({ path: citationPath(link.href), chunk: citedPassage(link.href) });
     }
   };
 }
