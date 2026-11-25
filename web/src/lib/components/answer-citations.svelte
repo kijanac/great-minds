@@ -6,6 +6,7 @@
   import { fetchChunks, type DocChunk } from "#lib/api/doc.ts";
   import type { Citation } from "#lib/citations.ts";
   import MarkdownView from "#lib/components/markdown-view.svelte";
+  import type { MarkdownLinkClick } from "#lib/markdown-links.ts";
   import { displayTitle, sectionLabel } from "#lib/utils.ts";
 
   let {
@@ -13,12 +14,14 @@
     citations,
     panelDocked = false,
     sourceTitle,
+    onLinkClick,
     onOpen,
   }: {
     root: HTMLElement | null;
     citations: readonly Citation[];
     panelDocked?: boolean;
     sourceTitle?: (path: string) => string | null;
+    onLinkClick?: MarkdownLinkClick;
     onOpen: (citation: Citation) => void;
   } = $props();
 
@@ -180,7 +183,7 @@
     <div
       class="relative mt-2 max-h-[13.5em] overflow-hidden text-[length:var(--text-caption)] leading-[1.6] text-warm-dim after:absolute after:inset-x-0 after:bottom-0 after:h-6 after:bg-gradient-to-t after:from-ink-panel"
     >
-      <MarkdownView source={stripPassageMarkers(passage.body)} variant="panel" />
+      <MarkdownView source={stripPassageMarkers(passage.body)} variant="panel" {onLinkClick} />
     </div>
   {/if}
   <div

@@ -4,6 +4,7 @@
   import { assignBlockRefIds } from "#lib/block-refs.ts";
   import FootnoteNotes from "#lib/components/footnote-notes.svelte";
   import HastNodeView from "#lib/components/hast-node.svelte";
+  import type { MarkdownLinkClick } from "#lib/markdown-links.ts";
   import { parseMarkdown } from "#lib/markdown.ts";
 
   let {
@@ -19,7 +20,7 @@
     variant?: "panel" | "article" | "answer" | "btw";
     stripBlockRefs?: boolean;
     resolveBlockRefs?: boolean;
-    onLinkClick?: (event: MouseEvent) => void;
+    onLinkClick?: MarkdownLinkClick;
     marginFootnotes?: boolean;
     panelDocked?: boolean;
   } = $props();

@@ -5,6 +5,7 @@
   import { resolveShare } from "#lib/api/shares.ts";
   import AnswerBlock from "#lib/components/answer-block.svelte";
   import { newUuid } from "@great-minds/client";
+  import type { MarkdownLinkClick } from "#lib/markdown-links.ts";
   import type { ThreadLike } from "#lib/types.ts";
 
   const token = $derived(page.params.token);
@@ -55,23 +56,9 @@
 
   // The share page is read-only: keep external links working but swallow
   // internal (app) navigations such as wiki/ and raw/ citations.
-  function onLinkClick(event: MouseEvent) {
-    const anchor =
-      event.currentTarget instanceof HTMLAnchorElement
-        ? event.currentTarget
-        : event.target instanceof Element
-          ? event.target.closest("a")
-          : null;
-    const href = anchor?.getAttribute("href");
-    if (
-      href &&
-      !href.startsWith("http://") &&
-      !href.startsWith("https://") &&
-      !href.startsWith("#")
-    ) {
-      event.preventDefault();
-    }
-  }
+  const onLinkClick: MarkdownLinkClick = (link, event) => {
+    if (link.kind !== "web" && link.kind !== "fragment") event.preventDefault();
+  };
 </script>
 
 <svelte:head>

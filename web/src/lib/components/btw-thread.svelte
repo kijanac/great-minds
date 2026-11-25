@@ -16,7 +16,7 @@
   import { Button } from "#lib/components/ui/button/index.ts";
   import { Conversation } from "#lib/conversation.svelte.ts";
   import { answerText } from "#lib/research-steps.ts";
-  import { rawSourceHref, useSourceOpener } from "#lib/source-opener.ts";
+  import { useSourceOpener } from "#lib/source-opener.ts";
   import type { ThreadLike } from "#lib/types.ts";
 
   let {
@@ -132,18 +132,18 @@
                 </div>
               {:else}
                 {#if answer}
-                  <div
-                    class="mb-3 text-[length:var(--text-small)] leading-[1.85] text-warm-dim"
-                    role="presentation"
-                    onclick={(event) => {
-                      const href = opener && live ? rawSourceHref(event) : null;
-                      if (href === null) return;
-                      event.preventDefault();
-                      event.stopPropagation();
-                      opener?.openCitation(exchange, href);
-                    }}
-                  >
-                    <MarkdownView source={answer} variant="btw" />
+                  <div class="mb-3 text-[length:var(--text-small)] leading-[1.85] text-warm-dim">
+                    <MarkdownView
+                      source={answer}
+                      variant="btw"
+                      onLinkClick={(link, event) => {
+                        if (opener && live && link.kind === "raw") {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          opener.openCitation(exchange, link.href);
+                        } else opener?.followLink?.(link, event);
+                      }}
+                    />
                     {#if exchange.status === "running" && live?.phase !== "finalizing"}
                       <span
                         class="ml-px inline-block h-2.5 w-px animate-[blink_1s_step-end_infinite] bg-gold-muted align-middle"

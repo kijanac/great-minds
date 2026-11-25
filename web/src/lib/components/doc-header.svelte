@@ -13,6 +13,7 @@
   import { CHIP_BASE, CHIP_INACTIVE } from "#lib/chip.ts";
   import { useReferenceRename } from "#lib/hooks/use-references.svelte.ts";
   import type { Conversation } from "#lib/conversation.svelte.ts";
+  import { webHref } from "#lib/markdown-links.ts";
   import { cn, formatShortDate } from "#lib/utils.ts";
   import type { ReferencePromotionAction as PromotionAction } from "#lib/types.ts";
   import { tick } from "svelte";
@@ -58,6 +59,8 @@
   const total = $derived(notes.length + conversations.length);
   const shortQuote = (quote: string) => (quote.length > 44 ? `${quote.slice(0, 44)}...` : quote);
   const metadata = $derived(articleMeta(document));
+  const sourceHref = $derived(webHref(metadata.url));
+  const sourceLabel = $derived(metadata.origin || metadata.url);
   const metaParts = $derived(
     [metadata.author, metadata.published_date, metadata.genre].filter(
       (part): part is string => !!part,
@@ -215,20 +218,20 @@
     </div>
   {/if}
 
-  {#if metadata.url || metadata.origin}
+  {#if sourceLabel}
     <p class="mb-3 font-mono text-[length:var(--text-chrome)] tracking-[0.06em] text-warm-ghost">
-      {#if metadata.url}
+      {#if sourceHref}
         <a
-          href={metadata.url}
+          href={sourceHref}
           target="_blank"
           rel="noopener noreferrer"
           class="inline-flex items-center gap-1 text-gold-muted underline decoration-gold/30 underline-offset-2 hover:text-gold"
         >
-          from {metadata.origin || metadata.url}
+          from {sourceLabel}
           <ExternalLink size={11} />
         </a>
       {:else}
-        from {metadata.origin}
+        from {sourceLabel}
       {/if}
     </p>
   {/if}
