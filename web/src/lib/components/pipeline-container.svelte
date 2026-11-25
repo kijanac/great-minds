@@ -1,7 +1,7 @@
 <script lang="ts">
   import { beforeNavigate, goto } from "$app/navigation";
   import { page } from "$app/state";
-  import type { Uuid } from "@great-minds/domain";
+  import type { FileIngestBatch, Uuid } from "@great-minds/domain";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
   import { useQueryClient } from "@tanstack/svelte-query";
   import { onDestroy } from "svelte";
@@ -35,31 +35,30 @@
   const vaults = useVaults();
   const me = useMe();
   let pageError = $state<string | null>(null);
-  let resolverStarted = $state(false);
+  let resolverStarted = false;
   let actionError = $state<string | null>(null);
   let readingFiles = $state(false);
   let picker: HTMLInputElement;
-  let componentActive = true;
   let navigationEpoch = 0;
 
   beforeNavigate(({ shallow, type }) => {
-    if (shallow && type === "goto") return;
-
-    navigationEpoch += 1;
+    if (!shallow || type !== "goto") navigationEpoch += 1;
   });
   onDestroy(() => {
-    componentActive = false;
+    navigationEpoch += 1;
   });
 
-  const draft = $derived(fileIngestDrafts().find((draft) => draft.batchId === routeJobId));
   const upload = useUploadState(() => routeJobId);
   const sendUpload = useFileUpload();
   const batchQuery = useFileIngestBatch(
     () => routeJobId,
     () => vaults.isFetched && !upload.running,
-    (batch) => ownsVault(batch.vault_id) && batch.created_by === auth.userId,
+    ownsBatch,
   );
   const fileBatch = $derived(batchQuery.data ?? null);
+  const draft = $derived(
+    fileBatch ? undefined : fileIngestDrafts().find(({ batchId }) => batchId === routeJobId),
+  );
   const lookupError = $derived(
     batchQuery.error ? errorMessage(batchQuery.error, "Couldn’t check this upload.") : null,
   );
@@ -68,20 +67,26 @@
   const viewingActiveJobs = $derived(!routeJobId && !urlParam);
   const activeJobs = useActiveJobs(() => (viewingActiveJobs ? activeVault.id : null));
   const jobVaultId = $derived(
-    fileBatch?.vault_id ?? (routeJobId && (!batchQuery.isSuccess || draft) ? null : activeVault.id),
+    fileBatch?.vault_id ?? (batchQuery.data === null && !draft ? activeVault.id : null),
   );
-  const canManage = $derived(
-    ownsVault(jobVaultId) && (!fileBatch || fileBatch.created_by === auth.userId),
-  );
+  const canManage = $derived(fileBatch ? ownsBatch(fileBatch) : ownsVault(jobVaultId));
 
   const progress = useJobSSE(
     () => routeJobId,
     () => jobVaultId,
   );
   const firstErrored = $derived(progress.track.find((stage) => stage.status === "failed"));
-  const isRunning = $derived(
-    !progress.overallDone && !progress.overallError && !progress.overallCancelled,
+  const runError = $derived(progress.overallError ?? resolveError);
+  const retryUrl = $derived(
+    progress.trigger === "url" && progress.backendPhase === "source_ingest",
   );
+  const retryLabel = $derived.by(() => {
+    if (progress.overallCancelled) return "Run again";
+    if (retryUrl) return "Retry URL";
+    return firstErrored?.key === "upload" ? "Compile saved files" : "Run again";
+  });
+  const stopped = $derived(Boolean(runError) || progress.overallCancelled);
+  const isRunning = $derived(!progress.overallDone && !stopped);
   const missing = $derived(fileBatch ? missingUploadFiles(fileBatch) : []);
   const missingHashes = $derived(new Set(missing.map((file) => file.hash)));
   const retryFiles = $derived(upload.files.filter((file) => missingHashes.has(file.hash)));
@@ -102,9 +107,15 @@
     );
   }
 
-  function captureRouteOwnership(predicate: () => boolean): () => boolean {
+  function ownsBatch(batch: FileIngestBatch) {
+    return batch.created_by === auth.userId && ownsVault(batch.vault_id);
+  }
+
+  function captureRouteOwnership() {
     const epoch = navigationEpoch;
-    return () => componentActive && navigationEpoch === epoch && predicate();
+    const href = page.url.href;
+    const userId = auth.userId;
+    return () => navigationEpoch === epoch && page.url.href === href && auth.userId === userId;
   }
 
   $effect(() => {
@@ -112,10 +123,8 @@
     const vaultId = activeVault.id;
     if (resolverStarted || routeJobId || !vaultId || !currentUrl || !vaults.isFetched) return;
     resolverStarted = true;
-    const ownsResolver = captureRouteOwnership(
-      () => routeJobId === null && page.url.pathname === "/pipeline" && urlParam === currentUrl,
-    );
-    if (!canManage) {
+    const ownsResolver = captureRouteOwnership();
+    if (!ownsVault(vaultId)) {
       pageError = "Only vault owners can add sources or update this vault.";
       return;
     }
@@ -139,7 +148,7 @@
   }
 
   async function discardAttempt() {
-    if (!draft || !auth.userId || fileBatch || upload.running) return;
+    if (!draft || !auth.userId || upload.running) return;
     try {
       forgetUpload(auth.userId, draft.batchId);
       await goto("/", { replace: true });
@@ -158,13 +167,13 @@
     const selected = Array.from(picker.files ?? []);
     picker.value = "";
     if (selected.length === 0 || readingFiles || upload.running || !fileBatch || !canManage) return;
-    const batchId = fileBatch.id;
-    const ownsSelection = captureRouteOwnership(() => routeJobId === batchId);
+    const ownsSelection = captureRouteOwnership();
     readingFiles = true;
     actionError = null;
     try {
-      const files = (await hashFiles(selected)).filter((file) => missingHashes.has(file.hash));
+      const hashed = await hashFiles(selected);
       if (!ownsSelection()) return;
+      const files = hashed.filter((file) => missingHashes.has(file.hash));
       if (files.length > 0) uploadFiles([...retryFiles, ...files]);
       else actionError = "None of the selected files match the files still missing.";
     } catch (error) {
@@ -178,7 +187,7 @@
     const id = routeJobId;
     const userId = auth.userId;
     if (!canManage || !id || !jobVaultId) return;
-    const ownsAction = captureRouteOwnership(() => routeJobId === id && auth.userId === userId);
+    const ownsAction = captureRouteOwnership();
     actionError = null;
     try {
       await cancelJob(id, jobVaultId);
@@ -190,16 +199,16 @@
 
   async function retry() {
     if (!canManage || !jobVaultId || !routeJobId) return;
+    const ownsAction = captureRouteOwnership();
     actionError = null;
     const nextId = newUuid();
     try {
-      const job =
-        progress.trigger === "url" && progress.backendPhase === "source_ingest"
-          ? await retryUrlJob(routeJobId, nextId, jobVaultId)
-          : await requestCompile(nextId, jobVaultId);
-      await goto(`/pipeline/runs/${job.id}`, { replace: true });
+      const job = retryUrl
+        ? await retryUrlJob(routeJobId, nextId, jobVaultId)
+        : await requestCompile(nextId, jobVaultId);
+      if (ownsAction()) await goto(`/pipeline/runs/${job.id}`, { replace: true });
     } catch (error) {
-      actionError = errorMessage(error, "Couldn’t start a new run.");
+      if (ownsAction()) actionError = errorMessage(error, "Couldn’t start a new run.");
     }
   }
 </script>
@@ -245,7 +254,7 @@
         </Alert>
       {/if}
 
-      {#snippet uploadButton(label: string, action: () => void, disabled = false)}
+      {#snippet actionButton(label: string, action: () => void, disabled = false)}
         <Button
           variant="outline"
           size="xs"
@@ -279,22 +288,20 @@
         <div class="mt-4 font-mono text-[length:var(--text-chrome)] text-warm-faint">
           {#if activeJobs.query.isError}
             <p class="mb-3" role="alert">Couldn’t load active runs.</p>
-            {@render uploadButton("Try again", () => void activeJobs.query.refetch())}
+            {@render actionButton("Try again", () => void activeJobs.query.refetch())}
           {:else if activeJobs.query.isPending}
             <p role="status">Loading runs…</p>
           {:else if activeJobs.entries.length === 0}
             <p>No active runs.</p>
           {:else if activeJobs.query.hasNextPage}
-            {@render uploadButton(
+            {@render actionButton(
               "Load more",
               () => void activeJobs.query.fetchNextPage(),
               activeJobs.query.isFetching,
             )}
           {/if}
         </div>
-      {/if}
-
-      {#if (draft && !fileBatch) || (fileBatch?.status === "uploading" && isRunning)}
+      {:else if draft || (fileBatch?.status === "uploading" && isRunning)}
         {#if uploadStatus}
           <p role="status" class="mb-6 font-serif text-[length:var(--text-body)] text-warm-dim">
             {uploadStatus}
@@ -335,21 +342,21 @@
               </p>
             {/if}
             <div class="flex flex-wrap gap-3">
-              {#if !fileBatch && draft}
+              {#if draft}
                 {#if ownsVault(draft.vaultId)}
-                  {@render uploadButton("Retry starting upload", startAgain, !me.canUseModels)}
+                  {@render actionButton("Retry starting upload", startAgain, !me.canUseModels)}
                 {/if}
                 <Button variant="ghost" size="xs" onclick={() => void discardAttempt()}
                   >Discard attempt</Button
                 >
               {:else if canManage}
                 {#if missing.length === 0}
-                  {@render uploadButton("Finish upload", () => uploadFiles([]), !me.canUseModels)}
+                  {@render actionButton("Finish upload", () => uploadFiles([]), !me.canUseModels)}
                 {:else}
                   {#if retryFiles.length > 0}
-                    {@render uploadButton("Retry upload", () => uploadFiles(retryFiles))}
+                    {@render actionButton("Retry upload", () => uploadFiles(retryFiles))}
                   {/if}
-                  {@render uploadButton("Reselect files", () => picker.click())}
+                  {@render actionButton("Reselect files", () => picker.click())}
                 {/if}
               {/if}
             </div>
@@ -387,84 +394,51 @@
         </Button>
       {/snippet}
 
-      {#if progress.overallError || resolveError}
-        {#snippet failedActions()}
+      {#if stopped}
+        {#snippet stoppedActions()}
           <div class="mb-8 flex flex-wrap items-center gap-3">
-            {#if lookupError && resolveError}
-              {@render uploadButton("Try again", () => void batchQuery.refetch())}
-            {:else if canManage && !resolveError && fileBatch?.status !== "uploading"}
-              {@render uploadButton(
-                progress.trigger === "url" && progress.backendPhase === "source_ingest"
-                  ? "Retry URL"
-                  : firstErrored?.key === "upload"
-                    ? "Compile saved files"
-                    : "Run again",
-                () => void retry(),
-                !me.canUseModels,
-              )}
+            {#if resolveError && lookupError}
+              {@render actionButton("Try again", () => void batchQuery.refetch())}
+            {:else if !resolveError && canManage && (progress.overallCancelled || fileBatch?.status !== "uploading")}
+              {@render actionButton(retryLabel, () => void retry(), !me.canUseModels)}
             {/if}
             {@render browseLibrary()}
           </div>
         {/snippet}
         <div class="mb-10">
-          {#if fileBatch?.status === "uploading" || resolveError}
+          {#if resolveError || (runError && fileBatch?.status === "uploading")}
             <h1
               class="mt-1 mb-6 font-serif text-[length:var(--text-title)] leading-[1.25] text-warm"
             >
               {resolveError ? "Couldn’t load this run" : "Upload stopped"}
             </h1>
-            {@render failedActions()}
+            {@render stoppedActions()}
           {:else}
             <RunOutcome
               outcome={progress.outcome}
               onOpen={(filePath) => void goto(`/doc/${filePath}`)}
-              stopped={{ kind: "failed", stage: firstErrored?.title ?? null }}
-              actions={failedActions}
+              stopped={runError
+                ? { kind: "failed", stage: firstErrored?.title ?? null }
+                : { kind: "cancelled", stage: null }}
+              actions={stoppedActions}
             />
           {/if}
-          <details>
-            <summary
-              class="cursor-pointer font-mono text-[length:var(--text-chrome)] text-warm-ghost hover:text-warm-faint"
-            >
-              Details
-            </summary>
-            <p
-              class="mt-2 font-mono text-[length:var(--text-chrome)] text-red-400/90 [overflow-wrap:anywhere]"
-            >
-              {progress.overallError ?? resolveError}
-            </p>
-          </details>
-        </div>
-      {/if}
-
-      {#if progress.overallCancelled}
-        {#snippet cancelledActions()}
-          <div class="mb-8 flex flex-wrap items-center gap-3">
-            {#if canManage}
-              <Button
-                variant="outline"
-                size="xs"
-                onclick={() => void retry()}
-                disabled={!me.canUseModels}
-                class="h-auto rounded-sm border-gold-dim px-3 py-1.5 disabled:opacity-45 font-mono text-[length:var(--text-chrome)] tracking-[0.1em] text-gold uppercase hover:bg-gold/10"
+          {#if runError}
+            <details>
+              <summary
+                class="cursor-pointer font-mono text-[length:var(--text-chrome)] text-warm-ghost hover:text-warm-faint"
               >
-                Run again
-              </Button>
-            {/if}
-            {@render browseLibrary()}
-          </div>
-        {/snippet}
-        <div class="mb-10">
-          <RunOutcome
-            outcome={progress.outcome}
-            onOpen={(filePath) => void goto(`/doc/${filePath}`)}
-            stopped={{ kind: "cancelled", stage: null }}
-            actions={cancelledActions}
-          />
+                Details
+              </summary>
+              <p
+                class="mt-2 font-mono text-[length:var(--text-chrome)] text-red-400/90 [overflow-wrap:anywhere]"
+              >
+                {runError}
+              </p>
+            </details>
+          {/if}
         </div>
-      {/if}
-
-      {#if progress.overallDone && !progress.overallError}
+      {:else if progress.overallDone}
         <div in:fly={{ y: 8, duration: 300, easing: cubicOut }}>
           <RunOutcome
             outcome={progress.outcome}

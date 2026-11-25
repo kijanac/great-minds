@@ -12,6 +12,7 @@ const UploadDraft = Schema.Struct({
 export type UploadDraft = typeof UploadDraft.Type;
 
 const decodeDrafts = Schema.decodeOption(Schema.fromJsonString(Schema.Array(UploadDraft)));
+const sameManifest = Schema.toEquivalence(UploadDraft.fields.manifest);
 const storageKey = (userId: string) => `file-ingest-drafts:${userId}`;
 let revision = $state(0);
 
@@ -40,18 +41,7 @@ function writeDrafts(userId: string, drafts: readonly UploadDraft[]) {
 export function rememberUpload(userId: string, vaultId: Uuid, manifest: UploadDraft["manifest"]) {
   const drafts = readDrafts(userId);
   const existing = drafts.find(
-    (draft) =>
-      draft.vaultId === vaultId &&
-      draft.manifest.length === manifest.length &&
-      draft.manifest.every((file, index) => {
-        const other = manifest[index];
-        return (
-          file.hash === other.hash &&
-          file.name === other.name &&
-          file.size === other.size &&
-          file.mimetype === other.mimetype
-        );
-      }),
+    (draft) => draft.vaultId === vaultId && sameManifest(draft.manifest, manifest),
   );
   if (existing) return existing;
   const draft = { vaultId, batchId: newUuid(), manifest };
@@ -61,10 +51,6 @@ export function rememberUpload(userId: string, vaultId: Uuid, manifest: UploadDr
 
 export function forgetUpload(userId: string, batchId: Uuid) {
   const drafts = readDrafts(userId);
-  if (drafts.some((draft) => draft.batchId === batchId)) {
-    writeDrafts(
-      userId,
-      drafts.filter((draft) => draft.batchId !== batchId),
-    );
-  }
+  const remaining = drafts.filter((draft) => draft.batchId !== batchId);
+  if (remaining.length !== drafts.length) writeDrafts(userId, remaining);
 }

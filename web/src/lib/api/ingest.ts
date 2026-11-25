@@ -11,7 +11,7 @@ import { errorMessage, fingerprint, manifestOf, uploadTarget } from "@great-mind
 import { api, connection, run } from "./app";
 import { selectedVault } from "./selected-vault";
 
-export type { FileIngestBatch, UserSuggestionResult };
+export type { UserSuggestionResult };
 
 const PUT_CONCURRENCY = 4;
 
@@ -77,15 +77,12 @@ export function commitFileIngestBatch(batchId: Uuid) {
 
 export function sendFileIngestFiles(batch: FileIngestBatch, files: readonly HashedFile[]) {
   const byHash = new Map(files.map(({ file, hash }) => [hash, file]));
-  const pending = new Map(
-    batch.files.filter((file) => file.status === "pending").map((file) => [file.hash, file]),
-  );
-  const transfers = batch.targets.flatMap((target) => {
-    const file = byHash.get(target.hash);
-    const manifest = pending.get(target.hash);
-    if (!file || !manifest) return [];
-    const { hash, name, mimetype } = manifest;
-    return uploadTarget(connection, batch, target, { name, content: file, hash, mimetype }).pipe(
+  const targets = new Map(batch.targets.map((target) => [target.hash, target]));
+  const transfers = batch.files.flatMap(({ hash, name, mimetype, status }) => {
+    const content = byHash.get(hash);
+    const target = targets.get(hash);
+    if (status !== "pending" || !content || !target) return [];
+    return uploadTarget(connection, batch, target, { name, content, hash, mimetype }).pipe(
       Effect.as({ hash, error: null }),
       Effect.catch((error) =>
         Effect.succeed({ hash, error: errorMessage(error, "Upload failed") }),
