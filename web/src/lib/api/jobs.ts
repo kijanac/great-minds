@@ -2,7 +2,6 @@ import {
   type JobProgressSnapshot,
   type JobPage,
   type JobResponse,
-  type PipelineRunFilter,
   type Uuid,
 } from "@great-minds/domain";
 import { followJob as followJobSnapshots, newUuid } from "@great-minds/client";
@@ -12,9 +11,18 @@ import { selectedVault } from "./selected-vault";
 
 export type { JobProgressSnapshot, JobResponse };
 
-export function listJobs(status?: PipelineRunFilter, limit = 50, offset = 0): Promise<JobPage> {
-  const query = status === undefined ? { limit, offset } : { limit, offset, status };
-  return run(api.jobs.listJobs({ params: { vault_id: selectedVault() }, query }));
+export function listActiveJobs(
+  vaultId: Uuid,
+  offset: number,
+  signal?: AbortSignal,
+): Promise<JobPage> {
+  return run(
+    api.jobs.listJobs({
+      params: { vault_id: vaultId },
+      query: { limit: 50, offset, status: "active" },
+    }),
+    { signal },
+  );
 }
 
 export function startUrlJob(url: string, jobId: Uuid = newUuid()): Promise<JobResponse> {

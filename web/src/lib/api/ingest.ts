@@ -1,11 +1,12 @@
 import {
   type FileFingerprint,
   type FileIngestBatch,
+  type FileIngestBatchCreate,
   type Uuid,
   type UserSuggestionResult,
 } from "@great-minds/domain";
 import { Effect } from "effect";
-import { errorMessage, fingerprint, manifestOf, newUuid, uploadTarget } from "@great-minds/client";
+import { errorMessage, fingerprint, manifestOf, uploadTarget } from "@great-minds/client";
 
 import { api, connection, run } from "./app";
 import { selectedVault } from "./selected-vault";
@@ -14,33 +15,17 @@ export type { FileIngestBatch, UserSuggestionResult };
 
 const PUT_CONCURRENCY = 4;
 
-export type FileIngestPhase = "uploading" | "processing" | "error";
-
-export interface UploadFailure {
-  name: string;
-  error: string;
-}
-
-export interface FileIngestProgress {
-  phase: FileIngestPhase;
-  uploaded: number;
-  total: number;
-  id?: Uuid;
-  batch?: FileIngestBatch;
-  error?: string;
-  failures?: UploadFailure[];
-}
-
 export const hashFile = (file: File): Promise<FileFingerprint> => fingerprint(file);
 
 export function checkDupes(
+  vaultId: Uuid,
   clientHashes: readonly FileFingerprint[],
 ): Promise<Set<FileFingerprint>> {
   if (clientHashes.length === 0) return Promise.resolve(new Set());
   return run(
     api.ingest
       .checkFileIngestDupes({
-        params: { vault_id: selectedVault() },
+        params: { vault_id: vaultId },
         payload: { client_hashes: clientHashes },
       })
       .pipe(
@@ -64,122 +49,50 @@ export const hashFiles = (files: readonly File[]): Promise<readonly HashedFile[]
     ),
   );
 
-const uploadFileOf = ({ file, hash }: HashedFile) => ({
-  name: file.name,
-  content: file,
-  hash,
-  mimetype: file.type,
-});
-
-export function createFileIngestBatch(
-  hashedFiles: readonly HashedFile[],
-  batchId: Uuid = newUuid(),
-): Promise<FileIngestBatch> {
-  return run(
-    api.ingest.createFileIngest({
-      params: { vault_id: selectedVault() },
-      payload: { batch_id: batchId, files: manifestOf(hashedFiles.map(uploadFileOf)) },
-    }),
+export const fileIngestManifest = (files: readonly HashedFile[]): FileIngestBatchCreate["files"] =>
+  manifestOf(
+    files.map(({ file, hash }) => ({ name: file.name, content: file, hash, mimetype: file.type })),
   );
+
+export function createFileIngestBatch(vaultId: Uuid, payload: FileIngestBatchCreate) {
+  return run(api.ingest.createFileIngest({ params: { vault_id: vaultId }, payload }));
 }
 
-export function getFileIngestBatch(batchId: Uuid): Promise<FileIngestBatch | null> {
+export function getFileIngestBatch(batchId: Uuid, signal?: AbortSignal) {
   return run(
     api.ingest
       .getFileIngest({ params: { batch_id: batchId } })
       .pipe(Effect.catchTag("NotFound", () => Effect.succeed(null))),
+    { signal },
   );
 }
 
-export function resumeFileIngestBatch(batchId: Uuid): Promise<FileIngestBatch> {
-  return run(api.ingest.resumeFileIngest({ params: { batch_id: batchId } }));
+export function resumeFileIngestBatch(batchId: Uuid, signal?: AbortSignal) {
+  return run(api.ingest.resumeFileIngest({ params: { batch_id: batchId } }), { signal });
 }
 
-type UploadResult = { ok: true; hash: FileFingerprint } | { ok: false; failure: UploadFailure };
+export function commitFileIngestBatch(batchId: Uuid) {
+  return run(api.ingest.commitFileIngest({ params: { batch_id: batchId } }));
+}
 
-const uploadOne =
-  (batch: FileIngestBatch, fileByHash: ReadonlyMap<FileFingerprint, File>) =>
-  (target: FileIngestBatch["targets"][number]) => {
-    const manifestFile = batch.files.find((file) => file.hash === target.hash);
-    const file = fileByHash.get(target.hash);
-    if (!manifestFile || !file) {
-      return Effect.succeed<UploadResult>({
-        ok: false,
-        failure: {
-          name: manifestFile?.name ?? target.hash,
-          error: "Reselect this file to continue",
-        },
-      });
-    }
-    return uploadTarget(connection, batch, target, uploadFileOf({ file, hash: target.hash })).pipe(
-      Effect.as<UploadResult>({ ok: true, hash: target.hash }),
+export function sendFileIngestFiles(batch: FileIngestBatch, files: readonly HashedFile[]) {
+  const byHash = new Map(files.map(({ file, hash }) => [hash, file]));
+  const pending = new Map(
+    batch.files.filter((file) => file.status === "pending").map((file) => [file.hash, file]),
+  );
+  const transfers = batch.targets.flatMap((target) => {
+    const file = byHash.get(target.hash);
+    const manifest = pending.get(target.hash);
+    if (!file || !manifest) return [];
+    const { hash, name, mimetype } = manifest;
+    return uploadTarget(connection, batch, target, { name, content: file, hash, mimetype }).pipe(
+      Effect.as({ hash, error: null }),
       Effect.catch((error) =>
-        Effect.succeed<UploadResult>({
-          ok: false,
-          failure: { name: manifestFile.name, error: errorMessage(error, "Upload failed") },
-        }),
+        Effect.succeed({ hash, error: errorMessage(error, "Upload failed") }),
       ),
     );
-  };
-
-export async function* continueFileIngest(
-  initialBatch: FileIngestBatch,
-  hashedFiles: readonly HashedFile[],
-): AsyncGenerator<FileIngestProgress> {
-  let batch = initialBatch;
-  const total = batch.files.length;
-  const received = () => batch.files.filter((file) => file.status !== "pending").length;
-
-  if (batch.status === "processing" || batch.status === "completed") {
-    yield { phase: "processing", uploaded: total, total, id: batch.id, batch };
-    return;
-  }
-  if (batch.status === "failed" || batch.status === "cancelled") {
-    yield {
-      phase: "error",
-      uploaded: received(),
-      total,
-      batch,
-      error: batch.error ?? `File ingest is ${batch.status}`,
-    };
-    return;
-  }
-
-  if (batch.targets.length === 0 && batch.files.some((file) => file.status === "pending")) {
-    batch = await resumeFileIngestBatch(batch.id);
-  }
-  yield { phase: "uploading", uploaded: received(), total, batch };
-
-  const fileByHash = new Map(hashedFiles.map(({ file, hash }) => [hash, file]));
-  const results = await run(
-    Effect.forEach(batch.targets, uploadOne(batch, fileByHash), {
-      concurrency: PUT_CONCURRENCY,
-    }),
-  );
-
-  const uploadedNow = results.filter((result) => result.ok).length;
-  const failures = results
-    .filter((result): result is Extract<UploadResult, { ok: false }> => !result.ok)
-    .map((result) => result.failure);
-  const uploaded = Math.min(total, received() + uploadedNow);
-  yield { phase: "uploading", uploaded, total, failures, batch };
-
-  if (failures.length > 0) {
-    batch = await resumeFileIngestBatch(batch.id);
-    yield {
-      phase: "error",
-      uploaded: batch.files.filter((file) => file.status !== "pending").length,
-      total,
-      batch,
-      error: `${failures.length} of ${total} files still need attention`,
-      failures,
-    };
-    return;
-  }
-
-  const job = await run(api.ingest.commitFileIngest({ params: { batch_id: batch.id } }));
-  batch = { ...batch, status: "processing", targets: [] };
-  yield { phase: "processing", uploaded: total, total, id: job.id, batch };
+  });
+  return run(Effect.all(transfers, { concurrency: PUT_CONCURRENCY }));
 }
 
 export function postUserSuggestion(params: {

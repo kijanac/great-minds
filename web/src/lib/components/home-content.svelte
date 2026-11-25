@@ -21,7 +21,7 @@
   import ShareDialog from "#lib/components/share-dialog.svelte";
   import { conversationOutline } from "#lib/citations.ts";
   import { Button } from "#lib/components/ui/button/index.ts";
-  import { useActiveJob } from "#lib/hooks/use-active-job.svelte.ts";
+  import { useActiveJobs } from "#lib/hooks/use-active-job.svelte.ts";
   import { unsponsoredNotice, useMe } from "#lib/hooks/use-me.svelte.ts";
   import { useAttention } from "#lib/hooks/use-attention.svelte.ts";
   import { usePanelCard } from "#lib/hooks/use-panel-card.svelte.ts";
@@ -44,7 +44,7 @@
   const sessions = useSessions();
   const vaults = useVaults();
   const attention = useAttention();
-  const activeJob = useActiveJob();
+  const activeJobs = useActiveJobs();
   const me = useMe();
   const initial = untrack(() => ({
     saved,
@@ -252,11 +252,14 @@
                 <div
                   class="flex min-h-[360px] w-full max-w-[800px] flex-col items-center justify-start pt-10"
                 >
-                  <IngestionFlow
-                    hasActivePipeline={activeJob.data ?? false}
-                    vaultName={currentVault.name}
-                    locked={!me.canUseModels}
-                  />
+                  {#key currentVault.id}
+                    <IngestionFlow
+                      pipelineHref={activeJobs.href}
+                      vaultId={currentVault.id}
+                      vaultName={currentVault.name}
+                      locked={!me.canUseModels}
+                    />
+                  {/key}
                 </div>
               {/if}
             </div>
