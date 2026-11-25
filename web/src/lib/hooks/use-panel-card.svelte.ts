@@ -1,7 +1,7 @@
 import { goto } from "$app/navigation";
-import { passageId } from "@great-minds/domain";
+import { citationPath, citedPassage, passageId } from "@great-minds/domain";
 import type { DocumentScope } from "#lib/api/doc.ts";
-import { createLinkInterceptor } from "#lib/hooks/use-link-interceptor.ts";
+import type { LinkDestination } from "#lib/markdown-links.ts";
 import type { ReadingTrail } from "#lib/research-steps.ts";
 import type { SourceDocumentSummary, SourceRef, WikiArticleOverview } from "#lib/types.ts";
 
@@ -87,7 +87,12 @@ export function usePanelCard(scope: DocumentScope = "vault") {
       select(null);
     },
     maximize,
-    onLinkClick: createLinkInterceptor(({ path, chunk }) => openPath(path, chunk)),
+    onLinkClick(link: LinkDestination, event: MouseEvent) {
+      if (link.kind !== "wiki" && link.kind !== "raw") return;
+      event.preventDefault();
+      if (link.kind === "wiki") void goto(`/doc/${link.href}`);
+      else openPath(citationPath(link.href), citedPassage(link.href));
+    },
     openArticle,
     openPath,
     openSource,

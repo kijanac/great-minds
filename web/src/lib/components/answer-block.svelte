@@ -11,6 +11,7 @@
   import FootnoteNotes from "#lib/components/footnote-notes.svelte";
   import HastNodeView from "#lib/components/hast-node.svelte";
   import { clearAnchorHighlights, setAnchorHighlights } from "#lib/highlight.ts";
+  import type { MarkdownLinkClick } from "#lib/markdown-links.ts";
   import { parseMarkdown } from "#lib/markdown.ts";
   import { hastText, type HastNode } from "#lib/markdown-plugins.ts";
   import { passageMark } from "#lib/passage-navigation.ts";
@@ -49,7 +50,7 @@
     panelDocked?: boolean;
     onSelection?: (info: SelectionInfo) => void;
     onBtwDismiss?: (btwId: string) => void;
-    onLinkClick?: (event: MouseEvent) => void;
+    onLinkClick?: MarkdownLinkClick;
     variant?: "answer" | "article";
     marginFootnotes?: boolean;
     blockRefs?: boolean;
@@ -401,6 +402,13 @@
     {/snippet}
   </FootnoteNotes>
   {#if onCitation && !streaming}
-    <AnswerCitations {root} {citations} {panelDocked} {sourceTitle} onOpen={onCitation} />
+    <AnswerCitations
+      {root}
+      {citations}
+      {panelDocked}
+      {sourceTitle}
+      {onLinkClick}
+      onOpen={onCitation}
+    />
   {/if}
 </div>

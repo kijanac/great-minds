@@ -1,7 +1,7 @@
 <script lang="ts">
   import * as Popover from "#lib/components/ui/popover/index.ts";
   import type { FootnoteDefinitions } from "#lib/footnote-notes.ts";
-  import { linkDestination, webHref } from "#lib/markdown-links.ts";
+  import { linkDestination, webHref, type MarkdownLinkClick } from "#lib/markdown-links.ts";
   import type { HastNode } from "#lib/markdown-plugins.ts";
   import { cn } from "#lib/utils.ts";
   import HastNodeView from "./hast-node.svelte";
@@ -23,7 +23,7 @@
   }: {
     node: HastNode;
     variant: Variant;
-    onLinkClick?: (event: MouseEvent) => void;
+    onLinkClick?: MarkdownLinkClick;
     blockOffset?: number;
     onBlockMouseUp?: (event: MouseEvent) => void;
     topLevel?: boolean;
@@ -222,7 +222,7 @@
           onFootnoteOpen(footnoteId);
           return;
         }
-        onLinkClick?.(event);
+        onLinkClick?.(link, event);
       }}
       onmouseenter={() => footnoteId && onFootnoteHover?.(footnoteId)}
       onmouseleave={() => footnoteId && onFootnoteHover?.(null)}

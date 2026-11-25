@@ -7,6 +7,7 @@
   import PassageLink from "#lib/components/passage-link.svelte";
   import { Button } from "#lib/components/ui/button/index.ts";
   import type { Conversation } from "#lib/conversation.svelte.ts";
+  import type { MarkdownLinkClick } from "#lib/markdown-links.ts";
   import type { ReferencePromotionAction, SelectionInfo } from "#lib/types.ts";
 
   let {
@@ -39,7 +40,7 @@
     onSupersessorClick?: (slug: string) => void;
     related?: readonly LinkItem[];
     onRelatedClick?: (filePath: string) => void;
-    onLinkClick?: (event: MouseEvent) => void;
+    onLinkClick?: MarkdownLinkClick;
     panelDocked?: boolean;
     threads?: Conversation[];
     jumpableThreads?: Set<string> | null;

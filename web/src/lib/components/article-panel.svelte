@@ -9,6 +9,7 @@
   import { Skeleton } from "#lib/components/ui/skeleton/index.ts";
   import MarkdownView from "#lib/components/markdown-view.svelte";
   import SourceStrip from "#lib/components/source-strip.svelte";
+  import type { MarkdownLinkClick } from "#lib/markdown-links.ts";
   import type { PanelContent } from "#lib/panel-content.ts";
   import { copyPassageLink } from "#lib/passage-navigation.ts";
   import { readLabel, type ReadingTrail } from "#lib/research-steps.ts";
@@ -40,7 +41,7 @@
     focus?: number | null;
     passageHref?: (chunk: number) => string | null;
     onOpenPath: (path: string) => void;
-    onLinkClick: (event: MouseEvent) => void;
+    onLinkClick: MarkdownLinkClick;
   } = $props();
 
   // Citation-opened cards carry no wire title; the chunk heading is the

@@ -31,6 +31,7 @@ it("on a phone, a citation opens a card with the cited passage and each answer l
     },
   );
   const opened: Citation[] = [];
+  const onLinkClick = vi.fn();
   const target = document.createElement("div");
   document.body.append(target);
   const component = mount(AnswerBlock, {
@@ -43,6 +44,7 @@ it("on a phone, a citation opens a card with the cited passage and each answer l
       exchangeId: "00000000-0000-4000-8000-000000000001" as never,
       btws: [],
       streaming: false,
+      onLinkClick,
       onCitation: (citation: Citation) => opened.push(citation),
     },
   });
@@ -53,12 +55,13 @@ it("on a phone, a citation opens a card with the cited passage and each answer l
     "2 sources",
   );
 
-  refs[0]?.click();
+  target.querySelector<HTMLAnchorElement>('a[data-citation="1"]')?.click();
   await vi.waitFor(() =>
     expect(
       target.querySelector("[data-citation-card]")?.textContent?.replace(/\s+/g, " ").trim(),
     ).toBe("1docs/a The cited passage. source · §5 open"),
   );
+  expect(onLinkClick).not.toHaveBeenCalled();
   refs[1]?.click();
   flushSync();
   const card = target.querySelector("[data-citation-card]");

@@ -22,6 +22,7 @@
   import { Button } from "#lib/components/ui/button/index.ts";
   import { unsponsoredNotice, useMe } from "#lib/hooks/use-me.svelte.ts";
   import type { Conversation } from "#lib/conversation.svelte.ts";
+  import type { MarkdownLinkClick } from "#lib/markdown-links.ts";
   import { sessionOriginHref } from "#lib/session-origin.ts";
   import { passageMark, revealPassage } from "#lib/passage-navigation.ts";
   import { answerText, type ReadingTrail } from "#lib/research-steps.ts";
@@ -47,7 +48,7 @@
     onCardClick: (source: SourceRef) => void;
     onOpenTrail: (trail: ReadingTrail) => void;
     onOpenPath: (path: string, chunk: number | null) => void;
-    onLinkClick?: (event: MouseEvent) => void;
+    onLinkClick: MarkdownLinkClick;
     receive: ReturnType<typeof crossfade>[1];
     contentsOpen?: boolean;
   } = $props();
@@ -58,6 +59,7 @@
     openTrail: (trail) => onOpenTrail(trail),
     toggle: (source) => onCardClick(source),
     openPath: (path, chunk) => onOpenPath(path, chunk),
+    followLink: (link, event) => onLinkClick(link, event),
   });
 
   const readMore = (exchange: Exchange) => {
@@ -227,13 +229,7 @@
 
 <svelte:document onselectionchange={handleSelectionChange} />
 
-<div
-  bind:this={viewport}
-  class="min-h-0 flex-1 overflow-y-auto"
-  onscroll={handleScroll}
-  onclick={onLinkClick}
-  role={onLinkClick ? "presentation" : undefined}
->
+<div bind:this={viewport} class="min-h-0 flex-1 overflow-y-auto" onscroll={handleScroll}>
   <div bind:this={content} data-lean class="relative mx-auto max-w-[740px] px-4 pt-9 pb-8 md:px-10">
     {#if outline.length > 0 && !panelDocked}
       <aside
@@ -287,6 +283,7 @@
               {panelDocked}
               onSelection={(info) => (popover = info)}
               onBtwDismiss={session.dismissBtw}
+              {onLinkClick}
               onCitation={(citation) => opener.openCitation(exchange, citation.href)}
               sourceTitle={(path) =>
                 exchange.sources.find((source) => source.label === path)?.title ?? null}

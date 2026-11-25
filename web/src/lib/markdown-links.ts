@@ -1,7 +1,9 @@
-type LinkDestination = {
-  kind: "web" | "email" | "fragment" | "wiki" | "raw";
-  href: string;
+export type LinkDestination = {
+  readonly kind: "web" | "email" | "fragment" | "wiki" | "raw";
+  readonly href: string;
 };
+
+export type MarkdownLinkClick = (link: LinkDestination, event: MouseEvent) => void;
 
 function parseUrl(value: unknown, base?: string): URL | undefined {
   if (typeof value !== "string") return;
@@ -35,14 +37,4 @@ export function linkDestination(value: unknown): LinkDestination | undefined {
   if (!url) return;
   if (isWebUrl(url)) return { kind: "web", href: url.href };
   if (url.protocol === "mailto:") return { kind: "email", href: url.href };
-}
-
-export function clickedMarkdownLink(event: MouseEvent): LinkDestination | undefined {
-  const anchor =
-    event.currentTarget instanceof HTMLAnchorElement
-      ? event.currentTarget
-      : event.target instanceof Element
-        ? event.target.closest("a")
-        : null;
-  return linkDestination(anchor?.getAttribute("href"));
 }

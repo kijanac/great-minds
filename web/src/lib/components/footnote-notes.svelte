@@ -5,6 +5,7 @@
 
   import HastNodeView from "#lib/components/hast-node.svelte";
   import { buildFootnotePresentation, type FootnoteDefinitions } from "#lib/footnote-notes.ts";
+  import type { MarkdownLinkClick } from "#lib/markdown-links.ts";
   import type { HastNode } from "#lib/markdown-plugins.ts";
   import { cn } from "#lib/utils.ts";
 
@@ -32,7 +33,7 @@
     marginFootnotes?: boolean;
     panelDocked?: boolean;
     resetKey: string;
-    onLinkClick?: (event: MouseEvent) => void;
+    onLinkClick?: MarkdownLinkClick;
     class?: string;
     root?: HTMLDivElement | null;
     children: Snippet<[FootnoteRenderContext]>;
