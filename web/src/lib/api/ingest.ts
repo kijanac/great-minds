@@ -54,26 +54,19 @@ export const fileIngestManifest = (files: readonly HashedFile[]): FileIngestBatc
     files.map(({ file, hash }) => ({ name: file.name, content: file, hash, mimetype: file.type })),
   );
 
-export function createFileIngestBatch(vaultId: Uuid, payload: FileIngestBatchCreate) {
-  return run(api.ingest.createFileIngest({ params: { vault_id: vaultId }, payload }));
-}
+export const createFileIngestBatch = (vaultId: Uuid, payload: FileIngestBatchCreate) =>
+  api.ingest.createFileIngest({ params: { vault_id: vaultId }, payload });
 
-export function getFileIngestBatch(batchId: Uuid, signal?: AbortSignal) {
-  return run(
-    api.ingest
-      .getFileIngest({ params: { batch_id: batchId } })
-      .pipe(Effect.catchTag("NotFound", () => Effect.succeed(null))),
-    { signal },
-  );
-}
+export const getFileIngestBatch = (batchId: Uuid) =>
+  api.ingest
+    .getFileIngest({ params: { batch_id: batchId } })
+    .pipe(Effect.catchTag("NotFound", () => Effect.succeed(null)));
 
-export function resumeFileIngestBatch(batchId: Uuid, signal?: AbortSignal) {
-  return run(api.ingest.resumeFileIngest({ params: { batch_id: batchId } }), { signal });
-}
+export const resumeFileIngestBatch = (batchId: Uuid) =>
+  api.ingest.resumeFileIngest({ params: { batch_id: batchId } });
 
-export function commitFileIngestBatch(batchId: Uuid) {
-  return run(api.ingest.commitFileIngest({ params: { batch_id: batchId } }));
-}
+export const commitFileIngestBatch = (batchId: Uuid) =>
+  api.ingest.commitFileIngest({ params: { batch_id: batchId } });
 
 export function sendFileIngestFiles(batch: FileIngestBatch, files: readonly HashedFile[]) {
   const byHash = new Map(files.map(({ file, hash }) => [hash, file]));
@@ -89,7 +82,7 @@ export function sendFileIngestFiles(batch: FileIngestBatch, files: readonly Hash
       ),
     );
   });
-  return run(Effect.all(transfers, { concurrency: PUT_CONCURRENCY }));
+  return Effect.all(transfers, { concurrency: PUT_CONCURRENCY });
 }
 
 export function postUserSuggestion(params: {
