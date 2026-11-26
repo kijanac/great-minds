@@ -499,8 +499,8 @@ export const CompilePhasesLive = Layer.effect(
           output.body,
         );
         const fileHash = fileContentHash(content);
-        if (added || previousPath !== path || previous.fileHash !== fileHash)
-          yield* storage.writeText(vaultOwner(vaultId), path, content);
+        const rewritten = added || previousPath !== path || previous.fileHash !== fileHash;
+        if (rewritten) yield* storage.writeText(vaultOwner(vaultId), path, content);
         yield* db.query((d) =>
           d
             .insert(wikiArticles)
@@ -531,7 +531,7 @@ export const CompilePhasesLive = Layer.effect(
                 ...(added ? { addedRunId: runId, archivedRunId: null } : {}),
                 ...(changed ? { changedRunId: runId } : {}),
                 archived: false,
-                updatedAt: sql`now()`,
+                ...(rewritten ? { updatedAt: sql`now()` } : {}),
               },
             }),
         );
