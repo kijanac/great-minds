@@ -291,6 +291,7 @@ const rows = () =>
               topicId: wikiArticles.topicId,
               path: wikiArticles.filePath,
               precis: wikiArticles.precis,
+              updatedAt: wikiArticles.updatedAt,
             })
             .from(wikiArticles),
         ),
@@ -498,12 +499,15 @@ describe("the themes Update pipeline", () => {
   it("asks nothing again and keeps the same articles when nothing changed", async () => {
     const first = await compile(id.run);
     const before = new Map(files);
+    const written = (await rows()).articles;
     calls.length = 0;
     embedded.length = 0;
     const again = await compile(id.rerun);
     expect(calls).toHaveLength(0);
     expect(embedded).toEqual([]);
-    expect((await rows()).backlinks).toHaveLength(1);
+    const after = await rows();
+    expect(after.backlinks).toHaveLength(1);
+    expect(after.articles).toEqual(written);
     expect(again).toEqual(first);
     expect(files.get("wiki/alpha.md")).toBe(before.get("wiki/alpha.md"));
     expect(files.get("wiki/beta.md")).toBe(before.get("wiki/beta.md"));
